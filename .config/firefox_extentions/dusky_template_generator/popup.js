@@ -28,13 +28,13 @@ const ORIGIN = crypto.randomUUID();
 
 const view = {
   tab: null, domain: "", saved: "", exists: false, path: "", rev: 0,
-  pickerOn: false, delArm: 0, autoArm: 0, force: false, timer: 0, ready: false,
+  busy: false, pickerOn: false, delArm: 0, autoArm: 0, force: false, timer: 0, ready: false,
 };
 
 function domainOf(url) {
   const u = URL.parse(url ?? "");
   if (!u || (u.protocol !== "https:" && u.protocol !== "http:")) return "";
-  return u.hostname.replace(/^www\./, "");
+  return u.hostname.replace(/^www\./, "").replace(/\.$/, "");
 }
 const fileName = () => `${view.domain}.css`;
 const shortPath = (p) => String(p ?? "").replace(/^\/home\/[^/]+(?=\/)/, "~");
@@ -95,22 +95,27 @@ function refresh() {
   label(ui.pick,
     view.pickerOn ? "■ Stop picking" : "🎯 Pick elements",
     view.pickerOn ? "picker is running on this page" : "click things on the page, assign a role");
+  if (view.busy || !view.ready) for (const b of BUTTONS) b.disabled = true;
 }
 
 function busy(on) {
+  ui.css.disabled = on;
   for (const b of BUTTONS) b.disabled = on;
   if (!on) refresh();
 }
 
 async function run(task) {
+  if (view.busy || !view.ready) return;
+  view.busy = true;
   busy(true);
   try { await task(); }
   catch (err) { say(err.message ?? String(err), "err"); }
-  finally { busy(false); }
+  finally { view.busy = false; busy(false); }
 }
 
 async function save() {
-  const req = { type: "write", domain: view.domain, css: ui.css.value, tabId: view.tab.id };
+  const submitted = ui.css.value;
+  const req = { type: "write", domain: view.domain, css: submitted, tabId: view.tab.id };
   if (!view.force) req.base_rev = view.rev;
   const reply = await bg(req, true);
   if (reply.conflict) {
@@ -120,7 +125,7 @@ async function save() {
     say("The file changed on disk (picker, or another editor). Click Overwrite to replace it, or ↻ Reload to see it.", "warn");
     return false;
   }
-  setDoc(reply);
+  setDoc(reply, ui.css.value !== submitted);
   say(reply.exists ? `Saved ${fileName()}` : "Template was empty — file removed", "ok");
   return true;
 }
@@ -214,7 +219,13 @@ ui.del.addEventListener("click", () => run(async () => {
   }
   view.delArm = 0;
   label(ui.del, "🗑 Delete", "remove this file from disk");
-  setDoc(await bg({ type: "delete", domain: view.domain, base_rev: view.rev, tabId: view.tab.id }, true));
+  const reply = await bg({ type: "delete", domain: view.domain, base_rev: view.rev, tabId: view.tab.id }, true);
+  if (reply.conflict) {
+    setDoc(reply, true);
+    say("The file changed on disk. Review it and click Delete again to confirm.", "warn");
+    return;
+  }
+  setDoc(reply);
   say(`Deleted ${fileName()}`, "ok");
 }));
 
@@ -240,6 +251,7 @@ browser.runtime.onMessage.addListener((msg) => {
 
 /* ── Init ─────────────────────────────────────────────────────────────── */
 (async function init() {
+  busy(true);
   const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
   view.tab = tab;
   view.domain = domainOf(tab?.url);
@@ -272,5 +284,8 @@ browser.runtime.onMessage.addListener((msg) => {
    * picker state is correct even on a freshly loaded tab. */
   const state = await pg({ type: "ping" }).catch(() => null);
   view.pickerOn = !!state?.active;
-  refresh();
-})();
+  busy(false);
+})().catch((err) => {
+  say(err.message ?? String(err), "err");
+  for (const b of BUTTONS) b.disabled = true;
+});

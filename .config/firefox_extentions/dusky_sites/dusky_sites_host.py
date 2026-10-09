@@ -27,6 +27,7 @@ Exit: stdin EOF (Firefox closed the port) or SIGTERM/SIGINT/SIGHUP. Config lives
 ~/.config/dusky/settings/dusky_sites/config.json (camelCase keys, atomic writes).
 """
 
+import colorsys
 import ctypes
 import hashlib
 import json
@@ -186,8 +187,18 @@ def parse_colors(path: Path) -> dict[str, str]:
         return {}
     # CSS uses private names so unrelated userChrome palettes cannot override it.
     # Keep the existing native-message palette keys consumed by the signed XPI.
-    return {name.replace("--dusky-palette-", "--", 1): value.strip()
-            for name, value in _COLOR_RE.findall(text)}
+    colors = {name.replace("--dusky-palette-", "--", 1): value.strip()
+              for name, value in _COLOR_RE.findall(text)}
+    # Keep component-valued site tokens valid, and refresh them with Matugen.
+    for name, value in tuple(colors.items()):
+        if re.fullmatch(r"#[0-9a-fA-F]{6}", value) is None:
+            continue
+        r, g, b = (int(value[i:i + 2], 16) for i in (1, 3, 5))
+        h, lightness, saturation = colorsys.rgb_to_hls(r / 255, g / 255, b / 255)
+        colors.setdefault(f"{name}_rgb", f"{r} {g} {b}")
+        colors.setdefault(f"{name}_rgb_comma", f"{r}, {g}, {b}")
+        colors.setdefault(f"{name}_hsl", f"{h * 360:.6f} {saturation * 100:.6f}% {lightness * 100:.6f}%")
+    return colors
 
 
 def balanced_block(text: str, start: int) -> str:

@@ -12,13 +12,13 @@
  *       @layer dusky.preview, dusky.live;
  *   CSS Cascade 5 reverses layer order for !important declarations: the
  *   EARLIEST layer wins, and layered !important beats unlayered !important.
- *   Therefore  preview  ≻  live  ≻  the site's own !important rules,
- *   independently of specificity, source order, and anything the page does to
- *   <head>. Hover preview is consequently identical in pick and edit mode.
+ *   Therefore preview beats live, and both beat unlayered author rules.
+ *   Inline !important and important rules in earlier site layers can still win.
+ *   Pick and edit mode share the same preview engine.
  *
  * Reliability contract:
  *   · nothing is written unless the picks region was read first (hydrated);
- *   · every write carries base_rev; a conflict re-reads, merges (local wins
+ *   · every write carries base_rev; a conflict re-reads, merges (local edits win
  *     per key) and retries with backoff;
  *   · writes are serialised and coalesced by generation — a burst is one write.
  *
@@ -71,6 +71,7 @@
     ["error", "Error"],
     ["on_error", "On error"],
     ["error_container", "Error container"],
+    ["on_error_container", "On error container"],
   ];
   const TOKEN_NAMES = new Set(TOKENS.map(([t]) => t));
 
@@ -84,7 +85,7 @@
     "tertiary_fixed", "tertiary_fixed_dim", "on_tertiary_fixed", "on_tertiary_fixed_variant",
     "scrim", "shadow", "source_color", "surface_tint",
   ]);
-  const PALETTE_SUFFIX = /_(rgb|rgba|hex|hsl|raw|strip)$/;
+  const PALETTE_SUFFIX = /_(rgb_comma|rgb|rgba|hex|hsl|raw|strip)$/;
   /* Framework internals that are never site design tokens. --mui-* and --wp--*
    * are deliberately NOT here: those are mappable palettes. */
   const NOISE_RE = /^--(tw-|fa-|dusky|darkreader|chakra-emotion)/i;
@@ -108,9 +109,9 @@
   const root = hostEl.attachShadow({ mode: "closed" });
 
   /* ══ Perceptual colour engine ═══════════════════════════════════════ */
-  /* The probe lives in a detached element inside the closed root: the page can
-   * neither see it nor style it, and it never triggers layout. */
-  let colorProbe = null;
+  /* A detached style object handles ordinary colours; a reusable shadow node
+   * resolves context-dependent colours and a one-pixel canvas converts to sRGB. */
+  let colorProbe = null, colorCanvas = null;
   const getProbe = () => (colorProbe ??= document.createElement("span"));
   const dropProbe = () => { colorProbe = null; };
 
@@ -130,7 +131,7 @@
     const triplet = !hsl && v.match(RGB_TRIPLET);
     if (triplet) {
       const [, r, g, b] = triplet.map(Number);
-      return r <= 255 && g <= 255 && b <= 255 ? { r, g, b, a: 1, shape: "rgb-triplet" } : null;
+      return r <= 255 && g <= 255 && b <= 255 ? { r, g, b, a: 1, shape: v.includes(",") ? "rgb-comma" : "rgb-triplet" } : null;
     }
     /* Reject non-colours early so font/spacing variables never leak through. */
     if (!(hsl || IS_COLOR_SYNTAX.test(v) || CSS.supports("color", v))) return null;
@@ -143,8 +144,17 @@
     /* Detached elements have no computed style, so resolve through the CSSOM:
      * style.color is already serialised by the parser into a canonical form. */
     const serialised = probe.style.color;
-    const match = RGB_OUT.exec(serialised) ?? RGB_OUT.exec(resolveViaRoot(serialised));
-    if (!match) return null;
+    const match = RGB_OUT.exec(serialised);
+    if (!match) {
+      const ctx = (colorCanvas ??= new OffscreenCanvas(1, 1).getContext("2d", {
+        colorSpace: "srgb", willReadFrequently: true,
+      }));
+      ctx.clearRect(0, 0, 1, 1);
+      ctx.fillStyle = resolveViaRoot(serialised);
+      ctx.fillRect(0, 0, 1, 1);
+      const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
+      return { r, g, b, a: a / 255, shape: hsl ? "hsl-triplet" : "color" };
+    }
     const [, rs, gs, bs, as] = match;
     const alpha = as === undefined ? 1 : (as.endsWith("%") ? parseFloat(as) / 100 : parseFloat(as));
     return {
@@ -153,21 +163,26 @@
     };
   }
 
-  /* Canonicalise exotic colour syntaxes (oklch, color-mix, light-dark) to rgb()
-   * using a one-shot computed-value round trip on the shadow root's own node. */
+  /* Resolve context-dependent colours before canvas converts their colour space. */
   let resolver = null;
   function resolveViaRoot(value) {
-    if (!resolver?.isConnected) {
+    if (!resolver) {
       resolver = document.createElement("i");
       resolver.style.cssText = "display:none!important";
       root.append(resolver);
     }
-    resolver.style.color = "";
-    resolver.style.color = value;
-    return getComputedStyle(resolver).color ?? "";
+    const detached = !hostEl.isConnected;
+    if (detached) document.documentElement.append(hostEl);
+    try {
+      resolver.style.color = "";
+      resolver.style.color = value;
+      return getComputedStyle(resolver).color;
+    } finally {
+      if (detached) hostEl.remove();
+    }
   }
 
-  const srgb = (c) => ((c /= 255), c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  const srgb = (c) => ((c /= 255), c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
   const luminance = (r, g, b) => 0.2126 * srgb(r) + 0.7152 * srgb(g) + 0.0722 * srgb(b);
 
   function chromaHue(r, g, b) {
@@ -496,7 +511,8 @@
       const token = matchKnownFramework(name) || classifyByValueAndName(name, col);
       if (!token || !TOKEN_NAMES.has(token)) { unmapped.push(name); continue; }
       if (`--${token}` === name) continue;
-      const key = col.shape === "rgb-triplet" ? `${token}\u0000rgb`
+      const key = col.shape === "rgb-comma" ? `${token}\u0000rgb_comma`
+        : col.shape === "rgb-triplet" ? `${token}\u0000rgb`
         : col.shape === "hsl-triplet" ? `${token}\u0000hsl` : token;
       (groups.get(key) ?? groups.set(key, []).get(key)).push(name);
     }
@@ -513,14 +529,15 @@
     if (kind === "tokens") {
       body.push(`${detectRootScopes()} {`, "    color-scheme: dark !important;");
       for (const [token] of TOKENS) {
-        for (const suffix of ["", "\u0000rgb", "\u0000hsl"]) {
+        for (const suffix of ["", "\u0000rgb", "\u0000rgb_comma", "\u0000hsl"]) {
           const names = groups.get(token + suffix);
           if (!names) continue;
           const label = suffix === "\u0000rgb" ? `${token} (rgb components)`
             : suffix === "\u0000hsl" ? `${token} (hsl components)` : token;
           body.push(`    /* ${label} */`);
           for (const n of names.toSorted()) {
-            body.push(`    ${n}: var(--${token}) !important;`);
+            const paletteName = token + (suffix ? `_${suffix.slice(1)}` : "");
+            body.push(`    ${n}: var(--${paletteName}) !important;`);
             mapped++;
           }
         }
@@ -584,8 +601,11 @@
     return { kind: "invalid" };
   }
 
-  const propsOf = (decl) => [...new Set(String(decl).split(";")
-    .map((d) => d.split(":")[0].trim().toLowerCase()).filter(Boolean))].toSorted();
+  const declStyle = document.createElement("div").style;
+  const propsOf = (decl) => {
+    declStyle.cssText = decl;
+    return [...declStyle].toSorted();
+  };
 
   const PROP_GROUP = [
     [/^background(-color|-image)?$/, "bg"], [/^color$/, "text"],
@@ -593,9 +613,9 @@
   ];
   function groupOfDecl(decl) {
     const props = propsOf(decl);
-    const first = props[0] ?? "";
-    if (first.startsWith("--")) return "var";
-    for (const [re, g] of PROP_GROUP) if (re.test(first)) return g;
+    if (props.length === 1 && props[0].startsWith("--")) return "var";
+    if (props.includes("fill")) return "fill";
+    for (const [re, g] of PROP_GROUP) if (props.some((p) => re.test(p))) return g;
     return `custom:${props.join(",")}`;
   }
   const tokenOf = (decl) => /var\(\s*--([a-z0-9_]+)/i.exec(String(decl ?? ""))?.[1] ?? "";
@@ -605,11 +625,18 @@
     for (let i = 0; i < text.length; i++) {
       const c = text[i];
       if (inStr) { if (c === "\\") i++; else if (c === inStr) inStr = 0; continue; }
+      if (c === "\\") { i++; continue; }
+      if (text.startsWith("/*", i)) {
+        const end = text.indexOf("*/", i + 2);
+        if (end < 0) return null;
+        i = end + 1;
+        continue;
+      }
       if (c === '"' || c === "'") { inStr = c; continue; }
       if (c === "{") { if (depth++ === 0) { selEnd = i; bodyStart = i + 1; } continue; }
       if (c === "}") { if (--depth === 0) { bodyEnd = i; break; } }
     }
-    if (selEnd < 0 || bodyEnd < 0) return null;
+    if (selEnd < 0 || bodyEnd < 0 || text.slice(bodyEnd + 1).trim()) return null;
     return { sel: text.slice(0, selEnd).trim(), decl: text.slice(bodyStart, bodyEnd).trim() };
   }
 
@@ -622,7 +649,7 @@
     const css = km ? trimmed.slice(0, km.index).trim() : trimmed;
     if (!css) return null;
 
-    const parts = splitRule(css);
+    const parts = css.includes("\n") ? null : splitRule(css);
     if (!parts?.sel || !parts?.decl) {
       return { raw: css, meta: meta0 || "manual", key: rawKey(css) };
     }
@@ -633,15 +660,45 @@
      * CSS it labels; otherwise the CSS is authoritative (self-healing files). */
     const stored = decodeKey(storedKey);
     const keep = stored.kind === "var"
-      ? group === "var" && stored.scope === parts.sel
-      : stored.kind === "sel" && group !== "var" && stored.sel === parts.sel;
+      ? group === "var" && stored.scope === parts.sel && stored.name === propsOf(decl)[0]
+      : stored.kind === "sel" && group !== "var" && stored.sel === parts.sel && stored.group === group;
     return { sel: parts.sel, decl, meta: meta0 || "restored", key: keep ? storedKey : derived };
   }
-  const parseLines = (text) => String(text ?? "").split("\n").map(parseRule).filter(Boolean);
+  /* Split only at top-level newlines. A rule inside a multiline comment must
+   * never acquire metadata that would prematurely close the comment. */
+  function parseLines(text) {
+    const source = String(text ?? "");
+    const rules = [];
+    let start = 0, depth = 0, quote = "", comment = false;
+    const push = (end) => {
+      const rule = parseRule(source.slice(start, end));
+      if (rule) rules.push(rule);
+      start = end + 1;
+    };
+    for (let i = 0; i < source.length; i++) {
+      const c = source[i];
+      if (comment) {
+        if (source.startsWith("*/", i)) { comment = false; i++; }
+        continue;
+      }
+      if (c === "\\") { i++; continue; }
+      if (quote) {
+        if (c === quote) quote = "";
+        continue;
+      }
+      if (source.startsWith("/*", i)) { comment = true; i++; continue; }
+      if (c === '"' || c === "'") quote = c;
+      else if (c === "{") depth++;
+      else if (c === "}") depth = Math.max(0, depth - 1);
+      else if (c === "\n" && depth === 0) push(i);
+    }
+    push(source.length);
+    return rules;
+  }
 
   const ruleCss = (r) => (r.raw !== undefined ? r.raw : `${r.sel} { ${r.decl} }`);
   const ruleLine = (r) =>
-    `${ruleCss(r)} /* dusky key=${enc(r.key)}${r.meta ? ` | ${safeMeta(r.meta)}` : ""} */`;
+    r.raw !== undefined ? r.raw : `${ruleCss(r)} /* dusky key=${enc(r.key)}${r.meta ? ` | ${safeMeta(r.meta)}` : ""} */`;
   const serialise = () => S.rules.map((r) => `    ${ruleLine(r)}`).join("\n");
 
   const target = () => S.stack.at(S.depth) ?? null;
@@ -657,7 +714,7 @@
     primary: "on_primary", primary_container: "on_primary_container",
     secondary: "on_secondary", secondary_container: "on_secondary_container",
     tertiary: "on_tertiary", tertiary_container: "on_tertiary_container",
-    error: "on_error", error_container: "on_error", background: "on_background",
+    error: "on_error", error_container: "on_error_container", background: "on_background",
   };
 
   function declFor(group, token) {
@@ -670,8 +727,12 @@
   }
   const colourGroup = (g) => (GROUPS[g] ? g : "bg");
 
-  const important = (text) => text.split(";").map((d) => d.trim()).filter(Boolean)
-    .map((d) => `${/!important\s*$/i.test(d) ? d : `${d} !important`};`).join(" ");
+  const important = (text) => {
+    const style = document.createElement("div").style;
+    style.cssText = text;
+    for (const name of style) style.setProperty(name, style.getPropertyValue(name), "important");
+    return style.cssText;
+  };
 
   function validSelector(sel) {
     if (typeof sel !== "string" || !sel || sel.length > LIMITS.SEL) return false;
@@ -684,8 +745,8 @@
     if (!src || src.length > LIMITS.DECL) return "";
     const probe = document.createElement("div");
     try { probe.style.cssText = src; } catch { return ""; }
-    if (!probe.style.length && !/--[\w-]+\s*:/.test(src)) return "";
-    return important(src);
+    if (!probe.style.length) return "";
+    return important(probe.style.cssText);
   }
 
   function getElementVars(elm) {
@@ -720,7 +781,8 @@
   /* ══ STYLE ENGINE — one adopted sheet, two cascade layers ═══════════ */
   /* @layer dusky.preview, dusky.live;  ⇒ for !important declarations the
    * EARLIEST layer wins (CSS Cascade 5 §layer ordering), so the preview always
-   * beats the live rule, and both beat the site's unlayered !important CSS. */
+   * beats the live rule, and both beat the site's unlayered !important CSS.
+   * Inline important and earlier page layers retain their CSS-defined priority. */
   const SHEET = new CSSStyleSheet();
   let liveCss = "";
   let previewCss = "";
@@ -1076,7 +1138,7 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
       if (!sel || seen.has(sel) || sel.length > LIMITS.SEL || !validSelector(sel)) return;
       let n = 0;
       try { n = document.querySelectorAll(sel).length; } catch { return; }
-      if (!n) return;
+      if (!n || !elm.matches(sel)) return;
       seen.add(sel);
       out.push({ sel, n });
     };
@@ -1087,8 +1149,10 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
     for (const c of classes.slice(0, 2)) add(`.${CSS.escape(c)}`);
     const role = elm.getAttribute("role");
     if (role) add(`${tag}[role=${cssString(role)}]`);
-    const testid = elm.getAttribute("data-testid") || elm.getAttribute("data-test");
-    if (testid) add(`[data-testid=${cssString(testid)}]`);
+    for (const attr of ["data-testid", "data-test"]) {
+      const value = elm.getAttribute(attr);
+      if (value) add(`[${attr}=${cssString(value)}]`);
+    }
     const name = elm.getAttribute("name");
     if (name) add(`${tag}[name=${cssString(name)}]`);
     const aria = elm.getAttribute("aria-label");
@@ -1586,7 +1650,7 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
   function commitRaw() {
     const r = currentEdit();
     if (!r) return;
-    const next = parseRule(oneLine(q("eraw").value));
+    const next = parseRule(q("eraw").value);
     if (!next) { flash("nothing to save", "err"); return; }
     writeRule(r.key, next);
     flash("✓ rule updated");
@@ -1732,16 +1796,25 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
   const send = (msg) => browser.runtime.sendMessage({ ...msg, origin: ORIGIN })
     .catch((e) => ({ ok: false, error: String(e?.message ?? e) }));
 
-  /* Keep local rules, adopt anything new that appeared on disk. */
+  let diskRules = Object.freeze([]);
+
   function mergeForeign(foreignPicks) {
+    const base = new Map(diskRules.map((r) => [r.key, ruleCss(r)]));
     const mine = new Map(S.rules.map((r) => [r.key, r]));
+    const foreign = parseLines(foreignPicks);
     const merged = [];
-    for (const r of parseLines(foreignPicks)) {
-      if (mine.has(r.key)) { merged.push(mine.get(r.key)); mine.delete(r.key); }
-      else merged.push(r);
+    const seen = new Set();
+    for (const rule of foreign) {
+      const local = mine.get(rule.key);
+      if (!local && base.has(rule.key)) continue;  /* deleted locally */
+      merged.push(local && base.get(rule.key) !== ruleCss(local) ? local : rule);
+      seen.add(rule.key);
     }
-    merged.push(...mine.values());
-    S.rules = Object.freeze(merged);
+    for (const [key, rule] of mine) {
+      if (!seen.has(key) && base.get(key) !== ruleCss(rule)) merged.push(rule);
+    }
+    diskRules = Object.freeze(foreign);
+    S.rules = Object.freeze(merged);               /* preserve repeated raw lines */
   }
 
   let saveInFlight = null;
@@ -1760,6 +1833,9 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
           await persistOnce();
           written = generation;
         }
+      } catch (err) {
+        S.note = String(err?.message ?? err);
+        setState(`⚠ NOT SAVED: ${S.note}`, "err");
       } finally { saveInFlight = null; }
     })();
   }
@@ -1767,16 +1843,18 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   async function persistOnce() {
-    const body = serialise();
-    if (body.length > LIMITS.BODY) {
-      S.note = "picks region exceeds 512 KiB — remove some rules";
-      setState(`⚠ NOT SAVED: ${S.note}`, "err");
-      return;
-    }
     setState("saving…", "");
     for (let attempt = 0; attempt < 3; attempt++) {
-      const reply = await send({ type: "splice", region: "picks", body: serialise(), base_rev: S.rev });
+      const writtenRules = S.rules;
+      const body = serialise();
+      if (new TextEncoder().encode(body).length > LIMITS.BODY) {
+        S.note = "picks region exceeds 512 KiB — remove some rules";
+        setState(`⚠ NOT SAVED: ${S.note}`, "err");
+        return;
+      }
+      const reply = await send({ type: "splice", region: "picks", body, base_rev: S.rev });
       if (reply?.ok) {
+        diskRules = writtenRules;
         S.rev = reply.rev ?? 0;
         S.note = "";
         flash(`✓ saved ${String(reply.path ?? "").split("/").pop()}`);
@@ -1812,35 +1890,41 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
     S.rev = reply.rev ?? 0;
     S.warnings = reply.warnings ?? [];
     S.rules = Object.freeze(parseLines(reply.picks));
+    diskRules = S.rules;
     return true;
   }
 
   /* Re-read disk and re-apply anything we have locally that disk lacks. */
   async function recover(manual = false) {
     await saveInFlight?.catch(() => {});
-    const local = S.rules;
-    const before = serialise();
-    if (!await hydrate(true)) { baseState(); return false; }
-    const merged = S.rules.slice();
-    for (const r of local) {
-      const i = merged.findIndex((x) => x.key === r.key);
-      if (i >= 0) merged[i] = r; else merged.push(r);
+    const reply = await send({ type: "read" });
+    if (!reply?.ok) {
+      S.note = reply?.error ?? "cannot reach the native host";
+      baseState();
+      return false;
     }
-    S.rules = Object.freeze(merged);
+    S.hydrated = true;
+    S.note = "";
+    S.rev = reply.rev ?? 0;
+    mergeForeign(reply.picks);
+    const diskText = diskRules.map((r) => `    ${ruleLine(r)}`).join("\n");
     renderLive(); refreshBar(); refreshDrawer(); refreshPanel();
-    if (serialise() !== before) { S.generation++; schedulePersist(); }
+    if (serialise() !== diskText) { S.generation++; schedulePersist(); }
     if (manual) flash("⟲ resynced with disk");
     return true;
   }
 
-  /* Disk changed under us (popup saved / deleted): disk wins. */
+  /* Adopt disk changes while preserving any edits still awaiting a commit. */
   async function rehydrate() {
-    await saveInFlight?.catch(() => {});
     const before = S.rules;
     const beforeText = serialise();
-    if (!await hydrate(true)) { baseState(); return; }
-    if (serialise() !== beforeText) S.undo.push(before);
-    renderLive(); refreshBar(); refreshDrawer(); refreshPanel();
+    if (!await recover()) return;
+    if (serialise() !== beforeText) {
+      S.undo.push(before);
+      if (S.undo.length > 100) S.undo.shift();
+      S.redo = [];
+      refreshBar();
+    }
     flash("↻ reloaded from disk");
   }
 
@@ -1924,12 +2008,22 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
   const LISTENERS = [["mouseover", onOver], ["pointerdown", onPointerDown], ["click", onClick], ["keydown", onKey]];
   let listenerCtl = null;
 
-  async function setActive(on) {
+  let activation = Promise.resolve();
+  function setActive(on) {
+    const job = activation.then(() => changeActive(on ?? !S.active));
+    activation = job.catch(() => {});
+    return job;
+  }
+
+  async function changeActive(on) {
     if (on === S.active) return;
     S.active = on;
     if (on) {
       dropIndex();
-      await hydrate(true);
+      await saveInFlight;
+      if (S.note) await recover();
+      else await hydrate(true);
+      S.undo = []; S.redo = [];
       document.documentElement.append(hostEl);
       buildBar();
       renderLive();
@@ -1970,14 +2064,14 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
         try { return Promise.resolve(scan()); }
         catch (e) { return Promise.resolve({ ok: false, error: `Scan failed: ${e?.message ?? e}` }); }
       case "picker":
-        return setActive(msg.enable ?? !S.active).then(() => ({ ok: true, active: S.active }));
+        return setActive(msg.enable).then(() => ({ ok: true, active: S.active }));
       case "reset":
         S.rules = Object.freeze([]); S.undo = []; S.redo = [];
-        S.hydrated = true; S.note = ""; S.rev = 0;
+        S.hydrated = false; S.note = ""; S.rev = 0; diskRules = S.rules;
         renderLive(); refreshBar(); refreshDrawer(); refreshPanel(); baseState();
         return Promise.resolve({ ok: true });
       case "rehydrate":
-        if (!S.active) { S.hydrated = false; return Promise.resolve({ ok: true, active: false }); }
+        if (!S.active) return Promise.resolve({ ok: true, active: false });
         return rehydrate().then(() => ({ ok: true, rules: S.rules.length }));
       default:
         return false;

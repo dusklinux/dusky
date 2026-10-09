@@ -6,7 +6,7 @@
  *      per-request AbortSignal.timeout, idle disconnect, two-strike port reset.
  *   2. content.js injected on demand, TOP FRAME ONLY, under the activeTab grant.
  *   3. Alt+Shift+P toggles the picker, degrading to "open the popup" when the
- *      command carries no host permission (a command is NOT an activeTab grant).
+ *      page refuses injection; commands also grant activeTab.
  *   4. For tab-originated messages the domain is ALWAYS derived from sender.url
  *      and the sender MUST be the top frame, so no page (and no embedded frame)
  *      can write another site's template.
@@ -23,7 +23,7 @@ const MUTATIONS = new Set(["write", "splice", "delete"]);
 const REGIONS = new Set(["auto", "picks"]);
 const HOST_TIMEOUT_MS = 8_000;
 const IDLE_DISCONNECT_MS = 30_000;
-/* Firefox refuses native-messaging frames over 1 MiB in either direction. */
+/* Application budget; Firefox caps host replies at 1 MiB, requests at 4 GiB. */
 const MAX_PAYLOAD = 768 * 1024;
 
 /* ── Native port ─────────────────────────────────────────────────────── */
@@ -34,7 +34,7 @@ let strikes = 0;
 const pending = new Map();
 
 function rejectAll(reason) {
-  for (const entry of pending.values()) entry.reject(new Error(reason));
+  for (const entry of pending.values()) entry.fail(new Error(reason));
   pending.clear();
 }
 
@@ -53,8 +53,9 @@ function armIdle() {
 
 function getPort() {
   if (port) return port;
-  port = browser.runtime.connectNative(HOST);
-  port.onMessage.addListener((reply) => {
+  const live = browser.runtime.connectNative(HOST);
+  port = live;
+  live.onMessage.addListener((reply) => {
     const entry = pending.get(reply?.__id);
     if (!entry) return;                              /* late reply after timeout */
     pending.delete(reply.__id);
@@ -62,11 +63,13 @@ function getPort() {
     strikes = 0;
     armIdle();
   });
-  port.onDisconnect.addListener((dead) => {
+  live.onDisconnect.addListener((dead) => {
+    if (port !== live) return;
     port = null;
+    strikes = 0;
     rejectAll(dead.error?.message ?? "native host disconnected");
   });
-  return port;
+  return live;
 }
 
 function postToHost(request) {
@@ -85,7 +88,10 @@ function postToHost(request) {
   signal.addEventListener("abort", onAbort, { once: true });
 
   pending.set(id, {
-    reject,
+    fail(err) {
+      signal.removeEventListener("abort", onAbort);
+      reject(err);
+    },
     settle(reply) {
       signal.removeEventListener("abort", onAbort);
       const { __id, ...clean } = reply;
@@ -126,7 +132,7 @@ function hostCall(request) {
 function siteOf(url) {
   const u = URL.parse(url ?? "");
   if (!u || (u.protocol !== "https:" && u.protocol !== "http:")) return "";
-  return u.hostname.replace(/^www\./, "");
+  return u.hostname.replace(/^www\./, "").replace(/\.$/, "");
 }
 
 function explain(err) {
@@ -173,29 +179,42 @@ function announce(reply, { tabId, fromTab, origin }) {
     origin: origin ?? "",
   };
   browser.runtime.sendMessage(evt).catch(() => {});                  /* open popups */
-  if (!fromTab && Number.isInteger(tabId)) {                         /* the popup's tab */
-    browser.tabs
-      .sendMessage(tabId, { type: "rehydrate", domain: evt.domain }, { frameId: 0 })
-      .catch(() => {});
+  const tabs = new Set(subscribers.get(evt.domain) ?? []);
+  if (Number.isInteger(tabId)) tabs.add(tabId);
+  for (const id of tabs) {
+    if (fromTab && id === tabId) continue;
+    browser.tabs.sendMessage(id, { type: "rehydrate", domain: evt.domain }, { frameId: 0 })
+      .catch(() => subscribers.get(evt.domain)?.delete(id));
   }
 }
 
 function tooBig(request) {
   for (const field of ["css", "body"]) {
     const value = request[field];
-    if (typeof value === "string" && value.length > MAX_PAYLOAD) {
-      return `${field} is ${(value.length / 1024) | 0} KiB — the native messaging limit is 1 MiB. Split the template.`;
+    const bytes = typeof value === "string" ? new TextEncoder().encode(value).length : 0;
+    if (bytes > MAX_PAYLOAD) {
+      return `${field} is ${Math.ceil(bytes / 1024)} KiB — the request budget is 768 KiB. Split the template.`;
     }
   }
   return "";
 }
 
+const subscribers = new Map();
+browser.tabs.onRemoved.addListener((tabId) => {
+  for (const [domain, tabs] of subscribers) {
+    tabs.delete(tabId);
+    if (!tabs.size) subscribers.delete(domain);
+  }
+});
+
 /* ── Message router ──────────────────────────────────────────────────── */
 browser.runtime.onMessage.addListener((msg, sender) => {
   if (typeof msg?.type !== "string" || msg.type === "dusky:changed") return false;
 
+  const fromTab = !!sender.tab && !sender.url?.startsWith(browser.runtime.getURL(""));
+
   /* popup → page relay (never reachable from a content script) */
-  if (msg.type === "page" && !sender.tab) {
+  if (msg.type === "page" && !fromTab) {
     if (!Number.isInteger(msg.tabId)) return Promise.resolve({ ok: false, error: "No tab." });
     return page(msg.tabId, msg.msg).then(
       (reply) => (reply && typeof reply === "object" ? reply : { ok: false, error: "The page did not answer." }),
@@ -204,7 +223,6 @@ browser.runtime.onMessage.addListener((msg, sender) => {
   }
   if (!HOST_OPS.has(msg.type)) return false;
 
-  const fromTab = !!sender.tab;
   const { tabId: askedTab, origin, ...request } = msg;
   const tabId = fromTab ? sender.tab.id : askedTab;
 
@@ -216,6 +234,14 @@ browser.runtime.onMessage.addListener((msg, sender) => {
     const domain = siteOf(sender.url);
     if (!domain) return Promise.resolve({ ok: false, error: "This page has no themeable domain." });
     request.domain = domain;                          /* never trust the sender */
+    for (const [other, tabs] of subscribers) {
+      if (other !== domain) {
+        tabs.delete(tabId);
+        if (!tabs.size) subscribers.delete(other);
+      }
+    }
+    if (!subscribers.has(domain)) subscribers.set(domain, new Set());
+    subscribers.get(domain).add(tabId);
   } else if (typeof request.domain === "string") {
     request.domain = siteOf(`https://${request.domain}`) || request.domain;
   }
@@ -250,8 +276,8 @@ browser.commands.onCommand.addListener(async (command) => {
   } catch { /* not injected yet */ }
 
   try {
-    /* Works only with a host permission (about:addons → Permissions, or the
-     * optional_host_permissions prompt). A command alone is not activeTab. */
+    /* Works with a host permission (about:addons → Permissions, or the
+     * optional_host_permissions prompt), or the command's activeTab grant. */
     await browser.scripting.executeScript({
       target: { tabId: tab.id, allFrames: false },
       files: ["content.js"],

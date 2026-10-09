@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Dusky Template Generator — native messaging host (Python 3.14+, Linux only).
+"""Dusky Template Generator — native messaging host (Python 3.15+, Linux only).
 
 Owns $XDG_CONFIG_HOME/dusky_sites/<domain>.css. Writes atomically
 (tmpfile + os.replace + dir fsync) with compare-and-swap revision checking, and
@@ -41,7 +41,7 @@ from typing import Any, Final
 
 type Reply = dict[str, Any]
 
-VERSION: Final = "4.0.0"
+VERSION: Final = "4.0.1"
 HOST_NAME: Final = "dusky_template_generator"
 MAX_IN: Final = 8 * 1024 * 1024          # accept generously ...
 MAX_OUT: Final = 1024 * 1024 - 1024      # ... Firefox drops host replies over 1 MiB
@@ -61,8 +61,8 @@ END: Final[dict[str, str]] = {
 # across different regions or across a stray pasted marker.
 REGION_RE: Final[dict[str, re.Pattern[str]]] = {
     name: re.compile(
-        r"^[ \t]*" + re.escape(BEGIN[name]) + r"[ \t]*\n(?P<body>.*?)^[ \t]*"
-        + re.escape(END[name]) + r"[ \t]*(?:\n|\Z)",
+        r"^[ \t]*" + re.escape(BEGIN[name]) + r"[ \t]*\r?\n(?P<body>.*?)^[ \t]*"
+        + re.escape(END[name]) + r"[ \t]*(?:\r?\n|\Z)",
         re.DOTALL | re.MULTILINE,
     )
     for name in BEGIN
@@ -93,8 +93,8 @@ def sanitize_domain(raw: object) -> str:
 
     Returns "" unless what remains is a valid hostname: labels of [a-z0-9_-]
     (each ≤63 bytes) joined by single dots, never starting or ending with a dot
-    or dash, ≤253 bytes total. Non-ASCII is converted to punycode (UTS-46 via
-    the stdlib idna codec) so the file name always matches what the Dusky engine
+    or dash, ≤253 bytes total. Non-ASCII is converted to punycode (IDNA via
+    the stdlib codec) so the file name always matches what the Dusky engine
     and @-moz-document domain() see. Junk is rejected, not repaired, so the
     derived file name cannot escape the templates directory.
     """
@@ -136,10 +136,30 @@ def moz_span(doc: str) -> tuple[int, int, int, int] | None:
     Brace counting that understands strings and comments. A naive doc.find("{")
     points *inside the user's first rule* when the file was hand-written.
     """
-    start = doc.find("@-moz-document")
-    if start < 0:
-        return None
-    open_at = doc.find("{", start)
+    start = open_at = -1
+    quote = ""
+    i = 0
+    while i < len(doc):
+        c = doc[i]
+        if c == "\\":
+            i += 2
+            continue
+        if quote:
+            if c == quote:
+                quote = ""
+        elif doc.startswith("/*", i):
+            close = doc.find("*/", i + 2)
+            i = len(doc) if close < 0 else close + 2
+            continue
+        elif c in "\"'":
+            quote = c
+        elif start < 0 and c == "@" and doc[i:i + 14].lower() == "@-moz-document" and (
+                i + 14 == len(doc) or doc[i + 14].isspace() or doc.startswith("/*", i + 14)):
+            start = i
+        elif start >= 0 and c == "{":
+            open_at = i
+            break
+        i += 1
     if open_at < 0:
         return None
     depth = 0
@@ -148,10 +168,10 @@ def moz_span(doc: str) -> tuple[int, int, int, int] | None:
     quote = ""
     while i < n:
         c = doc[i]
+        if c == "\\":
+            i += 2
+            continue
         if quote:
-            if c == "\\":
-                i += 2
-                continue
             if c == quote:
                 quote = ""
         elif c in "\"'":
@@ -215,17 +235,22 @@ def splice(doc: str, domain: str, region: str, body: str) -> str:
     Region order is normalised: auto goes right after the wrapper's opening
     brace, picks right before its closing brace, so picks always cascades last.
     """
-    if (len(BEGIN_COUNT_RE[region].findall(doc)) > 1
-            or len(END_COUNT_RE[region].findall(doc)) > 1):
+    begins = len(BEGIN_COUNT_RE[region].findall(doc))
+    ends = len(END_COUNT_RE[region].findall(doc))
+    if begins > 1 or ends > 1:
         raise ValueError(
             f"template contains more than one '{region}' region marker; "
             f"remove the duplicate by hand before writing"
         )
 
+    if begins != ends or (begins and REGION_RE[region].search(doc) is None):
+        raise ValueError(f"incomplete {region!r} region markers; repair them before writing")
+    if any(BEGIN_COUNT_RE[name].search(body) or END_COUNT_RE[name].search(body) for name in BEGIN):
+        raise ValueError("region body must not contain managed region markers")
     block = _block(region, body)
     if not doc.strip():
         doc = wrap(domain)
-    elif "@-moz-document" not in doc:
+    elif moz_span(doc) is None:
         doc = wrap(domain, doc)                      # adopt hand-written bare CSS
 
     if (m := REGION_RE[region].search(doc)) is not None:
@@ -258,7 +283,8 @@ def content_rev(data: bytes | str) -> int:
 
 def read_doc(path: Path) -> str:
     try:
-        return path.read_text(encoding="utf-8")
+        with path.open(encoding="utf-8", newline="") as stream:
+            return stream.read()
     except (FileNotFoundError, NotADirectoryError, IsADirectoryError):
         return ""
     except UnicodeDecodeError:
@@ -271,11 +297,9 @@ def read_doc(path: Path) -> str:
 def domain_lock(root: Path, domain: str) -> Iterator[None]:
     """Advisory exclusive lock for one domain, held across read → CAS → write.
 
-    flock(2) is per open-file-description, so it works across processes (two
-    Firefox profiles, Firefox + LibreWolf, the CLI selftest) on every local fs
-    Arch ships, including btrfs/ext4/xfs/tmpfs. The file is removed on release
-    so the store stays clean; correctness never depends on it alone because the
-    revision CAS refuses stale writes even if two holders ever overlap.
+    Keep the lock inode stable: unlinking it lets queued callers hold the old
+    inode while a new caller locks a different one. These small hidden files
+    intentionally survive release and process exit.
     """
     root.mkdir(parents=True, exist_ok=True, mode=DIR_MODE)
     lock = root / f".{domain}.lock"
@@ -284,35 +308,7 @@ def domain_lock(root: Path, domain: str) -> Iterator[None]:
         fcntl.flock(fd, fcntl.LOCK_EX)
         yield
     finally:
-        os.close(fd)                                 # releases the lock
-        with contextlib.suppress(OSError):
-            lock.unlink()                            # best-effort: leave no litter
-
-
-def sweep_stale_locks(root: Path) -> None:
-    """Remove orphaned `.*.lock` files left by older versions (or crashes).
-
-    Only a file nobody currently holds is removed: each candidate is opened
-    and exclusively locked non-blocking first, so a live holder is never
-    disturbed.
-    """
-    if not root.is_dir():
-        return
-    for lock in root.glob(".*.lock"):
-        try:
-            fd = os.open(lock, os.O_RDWR | os.O_CLOEXEC)
-        except OSError:
-            continue
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            os.close(fd)                             # live holder — leave it
-            continue
-        try:
-            with contextlib.suppress(OSError):
-                lock.unlink()
-        finally:
-            os.close(fd)
+        os.close(fd)
 
 
 def write_atomic(path: Path, text: str) -> None:
@@ -353,24 +349,28 @@ def store(path: Path, domain: str, css: str, current: str) -> Reply:
         path.unlink(missing_ok=True)
         return {"ok": True, "domain": domain, "path": str(path), "exists": False,
                 "existed": existed, "css": "", "picks": "", "rev": 0}
-    if "@-moz-document" not in css:
+    if moz_span(css) is None:
         css = wrap(domain, css)
     if not css.endswith("\n"):
         css += "\n"
-    # Identical bytes: no fsync, no new rev, no change broadcast storm.
+    # Include the largest exact JS request ID in the pre-commit reply budget.
+    reply = state_reply(path, domain, css)
+    if len(encode_reply(reply | {"__id": 2 ** 53 - 1})) > MAX_OUT:
+        raise ValueError("template is too large for a 1 MiB native messaging reply")
+    # Identical bytes: no fsync, no new rev.
     if css != current:
         write_atomic(path, css)
-    return state_reply(path, domain, css)
+    reply["exists"] = True
+    return reply
 
 
 def _base_rev(msg: dict[str, Any]) -> int | None:
     raw = msg.get("base_rev")
     if raw is None:
         return None
-    try:
-        return int(raw)
-    except (TypeError, ValueError):
-        return None
+    if type(raw) is not int or not 0 <= raw < 2 ** 48:
+        raise ValueError("base_rev must be a 48-bit nonnegative integer")
+    return raw
 
 
 def _conflict(path: Path, domain: str, current: str) -> Reply:
@@ -441,7 +441,7 @@ def read_exact(stream: io.BufferedReader, count: int) -> bytes | None:
                 return None
             raise Truncated(f"stream ended after {len(buf)} of {count} bytes")
         buf += chunk
-    return bytes(buf)
+    return buf.take_bytes()
 
 
 def read_message(stream: io.BufferedReader) -> dict[str, Any] | None:
@@ -463,8 +463,12 @@ def read_message(stream: io.BufferedReader) -> dict[str, Any] | None:
     return msg
 
 
+def encode_reply(obj: Reply) -> bytes:
+    return json.dumps(obj, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+
 def send_message(stream: io.BufferedWriter, obj: Reply) -> None:
-    data = json.dumps(obj, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    data = encode_reply(obj)
     if len(data) > MAX_OUT:
         fallback: Reply = {
             "ok": False, "__id": obj.get("__id"),
@@ -472,14 +476,13 @@ def send_message(stream: io.BufferedWriter, obj: Reply) -> None:
             "exists": obj.get("exists", False), "rev": obj.get("rev", 0),
             "error": f"reply of {len(data)} bytes exceeds the 1 MiB native messaging limit",
         }
-        data = json.dumps(fallback, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        data = encode_reply(fallback)
     stream.write(struct.pack("=I", len(data)) + data)
     stream.flush()
 
 
 def serve() -> int:
     root = config_dir()
-    sweep_stale_locks(root)                          # one-time: clear pre-fix litter
     stdin, stdout = sys.stdin.buffer, sys.stdout.buffer
     while True:
         try:
@@ -495,7 +498,7 @@ def serve() -> int:
         rid = msg.get("__id")
         try:
             reply = handle(msg, root)
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, TypeError, OverflowError) as exc:
             reply = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
         if rid is not None:
             reply["__id"] = rid
@@ -509,9 +512,6 @@ def serve() -> int:
 
 def selftest() -> int:
     """Exercise framing, sanitising, CAS, splicing and atomic storage."""
-    import io as _io
-    import tempfile as _tempfile
-
     checks = 0
 
     def ok(cond: object, what: str) -> None:
@@ -524,10 +524,10 @@ def selftest() -> int:
     print("dusky_template_host selftest — python", sys.version.split()[0])
 
     # framing round-trip, including __id echo
-    buf = _io.BytesIO()
+    buf = io.BytesIO()
     send_message(buf, {"ok": True, "__id": 7, "x": "é"})
     buf.seek(0)
-    got = read_message(_io.BufferedReader(_io.BytesIO(buf.getvalue())))
+    got = read_message(io.BufferedReader(io.BytesIO(buf.getvalue())))
     ok(got == {"ok": True, "__id": 7, "x": "é"}, "frame round-trips with __id echo")
 
     # domain sanitising
@@ -545,7 +545,7 @@ def selftest() -> int:
     ok(content_rev("a") != content_rev("b"), "rev distinguishes content")
     ok(content_rev("a") < 2 ** 53, "rev fits a JS Number")
 
-    with _tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         dom = "example.com"
         path = root / f"{dom}.css"
@@ -616,6 +616,76 @@ def selftest() -> int:
         # file mode and directory mode
         handle({"type": "write", "domain": dom, "css": "p{color:red}"}, root)
         ok(path.stat().st_mode & 0o777 == FILE_MODE, "template is 0600")
+
+        # A queued caller may already have the inode open when its owner exits.
+        with domain_lock(root, dom):
+            queued = os.open(root / f".{dom}.lock", os.O_RDWR)
+        try:
+            fcntl.flock(queued, fcntl.LOCK_EX)
+            contender = os.open(root / f".{dom}.lock", os.O_CREAT | os.O_RDWR, FILE_MODE)
+            try:
+                try:
+                    fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    ok(True, "queued caller and newcomer use the same lock inode")
+                else:
+                    ok(False, "queued caller and newcomer use the same lock inode")
+            finally:
+                os.close(contender)
+        finally:
+            os.close(queued)
+
+        original = read_doc(path)
+        try:
+            handle({"type": "write", "domain": dom, "css": "b{}", "base_rev": "bad"}, root)
+        except ValueError:
+            ok(read_doc(path) == original, "invalid revision cannot bypass CAS")
+        else:
+            ok(False, "invalid revision cannot bypass CAS")
+        try:
+            handle({"type": "splice", "domain": dom, "region": "picks",
+                    "body": "/*" + "a" * 600_000 + "*/"}, root)
+        except ValueError:
+            ok(read_doc(path) == original, "oversized reply refused before committing")
+        else:
+            ok(False, "oversized reply refused before committing")
+
+        # The wire reply adds __id after handle(): include it before committing.
+        empty_comment = splice("", dom, "picks", "/**/")
+        overhead = len(encode_reply(state_reply(path, dom, empty_comment)))
+        count = (MAX_OUT - overhead) // 2
+        at_limit = splice("", dom, "picks", "/*" + "x" * count + "*/")
+        try:
+            handle({"type": "write", "domain": dom, "css": at_limit}, root)
+        except ValueError:
+            ok(read_doc(path) == original, "request ID budget checked before committing")
+        else:
+            ok(False, "request ID budget checked before committing")
+        safe = splice("", dom, "picks", "/*" + "x" * (count - 64) + "*/")
+        near_limit = handle({"type": "write", "domain": dom, "css": safe}, root)
+        near_limit["__id"] = 2 ** 53 - 1
+        wire = io.BytesIO()
+        send_message(wire, near_limit)
+        wire.seek(0)
+        ok(read_message(wire)["ok"], "near-limit reply fits with largest exact JS ID")
+
+        crlf = wrap(dom, BEGIN["picks"] + "\na{}\n" + END["picks"]).replace("\n", "\r\n")
+        path.write_bytes(crlf.encode("utf-8"))
+        ok(read_doc(path) == crlf, "CRLF bytes preserved on read")
+        ok(content_rev(read_doc(path)) == content_rev(path.read_bytes()), "revision hashes original bytes")
+        replaced = splice(crlf, dom, "picks", "b{}")
+        ok(replaced.count(BEGIN["picks"]) == 1 and "a{}" not in replaced, "CRLF markers replaced once")
+        for malformed in (BEGIN["picks"] + "\na{}", END["picks"]):
+            try:
+                splice(malformed, dom, "picks", "b{}")
+            except ValueError:
+                ok(True, "incomplete region markers refused")
+            else:
+                ok(False, "incomplete region markers refused")
+        commented = '/* @-moz-document fake { example } */\na { content:"{"; }\n'
+        adopted = splice(commented, dom, "picks", "b{}")
+        ok(moz_span(adopted)[0] == 0 and 'a { content:"{"; }' in adopted,
+           "commented wrapper ignored when adopting bare CSS")
 
         r = handle({"type": "delete", "domain": dom}, root)
         ok(r["ok"] and r["existed"] and not path.exists(), "delete removes the file")

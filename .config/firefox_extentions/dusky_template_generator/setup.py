@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Dusky Template Generator — installer (Python 3.14+, Linux only).
+"""Dusky Template Generator — installer (Python 3.15+, Linux only).
 
 Registers host/dusky_template_host.py as the native messaging host
 "dusky_template_generator" for every Gecko browser profile root found, creates
@@ -10,6 +10,7 @@ $XDG_CONFIG_HOME/dusky_sites, and runs the host's own selftest.
     python3 setup.py --remove   uninstall the manifests
 """
 
+import argparse
 import json
 import os
 import subprocess
@@ -63,11 +64,6 @@ def install() -> int:
         return 1
     HOST_PY.chmod(0o755)
 
-    # Stale manifests shipped next to the host confuse nothing but the user.
-    for junk in (HERE / "host").glob("*.json"):
-        junk.unlink()
-        print(f"   removed stale {junk}")
-
     payload = json.dumps(manifest(), indent=2) + "\n"
     for dest in targets(existing_only=True):
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -104,15 +100,28 @@ def check() -> int:
             print(f"   MISSING  {dest}")
             bad = 1
             continue
-        data = json.loads(dest.read_text(encoding="utf-8"))
-        good = data.get("path") == str(HOST_PY) and EXT_ID in data.get("allowed_extensions", [])
+        try:
+            data = json.loads(dest.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            print(f"   INVALID  {dest}: {exc}")
+            bad = 1
+            continue
+        expected = manifest()
+        good = isinstance(data, dict) and all(
+            data.get(key) == expected[key]
+            for key in ("name", "path", "type", "allowed_extensions")
+        )
         print(f"   {'OK      ' if good else 'STALE   '} {dest}")
         bad |= 0 if good else 1
     print(f"   host     {HOST_PY} {'(executable)' if os.access(HOST_PY, os.X_OK) else '(NOT executable)'}")
     print(f"   store    {config_dir()} {'exists' if config_dir().is_dir() else 'MISSING'}")
-    return bad
+    return bad or int(not HOST_PY.is_file() or not os.access(HOST_PY, os.X_OK))
 
 
 if __name__ == "__main__":
-    arg = sys.argv[1] if len(sys.argv) > 1 else ""
-    raise SystemExit(remove() if arg == "--remove" else check() if arg == "--check" else install())
+    parser = argparse.ArgumentParser(description=__doc__)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--check", action="store_true", help="report status only")
+    mode.add_argument("--remove", action="store_true", help="uninstall host manifests")
+    args = parser.parse_args()
+    raise SystemExit(remove() if args.remove else check() if args.check else install())
