@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
 """
 ram_test.py - Ultimate DDR Memory Bandwidth & Latency Benchmark Suite
-Target: Arch Linux | Kernel 7.1.5+ | Python 3.14.6+
+Target: Arch Linux | Kernel 7.3+ | Python 3.15+
 """
 
 import argparse
-import atexit
 import contextlib
-import csv
+import fcntl
+lazy import csv
 import glob
 import json
+import math
 import os
 import re
 import shutil
 import signal
-import statistics
+lazy import statistics
 import subprocess
 import sys
 import tempfile
 import time
-import urllib.request
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -36,19 +36,6 @@ except ImportError:
     RICH_AVAILABLE = False
 
 console = Console() if RICH_AVAILABLE else None
-
-SUDO_AVAILABLE = False
-
-
-def cleanup_orphaned_tmp():
-    """Robust cleanup using rmtree to bypass ENOTEMPTY os errors."""
-    cache_dir = Path.home() / ".cache" / "ram_test_bench"
-    if cache_dir.exists():
-        shutil.rmtree(cache_dir, ignore_errors=True)
-
-
-atexit.register(cleanup_orphaned_tmp)
-
 
 @dataclass(slots=True, kw_only=True)
 class HardwareSpecs:
@@ -105,108 +92,57 @@ def tool_exists(name: str) -> bool:
 
 
 def cache_sudo_privileges() -> bool:
-    """Securely cache sudo credentials via PAM without passing plain strings in memory."""
+    """Authenticate once; later privileged commands must never prompt."""
     if os.geteuid() == 0:
         return True
-    try:
-        sudo_pass = os.environ.get("SUDO_PASSWORD")
-        if sudo_pass:
-            subprocess.run(["sudo", "-S", "-v"], input=f"{sudo_pass}\n", text=True, check=True, capture_output=True)
-            return True
-        proc = subprocess.run(["sudo", "-n", "true"], capture_output=True)
-        if proc.returncode == 0:
-            return True
-        if not sys.stdin.isatty():
-            return False
-        if RICH_AVAILABLE:
-            console.print("[bold yellow]󰌆 Sudo privileges required for hardware thermal & SMBIOS probing.[/bold yellow]")
-        subprocess.run(["sudo", "-v"], check=True, capture_output=True)
-        return True
-    except (subprocess.CalledProcessError, KeyboardInterrupt):
+    if not tool_exists("sudo"):
         return False
+    if subprocess.run(["sudo", "-n", "-v"], capture_output=True).returncode == 0:
+        return True
+    if not sys.stdin.isatty():
+        return False
+    return subprocess.run(["sudo", "-v"]).returncode == 0
 
 
-def run_cmd(cmd: list[str], timeout: int = 60) -> str:
-    """Execute a command with dynamic timeouts to prevent kernel deadlocks."""
-    proc = subprocess.run(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        timeout=timeout,
-    )
-    if proc.returncode != 0:
-        raise subprocess.CalledProcessError(proc.returncode, cmd, output=proc.stdout)
-    return proc.stdout or ""
+def run_cmd(cmd: list[str], timeout: int = 60, *, isolate: bool = True) -> str:
+    """Collect stable English output and terminate the whole job on cancellation."""
+    with subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, encoding="utf-8", errors="replace",
+        env={**os.environ, "LC_ALL": "C", "LIBSMARTCOLS_JSON": "pretty"},
+        start_new_session=isolate,
+    ) as proc:
+        try:
+            stdout, _ = proc.communicate(timeout=timeout)
+        except BaseException:
+            # stress-ng has workers: killing just its parent leaves tests running.
+            with contextlib.suppress(ProcessLookupError):
+                if isolate:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                else:
+                    proc.kill()
+            proc.communicate()
+            raise
+        if proc.returncode:
+            raise subprocess.CalledProcessError(proc.returncode, cmd, output=stdout)
+        return stdout
 
 
 def run_sudo_cmd(cmd: list[str], timeout: int = 60) -> str:
-    """Run a privileged command relying on pre-cached sudo tokens."""
-    if os.geteuid() == 0:
-        return run_cmd(cmd, timeout=timeout)
-
-    try:
-        proc = subprocess.run(
-            ["sudo", *cmd],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            check=True,
-            timeout=timeout,
-        )
-        return proc.stdout or ""
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"Privileged execution failed for {' '.join(cmd)}\n{e.output}") from e
-    except subprocess.TimeoutExpired as e:
-        raise RuntimeError(f"Command timed out after {timeout}s: {' '.join(cmd)}") from e
-
-
-def run_bench_priv(cmd: list[str], timeout: int) -> tuple[str, bool]:
-    """Run a benchmark binary with SCHED_FIFO priority via sudo when possible;
-    returns (stdout, privileged). Falls back to unprivileged execution when
-    sudo is unavailable so latency tests never hard-fail on missing root."""
-    if SUDO_AVAILABLE:
-        try:
-            return run_sudo_cmd(cmd, timeout=timeout), True
-        except (RuntimeError, OSError, subprocess.TimeoutExpired):
-            pass
-    proc = subprocess.run(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        timeout=timeout,
-        check=True,
-    )
-    return proc.stdout or "", False
+    # Keep the controlling terminal: sudo timestamps can be bound to its session.
+    return run_cmd(cmd if os.geteuid() == 0 else ["sudo", "-n", "--", *cmd], timeout, isolate=False)
 
 
 def get_online_cpu_count() -> int:
-    return os.process_cpu_count() or max(os.cpu_count() or 1, 1)
+    return len(os.sched_getaffinity(0))
 
 
 def get_optimal_p_core() -> str:
     """Comprehensive multi-tier heuristic to identify highest performance P-core / boost core.
-    Inspects CPPC highest_perf, cpuinfo_max_freq, scaling_max_freq, cpu_capacity, and L2 cache."""
-    best_core = "0"
+    Ranks allowed CPUs using CPPC, maximum frequency, and capacity."""
+    online_cpus = os.sched_getaffinity(0)
+    best_core = str(min(online_cpus))
     highest_score = -1.0
-
-    online_cpus = set()
-    for cpu_path in Path("/sys/devices/system/cpu/").glob("cpu[0-9]*"):
-        try:
-            match = re.search(r"cpu(\d+)$", cpu_path.name)
-            if not match:
-                continue
-            core_id = int(match.group(1))
-            online_path = cpu_path / "online"
-            if online_path.exists() and online_path.read_text(encoding="utf-8").strip() == "0":
-                continue
-            online_cpus.add(core_id)
-        except Exception:
-            continue
-
-    if not online_cpus:
-        return "0"
 
     for core_id in sorted(online_cpus):
         score = 0.0
@@ -217,7 +153,7 @@ def get_optimal_p_core() -> str:
         if cppc_path.exists():
             try:
                 score += float(cppc_path.read_text(encoding="utf-8").strip()) * 1000.0
-            except Exception:
+            except (OSError, ValueError):
                 pass
 
         # 2. Check cpuinfo_max_freq (maximum hardware frequency in kHz)
@@ -227,7 +163,7 @@ def get_optimal_p_core() -> str:
         if freq_path.exists():
             try:
                 score += float(freq_path.read_text(encoding="utf-8").strip()) / 1000.0
-            except Exception:
+            except (OSError, ValueError):
                 pass
 
         # 3. Check cpu_capacity
@@ -235,7 +171,7 @@ def get_optimal_p_core() -> str:
         if cap_path.exists():
             try:
                 score += float(cap_path.read_text(encoding="utf-8").strip())
-            except Exception:
+            except (OSError, ValueError):
                 pass
 
         if score > highest_score:
@@ -246,32 +182,28 @@ def get_optimal_p_core() -> str:
 
 
 def get_executable_tmpdir() -> Path:
-    default_tmp = Path(tempfile.gettempdir())
-    test_file = default_tmp / f".exec_test_{os.getpid()}.sh"
-    try:
-        test_file.write_text("#!/bin/sh\nexit 0", encoding="utf-8")
-        test_file.chmod(0o755)
-        subprocess.run([str(test_file)], check=True, capture_output=True)
-        return default_tmp
-    except (PermissionError, OSError, subprocess.CalledProcessError):
-        cache_dir = Path.home() / ".cache" / "ram_test_bench"
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        return cache_dir
-    finally:
-        with contextlib.suppress(FileNotFoundError):
-            test_file.unlink()
+    """Probe executable storage without deleting another invocation's files."""
+    cache_root = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    for base in (Path(tempfile.gettempdir()), cache_root / "ram_test_bench"):
+        base.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=base) as directory:
+            probe = Path(directory) / "probe"
+            probe.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            probe.chmod(0o755)
+            try:
+                run_cmd([str(probe)], timeout=5)
+                return base
+            except (OSError, subprocess.SubprocessError):
+                continue
+    raise RuntimeError("No executable temporary directory is available")
 
 
 def probe_dram_temperatures() -> list[tuple[str, float]]:
     """Probe hardware thermal sensors for DRAM modules with clean numbered labeling."""
     temps: list[tuple[str, float]] = []
     dimm_idx = 1
-    seen_paths = set()
 
     for path in sorted(glob.glob("/sys/class/hwmon/hwmon*/temp*_input")):
-        if path in seen_paths:
-            continue
-        seen_paths.add(path)
         try:
             val_c = int(Path(path).read_text(encoding="utf-8").strip()) / 1000.0
             name_path = Path(path).parent / "name"
@@ -286,201 +218,69 @@ def probe_dram_temperatures() -> list[tuple[str, float]]:
                 else:
                     sensor_name = f"{name} {label}"
                 temps.append((sensor_name, val_c))
-        except Exception:
+        except (OSError, ValueError):
             continue
     return temps
 
 
 def get_numa_node_count() -> int:
-    numa_nodes = 1
-    numa_path = "/sys/devices/system/node"
-    if os.path.exists(numa_path):
-        nodes = glob.glob(os.path.join(numa_path, "node*"))
-        if nodes:
-            numa_nodes = len(nodes)
-    return max(numa_nodes, 1)
+    return max(1, len(list(Path("/sys/devices/system/node").glob("node[0-9]*"))))
 
 
-def probe_cpu_cache_sizes(target_core: str = "0") -> tuple[int, int, int]:
-    l1_kb, l2_kb, l3_kb = 32, 512, 16384
-    core_id = re.split(r"[,\-]", target_core)[0].strip() if target_core else get_optimal_p_core()
-
-    try:
-        cache_dir = Path(f"/sys/devices/system/cpu/cpu{core_id}/cache/")
-        for index_path in cache_dir.glob("index*"):
-            try:
-                level = (index_path / "level").read_text(encoding="utf-8").strip()
-                ctype = (index_path / "type").read_text(encoding="utf-8").strip()
-                size_str = (index_path / "size").read_text(encoding="utf-8").strip()
-                m = re.match(r"(\d+)\s*([KMGT])?", size_str, re.IGNORECASE)
-                if m:
-                    val = int(m.group(1))
-                    unit = (m.group(2) or "K").upper()
-                    kb = val * 1024 if unit == "M" else (val * 1024 * 1024 if unit == "G" else val)
-
-                    if level == "1" and ctype.lower() in ["data", "unified"]:
-                        l1_kb = kb
-                    elif level == "2":
-                        l2_kb = kb
-                    elif level == "3":
-                        l3_kb = kb
-            except Exception:
-                continue
-    except Exception:
-        pass
-    return l1_kb, l2_kb, l3_kb
+def probe_cpu_cache_sizes(target_core: str | None = None) -> tuple[int, int, int]:
+    """Return observed data/unified cache sizes in KiB; zero means unavailable."""
+    sizes = {"1": 0, "2": 0, "3": 0}
+    core = target_core or get_optimal_p_core()
+    for index in Path(f"/sys/devices/system/cpu/cpu{core}/cache").glob("index*"):
+        try:
+            level = (index / "level").read_text(encoding="utf-8").strip()
+            kind = (index / "type").read_text(encoding="utf-8").strip()
+            size = (index / "size").read_text(encoding="utf-8").strip()
+            if level in sizes and kind in ("Data", "Unified"):
+                if match := re.fullmatch(r"(\d+)([KMGT])", size):
+                    sizes[level] = int(match[1]) * 1024 ** "KMGT".index(match[2])
+        except (OSError, ValueError):
+            continue
+    return sizes["1"], sizes["2"], sizes["3"]
 
 
-MBW_CACHE = Path.home() / ".cache" / "ram_test_mbw" / "mbw"
+MBW_CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "ram_test_mbw" / "mbw"
 
 
 def _get_mbw_binary() -> str | None:
-    """Return path to mbw binary if available (system PATH or persistent cache).
-    Persistent cache survives atexit cleanup of ram_test_bench."""
-    if p := shutil.which("mbw"):
-        return p
-    if MBW_CACHE.exists() and os.access(MBW_CACHE, os.X_OK):
+    if executable := shutil.which("mbw"):
+        return executable
+    if MBW_CACHE.is_file() and os.access(MBW_CACHE, os.X_OK):
         return str(MBW_CACHE)
     return None
 
 
-def _ensure_mbw_available() -> str | None:
-    """Ensure mbw is available. mbw is AUR-only (pacman -Ss mbw -> not found, AUR mbw 2.0-1),
-    so build from source via gcc/clang. Returns binary path or None."""
-    if existing := _get_mbw_binary():
-        return existing
-
-    compiler = "gcc" if tool_exists("gcc") else ("clang" if tool_exists("clang") else None)
-    if not compiler:
-        eprint("[Warning] mbw: no compiler (gcc/clang) available")
-        return None
-
-    MBW_CACHE.parent.mkdir(parents=True, exist_ok=True)
-    url = "https://raw.githubusercontent.com/raas/mbw/master/mbw.c"
-    c_tmp = MBW_CACHE.with_suffix(".c")
-
-    ok = False
-    try:
-        with urllib.request.urlopen(url, timeout=15) as resp:
-            c_tmp.write_bytes(resp.read())
-        ok = c_tmp.stat().st_size > 1000
-    except Exception:
-        ok = False
-
-    if not ok and tool_exists("curl"):
-        try:
-            subprocess.run(["curl", "-fsSL", url, "-o", str(c_tmp)], check=True, capture_output=True, timeout=30)
-            ok = c_tmp.exists() and c_tmp.stat().st_size > 1000
-        except Exception:
-            ok = False
-
-    if not ok:
-        eprint(f"[Warning] mbw: failed to download {url}")
-        return None
-
-    try:
-        subprocess.run([compiler, "-O2", str(c_tmp), "-o", str(MBW_CACHE)], check=True, capture_output=True, text=True, timeout=30)
-        MBW_CACHE.chmod(0o755)
-        if str(MBW_CACHE.parent) not in os.environ.get("PATH", ""):
-            os.environ["PATH"] = f"{MBW_CACHE.parent}:{os.environ.get('PATH','')}"
-        with contextlib.suppress(Exception):
-            c_tmp.unlink()
-        if RICH_AVAILABLE:
-            console.print(f"[bold green]✓ Built mbw from source: {MBW_CACHE}[/bold green]")
-        return str(MBW_CACHE)
-    except subprocess.CalledProcessError as e:
-        eprint(f"[Warning] mbw compilation failed: {e.stderr.strip() if e.stderr else e}")
-        return None
-    except Exception as e:
-        eprint(f"[Warning] mbw build failed: {e}")
-        return None
-
-
-def check_and_install_deps() -> None:
-    """Auto-install missing dependencies via pacman with sudo elevation.
-    Official repo packages are installed via pacman; mbw (AUR-only) is built from source."""
-    global SUDO_AVAILABLE
-
-    # Only official repo tools are handled via pacman. mbw is AUR-only
-    # (verified: `pacman -Ss mbw` returns 'package mbw was not found', only in AUR as `mbw 2.0-1`),
-    # so it is built from source instead of via pacman.
-    official_tools = ["sysbench", "stress-ng", "dmidecode", "taskset"]
-    needs_compiler = not (tool_exists("gcc") or tool_exists("clang"))
-    if needs_compiler:
-        official_tools.append("gcc")
-
-    missing = [t for t in official_tools if not tool_exists(t)]
+def check_dependencies(bench: str) -> None:
+    """Use preinstalled tools; benchmarking must also work offline."""
+    required = {"taskset"}
+    if bench in ("read", "write", "all"):
+        required.add("sysbench")
+    if bench in ("copy", "all"):
+        required.add("stress-ng")
+    missing = sorted(tool for tool in required if not tool_exists(tool))
+    if bench in ("cache", "latency", "all") and not (tool_exists("gcc") or tool_exists("clang")):
+        missing.append("gcc or clang")
+    if bench in ("single", "all") and not _get_mbw_binary():
+        missing.append("mbw (install beforehand or provide the cached binary)")
     if missing:
-        pacman_map = {
-            "taskset": "util-linux",
-            "gcc": "gcc",
-            "sysbench": "sysbench",
-            "stress-ng": "stress-ng",
-            "dmidecode": "dmidecode",
-        }
-        missing_pkgs = sorted({pacman_map.get(m, m) for m in missing})
-
-        if not tool_exists("pacman"):
-            eprint(f"Error: Missing dependencies: {', '.join(missing)}")
-            eprint("pacman not found - please install manually: " + ", ".join(missing_pkgs))
-            sys.exit(1)
-
-        if os.geteuid() != 0 and not SUDO_AVAILABLE:
-            SUDO_AVAILABLE = cache_sudo_privileges()
-
-        if os.geteuid() != 0 and not SUDO_AVAILABLE:
-            msg = f"Error: Missing critical benchmark dependencies: {', '.join(missing)}\n"
-            msg += f"Please install them using pacman: sudo pacman -S {' '.join(missing_pkgs)}"
-            msg += "\n(automatic sudo elevation failed - no cached credentials and no TTY)"
-            eprint(msg)
-            sys.exit(1)
-
-        install_str = " ".join(missing_pkgs)
-        if RICH_AVAILABLE:
-            console.print(f"[bold yellow]󰌆 Missing dependencies detected: {', '.join(missing)} → auto-installing via pacman: {install_str}[/bold yellow]")
-        else:
-            print(f"Missing dependencies detected: {', '.join(missing)} -> auto-installing via pacman: {install_str}")
-
-        if os.geteuid() == 0:
-            cmd = ["pacman", "-Sy", "--needed", "--noconfirm", *missing_pkgs]
-        else:
-            cmd = ["sudo", "pacman", "-Sy", "--needed", "--noconfirm", *missing_pkgs]
-
-        try:
-            subprocess.run(cmd, check=True)
-        except subprocess.CalledProcessError as e:
-            eprint(f"Error: pacman auto-install failed for {install_str}: {e}")
-            eprint(f"Please manually run: sudo pacman -S {' '.join(missing_pkgs)}")
-            sys.exit(1)
-        except FileNotFoundError as e:
-            eprint(f"Error: pacman/sudo not found: {e}")
-            sys.exit(1)
-
-        still_missing = [t for t in official_tools if not tool_exists(t)]
-        if still_missing:
-            eprint(f"Error: Still missing after auto-install: {', '.join(still_missing)}")
-            eprint(f"Try manually: sudo pacman -S {' '.join(sorted({pacman_map.get(m, m) for m in still_missing}))}")
-            sys.exit(1)
-
-        if RICH_AVAILABLE:
-            console.print("[bold green]✓ Dependencies installed successfully[/bold green]")
-
-    if not _get_mbw_binary():
-        _ensure_mbw_available()
-        if not _get_mbw_binary() and RICH_AVAILABLE:
-            console.print("[dim]Note: mbw (AUR-only) could not be built; single-core test will be skipped.[/dim]")
+        raise RuntimeError("Missing benchmark dependencies: " + ", ".join(missing))
 
 
 def detect_hardware_specs(skip_sudo: bool = False) -> HardwareSpecs:
     cpu_model = "Unknown Processor"
     if tool_exists("lscpu"):
         try:
-            out = run_cmd(["lscpu", "-J"])
+            out = run_cmd(["lscpu", "--json", "--hierarchic=never"])
             for entry in json.loads(out).get("lscpu", []):
                 if entry.get("field") == "Model name:":
                     cpu_model = entry.get("data", cpu_model)
                     break
-        except Exception:
+        except (OSError, ValueError, subprocess.SubprocessError):
             pass
 
     if cpu_model == "Unknown Processor":
@@ -488,7 +288,7 @@ def detect_hardware_specs(skip_sudo: bool = False) -> HardwareSpecs:
             cpuinfo = Path("/proc/cpuinfo").read_text(encoding="utf-8")
             if m := re.search(r"model name\s+:\s+(.+)", cpuinfo):
                 cpu_model = m.group(1).strip()
-        except Exception:
+        except (OSError, ValueError, subprocess.SubprocessError):
             pass
 
     total_ram_gib, avail_ram_gib = None, None
@@ -498,7 +298,7 @@ def detect_hardware_specs(skip_sudo: bool = False) -> HardwareSpecs:
             total_ram_gib = float(t_match.group(1)) / (1024.0 * 1024.0)
         if a_match := re.search(r"MemAvailable:\s+(\d+)\s+kB", meminfo):
             avail_ram_gib = float(a_match.group(1)) / (1024.0 * 1024.0)
-    except Exception:
+    except (OSError, ValueError, subprocess.SubprocessError):
         pass
 
     mem_type, configured_speed_mts, factory_speed_mts = "RAM", None, None
@@ -508,65 +308,29 @@ def detect_hardware_specs(skip_sudo: bool = False) -> HardwareSpecs:
     if tool_exists("dmidecode") and not skip_sudo:
         try:
             dmi_out = run_sudo_cmd(["dmidecode", "-t", "memory"], timeout=10)
-            types = re.findall(r"Type:\s+(DDR[2-9]\S*|LPDDR[2-9]\S*|HBM\d*|LPCAMM\d*|CAMM\d*|MRDIMM\S*|SDRAM\S*)", dmi_out)
-            types = [t for t in types if "Unknown" not in t and "None" not in t]
-            if types:
-                mem_type = types[0]
+            devices = [device for device in dmi_out.split("Memory Device")[1:]
+                       if re.search(r"^\s*Size: [1-9]\d* [KMGT]i?B$", device, re.MULTILINE)]
+            dimm_count = len(devices) or None
+            installed = "\n".join(devices)
 
-            if cfg_speeds := [int(s) for s in re.findall(r"Configured (?:Memory |Clock )?Speed:\s+(\d+)", dmi_out) if int(s) > 0]:
-                configured_speed_mts = max(cfg_speeds)
-
-            if fac_speeds := [int(s) for s in re.findall(r"Speed:\s+(\d+)\s*(?:MT/s|MHz)", dmi_out) if int(s) > 0]:
-                factory_speed_mts = max(fac_speeds)
-            if not configured_speed_mts:
-                configured_speed_mts = factory_speed_mts
-
-            def extract_first(pattern: str) -> str | None:
-                for m in re.findall(pattern, dmi_out):
-                    c = m.strip()
-                    if c and "Unknown" not in c and "Not Specified" not in c:
-                        return c
+            def extract_first(field: str) -> str | None:
+                for value in re.findall(rf"^\s*{field}: ([^\n]+)", installed, re.MULTILINE):
+                    if value.strip() not in ("Unknown", "Not Specified", "None"):
+                        return value.strip()
                 return None
 
-            manufacturer = extract_first(r"Manufacturer:\s+([^\n]+)")
-            part_number = extract_first(r"Part Number:\s+([^\n]+)")
-            form_factor = extract_first(r"Form Factor:\s+([^\n]+)")
-
-            # Parse installed devices and unique memory channels
-            devices = dmi_out.split("Memory Device")[1:]
-            installed_devices: list[str] = []
-            channel_keys: set[str] = set()
-
-            for idx, dev in enumerate(devices):
-                size_match = re.search(r"^\s*Size:\s+(\d+\s+[KMGT]?i?B)", dev, re.MULTILINE)
-                if size_match:
-                    installed_devices.append(dev)
-                    # Extract channel hints from Locator / Bank Locator
-                    loc_match = re.search(r"Locator:\s+([^\n]+)", dev)
-                    loc_str = loc_match.group(1).strip() if loc_match else f"DIMM_{idx}"
-                    chan_match = re.search(r"(Controller\d+[-_]Channel[A-Z0-9]+|Channel[A-Z0-9]+|CH[A-Z0-9]+|Node\d+[-_]Channel\d+)", loc_str, re.IGNORECASE)
-                    if chan_match:
-                        channel_keys.add(chan_match.group(1).lower())
-                    else:
-                        channel_keys.add(loc_str.lower())
-
-            installed = len(installed_devices)
-            if installed > 0:
-                dimm_count = installed
-                # Determine channels: if unique channel locators found, use count; otherwise standard platform logic
-                detected_chans = len(channel_keys) if channel_keys else min(installed, 2)
-                # Ensure channels does not exceed DIMM count or standard memory controller architecture
-                detected_chans = max(1, min(detected_chans, installed))
-                channels = detected_chans
-
-                # Standard DDR channel is 64 bits wide (in DDR5, 1 physical channel = two 32-bit subchannels = 64-bit width)
-                # Bus width is (number of active physical channels * 64)
-                bus_width_bits = channels * 64
-        except Exception:
+            mem_type = extract_first("Type") or "RAM"
+            manufacturer = extract_first("Manufacturer")
+            part_number = extract_first("Part Number")
+            form_factor = extract_first("Form Factor")
+            cfg = re.findall(r"^\s*Configured (?:Memory |Clock )?Speed: (\d+) (?:MT/s|MHz)", installed, re.MULTILINE)
+            rated = re.findall(r"^\s*Speed: (\d+) (?:MT/s|MHz)", installed, re.MULTILINE)
+            configured_speed_mts = min(map(int, cfg)) if cfg else None
+            factory_speed_mts = min(map(int, rated)) if rated else None
+            # SMBIOS slots/locators do not establish active channel topology.
+            # Leave the bus limit unknown unless the user supplies channel data.
+        except (OSError, ValueError, subprocess.SubprocessError):
             pass
-
-    if configured_speed_mts and bus_width_bits:
-        max_gb_s = (configured_speed_mts * (bus_width_bits / 8.0)) / 1000.0
 
     return HardwareSpecs(
         cpu_model=cpu_model,
@@ -591,480 +355,262 @@ def detect_hardware_specs(skip_sudo: bool = False) -> HardwareSpecs:
 
 @contextlib.contextmanager
 def set_cpu_performance():
-    """Securely set CPU governor. Uses atomic sudo commands and signal trapping."""
-    state_map: dict[str, str] = {}
-    paths = [
-        *Path("/sys/devices/system/cpu/").glob("cpu*/cpufreq/scaling_governor"),
-        *Path("/sys/devices/system/cpu/").glob("cpu*/cpufreq/energy_performance_preference"),
-    ]
-
-    for p in paths:
-        try:
-            state_map[str(p)] = p.read_text(encoding="utf-8").strip()
-        except Exception:
-            pass
-
-    def apply_values(target_map: dict[str, str]):
-        if not target_map:
-            return
-        cmds = []
-        for p, val in target_map.items():
-            cmds.append(f"echo '{val}' > '{p}' 2>/dev/null || true")
-        if cmds:
-            full_cmd = "\n".join(cmds)
+    """Set supported policy controls and restore them, including on SIGTERM."""
+    state: dict[str, str] = {}
+    targets: dict[str, str] = {}
+    for policy in Path("/sys/devices/system/cpu/cpufreq").glob("policy*"):
+        for control, available in (
+            ("scaling_governor", "scaling_available_governors"),
+            ("energy_performance_preference", "energy_performance_available_preferences"),
+        ):
+            path = policy / control
             try:
-                run_sudo_cmd(["sh", "-c", full_cmd], timeout=5)
-            except Exception:
-                pass
+                if "performance" not in (policy / available).read_text(encoding="utf-8").split():
+                    continue
+                value = path.read_text(encoding="utf-8").strip()
+                state[str(path)] = value
+                targets[str(path)] = "performance"
+            except OSError:
+                continue
 
-    original_sigint = signal.getsignal(signal.SIGINT)
-    original_sigterm = signal.getsignal(signal.SIGTERM)
-
-    def restore_state(*_):
-        apply_values(state_map)
-        sys.exit(130)
-
-    signal.signal(signal.SIGINT, restore_state)
-    signal.signal(signal.SIGTERM, restore_state)
-
-    gov_map = {p: "performance" for p in state_map if "scaling_governor" in p}
-    epp_map = {p: "performance" for p in state_map if "energy_performance" in p}
-
-    apply_values({**gov_map, **epp_map})
-
+    helper = """import json, sys
+from pathlib import Path
+failed = []
+for name, value in json.loads(sys.argv[1]).items():
     try:
-        yield
-    finally:
-        signal.signal(signal.SIGINT, original_sigint)
-        signal.signal(signal.SIGTERM, original_sigterm)
-        apply_values(state_map)
-
-
-def run_cache_hierarchy_latency_test(cores: str | None = None, hugepages: bool = False) -> CacheHierarchyResult | None:
-    target_core = re.split(r"[,\-]", cores)[0].strip() if cores else get_optimal_p_core()
-
-    if not (tool_exists("gcc") or tool_exists("clang")):
-        return None
-
-    l1_kb, l2_kb, l3_kb = probe_cpu_cache_sizes(target_core)
-    l1_target_kb = max(16, l1_kb // 2)
-    l2_target_kb = max(128, l2_kb // 2)
-    l3_target_kb = max(2048, l3_kb // 2)
-    dram_target_mb = max(128, (l3_kb * 5) // 1024)
-
-    cc = "gcc" if tool_exists("gcc") else "clang"
-    c_code = f"""
-#define _GNU_SOURCE
-#include <stdio.h>
-#include <stdlib.h>
-#include <time.h>
-#include <stdint.h>
-#include <sched.h>
-#include <sys/mman.h>
-
-static int g_hugepages = 0;
-
-static inline uint64_t rotl(const uint64_t x, int k) {{ return (x << k) | (x >> (64 - k)); }}
-static uint64_t s[4] = {{ 0x180ec6d33cfd0aba, 0xd5a61266f0c9392c, 0xa9582618e03fc9aa, 0x39abdc4529b1661c }};
-uint64_t next_prng(void) {{
-    const uint64_t result = rotl(s[1] * 5, 7) * 9;
-    const uint64_t t = s[1] << 17;
-    s[2] ^= s[0]; s[3] ^= s[1]; s[1] ^= s[2]; s[0] ^= s[3];
-    s[2] ^= t; s[3] = rotl(s[3], 45);
-    return result;
-}}
-
-static inline size_t random_bounded_zerobias(size_t range) {{
-    if (range <= 1) return 0;
-    uint64_t x = next_prng();
-    __uint128_t m = (__uint128_t)x * (__uint128_t)range;
-    uint64_t l = (uint64_t)m;
-    if (l < range) {{
-        uint64_t t = -range % range;
-        while (l < t) {{
-            x = next_prng();
-            m = (__uint128_t)x * (__uint128_t)range;
-            l = (uint64_t)m;
-        }}
-    }}
-    return (size_t)(m >> 64);
-}}
-
-double measure_lat_kb(size_t size_kb, size_t jumps) {{
-    size_t size_bytes = size_kb * 1024;
-    if (size_bytes < 16384) size_bytes = 16384;
-    size_t count = size_bytes / sizeof(size_t);
-    size_t *arr = NULL;
-    if (g_hugepages) {{
-        arr = (size_t *)mmap(NULL, size_bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        if (arr == MAP_FAILED) arr = NULL;
-        else (void)madvise(arr, size_bytes, MADV_HUGEPAGE);
-    }}
-    if (!arr) arr = (size_t *)malloc(size_bytes);
-    size_t *indices = (size_t *)malloc(count * sizeof(size_t));
-    if (!arr || !indices) {{
-        if (arr) {{ if (g_hugepages) munmap(arr, size_bytes); else free(arr); }}
-        if (indices) free(indices);
-        return 0.0;
-    }}
-
-    for (size_t i = 0; i < count; i++) indices[i] = i;
-
-    for (size_t i = count - 1; i > 0; i--) {{
-        size_t j = random_bounded_zerobias(i);
-        size_t tmp = indices[i];
-        indices[i] = indices[j];
-        indices[j] = tmp;
-    }}
-
-    for (size_t i = 0; i < count - 1; i++) arr[indices[i]] = indices[i+1];
-    arr[indices[count-1]] = indices[0];
-    free(indices);
-
-    size_t curr = 0;
-    for (size_t i = 0; i < 500000; i++) curr = arr[curr];
-
-    struct timespec ts1, ts2;
-    clock_gettime(CLOCK_MONOTONIC_RAW, &ts1);
-    for (size_t i = 0; i < jumps; i++) curr = arr[curr];
-    clock_gettime(CLOCK_MONOTONIC_RAW, &ts2);
-
-    __asm__ volatile("" : : "r"(curr) : "memory");
-
-    uint64_t delta_ns = (ts2.tv_sec - ts1.tv_sec) * 1000000000ULL + (ts2.tv_nsec - ts1.tv_nsec);
-    double nsec = (double)delta_ns;
-    if (g_hugepages) (void)munmap(arr, size_bytes);
-    else free(arr);
-    return nsec / (double)jumps;
-}}
-
-int main(int argc, char **argv) {{
-    if (argc > 1) g_hugepages = atoi(argv[1]);
-    struct sched_param param = {{ .sched_priority = 99 }};
-    sched_setscheduler(0, SCHED_FIFO, &param);
-
-    double l1 = measure_lat_kb({l1_target_kb}, 20000000);
-    double l2 = measure_lat_kb({l2_target_kb}, 20000000);
-    double l3 = measure_lat_kb({l3_target_kb}, 10000000);
-    double dram = measure_lat_kb({dram_target_mb * 1024}, 5000000);
-    printf("%.2f %.2f %.2f %.2f\\n", l1, l2, l3, dram);
-    return 0;
-}}
+        path = Path(name)
+        path.write_text(value, encoding="utf-8")
+        if path.read_text(encoding="utf-8").strip() != value:
+            failed.append(name)
+    except OSError:
+        failed.append(name)
+print(json.dumps(failed))
 """
+
+    def apply(values: dict[str, str]) -> bool:
+        if not values:
+            return True
+        try:
+            failed = json.loads(run_sudo_cmd([sys.executable, "-c", helper, json.dumps(values)], timeout=10))
+            if failed:
+                eprint("[Warning] CPU policy writes failed: " + ", ".join(failed))
+            return not failed
+        except (OSError, subprocess.SubprocessError) as exc:
+            eprint(f"[Warning] CPU policy update failed: {exc}")
+            return False
+
+    previous = signal.getsignal(signal.SIGTERM)
+
+    def terminate(signum, frame):
+        raise SystemExit(128 + signum)
+
+    signal.signal(signal.SIGTERM, terminate)
     try:
-        tmp_dir = get_executable_tmpdir()
-        with tempfile.TemporaryDirectory(dir=tmp_dir) as tmpdir:
-            c_path = os.path.join(tmpdir, "cache_lat.c")
-            bin_path = os.path.join(tmpdir, "cache_lat.bin")
-
-            with open(c_path, "w", encoding="utf-8") as f:
-                f.write(c_code)
-
-            comp_proc = subprocess.run([cc, "-O3", c_path, "-o", bin_path], capture_output=True, text=True)
-            if comp_proc.returncode != 0:
-                eprint(f"[Warning] Micro-bench compilation failed: {comp_proc.stderr}")
-                return None
-
-            cmd = ["taskset", "-c", target_core, bin_path, str(int(hugepages))]
-            out, _ = run_bench_priv(cmd, timeout=30)
-            out = out.strip().split()
-
-            if len(out) == 4:
-                return CacheHierarchyResult(
-                    l1_kb=l1_target_kb,
-                    l2_kb=l2_target_kb,
-                    l3_kb=l3_target_kb,
-                    dram_mb=dram_target_mb,
-                    l1_ns=float(out[0]),
-                    l2_ns=float(out[1]),
-                    l3_ns=float(out[2]),
-                    dram_ns=float(out[3]),
-                )
-    except Exception as e:
-        eprint(f"[Warning] Cache latency test exception: {e}")
-    return None
+        applied = apply(targets)
+        # Setting a governor can itself change EPP; apply it after governors.
+        applied = apply({name: value for name, value in targets.items()
+                         if name.endswith("energy_performance_preference")}) and applied
+        yield applied and bool(targets)
+    finally:
+        try:
+            apply(state)
+            apply({name: value for name, value in state.items()
+                   if name.endswith("energy_performance_preference")})
+        finally:
+            signal.signal(signal.SIGTERM, previous)
 
 
-def run_latency_test(
-    array_size_mb: int,
-    specs: HardwareSpecs,
-    cores: str | None = None,
-    hugepages: bool = False,
-    samples: int = 1,
-) -> TestResult:
-    target_core = re.split(r"[,\-]", cores)[0].strip() if cores else get_optimal_p_core()
-    lat_ns: float = 0.0
-    lat_values: list[float] = []
-    privileged = False
-    compiler = tool_exists("gcc") or tool_exists("clang")
-
-    if compiler:
-        cc = "gcc" if tool_exists("gcc") else "clang"
-        c_code = r"""
+LATENCY_SOURCE = r"""
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
-#include <time.h>
 #include <stdint.h>
-#include <sched.h>
+#include <time.h>
 #include <sys/mman.h>
 
-static inline uint64_t rotl(const uint64_t x, int k) { return (x << k) | (x >> (64 - k)); }
-static uint64_t s[4] = { 0x180ec6d33cfd0aba, 0xd5a61266f0c9392c, 0xa9582618e03fc9aa, 0x39abdc4529b1661c };
-uint64_t next_prng(void) {
-    const uint64_t result = rotl(s[1] * 5, 7) * 9;
-    const uint64_t t = s[1] << 17;
-    s[2] ^= s[0]; s[3] ^= s[1]; s[1] ^= s[2]; s[0] ^= s[3];
-    s[2] ^= t; s[3] = rotl(s[3], 45);
-    return result;
+static uint64_t state = UINT64_C(0x180ec6d33cfd0aba);
+static uint64_t random64(void) {
+    state ^= state >> 12;
+    state ^= state << 25;
+    state ^= state >> 27;
+    return state * UINT64_C(2685821657736338717);
 }
 
-static inline size_t random_bounded_zerobias(size_t range) {
-    if (range <= 1) return 0;
-    uint64_t x = next_prng();
-    __uint128_t m = (__uint128_t)x * (__uint128_t)range;
-    uint64_t l = (uint64_t)m;
-    if (l < range) {
-        uint64_t t = -range % range;
-        while (l < t) {
-            x = next_prng();
-            m = (__uint128_t)x * (__uint128_t)range;
-            l = (uint64_t)m;
-        }
-    }
-    return (size_t)(m >> 64);
+static size_t bounded(size_t range) {
+    uint64_t threshold = -((uint64_t)range) % range;
+    uint64_t value;
+    do { value = random64(); } while (value < threshold);
+    return value % range;
 }
 
 int main(int argc, char **argv) {
-    struct sched_param param = { .sched_priority = 99 };
-    sched_setscheduler(0, SCHED_FIFO, &param);
-
-    size_t size_bytes = 128 * 1024 * 1024;
-    int hugepages = 0;
-    int samples = 1;
-    if (argc > 1) size_bytes = (size_t)atoll(argv[1]);
-    if (argc > 2) hugepages = atoi(argv[2]);
-    if (argc > 3) samples = atoi(argv[3]);
-    if (samples < 1) samples = 1;
-
-    size_t count = size_bytes / sizeof(size_t);
-    size_t *arr = NULL;
-    if (hugepages) {
-        arr = (size_t *)mmap(NULL, size_bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        if (arr == MAP_FAILED) arr = NULL;
-        else (void)madvise(arr, size_bytes, MADV_HUGEPAGE);
+    if (argc != 5) return 1;
+    size_t bytes = strtoull(argv[1], NULL, 10);
+    size_t stride = strtoull(argv[2], NULL, 10);
+    int hugepages = atoi(argv[3]);
+    int samples = atoi(argv[4]);
+    if (stride < sizeof(void *) || stride % sizeof(void *) || samples < 1) return 1;
+    size_t count = bytes / stride;
+    if (count < 2 || count > SIZE_MAX / sizeof(size_t)) return 1;
+    char *buffer = mmap(NULL, bytes, PROT_READ | PROT_WRITE,
+                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (buffer == MAP_FAILED) { perror("mmap"); return 1; }
+    if (madvise(buffer, bytes, hugepages ? MADV_HUGEPAGE : MADV_NOHUGEPAGE)) {
+        perror("madvise"); munmap(buffer, bytes); return 1;
     }
-    if (!arr) arr = (size_t *)malloc(size_bytes);
-    size_t *indices = (size_t *)malloc(count * sizeof(size_t));
-    if (!arr || !indices) {
-        if (arr) { if (hugepages) munmap(arr, size_bytes); else free(arr); }
-        if (indices) free(indices);
-        return 1;
+    size_t *order = malloc(count * sizeof(*order));
+    if (!order) { perror("malloc"); munmap(buffer, bytes); return 1; }
+    for (size_t i = 0; i < count; ++i) order[i] = i;
+    for (size_t i = count - 1; i > 0; --i) {
+        size_t j = bounded(i + 1);
+        size_t tmp = order[i]; order[i] = order[j]; order[j] = tmp;
     }
-
-    for (size_t i = 0; i < count; i++) indices[i] = i;
-
-    for (size_t i = count - 1; i > 0; i--) {
-        size_t j = random_bounded_zerobias(i);
-        size_t tmp = indices[i];
-        indices[i] = indices[j];
-        indices[j] = tmp;
+    for (size_t i = 0; i < count; ++i)
+        *(void **)(buffer + order[i] * stride) = buffer + order[(i + 1) % count] * stride;
+    free(order);
+    // Volatile pointer loads preserve both warmup and the timed dependency chain.
+    void *cursor = buffer;
+    for (size_t i = 0; i < count; ++i) cursor = *(void * volatile *)cursor;
+    size_t jumps = count > 1000000 ? count : 1000000;
+    for (int sample = 0; sample < samples; ++sample) {
+        struct timespec start, end;
+        if (clock_gettime(CLOCK_MONOTONIC_RAW, &start)) return 1;
+        for (size_t i = 0; i < jumps; ++i) cursor = *(void * volatile *)cursor;
+        if (clock_gettime(CLOCK_MONOTONIC_RAW, &end)) return 1;
+        double ns = (double)(end.tv_sec - start.tv_sec) * 1e9 + end.tv_nsec - start.tv_nsec;
+        printf("%.4f\n", ns / jumps);
     }
-
-    for (size_t i = 0; i < count - 1; i++) arr[indices[i]] = indices[i+1];
-    arr[indices[count-1]] = indices[0];
-    free(indices);
-
-    size_t curr = 0;
-    for (size_t i = 0; i < 500000; i++) curr = arr[curr];
-
-    size_t jumps = 5000000;
-    for (int s = 0; s < samples; s++) {
-        struct timespec ts1, ts2;
-        curr = 0;
-        clock_gettime(CLOCK_MONOTONIC_RAW, &ts1);
-        for (size_t i = 0; i < jumps; i++) curr = arr[curr];
-        clock_gettime(CLOCK_MONOTONIC_RAW, &ts2);
-
-        __asm__ volatile("" : : "r"(curr) : "memory");
-
-        uint64_t delta_ns = (ts2.tv_sec - ts1.tv_sec) * 1000000000ULL + (ts2.tv_nsec - ts1.tv_nsec);
-        double nsec = (double)delta_ns;
-        printf("%.2f\n", nsec / (double)jumps);
-    }
-
-    if (hugepages) (void)munmap(arr, size_bytes);
-    else free(arr);
+    munmap(buffer, bytes);
     return 0;
 }
 """
+
+
+@contextlib.contextmanager
+def latency_binary():
+    compiler = shutil.which("gcc") or shutil.which("clang")
+    if not compiler:
+        raise RuntimeError("Latency tests require gcc or clang")
+    with tempfile.TemporaryDirectory(dir=get_executable_tmpdir()) as directory:
+        source = Path(directory) / "latency.c"
+        binary = Path(directory) / "latency"
+        source.write_text(LATENCY_SOURCE, encoding="utf-8")
+        run_cmd([compiler, "-std=c23", "-O3", "-Wall", "-Wextra", str(source), "-o", str(binary)])
+        yield str(binary)
+
+
+def measure_latency(binary: str, size_kib: int, core: str, hugepages: bool, samples: int) -> float:
+    stride = 0
+    for cache in Path(f"/sys/devices/system/cpu/cpu{core}/cache").glob("index*"):
         try:
-            tmp_dir = get_executable_tmpdir()
-            with tempfile.TemporaryDirectory(dir=tmp_dir) as tmpdir:
-                c_path = os.path.join(tmpdir, "lat.c")
-                bin_path = os.path.join(tmpdir, "lat.bin")
-
-                with open(c_path, "w", encoding="utf-8") as f:
-                    f.write(c_code)
-
-                comp_proc = subprocess.run([cc, "-O3", c_path, "-o", bin_path], capture_output=True, text=True)
-                if comp_proc.returncode != 0:
-                    eprint(f"[Warning] Latency compilation failed: {comp_proc.stderr}")
-                else:
-                    samples = max(1, samples)
-                    cmd = ["taskset", "-c", target_core, bin_path, str(array_size_mb * 1024 * 1024), str(int(hugepages)), str(samples)]
-                    out, privileged = run_bench_priv(cmd, timeout=60)
-                    out = out.strip()
-                    lat_values = [float(v) for v in out.split()]
-                    if lat_values:
-                        lat_ns = float(statistics.median(lat_values))
-        except Exception as e:
-            eprint(f"[Warning] Error during random latency execution: {e}")
-
-    return TestResult(
-        name="Random Memory Latency",
-        throughput_gb_s=0.0,
-        throughput_mib_s=0.0,
-        read_gb_s=0.0,
-        write_gb_s=0.0,
-        efficiency_pct=None,
-        latency_ns=lat_ns if lat_ns > 0 else None,
-        details=f"{array_size_mb}M pointer chasing ({'SCHED_FIFO' if privileged else 'unprivileged'} + Zero-Bias Lemire on Core {target_core}{'; THP' if hugepages else ''}; median of {len(lat_values)} samples)",
-    )
+            stride = max(stride, int((cache / "coherency_line_size").read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            continue
+    stride = stride or 64  # Fallback when sysfs does not expose a line size.
+    output = run_cmd(["taskset", "--cpu-list", core, binary, str(size_kib * 1024),
+                      str(stride), str(int(hugepages)), str(samples)], timeout=60 + samples * 10)
+    values = [float(value) for value in output.split()]
+    if len(values) != samples or any(not math.isfinite(value) or value <= 0 for value in values):
+        raise ValueError("Invalid latency sample output")
+    return statistics.median(values)
 
 
-def run_pure_read_test(
-    workers: int, run_time: int, specs: HardwareSpecs, cores: str | None = None
-) -> TestResult:
-    cmd = []
-    if cores:
-        cmd.extend(["taskset", "-c", cores])
+def dram_working_set_mib(core: str) -> int:
+    _, l2, l3 = probe_cpu_cache_sizes(core)
+    return max(128, (max(l2, l3) * 4 + 1023) // 1024)
 
-    cmd.extend(
-        [
-            "sysbench",
-            "memory",
-            f"--threads={workers}",
-            f"--time={run_time}",
-            "--memory-block-size=64M",
-            "--memory-total-size=1000G",
-            "--memory-scope=local",
-            "--memory-access-mode=seq",
-            "--memory-oper=read",
-            "run",
-        ]
-    )
 
+def run_cache_hierarchy_latency_test(
+    cores: str | None = None, hugepages: bool = False, samples: int = 3,
+    binary: str | None = None,
+) -> CacheHierarchyResult | None:
+    core = cores.split(",")[0] if cores else get_optimal_p_core()
+    l1, l2, l3 = probe_cpu_cache_sizes(core)
+    if not (l1 and l2 and l3):
+        eprint("[Warning] Cache hierarchy requires observed L1/L2/L3 sizes")
+        return None
+    sizes = (l1 // 2, l2 // 2, l3 // 2)
+    if not (0 < sizes[0] < l1 < sizes[1] < l2 < sizes[2] < l3):
+        eprint("[Warning] Cache sizes cannot isolate the requested hierarchy")
+        return None
+    dram_mib = dram_working_set_mib(core)
     try:
-        stdout = run_cmd(cmd, timeout=run_time + 15)
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-        return TestResult(
-            name="Pure Read (Multi-Thread)",
-            throughput_gb_s=0.0,
-            throughput_mib_s=0.0,
-            details=f"Failed ({type(exc).__name__}: sysbench/taskset error)",
-        )
-
-    mib_s = 0.0
-    for line in stdout.splitlines():
-        match = re.search(r"\(([\d\.]+)\s+([KMGT]?i?B)/sec\)", line, re.IGNORECASE)
-        if match:
-            val = float(match.group(1))
-            unit = match.group(2).upper()
-            if "G" in unit:
-                mib_s = val * 1024.0 if "GI" in unit else val * (1000.0 * 1000.0 * 1000.0) / (1024.0 * 1024.0)
-            elif "M" in unit:
-                mib_s = val if "MI" in unit else val * 1000000.0 / (1024.0 * 1024.0)
-            elif "K" in unit:
-                mib_s = val / 1024.0
-            else:
-                mib_s = val / (1024.0 * 1024.0)
-            break
-
-    gb_s = (mib_s * 1024.0 * 1024.0) / 1e9
-    eff_pct = (
-        (gb_s / specs.theoretical_max_gb_s) * 100.0
-        if specs.theoretical_max_gb_s and specs.theoretical_max_gb_s > 0
-        else None
-    )
-
-    return TestResult(
-        name="Pure Read (Multi-Thread)",
-        throughput_gb_s=gb_s,
-        throughput_mib_s=mib_s,
-        read_gb_s=gb_s,
-        write_gb_s=0.0,
-        efficiency_pct=eff_pct,
-        latency_ns=None,
-        details=f"sysbench 64M blocks, {workers} parallel read workers",
-    )
+        with (contextlib.nullcontext(binary) if binary else latency_binary()) as executable:
+            values = [measure_latency(executable, size, core, hugepages, samples)
+                      for size in (*sizes, dram_mib * 1024)]
+        return CacheHierarchyResult(l1_kb=sizes[0], l2_kb=sizes[1], l3_kb=sizes[2],
+                                    dram_mb=dram_mib, l1_ns=values[0], l2_ns=values[1],
+                                    l3_ns=values[2], dram_ns=values[3])
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
+        eprint(f"[Warning] Cache latency failed: {exc}")
+        return None
 
 
-def run_pure_write_test(
-    workers: int, run_time: int, specs: HardwareSpecs, cores: str | None = None
+def run_latency_test(
+    array_size_mb: int, specs: HardwareSpecs, cores: str | None = None,
+    hugepages: bool = False, samples: int = 3, binary: str | None = None,
 ) -> TestResult:
-    cmd = []
-    if cores:
-        cmd.extend(["taskset", "-c", cores])
-
-    cmd.extend(
-        [
-            "sysbench",
-            "memory",
-            f"--threads={workers}",
-            f"--time={run_time}",
-            "--memory-block-size=64M",
-            "--memory-total-size=1000G",
-            "--memory-scope=local",
-            "--memory-access-mode=seq",
-            "--memory-oper=write",
-            "run",
-        ]
-    )
-
+    core = cores.split(",")[0] if cores else specs.optimal_p_core
+    size_mib = max(array_size_mb, dram_working_set_mib(core))
+    latency = None
+    details = f"{size_mib} MiB, randomized cache-line pointer cycle on CPU {core}; median of {samples}; "
+    details += "THP requested" if hugepages else "base pages"
     try:
-        stdout = run_cmd(cmd, timeout=run_time + 15)
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-        return TestResult(
-            name="Pure Write (Multi-Thread)",
-            throughput_gb_s=0.0,
-            throughput_mib_s=0.0,
-            details=f"Failed ({type(exc).__name__}: sysbench/taskset error)",
-        )
+        with (contextlib.nullcontext(binary) if binary else latency_binary()) as executable:
+            latency = measure_latency(executable, size_mib * 1024, core, hugepages, samples)
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
+        eprint(f"[Warning] Random latency failed: {exc}")
+        details = f"Failed: {exc}"
+    return TestResult(name="Random Memory Latency", throughput_gb_s=0.0,
+                      throughput_mib_s=0.0, latency_ns=latency, details=details)
 
-    mib_s = 0.0
-    for line in stdout.splitlines():
-        match = re.search(r"\(([\d\.]+)\s+([KMGT]?i?B)/sec\)", line, re.IGNORECASE)
-        if match:
-            val = float(match.group(1))
-            unit = match.group(2).upper()
-            if "G" in unit:
-                mib_s = val * 1024.0 if "GI" in unit else val * (1000.0 * 1000.0 * 1000.0) / (1024.0 * 1024.0)
-            elif "M" in unit:
-                mib_s = val if "MI" in unit else val * 1000000.0 / (1024.0 * 1024.0)
-            elif "K" in unit:
-                mib_s = val / 1024.0
-            else:
-                mib_s = val / (1024.0 * 1024.0)
-            break
 
-    gb_s = (mib_s * 1024.0 * 1024.0) / 1e9
-    eff_pct = (
-        (gb_s / specs.theoretical_max_gb_s) * 100.0
-        if specs.theoretical_max_gb_s and specs.theoretical_max_gb_s > 0
-        else None
-    )
+def rate_bytes(value: str, unit: str) -> float:
+    unit = unit.upper()
+    prefix = unit[0] if unit[0] in "KMGT" else ""
+    exponent = " KMGT".index(prefix) if prefix else 0
+    return float(value) * (1024 if "I" in unit else 1000) ** exponent
 
-    return TestResult(
-        name="Pure Write (Multi-Thread)",
-        throughput_gb_s=gb_s,
-        throughput_mib_s=mib_s,
-        read_gb_s=0.0,
-        write_gb_s=gb_s,
-        efficiency_pct=eff_pct,
-        latency_ns=None,
-        details=f"sysbench 64M blocks, {workers} parallel write workers",
-    )
+
+def run_memory_test(
+    operation: str, workers: int, run_time: int, specs: HardwareSpecs, cores: str | None,
+) -> TestResult:
+    name = f"Pure {operation.title()} (Multi-Thread)"
+    core = cores.split(",")[0] if cores else specs.optimal_p_core
+    _, l2, l3 = probe_cpu_cache_sizes(core)
+    # sysbench requires a power-of-two block; keep each worker beyond the LLC.
+    minimum = max(64 * 1024, max(l2, l3) * 2)
+    block_kib = 1 << (minimum - 1).bit_length()
+    cmd = ["sysbench", "memory", f"--threads={workers}", f"--time={run_time}",
+           f"--memory-block-size={block_kib}K", "--memory-total-size=0",
+           "--memory-scope=local", "--memory-access-mode=seq", f"--memory-oper={operation}", "run"]
+    if cores:
+        cmd = ["taskset", "--cpu-list", cores, *cmd]
+    try:
+        stdout = run_cmd(cmd, timeout=run_time + 30)
+        match = re.search(r"\(([0-9]+(?:\.[0-9]+)?)\s+([KMGT]?i?B)/sec\)", stdout, re.IGNORECASE)
+        if not match:
+            raise ValueError("sysbench throughput not found")
+        bytes_s = rate_bytes(match[1], match[2])
+        if bytes_s <= 0:
+            raise ValueError("sysbench reported zero throughput")
+        gb_s = bytes_s / 1e9
+        return TestResult(name=name, throughput_gb_s=gb_s, throughput_mib_s=bytes_s / 2**20,
+                          read_gb_s=gb_s if operation == "read" else 0.0,
+                          write_gb_s=gb_s if operation == "write" else 0.0,
+                          efficiency_pct=gb_s / specs.theoretical_max_gb_s * 100 if specs.theoretical_max_gb_s else None,
+                          details=f"sysbench {block_kib // 1024} MiB local blocks, {workers} workers")
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        eprint(f"[Warning] {name}: {exc}")
+        return TestResult(name=name, throughput_gb_s=0.0, throughput_mib_s=0.0, details=f"Failed: {exc}")
+
+
+def run_pure_read_test(workers: int, run_time: int, specs: HardwareSpecs, cores: str | None = None) -> TestResult:
+    return run_memory_test("read", workers, run_time, specs, cores)
+
+
+def run_pure_write_test(workers: int, run_time: int, specs: HardwareSpecs, cores: str | None = None) -> TestResult:
+    return run_memory_test("write", workers, run_time, specs, cores)
 
 
 def run_copy_stream_test(
@@ -1072,9 +618,9 @@ def run_copy_stream_test(
 ) -> TestResult:
     cmd = []
     if cores:
-        cmd.extend(["taskset", "-c", cores])
+        cmd.extend(["taskset", "--cpu-list", cores])
 
-    actual_time = max(run_time, 5)
+    actual_time = max(run_time, 10)
     cmd.extend(
         [
             "stress-ng",
@@ -1083,15 +629,15 @@ def run_copy_stream_test(
             "--timeout",
             f"{actual_time}s",
             "--metrics-brief",
-            "-v",
+            "--verbose",
         ]
     )
 
     try:
         stdout = run_cmd(cmd, timeout=actual_time + 15)
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+    except (OSError, subprocess.SubprocessError) as exc:
         return TestResult(
-            name="Stream Copy (Multi-Thread)",
+            name="Stream Mix (Multi-Thread)",
             throughput_gb_s=0.0,
             throughput_mib_s=0.0,
             details=f"Failed ({type(exc).__name__}: stress-ng/taskset error)",
@@ -1103,24 +649,17 @@ def run_copy_stream_test(
     )
     matches = rate_re.findall(stdout)
 
-    read_mb_s = 0.0
-    write_mb_s = 0.0
-    for r_val, r_unit, w_val, w_unit in matches:
-        r_f = float(r_val)
-        w_f = float(w_val)
-        if "G" in r_unit.upper():
-            r_f *= 1000.0
-        if "G" in w_unit.upper():
-            w_f *= 1000.0
-        read_mb_s += r_f
-        write_mb_s += w_f
-
-    total_mb_s = read_mb_s + write_mb_s
-
-    read_gb_s = read_mb_s / 1000.0
-    write_gb_s = write_mb_s / 1000.0
-    total_gb_s = total_mb_s / 1000.0
-    total_mib_s = (total_gb_s * 1e9) / (1024.0 * 1024.0)
+    # stress-ng labels binary megabytes as MB (STRESS_MB == 1024 * 1024).
+    if len(matches) != workers:
+        eprint(f"[Warning] STREAM reported rates for {len(matches)} of {workers} workers")
+        return TestResult(name="Stream Mix (Multi-Thread)", throughput_gb_s=0.0,
+                          throughput_mib_s=0.0, details="Failed: incomplete STREAM worker metrics")
+    read_bytes_s = sum(rate_bytes(value, unit.replace("B", "iB")) for value, unit, _, _ in matches)
+    write_bytes_s = sum(rate_bytes(value, unit.replace("B", "iB")) for _, _, value, unit in matches)
+    read_gb_s = read_bytes_s / 1e9
+    write_gb_s = write_bytes_s / 1e9
+    total_gb_s = read_gb_s + write_gb_s
+    total_mib_s = (read_bytes_s + write_bytes_s) / 2**20
 
     eff_pct = (
         (total_gb_s / specs.theoretical_max_gb_s) * 100.0
@@ -1129,54 +668,54 @@ def run_copy_stream_test(
     )
 
     return TestResult(
-        name="Stream Copy (Multi-Thread)",
+        name="Stream Mix (Multi-Thread)",
         throughput_gb_s=total_gb_s,
         throughput_mib_s=total_mib_s,
         read_gb_s=read_gb_s,
         write_gb_s=write_gb_s,
         efficiency_pct=eff_pct,
         latency_ns=None,
-        details=f"stress-ng --stream, {workers} workers (Read: {read_gb_s:.1f} GB/s, Write: {write_gb_s:.1f} GB/s)",
+        details=f"STREAM copy/scale/add/triad, {workers} workers (Read: {read_gb_s:.1f} GB/s, Write: {write_gb_s:.1f} GB/s)",
     )
 
 
 def run_single_core_test(
     size_mib: int, runs: int, run_time: int, specs: HardwareSpecs, cores: str | None = None
 ) -> TestResult:
-    target_core = re.split(r"[,\-]", cores)[0].strip() if cores else get_optimal_p_core()
-    avail_mib = (specs.avail_ram_gib or 64.0) * 1024.0
-    size_mib = max(64, min(size_mib, int(avail_mib * 0.25)))
+    target_core = cores.split(",")[0] if cores else specs.optimal_p_core
+    if specs.avail_ram_gib is not None:
+        size_mib = max(1, min(size_mib, int(specs.avail_ram_gib * 1024 * 0.25)))
 
     mbw_bin = _get_mbw_binary()
-    if not mbw_bin:
-        mbw_bin = _ensure_mbw_available()
     if mbw_bin:
         try:
-            cmd = ["taskset", "-c", target_core, mbw_bin, "-n", str(runs), str(size_mib)]
+            cmd = ["taskset", "--cpu-list", target_core, mbw_bin, "-t", "0", "-n", str(runs), str(size_mib)]
             stdout = run_cmd(cmd, timeout=run_time + 60)
             avg_re = re.compile(r"^AVG\s+Method:\s+(\S+).+?Copy:\s+([0-9.]+)\s+MiB/s", re.MULTILINE)
             averages = avg_re.findall(stdout)
             memcpy_mib_s = next((float(rate) for method, rate in averages if method == "MEMCPY"), 0.0)
-            gb_s = (memcpy_mib_s * 1024.0 * 1024.0) / 1e9
+            if not math.isfinite(memcpy_mib_s) or memcpy_mib_s <= 0:
+                raise ValueError("mbw MEMCPY average missing or invalid")
+            gb_s = (2 * memcpy_mib_s * 1024.0 * 1024.0) / 1e9
             eff_pct = ((gb_s / specs.theoretical_max_gb_s) * 100.0) if specs.theoretical_max_gb_s else None
             return TestResult(
                 name="Single-Core Copy (1 Core)",
                 throughput_gb_s=gb_s,
-                throughput_mib_s=memcpy_mib_s,
+                throughput_mib_s=2 * memcpy_mib_s,
                 read_gb_s=gb_s / 2.0,
                 write_gb_s=gb_s / 2.0,
                 efficiency_pct=eff_pct,
                 latency_ns=None,
-                details=f"mbw memcpy {size_mib}M on Core {target_core} (Line Fill Buffer limit)",
+                details=f"mbw memcpy {size_mib} MiB on Core {target_core} (read + write traffic; excludes write allocation)",
             )
-        except Exception:
-            pass
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            eprint(f"[Warning] mbw failed: {exc}")
 
     return TestResult(
         name="Single-Core Copy (1 Core)",
         throughput_gb_s=0.0,
         throughput_mib_s=0.0,
-        details="Failed (mbw unavailable or error - AUR-only package, auto-build failed)"
+        details="Failed (mbw unavailable, invalid output, or execution error)"
     )
 
 
@@ -1201,19 +740,19 @@ def build_gauge(pct: float | None, width: int = 12, mode: str = "bandwidth") -> 
 
 def render_header(specs: HardwareSpecs, governor_active: bool = True):
     if specs.configured_speed_mts and specs.factory_speed_mts and specs.factory_speed_mts > specs.configured_speed_mts:
-        speed_str = f"{specs.configured_speed_mts} MT/s [dim](Factory Rated: {specs.factory_speed_mts} MT/s)[/dim]"
+        speed_str = f"{specs.configured_speed_mts} MT/s (Factory Rated: {specs.factory_speed_mts} MT/s)"
     elif specs.configured_speed_mts:
         speed_str = f"{specs.configured_speed_mts} MT/s"
     else:
         speed_str = "Unknown MT/s"
 
     dimm_str = (
-        f"{specs.dimm_count} Modules ({specs.bus_width_bits}-bit total width)"
-        if specs.dimm_count and specs.bus_width_bits
+        f"{specs.dimm_count} Modules" + (f" ({specs.bus_width_bits}-bit width, user-supplied)" if specs.bus_width_bits else " (channel topology unknown)")
+        if specs.dimm_count
         else "Unknown Topology"
     )
     max_str = (
-        f"{specs.theoretical_max_gb_s:.2f} GB/s (Theoretical Limit)"
+        f"{specs.theoretical_max_gb_s:.2f} GB/s (user-supplied topology estimate)"
         if specs.theoretical_max_gb_s
         else "N/A"
     )
@@ -1225,14 +764,14 @@ def render_header(specs: HardwareSpecs, governor_active: bool = True):
     mfg_str = specs.manufacturer or "Generic DRAM"
     form_str = specs.form_factor or "System Memory"
     gov_str = (
-        "[bold green]Performance Mode[/bold green] (Hardware Frequency Boost Active)"
+        "[bold green]Performance Mode[/bold green] (Policy controls verified)"
         if governor_active
         else "[dim]Standard Governor[/dim]"
     )
     numa_str = (
         f"[bold cyan]{specs.numa_nodes} NUMA Nodes[/bold cyan] (Uniform Memory Architecture)"
         if specs.numa_nodes == 1
-        else f"[bold red]{specs.numa_nodes} NUMA Nodes[/bold red] (Multi-Socket Inter-Node NUMA Routing)"
+        else f"[bold red]{specs.numa_nodes} NUMA Nodes[/bold red] (Non-uniform memory architecture)"
     )
 
     temp_str = "No Sensor Data"
@@ -1240,7 +779,7 @@ def render_header(specs: HardwareSpecs, governor_active: bool = True):
         t_list = [f"{lbl}: {val:.1f}°C" for lbl, val in specs.initial_dram_temps]
         temp_str = " | ".join(t_list)
     if not RICH_AVAILABLE:
-        print(f"=== RAM BANDWIDTH BENCHMARK SUITE ===")
+        print("=== RAM BANDWIDTH BENCHMARK SUITE ===")
         print(f"CPU: {specs.cpu_model} ({specs.online_cpus} online cores | Optimal Core: {specs.optimal_p_core})")
         print(f"RAM: {specs.mem_type} @ {speed_str} | {ram_cap_str}")
         print(f"Topology: {dimm_str} | {mfg_str} {form_str}")
@@ -1278,10 +817,10 @@ def render_cache_hierarchy_table(result: CacheHierarchyResult | None):
     if not result:
         return
 
-    l1_size_str = f"{result.l1_kb} KB"
-    l2_size_str = f"{result.l2_kb} KB" if result.l2_kb < 1024 else f"{result.l2_kb / 1024:.1f} MB"
-    l3_size_str = f"{result.l3_kb / 1024:.1f} MB"
-    dram_size_str = f"{result.dram_mb} MB"
+    l1_size_str = f"{result.l1_kb} KiB"
+    l2_size_str = f"{result.l2_kb} KiB" if result.l2_kb < 1024 else f"{result.l2_kb / 1024:.1f} MiB"
+    l3_size_str = f"{result.l3_kb / 1024:.1f} MiB"
+    dram_size_str = f"{result.dram_mb} MiB"
 
     if not RICH_AVAILABLE:
         print("\n=== CPU CACHE & MEMORY LATENCY HIERARCHY ===")
@@ -1319,7 +858,7 @@ def render_cache_hierarchy_table(result: CacheHierarchyResult | None):
     table.add_row("L1 Data Cache", l1_size_str, f"[bold bright_green]{result.l1_ns:.2f} ns[/bold bright_green]", l1_gauge, f"On-die L1 core data cache ([bold bright_green]{l1_speedup}[/bold bright_green] than DRAM)")
     table.add_row("L2 Dedicated Cache", l2_size_str, f"[bold bright_green]{result.l2_ns:.2f} ns[/bold bright_green]", l2_gauge, f"Per-core dedicated L2 cache ([bold bright_green]{l2_speedup}[/bold bright_green] than DRAM)")
     table.add_row("L3 Shared Smart Cache", l3_size_str, f"[bold bright_yellow]{result.l3_ns:.2f} ns[/bold bright_yellow]", l3_gauge, f"Shared LLC Smart Cache ([bold bright_yellow]{l3_speedup}[/bold bright_yellow] than DRAM)")
-    table.add_row("Main System DRAM", dram_size_str, f"[bold bright_cyan]󰔛 {result.dram_ns:.2f} ns[/bold bright_cyan]", dram_gauge, "Uncached random DRAM pointer-chasing baseline")
+    table.add_row("Main System DRAM", dram_size_str, f"[bold bright_cyan]󰔛 {result.dram_ns:.2f} ns[/bold bright_cyan]", dram_gauge, "Random pointer-chasing baseline; includes TLB effects")
 
     console.print(table)
 
@@ -1344,7 +883,7 @@ def render_results_table(results: list[TestResult], specs: HardwareSpecs):
     )
     table.add_column("Benchmark Test Mode", style="bold bright_white", width=28)
     table.add_column("Throughput", justify="right", style="bold bright_green", width=14)
-    table.add_column("Bus Efficiency", justify="center", width=20)
+    table.add_column("Rate / Estimated Peak", justify="center", width=20)
     table.add_column("Access Latency", justify="right", style="bold bright_cyan", width=15)
     table.add_column("Test Configuration & Details", style="bright_white")
 
@@ -1363,7 +902,7 @@ def render_results_table(results: list[TestResult], specs: HardwareSpecs):
             tp_str,
             eff_str,
             lat_str,
-            r.details,
+            Text(r.details),
         )
 
     console.print(table)
@@ -1376,7 +915,7 @@ def render_results_table(results: list[TestResult], specs: HardwareSpecs):
         note_text.append(f"{specs.theoretical_max_gb_s:.2f} GB/s.\n", style="bold bright_green")
     else:
         note_text.append(
-            "Theoretical Max Peak calculation requires SMBIOS speed & channel data.\n",
+            "Estimated peak requires SMBIOS speed and user-supplied --channels.\n",
             style="bright_white",
         )
 
@@ -1384,7 +923,7 @@ def render_results_table(results: list[TestResult], specs: HardwareSpecs):
         note_text.append(" 󰅂 ", style="bright_cyan")
         note_text.append("Frequency Downclocking Detected: ", style="bold bright_white")
         note_text.append(
-            f"Installed RAM is factory-rated for {specs.factory_speed_mts} MT/s but currently operating at {specs.configured_speed_mts} MT/s due to CPU memory controller hardware constraints.\n",
+            f"Installed RAM is factory-rated for {specs.factory_speed_mts} MT/s but currently operating at {specs.configured_speed_mts} MT/s (the firmware does not establish the cause).\n",
             style="bright_white",
         )
 
@@ -1395,12 +934,12 @@ def render_results_table(results: list[TestResult], specs: HardwareSpecs):
     note_text.append("Single-Core Throughput Limit: ", style="bold bright_white")
     if single_core and single_core.throughput_gb_s > 0:
         note_text.append(
-            f"Measured single-core copy throughput is {single_core.throughput_gb_s:.1f} GB/s — typically capped well below multi-core saturation by finite per-core Line Fill Buffer (LFB) request queues.\n",
+            f"Measured single-core copy throughput is {single_core.throughput_gb_s:.1f} GB/s — depends on cache residency, the copy implementation, and per-core memory parallelism.\n",
             style="bright_white",
         )
     else:
         note_text.append(
-            f"A single core (Core {specs.optimal_p_core}) is typically capped well below multi-core saturation by finite per-core Line Fill Buffer (LFB) request queues.\n",
+            f"Copy throughput on Core {specs.optimal_p_core} depends on cache residency, the copy implementation, and per-core memory parallelism.\n",
             style="bright_white",
         )
     note_text.append(" 󰅂 ", style="bright_cyan")
@@ -1414,12 +953,12 @@ def render_results_table(results: list[TestResult], specs: HardwareSpecs):
     note_text.append("Random Access Latency vs Bandwidth: ", style="bold bright_white")
     if latency_res and latency_res.latency_ns:
         note_text.append(
-            f"Random latency (measured {latency_res.latency_ns:.1f} ns) uses 128MB pointer chasing beyond L3 to isolate true DRAM access delay; typical range: ~70-90 ns DDR4, ~90-130 ns DDR5. ",
+            f"Random pointer-chasing latency is {latency_res.latency_ns:.1f} ns. It includes cache, TLB, and scheduling effects; see the measured working set in the test details. ",
             style="bright_white",
         )
     else:
         note_text.append(
-            "Random latency is measured via 128MB random pointer chasing beyond L3 to isolate true DRAM access delay. ",
+            "Random latency uses a randomized cache-line pointer cycle sized beyond the observed last-level cache. ",
             style="bright_white",
         )
     note_text.append(
@@ -1435,145 +974,125 @@ def render_results_table(results: list[TestResult], specs: HardwareSpecs):
     console.print(panel)
 
 
-HISTORY_DIR = Path.home() / ".config" / "dusky" / "settings" / "ram_test"
+HISTORY_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "dusky" / "settings" / "ram_test"
 HISTORY_FILE = HISTORY_DIR / "history.json"
 
 
-def save_run_to_history(
-    specs: HardwareSpecs,
-    cache_hierarchy: CacheHierarchyResult | None,
-    results: list[TestResult],
-    args: argparse.Namespace,
-) -> None:
-    """Save benchmark run state to ~/.config/dusky/settings/ram_test/ for multi-run comparison."""
+@contextlib.contextmanager
+def atomic_text(path: Path, *, newline: str | None = None):
+    """Publish a complete report and preserve the previous file on failure."""
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline=newline,
+                                     dir=path.parent, prefix=f".{path.name}.", delete=False) as stream:
+        temporary = Path(stream.name)
+        try:
+            yield stream
+            stream.flush()
+            os.fsync(stream.fileno())
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise
     try:
-        HISTORY_DIR.mkdir(parents=True, exist_ok=True)
-        history = load_history()
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
-        now_ts = time.strftime("%Y-%m-%d %H:%M:%S")
-        time_short = time.strftime("%H:%M:%S")
-        date_short = time.strftime("%m-%d")
-        run_id = f"run_{time.strftime('%Y%m%d_%H%M%S')}"
 
-        metrics_map: dict[str, float] = {}
-        for r in results:
-            if r.name == "Random Memory Latency" and r.latency_ns:
-                metrics_map["Random Memory Latency (ns)"] = r.latency_ns
-            elif r.name != "Random Memory Latency" and r.throughput_gb_s > 0:
-                metrics_map[r.name] = r.throughput_gb_s
+def atomic_json(path: Path, data: object) -> None:
+    with atomic_text(path) as stream:
+        json.dump(data, stream, indent=2, allow_nan=False)
 
-        entry = {
-            "id": run_id,
-            "timestamp": now_ts,
-            "time_short": time_short,
-            "date_short": date_short,
-            "bench": getattr(args, "bench", "all"),
-            "hugepages": bool(getattr(args, "hugepages", False)),
-            "workers": getattr(args, "workers", None) or specs.online_cpus,
-            "cores": getattr(args, "cores", None),
-            "time_sec": getattr(args, "time", 10),
-            "optimal_core": specs.optimal_p_core,
-            "cpu_model": specs.cpu_model,
-            "mem_type": specs.mem_type,
-            "configured_speed_mts": specs.configured_speed_mts,
-            "cache": {
-                "l1_ns": cache_hierarchy.l1_ns if cache_hierarchy else None,
-                "l2_ns": cache_hierarchy.l2_ns if cache_hierarchy else None,
-                "l3_ns": cache_hierarchy.l3_ns if cache_hierarchy else None,
-                "dram_ns": cache_hierarchy.dram_ns if cache_hierarchy else None,
-            } if cache_hierarchy else None,
-            "metrics": metrics_map,
-            "results_raw": [asdict(r) for r in results],
-            "initial_temps": specs.initial_dram_temps,
-            "final_temps": specs.final_dram_temps or probe_dram_temperatures(),
-        }
 
-        history.append(entry)
-        if len(history) > 100:
-            history = history[-100:]
+@contextlib.contextmanager
+def history_lock():
+    HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+    with (HISTORY_DIR / ".lock").open("a", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
 
-        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-            json.dump(history, f, indent=2)
 
-        snapshot_file = HISTORY_DIR / f"{run_id}.json"
-        with open(snapshot_file, "w", encoding="utf-8") as f:
-            json.dump(entry, f, indent=2)
-    except Exception as e:
-        eprint(f"[Warning] Failed to save history to {HISTORY_FILE}: {e}")
+def save_run_to_history(
+    specs: HardwareSpecs, cache_hierarchy: CacheHierarchyResult | None,
+    results: list[TestResult], args: argparse.Namespace,
+) -> None:
+    now_ts = time.strftime("%Y-%m-%d %H:%M:%S")
+    time_short = time.strftime("%H:%M:%S")
+    date_short = time.strftime("%m-%d")
+    run_id = f"run_{time.time_ns()}"
+    metrics_map: dict[str, float] = {}
+    for r in results:
+        if r.name == "Random Memory Latency" and r.latency_ns:
+            metrics_map["Random Memory Latency (ns)"] = r.latency_ns
+        elif r.name != "Random Memory Latency" and r.throughput_gb_s > 0:
+            metrics_map[r.name] = r.throughput_gb_s
+
+    entry = {
+        "id": run_id,
+        "metrics_version": 2,
+        "timestamp": now_ts,
+        "time_short": time_short,
+        "date_short": date_short,
+        "bench": getattr(args, "bench", "all"),
+        "hugepages": bool(getattr(args, "hugepages", False)),
+        "workers": getattr(args, "workers", None) or specs.online_cpus,
+        "cores": getattr(args, "cores", None),
+        "time_sec": getattr(args, "time", 10),
+        "optimal_core": specs.optimal_p_core,
+        "cpu_model": specs.cpu_model,
+        "mem_type": specs.mem_type,
+        "configured_speed_mts": specs.configured_speed_mts,
+        "cache": {
+            "l1_ns": cache_hierarchy.l1_ns if cache_hierarchy else None,
+            "l2_ns": cache_hierarchy.l2_ns if cache_hierarchy else None,
+            "l3_ns": cache_hierarchy.l3_ns if cache_hierarchy else None,
+            "dram_ns": cache_hierarchy.dram_ns if cache_hierarchy else None,
+        } if cache_hierarchy else None,
+        "metrics": metrics_map,
+        "results_raw": [asdict(r) for r in results],
+        "initial_temps": specs.initial_dram_temps,
+        "final_temps": specs.final_dram_temps,
+    }
+
+    try:
+        with history_lock():
+            history = load_history()
+            history.append(entry)
+            atomic_json(HISTORY_DIR / f"{run_id}.json", entry)
+            atomic_json(HISTORY_FILE, history[-100:])
+            for discarded in history[:-100]:
+                old_id = discarded.get("id", "")
+                if re.fullmatch(r"run_[0-9_]+", old_id):
+                    (HISTORY_DIR / f"{old_id}.json").unlink(missing_ok=True)
+    except (OSError, ValueError) as exc:
+        eprint(f"[Warning] Failed to save history: {exc}")
 
 
 def load_history() -> list[dict]:
-    """Load historical benchmark runs from ~/.config/dusky/settings/ram_test/history.json."""
-    if not HISTORY_FILE.exists():
-        return []
     try:
-        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            if isinstance(data, list):
-                return data
-    except Exception:
-        pass
-    return []
+        data = json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return []
+    if not isinstance(data, list) or any(not isinstance(entry, dict) for entry in data):
+        raise ValueError(f"Invalid benchmark history: {HISTORY_FILE}")
+    for entry in data:
+        metrics = entry.get("metrics", {})
+        cache = entry.get("cache") or {}
+        if not isinstance(metrics, dict) or not isinstance(cache, dict):
+            raise ValueError("Invalid historical metric mapping")
+        for value in (*metrics.values(), *cache.values()):
+            if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)):
+                raise ValueError("Invalid historical numeric metric")
+        for name in ("id", "timestamp", "time_short"):
+            if name in entry and not isinstance(entry[name], str):
+                raise ValueError(f"Invalid historical {name}")
+    return data
 
 
 def clear_history() -> None:
-    """Clear all saved benchmark history files in ~/.config/dusky/settings/ram_test/."""
-    if HISTORY_DIR.exists():
-        for p in HISTORY_DIR.glob("*.json"):
-            with contextlib.suppress(OSError):
-                p.unlink()
-    msg = "Cleared all benchmark history in ~/.config/dusky/settings/ram_test/"
-    if RICH_AVAILABLE:
-        console.print(f"[bold green]󰄬 {msg}[/bold green]")
-    else:
-        print(msg)
-
-
-def generate_sparkline(runs: list[dict], extractor, mode: str = "bandwidth") -> str:
-    """Render a run-aligned colored Unicode sparkline trend curve from historical data points."""
-    run_vals = [extractor(r) for r in runs]
-    valid_vals = [v for v in run_vals if v is not None]
-    if not valid_vals:
-        return "[dim]—[/dim]"
-    if len(valid_vals) == 1:
-        res = ""
-        for v in run_vals:
-            if v is not None:
-                res += "[bold cyan]▄[/bold cyan]"
-            else:
-                res += "[dim bright_black]·[/dim bright_black]"
-        return res
-
-    min_v = min(valid_vals)
-    max_v = max(valid_vals)
-    mean_v = sum(valid_vals) / len(valid_vals)
-    rel_spread = (max_v - min_v) / (mean_v if mean_v > 0 else 1.0)
-
-    blocks = [" ", "▂", "▃", "▄", "▅", "▆", "▇", "█"]
-    res = ""
-
-    if rel_spread < 0.03:
-        for v in run_vals:
-            if v is not None:
-                res += "[bright_green]▄[/bright_green]"
-            else:
-                res += "[dim bright_black]·[/dim bright_black]"
-        return res
-
-    span = max_v - min_v if max_v != min_v else 1.0
-    for v in run_vals:
-        if v is None:
-            res += "[dim bright_black]·[/dim bright_black]"
-            continue
-        idx = int(round(((v - min_v) / span) * (len(blocks) - 1)))
-        idx = max(0, min(len(blocks) - 1, idx))
-        char = blocks[idx]
-        if mode == "latency":
-            color = "bright_green" if idx <= 2 else ("bright_yellow" if idx <= 5 else "bright_red")
-        else:
-            color = "bright_green" if idx >= 5 else ("bright_yellow" if idx >= 2 else "bright_red")
-        res += f"[{color}]{char}[/{color}]"
-    return res
+    with history_lock():
+        for path in HISTORY_DIR.glob("run_*.json"):
+            path.unlink()
+        HISTORY_FILE.unlink(missing_ok=True)
+    print(f"Cleared benchmark history in {HISTORY_DIR}")
 
 
 def render_history_comparison(history: list[dict], count: int = 7) -> None:
@@ -1586,8 +1105,10 @@ def render_history_comparison(history: list[dict], count: int = 7) -> None:
             print(msg)
         return
 
-    runs = history[-count:]
+    # Version 1 used different latency methods and incorrect copy/STREAM units.
+    runs = [run for run in history if run.get("metrics_version") == 2][-count:]
     if not runs:
+        print("No comparable runs using the current measurement method yet.")
         return
 
     metrics_meta = [
@@ -1599,14 +1120,14 @@ def render_history_comparison(history: list[dict], count: int = 7) -> None:
         ("Single-Core Copy (GB/s)", "bandwidth", "bold bright_yellow", lambda r: r.get("metrics", {}).get("Single-Core Copy (1 Core)")),
         ("Pure Read Multi-Core (GB/s)", "bandwidth", "bold bright_green", lambda r: r.get("metrics", {}).get("Pure Read (Multi-Thread)")),
         ("Pure Write Multi-Core (GB/s)", "bandwidth", "bold bright_green", lambda r: r.get("metrics", {}).get("Pure Write (Multi-Thread)")),
-        ("STREAM Copy Multi-Core (GB/s)", "bandwidth", "bold bright_green", lambda r: r.get("metrics", {}).get("Stream Copy (Multi-Thread)")),
+        ("STREAM Mix Multi-Core (GB/s)", "bandwidth", "bold bright_green", lambda r: r.get("metrics", {}).get("Stream Mix (Multi-Thread)")),
     ]
 
     if not RICH_AVAILABLE:
         print(f"\n=== MULTI-RUN BENCHMARK COMPARISON (Last {len(runs)} Runs) ===")
         header_cols = [f"{'Metric':<28s}"]
         for i, r in enumerate(runs):
-            t_short = r.get("time_short", r.get("timestamp", "").split()[-1] if "timestamp" in r else "?")
+            t_short = r.get("time_short", (r.get("timestamp", "").split() or ["?"])[-1])
             header_cols.append(f"R{i+1} ({t_short:>8s})")
         header_cols.extend([" Min / Max  ", " Δ vs Base "])
         header = " | ".join(header_cols)
@@ -1650,7 +1171,7 @@ def render_history_comparison(history: list[dict], count: int = 7) -> None:
         is_latest = (i == len(runs) - 1)
         tag = "[bold bright_green]Latest[/bold bright_green]" if is_latest else f"R{i+1}"
         hp = " [dim](THP)[/dim]" if r.get("hugepages") else ""
-        raw_t = r.get("time_short", r.get("timestamp", "").split()[-1] if "timestamp" in r else "")
+        raw_t = r.get("time_short", (r.get("timestamp", "").split() or [""])[-1])
         t_short = ":".join(raw_t.split(":")[:2])
         t.add_column(f"{tag}{hp}\n[white]{t_short}[/white]", justify="right", min_width=7, no_wrap=True)
 
@@ -1709,28 +1230,26 @@ def export_report(
     cache_hierarchy: CacheHierarchyResult | None,
     results: list[TestResult],
 ) -> None:
-    specs.final_dram_temps = probe_dram_temperatures()
-
     export_path = Path(filename).expanduser().resolve()
     export_path.parent.mkdir(parents=True, exist_ok=True)
 
     data = {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "metrics_version": 2,
         "hardware_specs": asdict(specs),
         "cache_hierarchy_latency_ns": asdict(cache_hierarchy) if cache_hierarchy else None,
         "benchmark_results": [asdict(r) for r in results],
     }
 
     if export_path.suffix.lower() == ".json":
-        with open(export_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+        atomic_json(export_path, data)
         msg = f"Exported benchmark report to JSON: {export_path}"
         if RICH_AVAILABLE:
             console.print(f"[bold green]󰄬 {msg}[/bold green]")
         else:
             print(msg)
     elif export_path.suffix.lower() == ".csv":
-        with open(export_path, "w", newline="", encoding="utf-8") as f:
+        with atomic_text(export_path, newline="") as f:
             writer = csv.writer(f)
             writer.writerow(["# SYSTEM HARDWARE METADATA"])
             writer.writerow(["# CPU Model", specs.cpu_model])
@@ -1742,23 +1261,43 @@ def export_report(
             for r in results:
                 tp_gb = f"{r.throughput_gb_s:.2f}" if r.throughput_gb_s > 0 else "—"
                 tp_mib = f"{r.throughput_mib_s:.1f}" if r.throughput_mib_s > 0 else "—"
-                writer.writerow([r.name, tp_gb, tp_mib, f"{r.efficiency_pct:.1f}" if r.efficiency_pct else "—", f"{r.latency_ns:.2f}" if r.latency_ns else "—", r.details])
+                writer.writerow([r.name, tp_gb, tp_mib, f"{r.efficiency_pct:.1f}" if r.efficiency_pct is not None else "—", f"{r.latency_ns:.2f}" if r.latency_ns else "—", r.details])
         msg = f"Exported benchmark report to CSV: {export_path}"
         if RICH_AVAILABLE:
             console.print(f"[bold green]󰄬 {msg}[/bold green]")
         else:
             print(msg)
     else:
-        msg = f"Unsupported export format (use .json or .csv): {export_path}"
-        if RICH_AVAILABLE:
-            console.print(f"[bold yellow]󰘓 {msg}[/bold yellow]")
-        else:
-            print(msg)
+        raise ValueError(f"Unsupported export format: {export_path.suffix}")
+
+
+def positive_int(value: str) -> int:
+    number = int(value)
+    if number <= 0:
+        raise argparse.ArgumentTypeError("must be greater than zero")
+    return number
+
+
+def normalize_cores(value: str) -> str:
+    """Accept taskset's CPU-list ranges/strides and require allowed online CPUs."""
+    allowed = os.sched_getaffinity(0)
+    selected: set[int] = set()
+    for part in value.split(","):
+        match = re.fullmatch(r"(\d+)(?:-(\d+)(?::([1-9]\d*))?)?", part)
+        if not match:
+            raise argparse.ArgumentTypeError("invalid CPU list (use 0,2-6 or 0-6:2)")
+        start = int(match[1])
+        end = int(match[2] or match[1])
+        step = int(match[3] or 1)
+        if start > end or end > max(allowed):
+            raise argparse.ArgumentTypeError("CPU range is reversed or outside the available CPUs")
+        selected.update(range(start, end + 1, step))
+    if not selected <= allowed:
+        raise argparse.ArgumentTypeError("CPU list includes CPUs outside this process's affinity")
+    return ",".join(map(str, sorted(selected)))
 
 
 def main() -> int:
-    global SUDO_AVAILABLE
-
     parser = argparse.ArgumentParser(
         description="Ultimate Hardware-Agnostic RAM Bandwidth & Latency Benchmark Suite"
     )
@@ -1770,33 +1309,34 @@ def main() -> int:
     )
     parser.add_argument(
         "--workers",
-        type=int,
-        help="Number of workers for multi-core tests (default: all online CPUs).",
+        type=positive_int,
+        help="Workers for multi-core tests (default: CPUs selected by --cores or process affinity).",
     )
     parser.add_argument(
         "--time",
-        type=int,
+        type=positive_int,
         default=10,
-        help="Duration in seconds per test (default: 10).",
+        help="Duration for read/write/STREAM (STREAM minimum: 10 seconds; default: 10).",
     )
     parser.add_argument(
         "--size",
-        type=int,
+        type=positive_int,
         default=4096,
         help="Array size in MiB for mbw single-core test (default: 4096).",
     )
     parser.add_argument(
         "--cores",
+        type=normalize_cores,
         help="Core range string to pin tests to (e.g. 0-13 or 0-7).",
     )
     parser.add_argument(
         "--hugepages",
         action="store_true",
-        help="Use Transparent Huge Pages (madvise MADV_HUGEPAGE) in latency tests to minimize TLB miss overhead.",
+        help="Request Transparent Huge Pages in latency tests; allocation depends on kernel policy.",
     )
     parser.add_argument(
         "--samples",
-        type=int,
+        type=positive_int,
         default=3,
         help="Number of latency samples per test; median reported (default: 3).",
     )
@@ -1810,8 +1350,8 @@ def main() -> int:
         dest="compare",
         nargs="?",
         const=7,
-        type=int,
-        help="Compare results from the last N runs side-by-side with trend graphs (default: 7).",
+        type=positive_int,
+        help="Compare the last N runs using the current measurement method (default: 7).",
     )
     parser.add_argument(
         "--clear-history",
@@ -1823,122 +1363,89 @@ def main() -> int:
         action="store_true",
         help="Skip optimizing CPU performance governor.",
     )
+    parser.add_argument("--channels", type=positive_int, help="Known active channels; enables an estimated bus peak (SMBIOS slots are insufficient).")
+    parser.add_argument("--channel-width", type=positive_int, default=64, help="Data bits per supplied channel (default: 64; use 32 for DDR5 subchannels).")
     args = parser.parse_args()
+    if args.export and Path(args.export).suffix.lower() not in (".json", ".csv"):
+        parser.error("--export requires a .json or .csv path")
 
     if args.clear_history:
-        clear_history()
+        try:
+            clear_history()
+        except OSError as exc:
+            eprint(f"Error: {exc}")
+            return 1
         return 0
 
-    if args.compare is not None and "--bench" not in sys.argv:
-        render_history_comparison(load_history(), count=args.compare)
+    if args.compare is not None and not any(arg == "--bench" or arg.startswith("--bench=") for arg in sys.argv[1:]):
+        try:
+            render_history_comparison(load_history(), count=args.compare)
+        except (OSError, ValueError) as exc:
+            eprint(f"Error: {exc}")
+            return 1
         return 0
 
     try:
+        check_dependencies(args.bench)
         has_sudo = cache_sudo_privileges()
-        SUDO_AVAILABLE = has_sudo
 
-        check_and_install_deps()
         specs = detect_hardware_specs(skip_sudo=not has_sudo)
 
-        render_header(specs, governor_active=not args.no_governor and has_sudo)
-
-        workers = args.workers or specs.online_cpus
+        if args.channels:
+            specs.channels = args.channels
+            specs.bus_width_bits = args.channels * args.channel_width
+            if specs.configured_speed_mts:
+                specs.theoretical_max_gb_s = specs.configured_speed_mts * specs.bus_width_bits / 8000
+        workers = args.workers or (len(args.cores.split(",")) if args.cores else specs.online_cpus)
+        args.workers = workers
         results: list[TestResult] = []
-        cache_hierarchy: CacheHierarchyResult | None = None
-
-        governor_ctx = (
-            contextlib.nullcontext() if (args.no_governor or not has_sudo) else set_cpu_performance()
-        )
-
-        with governor_ctx:
-            if RICH_AVAILABLE:
-                with Progress(
-                    SpinnerColumn("dots", style="cyan"),
-                    TextColumn("[bold cyan]{task.description}[/bold cyan]"),
-                    console=console,
-                    transient=True,
-                ) as progress:
-                    if args.bench in ["cache", "all"]:
-                        tc = progress.add_task(
-                            "Measuring L1/L2/L3 Cache & DRAM Latency Hierarchy...", total=None
-                        )
-                        cache_hierarchy = run_cache_hierarchy_latency_test(args.cores, hugepages=args.hugepages)
-                        progress.remove_task(tc)
-
-                    if args.bench in ["latency", "all"]:
-                        t0 = progress.add_task(
-                            "Running Random DRAM Access Latency Benchmark (128M Pointer-Chasing)...", total=None
-                        )
-                        res_lat = run_latency_test(128, specs, args.cores, hugepages=args.hugepages, samples=args.samples)
-                        results.append(res_lat)
-                        progress.remove_task(t0)
-
-                    if args.bench in ["single", "all"]:
-                        t1 = progress.add_task(
-                            "Running Single-Core Memory Copy Benchmark...", total=None
-                        )
-                        res_single = run_single_core_test(args.size, 10, args.time, specs, args.cores)
-                        results.append(res_single)
-                        progress.remove_task(t1)
-
-                    if args.bench in ["read", "all"]:
-                        t2 = progress.add_task(
-                            "Running Pure Multi-Core Read Benchmark (sysbench 64M)...", total=None
-                        )
-                        res_read = run_pure_read_test(workers, args.time, specs, args.cores)
-                        results.append(res_read)
-                        progress.remove_task(t2)
-
-                    if args.bench in ["write", "all"]:
-                        t3 = progress.add_task(
-                            "Running Pure Multi-Core Write Benchmark (sysbench 64M)...", total=None
-                        )
-                        res_write = run_pure_write_test(workers, args.time, specs, args.cores)
-                        results.append(res_write)
-                        progress.remove_task(t3)
-
-                    if args.bench in ["copy", "all"]:
-                        t4 = progress.add_task(
-                            "Running Multi-Core STREAM Copy Benchmark (stress-ng)...", total=None
-                        )
-                        res_copy = run_copy_stream_test(workers, args.time, specs, args.cores)
-                        results.append(res_copy)
-                        progress.remove_task(t4)
-            else:
-                if args.bench in ["cache", "all"]:
-                    print("Measuring L1/L2/L3 Cache & DRAM Latency Hierarchy...")
-                    cache_hierarchy = run_cache_hierarchy_latency_test(args.cores, hugepages=args.hugepages)
-                if args.bench in ["latency", "all"]:
-                    print("Running Random DRAM Access Latency Benchmark...")
-                    results.append(run_latency_test(128, specs, args.cores, hugepages=args.hugepages, samples=args.samples))
-                if args.bench in ["single", "all"]:
-                    print("Running Single-Core Memory Copy Benchmark...")
-                    results.append(run_single_core_test(args.size, 10, args.time, specs, args.cores))
-                if args.bench in ["read", "all"]:
-                    print("Running Pure Multi-Core Read Benchmark...")
-                    results.append(run_pure_read_test(workers, args.time, specs, args.cores))
-                if args.bench in ["write", "all"]:
-                    print("Running Pure Multi-Core Write Benchmark...")
-                    results.append(run_pure_write_test(workers, args.time, specs, args.cores))
-                if args.bench in ["copy", "all"]:
-                    print("Running Multi-Core STREAM Copy Benchmark...")
-                    results.append(run_copy_stream_test(workers, args.time, specs, args.cores))
-
-            if cache_hierarchy:
-                render_cache_hierarchy_table(cache_hierarchy)
-            if results:
-                render_results_table(results, specs)
-
-            # Persist run to ~/.config/dusky/settings/ram_test/
-            save_run_to_history(specs, cache_hierarchy, results, args)
-
-            # Show multi-run trend comparison if historical runs exist
-            hist = load_history()
-            if len(hist) >= 2:
-                render_history_comparison(hist, count=args.compare or 7)
-
-            if args.export:
-                export_report(args.export, specs, cache_hierarchy, results)
+        cache_hierarchy = None
+        governor_ctx = set_cpu_performance() if not args.no_governor and has_sudo else contextlib.nullcontext(False)
+        native_ctx = latency_binary() if args.bench in ("cache", "latency", "all") else contextlib.nullcontext(None)
+        with governor_ctx as governor_active, native_ctx as binary:
+            render_header(specs, governor_active=governor_active)
+            progress_ctx = Progress(SpinnerColumn("dots", style="cyan"),
+                                    TextColumn("{task.description}"), console=console, transient=True) if RICH_AVAILABLE else contextlib.nullcontext(None)
+            with progress_ctx as progress:
+                for mode in ("cache", "latency", "single", "read", "write", "copy"):
+                    if args.bench not in (mode, "all"):
+                        continue
+                    description = f"Running {mode} memory benchmark..."
+                    task = progress.add_task(description, total=None) if progress else None
+                    if not progress:
+                        print(description)
+                    try:
+                        match mode:
+                            case "cache":
+                                cache_hierarchy = run_cache_hierarchy_latency_test(args.cores, args.hugepages, args.samples, binary)
+                            case "latency":
+                                results.append(run_latency_test(128, specs, args.cores, args.hugepages, args.samples, binary))
+                            case "single":
+                                results.append(run_single_core_test(args.size, 10, args.time, specs, args.cores))
+                            case "read":
+                                results.append(run_pure_read_test(workers, args.time, specs, args.cores))
+                            case "write":
+                                results.append(run_pure_write_test(workers, args.time, specs, args.cores))
+                            case "copy":
+                                results.append(run_copy_stream_test(workers, args.time, specs, args.cores))
+                    finally:
+                        if progress:
+                            progress.remove_task(task)
+        # Restore policy controls before rendering and report I/O.
+        specs.final_dram_temps = probe_dram_temperatures()
+        if cache_hierarchy:
+            render_cache_hierarchy_table(cache_hierarchy)
+        if results:
+            render_results_table(results, specs)
+        save_run_to_history(specs, cache_hierarchy, results, args)
+        history = load_history()
+        if len(history) >= 2:
+            render_history_comparison(history, count=args.compare or 7)
+        if args.export:
+            export_report(args.export, specs, cache_hierarchy, results)
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
+        eprint(f"Error: {exc}")
+        return 1
     except KeyboardInterrupt:
         if RICH_AVAILABLE:
             console.print("\n[bold yellow]󰞅 Benchmark interrupted by user.[/bold yellow]")
@@ -1963,4 +1470,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    def terminate(signum, frame):
+        raise SystemExit(128 + signum)
+
+    signal.signal(signal.SIGTERM, terminate)
     sys.exit(main())
