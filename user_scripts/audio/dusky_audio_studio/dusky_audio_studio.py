@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Dusky Audio Studio & Voice DSP — Bleeding-Edge Audio Engine & GTK3 Control Studio
-Target Specification: Parstix Linux (Kernel 7.3+, Python 3.14.7+)
+Target Specification: Parstix Linux (Kernel 7.3+, Python 3.15+)
 Pure bleeding-edge Linux audio architecture with zero legacy shims.
 
 Features:
@@ -23,13 +23,13 @@ Features:
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, fields
-from concurrent.futures import ThreadPoolExecutor
+lazy from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Final
 import json
 import fcntl
 import os
-import select
+lazy import select
 import shutil
 import signal
 import socket
@@ -43,8 +43,8 @@ import weakref
 # --- Constants & Paths ---
 APP_ID: Final[str] = "org.dusky.audio-studio"
 HOME_DIR: Final[Path] = Path.home()
-STATE_DIR: Final[Path] = HOME_DIR / ".config" / "dusky" / "settings" / "dusky_studio"
-CACHE_DIR: Final[Path] = HOME_DIR / ".cache" / "dusky_studio"
+STATE_DIR: Final[Path] = Path(os.environ.get("XDG_CONFIG_HOME") or HOME_DIR / ".config") / "dusky" / "settings" / "dusky_studio"
+CACHE_DIR: Final[Path] = Path(os.environ.get("XDG_CACHE_HOME") or HOME_DIR / ".cache") / "dusky_studio"
 CONFIG_FILE: Final[Path] = STATE_DIR / "config.json"
 SOCK_PATH: Final[Path] = STATE_DIR / "dusky_audio.sock"
 PID_FILE: Final[Path] = STATE_DIR / "daemon.pid"
@@ -72,7 +72,7 @@ EQ_BANDS: Final[tuple[tuple[str, int, int, int], ...]] = (
     ("12.0 kHz (Brilliance)", 0, 12000, 1000),
 )
 
-# Sandboxed execution environment
+# Command locale for predictable command output
 COMMAND_ENV: Final[dict[str, str]] = os.environ.copy()
 COMMAND_ENV["LC_ALL"] = "C.UTF-8"
 COMMAND_ENV["LANG"] = "C.UTF-8"
@@ -424,7 +424,7 @@ class AudioConfig:
     # Vocoder & Voice Character Stack
     vocoder_on: bool = False
     vocoder_mix: int = 0  # 0..100%
-    vocoder_carrier_hz: int = 110  # 50..440 Hz
+    vocoder_carrier_hz: int = 110  # 50..880 Hz
     vocoder_attack_ms: int = 5  # 1..100 ms
     vocoder_release_ms: int = 30  # 5..500 ms
     vocoder_detune: int = 20  # 0..200 per-mille
@@ -533,7 +533,8 @@ def validate_config(cfg: AudioConfig) -> None:
         elif isinstance(expected, int):
             valid = type(value) is int
         elif isinstance(expected, str):
-            valid = isinstance(value, str) and len(value) <= 255 and "\n" not in value
+            valid = (isinstance(value, str) and len(value.encode("utf-8")) <= 255
+                     and not any(c in value for c in "\n\r\0"))
         else:
             valid = (isinstance(value, list) and len(value) == 9
                      and all(type(x) is int and -1200 <= x <= 1200 for x in value))
@@ -1016,13 +1017,16 @@ def pid_is_dusky_audio(pid: int) -> bool:
 
     PID files can outlive their process; once the kernel recycles the PID it
     may belong to any unrelated program. Every consumer of PID_FILE /
-    GUI_PID_FILE verifies ownership through here before signalling, so a
-    stale file can never get an innocent process killed."""
+    GUI_PID_FILE checks the script name here before signalling, rejecting
+    ordinary stale PID files that now refer to a different application."""
     try:
+        if pid <= 0:
+            return False
         raw = Path(f"/proc/{pid}/cmdline").read_bytes()
     except OSError:
         return False
-    return b"dusky_audio_studio" in raw
+    return any(Path(os.fsdecode(arg)).name == Path(__file__).name
+               for arg in raw.split(b"\0")[1:] if arg)
 
 
 def get_daemon_pid() -> int | None:
@@ -1043,7 +1047,7 @@ def pipewire_audio_snapshot() -> tuple[dict[str, dict[str, Any]], dict[str, str]
     """Return live hardware nodes and default metadata from one graph dump."""
     try:
         objects = json.loads(subprocess.check_output(
-            ["pw-dump"], text=True, stderr=subprocess.DEVNULL,
+            ["pw-dump", "--no-colors"], text=True, stderr=subprocess.DEVNULL,
             env=COMMAND_ENV, timeout=2,
         ))
     except (OSError, subprocess.SubprocessError, ValueError):
@@ -1062,6 +1066,8 @@ def pipewire_audio_snapshot() -> tuple[dict[str, dict[str, Any]], dict[str, str]
             nodes[name] = {**props, "id": obj.get("id")}
         if obj.get("props", {}).get("metadata.name") == "default":
             for item in obj.get("metadata", []):
+                if item.get("subject") != 0:
+                    continue
                 value = item.get("value")
                 candidate = value.get("name") if isinstance(value, dict) else value
                 if isinstance(candidate, str):
@@ -1160,24 +1166,31 @@ def restore_previous_default_devices(cfg: AudioConfig | None = None,
                 selected = props.get("id")
                 break
         if selected is not None:
-            result = subprocess.run(["wpctl", "set-default", str(selected)],
-                                    capture_output=True, text=True, env=COMMAND_ENV)
-            if result.returncode:
-                print(f"[DuskyAudio] Could not restore {direction}: {result.stderr.strip()}",
-                      file=sys.stderr)
-                continue
-            if configured and shutil.which("pw-metadata"):
-                result = subprocess.run(
-                    ["pw-metadata", "-n", "default", "0",
-                     f"default.configured.audio.{direction}",
-                     json.dumps({"name": configured}), "Spa:String:JSON"],
-                    capture_output=True, text=True, env=COMMAND_ENV)
+            try:
+                result = subprocess.run(["wpctl", "set-default", str(selected)],
+                                        capture_output=True, text=True, env=COMMAND_ENV, timeout=2)
                 if result.returncode:
-                    print(f"[DuskyAudio] Could not restore configured {direction}: {result.stderr.strip()}",
+                    print(f"[DuskyAudio] Could not restore {direction}: {result.stderr.strip()}",
                           file=sys.stderr)
-            elif not configured:
-                subprocess.run(["wpctl", "clear-default", str(selected)],
-                               capture_output=True, text=True, env=COMMAND_ENV)
+                    continue
+                if configured and shutil.which("pw-metadata"):
+                    result = subprocess.run(
+                        ["pw-metadata", "-n", "default", "0",
+                         f"default.configured.audio.{direction}",
+                         json.dumps({"name": configured}), "Spa:String:JSON"],
+                        capture_output=True, text=True, env=COMMAND_ENV, timeout=2)
+                    if result.returncode:
+                        print(f"[DuskyAudio] Could not restore configured {direction}: {result.stderr.strip()}",
+                              file=sys.stderr)
+                elif not configured:
+                    result = subprocess.run(
+                        ["wpctl", "clear-default", "1" if direction == "source" else "0"],
+                        capture_output=True, text=True, env=COMMAND_ENV, timeout=2)
+                    if result.returncode:
+                        print(f"[DuskyAudio] Could not clear configured {direction}: {result.stderr.strip()}",
+                              file=sys.stderr)
+            except (OSError, subprocess.SubprocessError) as exc:
+                print(f"[DuskyAudio] Could not restore {direction}: {exc}", file=sys.stderr)
 
 
 def set_dusky_devices_as_default() -> bool:
@@ -1201,7 +1214,7 @@ def set_dusky_devices_as_default() -> bool:
     for _ in range(40):
         try:
             graph = json.loads(subprocess.check_output(
-                ["pw-dump"], text=True, stderr=subprocess.DEVNULL,
+                ["pw-dump", "--no-colors"], text=True, stderr=subprocess.DEVNULL,
                 env=COMMAND_ENV, timeout=2))
             expected_classes = {
                 "ghelper-audio": "Audio/Source",
@@ -1246,7 +1259,7 @@ def set_dusky_devices_as_default() -> bool:
                 if available:
                     subprocess.run(["wpctl", "set-default", str(node_id)],
                                    check=True, capture_output=True, text=True,
-                                   env=COMMAND_ENV)
+                                   env=COMMAND_ENV, timeout=2)
             return True
         except (OSError, subprocess.SubprocessError, ValueError) as e:
             last_error = str(e)
@@ -1269,8 +1282,6 @@ class AudioDspServer:
         self._lock = threading.Lock()
         self._command_lock = threading.RLock()
         self.config: AudioConfig | None = None
-        self._route_source = ""
-        self._route_sink = ""
 
     def start(self) -> bool:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -1295,6 +1306,7 @@ class AudioDspServer:
             print(f"[DuskyAudioServer] Failed to launch {self.bin_path}: {e}", file=sys.stderr)
             return False
 
+        os.set_blocking(self.proc.stdin.fileno(), False)
         self.running = True
         threading.Thread(target=self._telemetry_reader, daemon=True).start()
 
@@ -1343,12 +1355,13 @@ class AudioDspServer:
                                                cfg.pre_source, snapshot)
                 sink = resolve_hardware_node("Audio/Sink", "sink", cfg.sink,
                                              cfg.pre_sink, snapshot)
-                if source != self._route_source:
+                # The helper ignores unchanged healthy routes and recreates failed
+                # streams, including devices that return between polling intervals.
+                try:
                     self.send_cmd(f"SRC {source}")
-                    self._route_source = source
-                if sink != self._route_sink:
                     self.send_cmd(f"SINK_TGT {sink}")
-                    self._route_sink = sink
+                except RuntimeError as exc:
+                    print(f"[DuskyAudioServer] Device routing failed: {exc}", file=sys.stderr)
 
     def _telemetry_reader(self) -> None:
         if not self.proc or not self.proc.stdout:
@@ -1393,7 +1406,8 @@ class AudioDspServer:
                         if idx != -1:
                             del buf[:idx]
                         else:
-                            del buf[:]
+                            # Preserve a possible magic prefix split across reads.
+                            del buf[:-(len(magic_bytes) - 1)]
                             break
             except Exception:
                 break
@@ -1403,8 +1417,22 @@ class AudioDspServer:
             if not self.proc or not self.proc.stdin or self.proc.poll() is not None:
                 raise RuntimeError("DSP helper is not running")
             try:
-                self.proc.stdin.write((line.strip() + "\n").encode("utf-8"))
-                self.proc.stdin.flush()
+                payload = (line.strip() + "\n").encode("utf-8")
+                # Match the helper's line buffer and Linux PIPE_BUF. Nonblocking
+                # writes up to this size are atomic, so a timeout leaves no fragment.
+                if len(payload) > 4096:
+                    raise RuntimeError("DSP command exceeds 4095 UTF-8 bytes")
+                fd = self.proc.stdin.fileno()
+                deadline = time.monotonic() + 0.5
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0 or not select.select([], [fd], [], remaining)[1]:
+                        raise TimeoutError("DSP command pipe is stalled")
+                    try:
+                        os.write(fd, payload)
+                    except BlockingIOError:
+                        continue
+                    break
             except OSError as e:
                 raise RuntimeError(f"DSP command failed: {e}") from e
 
@@ -1427,6 +1455,11 @@ class AudioDspServer:
         elif self.proc:
             self.proc.wait()
 
+        if self.proc:
+            for pipe in (self.proc.stdin, self.proc.stdout):
+                if pipe:
+                    pipe.close()
+
         if self.sock:
             try:
                 self.sock.close()
@@ -1436,8 +1469,28 @@ class AudioDspServer:
         if self._owns_socket:
             SOCK_PATH.unlink(missing_ok=True)
             PID_FILE.unlink(missing_ok=True)
+            self._owns_socket = False
 
     def serve_forever(self) -> None:
+        try:
+            self._serve_clients()
+        finally:
+            self.stop()
+            if self.config is not None:
+                snapshot = pipewire_audio_snapshot()
+                if snapshot is not None:
+                    defaults = snapshot[1]
+                    directions = {
+                        direction for direction, virtual_name in (
+                            ("source", "ghelper-audio"),
+                            ("sink", "ghelper-audio-sink"),
+                        ) if any(defaults.get(f"default.{prefix}audio.{direction}") == virtual_name
+                                 for prefix in ("", "configured."))
+                    }
+                    if directions:
+                        restore_previous_default_devices(self.config, directions)
+
+    def _serve_clients(self) -> None:
         while self.running:
             try:
                 conn, _ = self.sock.accept()  # type: ignore
@@ -1448,38 +1501,29 @@ class AudioDspServer:
 
             threading.Thread(target=self._handle_client, args=(conn,), daemon=True).start()
 
-        helper_failed = self.running and self.proc is not None and self.proc.poll() is not None
-        self.stop()
-        if helper_failed and self.config is not None:
-            snapshot = pipewire_audio_snapshot()
-            if snapshot is not None:
-                defaults = snapshot[1]
-                directions = {
-                    direction for direction, virtual_name in (
-                        ("source", "ghelper-audio"),
-                        ("sink", "ghelper-audio-sink"),
-                    ) if any(defaults.get(f"default.{prefix}audio.{direction}") == virtual_name
-                             for prefix in ("", "configured."))
-                }
-                if directions:
-                    restore_previous_default_devices(self.config, directions)
-
     def _handle_client(self, conn: socket.socket) -> None:
         conn.settimeout(5.0)
         try:
             with conn:
-                buf = ""
+                buf = bytearray()
                 while self.running:
                     try:
-                        chunk = conn.recv(4096).decode("utf-8")
+                        chunk = conn.recv(4096)
                     except socket.timeout:
                         continue
                     if not chunk:
                         break
-                    buf += chunk
-                    while "\n" in buf:
-                        line, buf = buf.split("\n", 1)
-                        cmd = line.strip()
+                    buf.extend(chunk)
+                    if len(buf) > 65536:
+                        conn.sendall(b"ERROR oversized command\n")
+                        return
+                    while (end := buf.find(b"\n")) != -1:
+                        line = buf.take_bytes(end + 1)
+                        try:
+                            cmd = line.decode("utf-8").strip()
+                        except UnicodeDecodeError:
+                            conn.sendall(b"ERROR invalid UTF-8\n")
+                            continue
                         if not cmd:
                             continue
 
@@ -1516,12 +1560,16 @@ class AudioDspServer:
         validate_config(cfg)
         self.config = cfg
         # Hardware source & sink resolution (eliminates feedback loops)
-        target_src = resolve_hardware_source(cfg.source, fallback_node=cfg.pre_source)
+        snapshot = pipewire_audio_snapshot()
+        if snapshot is None:
+            target_src = target_sink = NO_HARDWARE_TARGET
+        else:
+            target_src = resolve_hardware_node("Audio/Source", "source", cfg.source,
+                                               cfg.pre_source, snapshot)
+            target_sink = resolve_hardware_node("Audio/Sink", "sink", cfg.sink,
+                                                cfg.pre_sink, snapshot)
         self.send_cmd(f"SRC {target_src}")
-        self._route_source = target_src
-        target_sink = resolve_hardware_sink(cfg.sink, fallback_node=cfg.pre_sink)
         self.send_cmd(f"SINK_TGT {target_sink}")
-        self._route_sink = target_sink
         self.send_cmd(f"VOL {cfg.volume * 10}")
         self.send_cmd(f"MON {1 if cfg.monitor else 0}")
 
@@ -1599,8 +1647,9 @@ def send_daemon_cmd(cmd_str: str) -> bool:
             client.settimeout(0.5)
             client.connect(str(SOCK_PATH))
             client.sendall(f"CMD {cmd_str.strip()}\n".encode("utf-8"))
-            resp = client.recv(128)
-            return resp.startswith(b"OK")
+            with client.makefile("rb") as response:
+                resp = response.readline(4096)
+            return resp == b"OK\n"
     except Exception:
         return False
 
@@ -1613,7 +1662,8 @@ def daemon_responds() -> bool:
             client.settimeout(0.3)
             client.connect(str(SOCK_PATH))
             client.sendall(b"PING\n")
-            return client.recv(16).startswith(b"PONG")
+            with client.makefile("rb") as response:
+                return response.readline(16) == b"PONG\n"
     except OSError:
         return False
 
@@ -1627,8 +1677,9 @@ def sync_config_to_daemon(cfg: AudioConfig) -> bool:
             client.connect(str(SOCK_PATH))
             payload = json.dumps(asdict(cfg))
             client.sendall(f"CONFIG_SYNC {payload}\n".encode("utf-8"))
-            resp = client.recv(128)
-            return resp.startswith(b"OK")
+            with client.makefile("rb") as response:
+                resp = response.readline(4096)
+            return resp == b"OK\n"
     except Exception:
         return False
 
@@ -1647,10 +1698,9 @@ def fetch_telemetry_from_daemon() -> AudioTelemetry | None:
         return None
     try:
         if _telemetry_client is None:
-            client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            client.settimeout(0.03)
-            client.connect(str(SOCK_PATH))
-            _telemetry_client = client
+            _telemetry_client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            _telemetry_client.settimeout(0.03)
+            _telemetry_client.connect(str(SOCK_PATH))
         _telemetry_client.sendall(b"GET_TELEMETRY\n")
         while b"\n" not in _telemetry_buffer:
             chunk = _telemetry_client.recv(1024)
@@ -1713,20 +1763,11 @@ def _start_daemon_locked(cfg: AudioConfig) -> bool:
         return False
 
     # Spawn daemon server in background subprocess
-    script_dir = Path(__file__).resolve().parent
-    server_code = f"""
-import sys
-sys.path.insert(0, {repr(str(script_dir))})
-from dusky_audio_studio import AudioDspServer, Path
-srv = AudioDspServer(Path({repr(str(bin_path))}))
-if srv.start():
-    srv.serve_forever()
-    """
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     try:
         with open(CACHE_DIR / "server.log", "a", encoding="utf-8") as log:
             child = subprocess.Popen(
-                [sys.executable, "-c", server_code], stdout=log, stderr=log,
+                [sys.executable, str(Path(__file__).resolve()), "--serve", str(bin_path)], stdout=log, stderr=log,
                 stdin=subprocess.DEVNULL, cwd=str(STATE_DIR),
                 start_new_session=True, env=COMMAND_ENV,
             )
@@ -2424,7 +2465,7 @@ def run_gtk_app(*, open_only: bool = False) -> None:
             carrier_title = "Carrier Pitch Transposition" if self.cfg.vocoder_follow else "Carrier Frequency"
             carrier_val = self.cfg.vocoder_pitch_shift if self.cfg.vocoder_follow else self.cfg.vocoder_carrier_hz
             carrier_min = -24 if self.cfg.vocoder_follow else 50
-            carrier_max = 24 if self.cfg.vocoder_follow else 440
+            carrier_max = 24 if self.cfg.vocoder_follow else 880
             carrier_unit = " st" if self.cfg.vocoder_follow else " Hz"
             self.carrier_row = self.create_slider_row(
                 carrier_title,
@@ -2986,7 +3027,7 @@ def run_gtk_app(*, open_only: bool = False) -> None:
             else:
                 self.carrier_row._unit = " Hz"  # type: ignore[attr-defined]
                 self.carrier_row._signed = False  # type: ignore[attr-defined]
-                self.carrier_row._scale.set_range(50, 440)  # type: ignore
+                self.carrier_row._scale.set_range(50, 880)  # type: ignore
                 self.carrier_row._scale.set_value(c_hz)  # type: ignore
                 self.carrier_row._title_lbl.set_text("Carrier Frequency")  # type: ignore
                 self.carrier_row._val_lbl.set_text(f"{c_hz} Hz")  # type: ignore
@@ -3476,7 +3517,7 @@ def run_gtk_app(*, open_only: bool = False) -> None:
                 else:
                     self.carrier_row._unit = " Hz"  # type: ignore[attr-defined]
                     self.carrier_row._signed = False  # type: ignore[attr-defined]
-                    self.carrier_row._scale.set_range(50, 440)  # type: ignore
+                    self.carrier_row._scale.set_range(50, 880)  # type: ignore
                     self.carrier_row._scale.set_value(c_hz)  # type: ignore
                     self.carrier_row._title_lbl.set_text("Carrier Frequency")  # type: ignore
                     self.carrier_row._val_lbl.set_text(f"{c_hz} Hz")  # type: ignore
@@ -3596,6 +3637,22 @@ def run_gtk_app(*, open_only: bool = False) -> None:
 # -----------------------------------------------------------------------------
 def main() -> None:
     args = sys.argv[1:]
+    if len(args) == 2 and args[0] == "--serve":
+        server = AudioDspServer(Path(args[1]))
+
+        def request_stop(_signal: int, _frame: Any) -> None:
+            # Unwind startup as well as the serving loop through their cleanup.
+            raise SystemExit(0)
+
+        signal.signal(signal.SIGTERM, request_stop)
+        signal.signal(signal.SIGINT, request_stop)
+        try:
+            if not server.start():
+                raise SystemExit(1)
+            server.serve_forever()
+        finally:
+            server.stop()
+        return
     cfg = load_config()
 
     if not args or args[0] in ("--gui", "-g", "--gui-only"):

@@ -52,7 +52,10 @@ struct gha_frame
 
 #pragma pack(pop)
 
-/* Stdin command format (line-terminated, ASCII):
+static_assert(sizeof(struct gha_frame) == 36, "telemetry frame layout changed");
+
+/* Stdin command format (line-terminated; ASCII controls, UTF-8 node names).
+ * Maximum line length: 4095 bytes, excluding the terminating newline.
  *
  *   SRC <pw-node-name|default>
  *                       point the capture stream at a specific source

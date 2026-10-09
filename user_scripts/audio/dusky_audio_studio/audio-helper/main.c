@@ -761,7 +761,9 @@ static void pitch_tracker_push(struct pitch_tracker *p, float x, float fs)
     return;
 
 missed:
-    if (++p->miss_hops >= 10)
+    if (p->miss_hops < 10)
+        p->miss_hops++;
+    if (p->miss_hops >= 10)
         p->valid = 0;
 }
 
@@ -1088,11 +1090,16 @@ struct post_ring
     _Atomic uint32_t tail;
 };
 
+struct eq_settings
+{
+    int type, freq_hz, q_mille, gain_centidb;
+};
+
 struct rt_state
 {
     DenoiseState *rn;
     struct biquad eq[GHA_EQ_BANDS];
-    int eq_seq[GHA_EQ_BANDS]; /* last applied param hash */
+    struct eq_settings eq_settings[GHA_EQ_BANDS]; /* last applied values */
     struct delay_state delay;
     struct reverb_state reverb;
     int was_delay_on;
@@ -1206,50 +1213,57 @@ static struct sink_channel_state g_sink_ch_r;
 static struct post_ring g_sink_l; /* denoised left -> sink_out_stream */
 static struct post_ring g_sink_r; /* denoised right -> sink_out_stream */
 
-static int eq_hash(const struct eq_band *b)
+/* Load each parameter once and compare actual values: an arithmetic hash can
+ * collide for valid frequency/gain combinations and silently skip a redesign. */
+static struct eq_settings eq_read(const struct eq_band *band)
 {
-    return atomic_load(&b->type) * 1000003 + atomic_load(&b->freq_hz) * 31 + atomic_load(&b->q_mille) * 17 + atomic_load(&b->gain_centidb);
+    return (struct eq_settings){
+        .type = atomic_load(&band->type),
+        .freq_hz = atomic_load(&band->freq_hz),
+        .q_mille = atomic_load(&band->q_mille),
+        .gain_centidb = atomic_load(&band->gain_centidb),
+    };
+}
+
+static bool eq_changed(struct eq_settings a, struct eq_settings b)
+{
+    return a.type != b.type || a.freq_hz != b.freq_hz ||
+           a.q_mille != b.q_mille || a.gain_centidb != b.gain_centidb;
+}
+
+static void eq_design(struct biquad *filter, struct eq_settings settings)
+{
+    biquad_design(filter, settings.type, SAMPLE_RATE, settings.freq_hz,
+                  fmaxf(0.1f, settings.q_mille * 0.001f), settings.gain_centidb * 0.01f);
 }
 
 static void rt_refresh_eq(void)
 {
     for (int i = 0; i < GHA_EQ_BANDS; i++)
     {
-        int h = eq_hash(&g_params.eq[i]);
-        if (h != g_rt.eq_seq[i])
+        struct eq_settings settings = eq_read(&g_params.eq[i]);
+        if (eq_changed(settings, g_rt.eq_settings[i]))
         {
-            int type = atomic_load(&g_params.eq[i].type);
-            float f = (float)atomic_load(&g_params.eq[i].freq_hz);
-            float q = atomic_load(&g_params.eq[i].q_mille) * 0.001f;
-            float gd = atomic_load(&g_params.eq[i].gain_centidb) * 0.01f;
-            if (q < 0.1f)
-                q = 0.1f;
-            biquad_design(&g_rt.eq[i], type, (float)SAMPLE_RATE, f, q, gd);
-            g_rt.eq_seq[i] = h;
+            eq_design(&g_rt.eq[i], settings);
+            g_rt.eq_settings[i] = settings;
         }
     }
 }
 
 static struct biquad g_sink_eq_l[GHA_EQ_BANDS];
 static struct biquad g_sink_eq_r[GHA_EQ_BANDS];
-static int g_sink_eq_seq[GHA_EQ_BANDS];
+static struct eq_settings g_sink_eq_settings[GHA_EQ_BANDS];
 
 static void rt_refresh_sink_eq(void)
 {
     for (int i = 0; i < GHA_EQ_BANDS; i++)
     {
-        int h = eq_hash(&g_params.out_eq[i]);
-        if (h != g_sink_eq_seq[i])
+        struct eq_settings settings = eq_read(&g_params.out_eq[i]);
+        if (eq_changed(settings, g_sink_eq_settings[i]))
         {
-            int type = atomic_load(&g_params.out_eq[i].type);
-            float f = (float)atomic_load(&g_params.out_eq[i].freq_hz);
-            float q = atomic_load(&g_params.out_eq[i].q_mille) * 0.001f;
-            float gd = atomic_load(&g_params.out_eq[i].gain_centidb) * 0.01f;
-            if (q < 0.1f)
-                q = 0.1f;
-            biquad_design(&g_sink_eq_l[i], type, (float)SAMPLE_RATE, f, q, gd);
-            biquad_design(&g_sink_eq_r[i], type, (float)SAMPLE_RATE, f, q, gd);
-            g_sink_eq_seq[i] = h;
+            eq_design(&g_sink_eq_l[i], settings);
+            eq_design(&g_sink_eq_r[i], settings);
+            g_sink_eq_settings[i] = settings;
         }
     }
 }
@@ -2146,8 +2160,8 @@ static void cb_sink_in_process(void *userdata)
     int out_atn_target_hz = atomic_load(&g_params.out_voice_autotune_target_hz);
     int out_bitcrush_bits = atomic_load(&g_params.out_bitcrush_bits);
     int out_bitcrush_ds = atomic_load(&g_params.out_bitcrush_downsample);
-    int out_voice_hpf_hz = atomic_load(&g_params.out_voice_bpf_hpf_hz);
-    int out_voice_lpf_hz = atomic_load(&g_params.out_voice_bpf_lpf_hz);
+    int out_voice_hpf_hz = g_sink_rt.voice_hpf_designed_hz;
+    int out_voice_lpf_hz = g_sink_rt.voice_lpf_designed_hz;
     int out_stutter_hz = atomic_load(&g_params.out_voice_stutter_hz);
     int out_stutter_duty = atomic_load(&g_params.out_voice_stutter_duty_mille);
 
@@ -2410,9 +2424,11 @@ static const struct pw_stream_events sink_out_stream_events = {
 
 /* Create (or recreate) the capture stream and connect it. When target is
  * non-NULL and not "default", PW_KEY_TARGET_OBJECT pins the stream to that
- * source and NODE_DONT_RECONNECT prevents WirePlumber from overriding it.
+ * source. DONT_FALLBACK prevents routing into our own virtual devices;
+ * DONT_MOVE keeps metadata from moving it. The controller retries failed
+ * streams after target hotplug.
  * For "System default" (NULL / "" / "default") WirePlumber picks the default
- * source and NODE_DONT_RECONNECT stays false so it tracks default changes.
+ * source and normal automatic routing tracks default changes.
  *
  * Baking PW_KEY_TARGET_OBJECT into the initial properties (rather than
  * updating them on a live stream) guarantees WirePlumber sees the target on
@@ -2429,7 +2445,8 @@ static int create_capture_stream(struct app *app, const char *target)
         PW_KEY_NODE_NAME, "ghelper-audio-capture",
         PW_KEY_NODE_DESCRIPTION, "G-Helper Audio capture",
         PW_KEY_NODE_AUTOCONNECT, "true",
-        PW_KEY_NODE_DONT_RECONNECT, has_target ? "true" : "false",
+        "node.dont-fallback", has_target ? "true" : "false",
+        "node.dont-move", has_target ? "true" : "false",
         NULL);
 
     if (has_target)
@@ -2502,7 +2519,8 @@ static int create_monitor_stream(struct app *app, const char *target)
         PW_KEY_NODE_NAME, "ghelper-audio-monitor",
         PW_KEY_NODE_DESCRIPTION, "Dusky Audio monitor",
         PW_KEY_NODE_AUTOCONNECT, "true",
-        PW_KEY_NODE_DONT_RECONNECT, has_target ? "true" : "false",
+        "node.dont-fallback", has_target ? "true" : "false",
+        "node.dont-move", has_target ? "true" : "false",
         "node.link-group", "ghelper-sink-group",
         NULL);
 
@@ -2576,10 +2594,10 @@ static void apply_pending_monitor(struct app *app)
 
 /* Create (or recreate) the sink output stream targeting a specific physical
  * output device. When target is non-NULL and not "default", PW_KEY_TARGET_OBJECT
- * pins the stream to that device and NODE_DONT_RECONNECT prevents WirePlumber
- * from overriding it. For "default" (NULL / "" / "default") WirePlumber picks
- * the default sink. Both cases share the same link-group as sink_in to prevent
- * feedback loops. */
+ * pins the stream to that device. DONT_FALLBACK and DONT_MOVE preserve
+ * that choice; the controller retries failed streams after target hotplug.
+ * For "default" (NULL / "" / "default") WirePlumber picks the default sink.
+ * Both cases share the same link-group as sink_in to prevent feedback loops. */
 static int create_sink_out_stream(struct app *app, const char *target)
 {
     int has_target = (target && target[0] && strcmp(target, "default") != 0);
@@ -2591,7 +2609,8 @@ static int create_sink_out_stream(struct app *app, const char *target)
         PW_KEY_NODE_NAME, "ghelper-audio-sink-out",
         PW_KEY_NODE_DESCRIPTION, "Dusky Audio playback",
         PW_KEY_NODE_AUTOCONNECT, "true",
-        PW_KEY_NODE_DONT_RECONNECT, has_target ? "true" : "false",
+        "node.dont-fallback", has_target ? "true" : "false",
+        "node.dont-move", has_target ? "true" : "false",
         /* Must share link-group with sink_in so WirePlumber routes
          * to real hardware, not back into our own virtual sink. */
         "node.link-group", "ghelper-sink-group",
@@ -2766,7 +2785,9 @@ static void parse_cmd(char *line)
          * device. Same deferred-apply pattern as SRC for input capture. */
         const char *val = line + 9;
         while (*val == ' ') val++;
-        if (strcmp(g_app.current_sink, val) == 0 && !atomic_load(&g_app.sink_tgt_pending))
+        if (strcmp(g_app.current_sink, val) == 0 && !atomic_load(&g_app.sink_tgt_pending) &&
+            g_app.sink_out_stream &&
+            pw_stream_get_state(g_app.sink_out_stream, NULL) >= PW_STREAM_STATE_CONNECTING)
             return;
         snprintf(g_app.sink_pending_target, sizeof(g_app.sink_pending_target),
                  "%s", val);
@@ -3008,7 +3029,9 @@ static void parse_cmd(char *line)
         const char *t = line + 4;
         while (*t == ' ')
             t++;
-        if (strcmp(g_app.current_source, t) == 0 && !atomic_load(&g_app.src_pending))
+        if (strcmp(g_app.current_source, t) == 0 && !atomic_load(&g_app.src_pending) &&
+            g_app.in_stream &&
+            pw_stream_get_state(g_app.in_stream, NULL) >= PW_STREAM_STATE_CONNECTING)
             return;
         size_t n = strlen(t);
         if (n >= sizeof(g_app.src_pending_target))
@@ -3220,60 +3243,62 @@ static void parse_cmd(char *line)
             v = 1000;
         atomic_store(&g_params.voice_autotune_target_hz, v);
     }
-    else if (!strncmp(line, "QUIT", 4))
+    else if (!strcmp(line, "QUIT"))
     {
         fprintf(stderr, "[ghelper-audio] received QUIT\n");
-        /* main loop quit happens in signal/eof path */
-        kill(getpid(), SIGTERM);
+        pw_main_loop_quit(g_app.loop);
     }
 }
 
 static char stdin_buf[4096];
-static int stdin_len = 0;
+static size_t stdin_len;
+static bool stdin_discarding;
 
 static void on_stdin(void *userdata, int fd, uint32_t mask)
 {
     struct app *app = userdata;
-    if (mask & (SPA_IO_HUP | SPA_IO_ERR))
+    if (mask & SPA_IO_IN)
     {
+        char input[4096];
+        ssize_t n = read(fd, input, sizeof(input));
+        if (n < 0)
+        {
+            if (errno == EINTR || errno == EAGAIN)
+                return;
+            pw_main_loop_quit(app->loop);
+            return;
+        }
+        if (n == 0)
+        {
+            pw_main_loop_quit(app->loop);
+            return;
+        }
+        for (ssize_t i = 0; i < n; i++)
+        {
+            if (input[i] == '\n')
+            {
+                if (!stdin_discarding)
+                {
+                    stdin_buf[stdin_len] = '\0';
+                    parse_cmd(stdin_buf);
+                }
+                stdin_len = 0;
+                stdin_discarding = false;
+            }
+            else if (!stdin_discarding)
+            {
+                if (stdin_len == sizeof(stdin_buf) - 1)
+                {
+                    stdin_discarding = true;
+                    fprintf(stderr, "[ghelper-audio] discarded oversized stdin line\n");
+                }
+                else
+                    stdin_buf[stdin_len++] = input[i];
+            }
+        }
+    }
+    else if (mask & (SPA_IO_HUP | SPA_IO_ERR))
         pw_main_loop_quit(app->loop);
-        return;
-    }
-    if (!(mask & SPA_IO_IN))
-        return;
-
-    /* If the buffer is full with no newline in sight we are looking at an
-     * oversized garbage line. Drop it and resync - the old code called
-     * read() with count 0 here, mistook the immediate return of 0 for EOF,
-     * and tore the whole engine down mid-session. */
-    if (stdin_len >= (int)sizeof(stdin_buf) - 1)
-    {
-        stdin_len = 0;
-        stdin_buf[0] = '\0';
-        fprintf(stderr, "[ghelper-audio] discarded oversized stdin line\n");
-        return;
-    }
-
-    int n = (int)read(fd, stdin_buf + stdin_len, sizeof(stdin_buf) - 1 - stdin_len);
-    if (n <= 0)
-    {
-        pw_main_loop_quit(app->loop);
-        return;
-    }
-    stdin_len += n;
-    stdin_buf[stdin_len] = '\0';
-
-    for (;;)
-    {
-        char *nl = memchr(stdin_buf, '\n', stdin_len);
-        if (!nl)
-            break;
-        *nl = '\0';
-        parse_cmd(stdin_buf);
-        int consumed = (int)(nl - stdin_buf) + 1;
-        memmove(stdin_buf, stdin_buf + consumed, stdin_len - consumed);
-        stdin_len -= consumed;
-    }
 }
 
 /* ---------------------------------------------------------------------------
@@ -3304,8 +3329,6 @@ int main(int argc, char *argv[])
         return 1;
     }
     /* Pre-design EQ defaults */
-    for (int i = 0; i < GHA_EQ_BANDS; i++)
-        g_rt.eq_seq[i] = -1;
     rt_refresh_eq();
     /* Pre-RNNoise rumble filter: 70 Hz high-pass with Butterworth Q. Q
      * is intentionally low (0.707) so the slope is gentle and male voice
@@ -3358,8 +3381,6 @@ int main(int argc, char *argv[])
     g_sink_ch_r.hangover_left = 0;
 
     /* ---- Output Playback DSP RT State Initialization ---- */
-    for (int i = 0; i < GHA_EQ_BANDS; i++)
-        g_sink_eq_seq[i] = -1;
     rt_refresh_sink_eq();
 
     g_sink_rt.autotune_ratio_smooth = 1.0f;
@@ -3527,7 +3548,7 @@ int main(int argc, char *argv[])
     /* 60 Hz timer to emit audio frames on stdout */
     struct timespec interval = {0, 16000000}; /* 16 ms */
     app->timer = pw_loop_add_timer(pw_main_loop_get_loop(app->loop),
-                                   (void (*)(void *, uint64_t))on_timer, app);
+                                   on_timer, app);
     if (!app->timer)
     {
         fprintf(stderr, "PipeWire timer creation failed\n");

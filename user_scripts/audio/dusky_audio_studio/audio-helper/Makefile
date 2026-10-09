@@ -5,9 +5,10 @@ CC      ?= cc
 STRIP   ?= strip --strip-all
 
 CFLAGS  ?= -O2 -pipe -fno-plt -fexceptions -fstack-clash-protection -fcf-protection -fno-strict-aliasing -flto=auto -Wall -Wextra
-CFLAGS  += -I.
-# Apply local CPU tuning even when an inherited CFLAGS selects a generic target.
-HOST_CFLAGS ?= -march=native -mtune=native
+CFLAGS  += -std=gnu23 -I.
+# Keep the default binary portable for ISO distribution. Local installations
+# may opt in with HOST_CFLAGS="-march=native -mtune=native".
+HOST_CFLAGS ?=
 
 PW_CFLAGS = $(shell pkg-config --cflags libpipewire-0.3 rnnoise)
 PW_LIBS   = $(shell pkg-config --libs libpipewire-0.3 rnnoise)
@@ -21,6 +22,8 @@ endif
 
 LDLIBS  += $(PW_LIBS) -lm -lpthread
 LDFLAGS += -Wl,-O1 -Wl,--sort-common -Wl,--as-needed -Wl,-z,relro -Wl,-z,now -Wl,-z,pack-relative-relocs $(MOLD_FLAG) -flto=auto
+
+.DELETE_ON_ERROR:
 
 all: dusky_audio_dsp
 
