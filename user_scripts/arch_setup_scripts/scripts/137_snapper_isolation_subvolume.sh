@@ -1267,7 +1267,8 @@ EOF
     fi
 
     rm -f "$tmp_service" "$tmp_timer"
-    remove_array_value ACTIVE_TEMP_FILES "$tmp_service" "$tmp_timer"
+    remove_array_value ACTIVE_TEMP_FILES "$tmp_service"
+    remove_array_value ACTIVE_TEMP_FILES "$tmp_timer"
 
     sudo systemd-analyze verify --man=no "$service_file" "$timer_file" || fatal "Generated snapshot units failed verification."
     sudo systemctl daemon-reload
