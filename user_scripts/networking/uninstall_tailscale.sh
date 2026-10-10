@@ -2,16 +2,16 @@
 # -----------------------------------------------------------------------------
 # Name:        Arch/Hyprland Tailscale Teardown
 # Description: Disables, Resets, or Uninstalls Tailscale.
-#              (Companion script to remote_setup.sh)
-# Version:     1.1.0
+#              (Companion to 01_tailscale_setup.sh)
+# Version:     1.2.1
 # -----------------------------------------------------------------------------
 
 # --- Strict Mode & Safety ---
 set -euo pipefail
-shopt -s inherit_errexit 2>/dev/null || true
+shopt -s inherit_errexit
 
 # --- Constants ---
-declare -r LOCKFILE="/var/lock/01_tailscale_setup.sh.lock"
+declare -r LOCKFILE="/run/lock/dusky-tailscale.lock"
 declare -r NM_CONF="/etc/NetworkManager/conf.d/96-tailscale.conf"
 
 # --- Colors ---
@@ -35,7 +35,7 @@ die() {
 
 cleanup() {
     local exit_code=$?
-    if (( exit_code != 0 )); then
+    if (( exit_code != 0 && exit_code != 130 && exit_code != 143 )); then
         printf "\n%s[FATAL]%s Script terminated with error code %d.\n" "$R" "$W" "$exit_code" >&2
     fi
 }
@@ -46,31 +46,41 @@ trap 'exit 143' TERM
 cmd_exists() { command -v "$1" &>/dev/null; }
 pkg_installed() { pacman -Q "$1" &>/dev/null; }
 
-# --- Pre-Flight Checks ---
-if (( BASH_VERSINFO[0] < 5 )); then die "Bash 5.0+ required."; fi
+remove_firewalld_interface() {
+    local result
+    if "$@" --zone=trusted --query-interface=tailscale0 >/dev/null; then
+        "$@" --zone=trusted --remove-interface=tailscale0 >/dev/null
+    else
+        result=$?
+        (( result == 1 )) || die "Could not inspect the Tailscale firewalld assignment."
+    fi
+}
 
+# --- Pre-Flight Checks ---
 if (( EUID != 0 )); then
     log_info "Escalating permissions..."
-    script_path=$(realpath "${BASH_SOURCE[0]}")
+    script_path=$(realpath -- "${BASH_SOURCE[0]}")
     exec sudo --preserve-env=TERM bash "$script_path" "$@"
 fi
 
+[[ -f /etc/arch-release ]] || die "This script targets Arch Linux."
+
 exec 9> "$LOCKFILE"
-flock -n 9 || die "Another Tailscale setup or teardown is running."
+flock -n 9 || die "Another networking setup or teardown is running."
 
 # --- Logic ---
 
-log_step "Tailscale Teardown & Revert"
+log_step "Tailscale Teardown"
 printf "This script can disable Tailscale temporarily, reset it, or remove it completely.\n\n"
 
 printf "%sChoose an option:%s\n" "$C" "$W"
 printf "  %s[1]%s Disable (Turn off VPN, keep login & install)\n" "$G" "$W"
-printf "  %s[2]%s Reset Identity (Keep install, force NEW IP & QR code on next setup)\n" "$B" "$W"
-printf "  %s[3]%s Full Uninstall (Remove package, configs & all data)\n" "$R" "$W"
+printf "  %s[2]%s Reset Identity (Keep install, re-authenticate on next setup)\n" "$B" "$W"
+printf "  %s[3]%s Full Uninstall (Remove package and standard local Tailscale state)\n" "$R" "$W"
 printf "  %s[4]%s Cancel\n\n" "$Y" "$W"
 
 printf "Select [1-4]: "
-read -r choice
+read -r choice || { log_info "Cancelled (end of input)."; exit 0; }
 
 case "$choice" in
     1) MODE="DISABLE" ;;
@@ -82,21 +92,26 @@ esac
 # --- Action: Stop Service ---
 log_step "Stopping Services"
 
-if systemctl is-active --quiet tailscaled; then
-    log_info "Bringing down tailscale interface..."
-    # Attempt polite logout if we are resetting/uninstalling to clear coordination server
-    if [[ "$MODE" != "DISABLE" ]]; then
-        timeout 5 tailscale logout 2>/dev/null || true
+unit_state=$(systemctl show tailscaled.service --property=LoadState --value)
+if [[ "$unit_state" != "not-found" ]]; then
+    active_state=$(systemctl show tailscaled.service --property=ActiveState --value)
+    if [[ "$active_state" == active ]]; then
+        if [[ "$MODE" == DISABLE ]]; then
+            timeout --kill-after=2s 5s tailscale down --accept-risk=lose-ssh || log_warn "Could not disconnect via CLI; stopping the daemon."
+        else
+            # Logout already brings the connection down; no second down call is needed.
+            timeout --kill-after=2s 5s tailscale logout || log_warn "Logout failed; local state will still be removed."
+        fi
     fi
-    
-    tailscale down --accept-risk=lose-ssh 2>/dev/null || true
-    
-else
-    log_info "Tailscale service is not running."
-fi
-if pkg_installed tailscale; then
     systemctl disable --now tailscaled
+    active_state=$(systemctl show tailscaled.service --property=ActiveState --value)
+    case "$active_state" in
+        inactive|failed) ;;
+        *) die "Tailscaled did not stop ($active_state); refusing to delete its state." ;;
+    esac
     log_succ "Service stopped and disabled."
+else
+    log_info "Tailscale service is not installed."
 fi
 
 if [[ "$MODE" == "DISABLE" ]]; then
@@ -122,23 +137,38 @@ fi
 log_info "Cleaning network configs..."
 
 # Firewall
-if cmd_exists firewall-cmd && systemctl is-active --quiet firewalld; then
-    firewall-cmd --zone=trusted --remove-interface=tailscale0 >/dev/null 2>&1 || true
-    firewall-cmd --permanent --zone=trusted --remove-interface=tailscale0 >/dev/null 2>&1 || true
-elif cmd_exists ufw && systemctl is-active --quiet ufw; then
-    ufw delete allow in on tailscale0 >/dev/null 2>&1 || true
+if cmd_exists firewall-cmd; then
+    if systemctl is-active --quiet firewalld; then
+        remove_firewalld_interface firewall-cmd
+        remove_firewalld_interface firewall-cmd --permanent
+    elif cmd_exists firewall-offline-cmd; then
+        remove_firewalld_interface firewall-offline-cmd
+    else
+        die "Cannot remove permanent firewalld settings: firewall-offline-cmd is missing."
+    fi
+fi
+if cmd_exists ufw; then
+    ufw delete allow in on tailscale0 || die "Could not remove the Tailscale UFW rule."
 fi
 
 # NetworkManager
-rm -f "$NM_CONF"
-if systemctl is-active --quiet NetworkManager; then
-    systemctl reload NetworkManager || systemctl restart NetworkManager
+if [[ -f "$NM_CONF" ]]; then
+    nm_config=$(< "$NM_CONF")
+    case "$nm_config" in
+        $'[keyfile]\nunmanaged-devices+=interface-name:tailscale0'|$'[keyfile]\nunmanaged-devices=interface-name:tailscale0')
+            rm -f -- "$NM_CONF"
+            if cmd_exists nmcli && systemctl is-active --quiet NetworkManager; then
+                nmcli general reload conf
+            fi
+            ;;
+        *) log_warn "Retaining edited NetworkManager configuration: $NM_CONF" ;;
+    esac
 fi
-log_succ "Network configs cleared."
+log_info "System resolver configuration and configuration backups are retained."
 
 if [[ "$MODE" == "RESET" ]]; then
     printf "\n%s[SUCCESS]%s Tailscale identity has been reset.\n" "$G" "$W"
-    printf "You can now run the Setup Script to generate a NEW IP and re-authenticate.\n"
+    printf "You can now run the Setup Script to re-authenticate. The assigned IP is determined by Tailscale.\n"
     exit 0
 fi
 
@@ -153,6 +183,13 @@ else
     log_warn "Tailscale package not found (already removed?)."
 fi
 
-rm -f /etc/modules-load.d/99-tailscale-uinput.conf
+legacy_module_conf=/etc/modules-load.d/99-tailscale-uinput.conf
+if [[ -f "$legacy_module_conf" ]]; then
+    if [[ "$(< "$legacy_module_conf")" == uinput ]]; then
+        rm -f -- "$legacy_module_conf"
+    else
+        log_warn "Retaining edited module configuration: $legacy_module_conf"
+    fi
+fi
 
-printf "\n%s[SUCCESS]%s Tailscale has been fully removed.\n" "$G" "$W"
+printf "\n%s[SUCCESS]%s Tailscale package and standard local state have been removed.\n" "$G" "$W"
