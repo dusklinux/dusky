@@ -127,16 +127,8 @@ fmt_h() {
 fmt_v() {
     local -n _out=$1
     local s="${2:--}"
-    local len="${#s}"
-    if (( len >= 3 )); then
-        _out="${s:0:3}"
-    elif (( len == 2 )); then
-        _out=" ${s}"
-    elif (( len == 1 )); then
-        _out=" ${s} "
-    else
-        _out="   "
-    fi
+    # Waybar centers each line; manual spaces shift two-character readings.
+    _out="${s:0:3}"
 }
 if [[ "$CLASS" == "network-disconnected" ]]; then
     TT="Disconnected"
