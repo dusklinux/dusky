@@ -157,7 +157,7 @@ tooltip label {
 #custom-distro {
 	background-color: @glass_apex;
 	color: @background;
-	padding: 0 5px 0 5px;
+	padding: 0 4px 0 2px;
 }
 
 /*-----------------
