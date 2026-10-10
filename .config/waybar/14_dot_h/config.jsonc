@@ -96,8 +96,8 @@
     "custom/settings": {
         "format": "󰌽",
         "tooltip": true,
-        "tooltip-format": "Control Center",
-        "on-click": "python3 ~/user_scripts/dusky_system/control_center/dusky_control_center.py",
+        "tooltip-format": "LMB: Dusky Center\nRMB: Dusky Tray",
+        "on-click": "\"$HOME/.local/bin/dusky-center\"",
         "on-click-right": "\"$HOME/.local/bin/dusky-tray\""
     },
 

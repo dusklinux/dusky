@@ -225,9 +225,9 @@
 
     "custom/power": {
         "format": "󰐥",
-        "tooltip-format": "Power Menu\nRight-click: Control Center",
+        "tooltip-format": "Power Menu\nLMB: Power Menu\nRMB: Dusky Center",
         "on-click": "dusky-run ~/user_scripts/wlogout/wlogout_scale.sh",
-        "on-click-right": "dusky-run python3 ~/user_scripts/dusky_system/control_center/dusky_control_center.py"
+        "on-click-right": "\"$HOME/.local/bin/dusky-center\""
     },
 
     "custom/inhibit-suspend": {

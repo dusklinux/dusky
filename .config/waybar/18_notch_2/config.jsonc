@@ -230,8 +230,9 @@
 
         "custom/arch": {
             "format": "󰌽",
-            "on-click": "gdbus call --session --dest com.github.dusky.controlcenter --object-path /com/github/dusky/controlcenter --method org.freedesktop.Application.Activate '{}'",
-            "tooltip": false
+            "on-click": "\"$HOME/.local/bin/dusky-center\"",
+            "tooltip": true,
+            "tooltip-format": "LMB: Dusky Center"
         },
 
         "memory": {

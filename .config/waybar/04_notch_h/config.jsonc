@@ -17,9 +17,9 @@
 
         "custom/launcher": {
             "format": "󰌽",
-            "on-click": "python3 ~/user_scripts/dusky_system/control_center/dusky_control_center.py",
+            "on-click": "\"$HOME/.local/bin/dusky-center\"",
             "on-click-right": "\"$HOME/.local/bin/dusky-tray\"",
-            "tooltip-format": "Control Center"
+            "tooltip-format": "LMB: Dusky Center\nRMB: Dusky Tray"
         },
 
         "custom/cava": {

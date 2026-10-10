@@ -135,10 +135,10 @@
     // ===================================================================
     "custom/launcher": {
         "format": "󰌽",
-        "tooltip-format": "App Launcher\n\nLMB: Control Center\nMMB: Dusky Tray\nRMB: Application Launcher",
+        "tooltip-format": "LMB: Dusky Center\nMMB: Dusky Tray\nRMB: Application Launcher",
         "on-click-right": "dusky-run rofi -show drun",
         "on-click-middle": "\"$HOME/.local/bin/dusky-tray\"",
-        "on-click": "python3 ~/user_scripts/dusky_system/control_center/dusky_control_center.py"
+        "on-click": "\"$HOME/.local/bin/dusky-center\""
     },
 
     "hyprland/workspaces": {

@@ -145,8 +145,8 @@
     "custom/launcher": {
         "format": "󰌽 ",
         "tooltip": true,
-        "tooltip-format": "Control Center",
-        "on-click": "gdbus call --session --dest com.github.dusky.controlcenter --object-path /com/github/dusky/controlcenter --method org.freedesktop.Application.Activate '{}'",
+        "tooltip-format": "LMB: Dusky Center\nRMB: Dusky Tray",
+        "on-click": "\"$HOME/.local/bin/dusky-center\"",
         "on-click-right": "\"$HOME/.local/bin/dusky-tray\""
     },
 
