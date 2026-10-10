@@ -1,119 +1,94 @@
 #!/usr/bin/env bash
-# Captures a screen region and searches it with Google Lens.
-# Optimized for UWSM (Universal Wayland Session Manager) environments.
-
-
-# --- [ CONFIGURATION ] --------------------------------------------------------
-# true  = Upload to uguu.se (public URL, no manual paste)
-# false = Copy to clipboard + open Lens (private, requires Ctrl+V)
-readonly USE_UPLOAD_SERVICE="true"
-
-# --- [ STRICT MODE ] ----------------------------------------------------------
+# Capture a Wayland screen region and search it with Google Lens.
 set -euo pipefail
 
-# --- [ DEPENDENCY MANAGER ] ---------------------------------------------------
-
-ensure_dependency() {
-    local cmd="$1"
-    local package="$2"
-
-    if command -v "$cmd" &>/dev/null; then
-        return 0
-    fi
-
-    printf '📦 Dependency "%s" missing. Installing package "%s"...\n' "$cmd" "$package"
-
-    if sudo pacman -S --needed --noconfirm "$package"; then
-        printf '✅ Installed %s.\n' "$package"
-    else
-        printf '❌ Failed to install %s. Check sudo privileges.\n' "$package" >&2
-        exit 1
-    fi
-}
-
-# --- Core Dependencies ---
-ensure_dependency "grim"        "grim"
-ensure_dependency "slurp"       "slurp"
-ensure_dependency "xdg-open"    "xdg-utils"
-ensure_dependency "notify-send" "libnotify"
-
-# --- Mode-Specific Dependencies ---
-if [[ "${USE_UPLOAD_SERVICE}" == "true" ]]; then
-    ensure_dependency "curl" "curl"
-    ensure_dependency "jq"   "jq"
-else
-    ensure_dependency "wl-copy" "wl-clipboard"
-fi
-
-# --- [ HELPER FUNCTIONS ] -----------------------------------------------------
+# true: upload to uguu.se; false: copy locally and paste into Lens with Ctrl+V.
+readonly USE_UPLOAD_SERVICE="${USE_UPLOAD_SERVICE:-true}"
 
 notify() {
-    notify-send -a "Google Lens" "$1" "$2"
-}
-
-open_url() {
-    dusky-run xdg-open "$1" &
-    disown
+    # A missing notification daemon must not interrupt capture or browser launch.
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send -a "Google Lens" "$1" "$2" || true
+    fi
 }
 
 die() {
-    printf '❌ %s\n' "$1" >&2
+    printf 'Google Lens: %s\n' "$1" >&2
     notify "Error" "$1"
     exit 1
 }
 
-# --- [ MAIN LOGIC ] -----------------------------------------------------------
+open_url() {
+    # xdg-open may remain attached to the browser; report failures asynchronously.
+    (
+        dusky-run xdg-open "$1" || die "Failed to open Google Lens in the browser."
+    ) </dev/null &
+    disown "$!" || true
+}
 
-printf '📷 Select region...\n'
+case "$USE_UPLOAD_SERVICE" in
+    true) dependencies=(grim slurp dusky-run xdg-open mktemp rm curl jq) ;;
+    false) dependencies=(grim slurp dusky-run xdg-open mktemp rm wl-copy) ;;
+    *) die "USE_UPLOAD_SERVICE must be true or false." ;;
+esac
 
-# 1. Capture Geometry
-if ! geometry=$(slurp 2>/dev/null); then
-    printf '🚫 Selection cancelled.\n'
+# Dependencies belong in the ISO/install process, not an interactive keybind.
+for dependency in "${dependencies[@]}"; do
+    command -v "$dependency" >/dev/null 2>&1 || die "Missing command: $dependency"
+done
+
+tmp_file=$(mktemp --tmpdir lens-XXXXXXXXXX.png) || die "Failed to create a temporary image."
+trap 'rm -f -- "$tmp_file"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
+printf 'Select a screen region...\n'
+# Reuse the temporary file for diagnostics until capture overwrites it.
+selection_status=0
+geometry=$(slurp -f '%x,%y %wx%h' </dev/null 2> "$tmp_file") || selection_status=$?
+selection_error=$(< "$tmp_file")
+# slurp 1.5 reports both cancellation and errors with status 1.
+if [[ $selection_status == 1 && $selection_error == 'selection cancelled' ]]; then
+    printf 'Selection cancelled.\n'
     exit 0
 fi
+[[ -z $selection_error ]] || printf '%s\n' "$selection_error" >&2
+(( selection_status == 0 )) || die "Region selection failed (status $selection_status)."
 
-# 2. Validate Geometry (Security & Sanity Check)
-if [[ ! "${geometry}" =~ ^[0-9]+,[0-9]+\ [0-9]+x[0-9]+$ ]]; then
+# Output coordinates may be negative; dimensions must be positive.
+if [[ ! $geometry =~ ^-?[0-9]+,-?[0-9]+\ 0*[1-9][0-9]*x0*[1-9][0-9]*$ ]]; then
     die "Invalid selection geometry received."
 fi
 
-# -----------------------------------------------------------------------------
-# UPLOAD MODE: Screenshot → uguu.se → Google Lens via URL
-# -----------------------------------------------------------------------------
-if [[ "${USE_UPLOAD_SERVICE}" == "true" ]]; then
+# Capture first so a failed screenshot cannot replace the clipboard contents.
+grim -t png -g "$geometry" "$tmp_file" || die "Failed to capture the selected region."
+[[ -s $tmp_file ]] || die "The screenshot is empty."
 
-    tmp_file=$(mktemp /tmp/lens-XXXXXX.png)
-    trap 'rm -f "${tmp_file}"' EXIT
-
-    grim -g "${geometry}" "${tmp_file}"
-    notify "Uploading..." "Sending image to secure host"
-
-    # curl flags: -s (silent), -S (show error on fail), -f (fail fast on HTTP error)
-    if ! response=$(curl -sSf -F "files[]=@${tmp_file}" 'https://uguu.se/upload'); then
-        die "Upload connection failed."
+if [[ $USE_UPLOAD_SERVICE == true ]]; then
+    notify "Uploading..." "Sending the screenshot to uguu.se."
+    # Read the image from stdin so TMPDIR names cannot affect multipart syntax.
+    if ! response=$(curl --silent --show-error --fail \
+        --connect-timeout 10 --max-time 60 \
+        --form 'files[]=@-;filename=screenshot.png;type=image/png' \
+        'https://uguu.se/upload' < "$tmp_file"); then
+        die "Image upload failed."
     fi
 
-    # Optimization: Use Bash here-string (<<<) instead of piping echo
-    url=$(jq -r '.files[0].url // empty' <<< "${response}")
-
-    if [[ -z "${url}" ]]; then
-        printf 'Debug: Raw response was: %s\n' "${response}" >&2
-        die "Upload succeeded but URL parsing failed."
+    if ! encoded_url=$(jq --slurp --exit-status --raw-output '
+        select(length == 1) | .[0]
+        | select(.success == true)
+        | .files[0].url
+        | select(type == "string")
+        | select(test("^https?://[^/?#[:space:]]+([/?#][^[:space:]]*)?$"))
+        | @uri
+    ' <<< "$response"); then
+        die "The upload service returned an invalid or unsuccessful response."
     fi
 
-    open_url "https://lens.google.com/uploadbyurl?url=${url}"
-
-# -----------------------------------------------------------------------------
-# CLIPBOARD MODE: Screenshot → Clipboard → Manual Paste
-# -----------------------------------------------------------------------------
+    open_url "https://lens.google.com/uploadbyurl?url=${encoded_url}"
 else
-
-    # Pipeline: grim -> stdout -> wl-copy
-    if grim -g "${geometry}" - | wl-copy; then
-        notify "Ready" "Screenshot copied. Paste (Ctrl+V) in browser."
-        open_url "https://lens.google.com/"
-    else
-        die "Failed to capture or copy to clipboard."
-    fi
-
+    wl-copy --type image/png < "$tmp_file" || die "Failed to copy the screenshot."
+    notify "Ready" "Screenshot copied. Paste (Ctrl+V) in the browser."
+    open_url 'https://lens.google.com/'
 fi
