@@ -27,7 +27,7 @@ ambiguous, because the explorer and Markdown expose separate width settings.
 
 ## Read and write behavior
 
-This is a focused engine for the audited DuskyNVIM layout, not a general Lua
+This is a focused engine for the audited Dusky Nvim layout, not a general Lua
 interpreter. It tokenizes short scalar literals and named table fields, ignoring
 comments and long strings. It does not execute configuration functions. Missing,
 complex, or duplicate bindings cannot be rewritten. Arbitrary Lua expressions,
@@ -62,7 +62,9 @@ native diff folding. Markdown's limit is independent and measured in MiB.
 Actions explicitly set `NVIM_APPNAME=nvim`, retain XDG paths, and suspend the TUI
 while Neovim runs. Quit Neovim to return to the TUI:
 
-- Plugin update, manager, and startup profile use the native Lazy interface.
+- Plugin update, manager, and startup profile use Lazy's public Lua API and native
+  interface. The `:Lazy` command is registered after interactive startup commands;
+  using it with `-c` can resolve to the `:LazyDev` stub and fail instead.
 - Language tools use Mason's native installation/update interface.
 - Parser update uses `nvim-treesitter.update(...):wait(300000)` and reports success
   or failure inside Neovim; it updates installed parsers, not a new parser list.

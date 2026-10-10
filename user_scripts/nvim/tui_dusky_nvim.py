@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""DuskyNVIM configurator for the deployed configuration, never its source copy."""
+"""Dusky Nvim configurator for the deployed configuration, never its source copy."""
 import os
 import sys
 import shlex
@@ -15,7 +15,7 @@ from python.frontend.core_types import ConfigItem
 _CONFIG = Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config') / 'nvim'
 ENGINE_TYPE = 'neovim'
 TARGET_FILE = str(_CONFIG / 'lua/config/options.lua')
-APP_TITLE = 'DuskyNVIM'
+APP_TITLE = 'Dusky Nvim'
 DEFAULT_MODE = 'auto'
 THEME_FILE = '~/.config/matugen/generated/dusky_tui.json'
 ENABLE_USER_PRESETS = True
@@ -80,7 +80,7 @@ SCHEMA = {
         option('Spell checking', 'spell', True, 'Default spelling preference. Disabled temporarily for files above the large-file threshold.', group='Spelling'),
         option('Spelling languages', 'spelllang', 'en_us', 'Comma-separated installed spell dictionaries. Additional dictionaries may require provisioning.', group='Spelling', options=['en_us', 'en_gb', 'en_us,en_gb']),
         option('Persistent undo', 'undofile', True, 'Save undo history between sessions in Neovim’s state directory.', group='Files'),
-        option('Reload disk changes', 'autoread', True, 'Reload externally changed files when the buffer has no unsaved edits; DuskyNVIM checks on focus return.', group='Files'),
+        option('Reload disk changes', 'autoread', True, 'Reload externally changed files when the buffer has no unsaved edits; Dusky Nvim checks on focus return.', group='Files'),
         option('Swap files', 'swapfile', False, 'Write swap files for recovery during editing.', group='Files'),
         option('Backup before write', 'writebackup', False, 'Create a temporary backup while replacing a file.', group='Files'),
         option('Keep backup files', 'backup', False, 'Retain backup files after successful writes.', group='Files'),
@@ -100,7 +100,7 @@ SCHEMA = {
     3: [
         option('Split below', 'splitbelow', True, 'Open horizontal splits below the current window.', group='Splits'),
         option('Split to the right', 'splitright', True, 'Open vertical splits to the right of the current window.', group='Splits'),
-        option('Enable folding', 'foldenable', True, 'Enable fold display. DuskyNVIM selects Tree-sitter, manual, or native diff folding per buffer/window.', group='Folds'),
+        option('Enable folding', 'foldenable', True, 'Enable fold display. Dusky Nvim selects Tree-sitter, manual, or native diff folding per buffer/window.', group='Folds'),
         option('Initial fold level', 'foldlevelstart', 99, 'Fold level when editing a new buffer. A high value opens all ordinary folds.', group='Folds', min_val=0, max_val=99, step=1),
         option('Default fold level', 'foldlevel', 99, 'Default nesting depth visible before folds close. Initial fold level can override it when opening files.', group='Folds', min_val=0, max_val=99, step=1),
         option('Floating transparency', 'winblend', 0, 'Default transparency percentage for floating windows; plugins may override it.', group='Appearance', min_val=0, max_val=100, step=5),
@@ -119,11 +119,13 @@ SCHEMA = {
         feature('Code right padding', 'right_pad', 'opts/code', 'lua/plugins/render-markdown.lua', 4, 'Extra columns on the right of rendered code blocks.', group='Markdown', min_val=0, max_val=16, step=1),
     ],
     5: [
-        action('Update plugins', 'update_plugins', nvim_command('-c', 'Lazy update'), 'Update installed plugins using native Lazy UI. This updates the deployed lazy-lock.json; it does not copy the lockfile back to the maintained source.', group='Plugins'),
-        action('Plugin manager', 'plugins', nvim_command('-c', 'Lazy'), 'Inspect installed plugins and choose install, sync, update, or restore operations in the native interface.', group='Plugins'),
-        action('Plugin startup profile', 'profile', nvim_command('-c', 'Lazy profile'), 'Inspect native plugin loading timings. Open a representative file inside Neovim to include its demand-loaded features.', group='Plugins'),
+        # :Lazy is registered on VeryLazy, after interactive startup -c commands.
+        # Calling the public API avoids resolving :Lazy as the :LazyDev stub.
+        action('Update plugins', 'update_plugins', nvim_command('-c', 'lua require("lazy").update()'), 'Update installed plugins using native Lazy UI. This updates the deployed lazy-lock.json; it does not copy the lockfile back to the maintained source.', group='Plugins'),
+        action('Plugin manager', 'plugins', nvim_command('-c', 'lua require("lazy").home()'), 'Inspect installed plugins and choose install, sync, update, or restore operations in the native interface.', group='Plugins'),
+        action('Plugin startup profile', 'profile', nvim_command('-c', 'lua require("lazy").profile()'), 'Inspect native plugin loading timings. Open a representative file inside Neovim to include its demand-loaded features.', group='Plugins'),
         action('Language tools', 'tools', nvim_command('-c', 'Mason'), 'Manage language servers and formatters in Mason. Its native UI provides installation and update actions.', group='Tools'),
-        action('Update parsers', 'parsers', nvim_command('-c', 'lua local ok,err=pcall(function() assert(require("nvim-treesitter").update(nil,{summary=true}):wait(300000),"Parser update failed") end); vim.notify(ok and "DuskyNVIM parsers updated" or tostring(err),ok and vim.log.levels.INFO or vim.log.levels.ERROR)'), 'Update installed Tree-sitter parsers with the provisioned nvim-treesitter API. Progress and any failure appear in Neovim. This can take several minutes.', group='Tools'),
+        action('Update parsers', 'parsers', nvim_command('-c', 'lua local ok,err=pcall(function() assert(require("nvim-treesitter").update(nil,{summary=true}):wait(300000),"Parser update failed") end); vim.notify(ok and "Dusky Nvim parsers updated" or tostring(err),ok and vim.log.levels.INFO or vim.log.levels.ERROR)'), 'Update installed Tree-sitter parsers with the provisioned nvim-treesitter API. Progress and any failure appear in Neovim. This can take several minutes.', group='Tools'),
         action('Health check', 'health', nvim_command('-c', 'checkhealth'), 'Run Neovim and plugin health checks; no packages are installed by this action.', group='Inspect'),
         action('Formatter information', 'formatters', nvim_command('-c', 'ConformInfo'), 'Inspect formatter availability and logs using the native Conform interface.', group='Inspect'),
         action('Edit deployed config', 'config', nvim_command(str(_CONFIG / 'init.lua')), 'Open the deployed init.lua for advanced configuration. The normal leader config shortcut targets the maintained source, so this action opens the deployed path explicitly.', group='Inspect'),

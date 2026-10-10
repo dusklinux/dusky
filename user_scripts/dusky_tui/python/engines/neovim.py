@@ -227,7 +227,7 @@ class NeovimEngine(BaseEngine):
                                        ['(', '"config.lazy"', ')'], ['(', "'config.lazy'", ')'])
                                    and not text[text.rfind('\n', 0, token.start) + 1:token.start].strip()]
                         if len(matches) != 1:
-                            raise ValueError('Cannot locate an unambiguous DuskyNVIM bootstrap.')
+                            raise ValueError('Cannot locate an unambiguous Dusky Nvim bootstrap.')
                         pos = matches[0]
                         replacements[(pos, pos)] = f'vim.g.dusky_bigfile_size = {literal}\n'
                     else:

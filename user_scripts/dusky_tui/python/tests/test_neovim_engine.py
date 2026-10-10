@@ -3,6 +3,7 @@ import importlib.util
 import os
 from pathlib import Path
 import shutil
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -199,6 +200,46 @@ class NeovimTests(unittest.TestCase):
         result = run('--restore')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual({name: (config / name).read_bytes() for name in targets}, original)
+
+    def test_plugin_actions_before_lazy_command_registration(self):
+        config = self.root / 'xdg/nvim'
+        config.mkdir(parents=True)
+        # Model interactive startup: the LazyDev stub exists before :Lazy.
+        (config / 'init.lua').write_text('''
+vim.api.nvim_create_user_command("LazyDev", function()
+  error("Plugin action resolved to LazyDev before Lazy registration")
+end, {nargs="*"})
+package.preload["lazy"] = function()
+  local api = {}
+  for _, name in ipairs({"update", "home", "profile"}) do
+    api[name] = function()
+      vim.fn.writefile({name}, vim.fn.stdpath("config") .. "/action-result")
+    end
+  end
+  return api
+end
+''', encoding='utf-8')
+        env = os.environ | {'XDG_CONFIG_HOME': str(config.parent),
+                            'XDG_DATA_HOME': str(self.root / 'data'),
+                            'XDG_STATE_HOME': str(self.root / 'state'),
+                            'XDG_CACHE_HOME': str(self.root / 'cache')}
+        schema_path = Path.home() / 'user_scripts/nvim/tui_dusky_nvim.py'
+        spec = importlib.util.spec_from_file_location('test_nvim_actions', schema_path)
+        schema = importlib.util.module_from_spec(spec)
+        with patch.dict(os.environ, env):
+            spec.loader.exec_module(schema)
+        actions = {item.key: item for item in schema.SCHEMA[5]}
+        result_file = config / 'action-result'
+        for key, expected in [('update_plugins', 'update'), ('plugins', 'home'),
+                              ('profile', 'profile')]:
+            with self.subTest(action=key):
+                result_file.unlink(missing_ok=True)
+                command = shlex.split(actions['action_' + key].default)
+                result = subprocess.run([*command, '--headless', '-c', 'qa!'], env=env,
+                                        capture_output=True, text=True, encoding='utf-8', timeout=15)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertTrue(result_file.exists(), result.stdout + result.stderr)
+                self.assertEqual(result_file.read_text(encoding='utf-8').strip(), expected)
 
 
 if __name__ == '__main__':
