@@ -6,6 +6,16 @@
 @define-color primary_col @primary;
 @define-color secondary_col @secondary;
 @define-color tertiary_col @tertiary;
+@define-color glass_bar alpha(@surface_container, 0.90);
+@define-color glass_module alpha(@surface_container_high, 0.65);
+@define-color glass_tooltip alpha(@surface_container_highest, 0.85);
+
+/* WAYBAR_OPAQUE_SWITCH_START */
+@define-color glass_bar @surface_container;
+@define-color glass_module @surface_container_high;
+@define-color glass_tooltip @surface_container_highest;
+/* WAYBAR_OPAQUE_SWITCH_END */
+
 
 * {
   border: none;
@@ -34,7 +44,7 @@ window#waybar.hidden {
   border: 1px solid alpha(@outline_variant, 0.7);
   margin: 3px 0px;
   padding: 3px 10px;
-  background-color: alpha(@bg, 0.90);
+  background-color: @glass_bar;
   color: @fg;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
 }
@@ -61,7 +71,7 @@ window#waybar.hidden {
   font-weight: 900;
 }
 
-#workspaces button.empty {
+#workspaces button.empty:not(.active):not(.urgent) {
   color: alpha(@fg, 0.4);
 }
 
@@ -76,7 +86,7 @@ window#waybar.hidden {
 }
 
 /* --- Module Groups & Spacing --- */
-box#group-center {
+box#center {
   margin: 0 2px;
   padding: 0;
 }
@@ -110,7 +120,7 @@ box#group-center {
 #bluetooth,
 #pulseaudio {
   border-radius: 6px;
-  background-color: alpha(@surface_container_high, 0.65);
+  background-color: @glass_module;
   color: @fg;
 }
 
@@ -134,12 +144,12 @@ box#group-center {
   color: @primary;
 }
 
-#battery.warning {
+#battery.warning:not(.charging):not(.plugged) {
   color: @error;
   background-color: alpha(@error_container, 0.5);
 }
 
-#battery.critical:not(.charging) {
+#battery.critical:not(.charging):not(.plugged) {
   background-color: @error;
   color: @on_error;
   animation-name: blink-critical;
@@ -158,7 +168,7 @@ box#group-center {
 
 tooltip {
   padding: 6px 10px;
-  background-color: @surface_container_highest;
+  background-color: @glass_tooltip;
   color: @on_surface;
   font-size: 11px;
   border: 1px solid @outline_variant;

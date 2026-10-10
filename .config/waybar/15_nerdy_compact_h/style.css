@@ -1,14 +1,14 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    COMPACT HORIZONTAL WAYBAR THEME - GTK CSS COMPATIBLE
    Uses Matugen colors via @import
-   
+
    OPTIMIZED FOR MINIMAL HEIGHT - Target: ~28px
    ═══════════════════════════════════════════════════════════════════════════ */
 
-@import url("../../.config/matugen/generated/waybar-colors.css");
+@import url("../matugen/generated/waybar-colors.css");
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   TRANSPARENCY DEFINITIONS 
+   TRANSPARENCY DEFINITIONS
    ───────────────────────────────────────────────────────────────────────────── */
 @define-color glass_bar           alpha(@surface_container, 0.55);
 @define-color glass_workspaces    alpha(@surface_container_low, 0.55);
@@ -35,7 +35,7 @@
    RESET & BASE - COMPACT
    ═══════════════════════════════════════════════════════════════════════════ */
 * {
-    font-family: "JetBrains Mono Nerd Font Propo", "JetBrainsMono Nerd Font", "JetBrains Mono NF", "JetBrains Mono", "Symbols Nerd Font", sans-serif;
+    font-family: "JetBrainsMono Nerd Font Propo", "JetBrainsMono Nerd Font", "JetBrains Mono NF", "JetBrains Mono", "Symbols Nerd Font", sans-serif;
     font-size: 11px;
     font-weight: 500;
     min-height: 0;
@@ -97,7 +97,7 @@ tooltip label {
 #cpu,
 #memory,
 #disk,
-#temperature,
+#custom-temperature,
 #backlight,
 #network,
 #bluetooth,
@@ -126,7 +126,7 @@ tooltip label {
 #cpu:hover,
 #memory:hover,
 #disk:hover,
-#temperature:hover,
+#custom-temperature:hover,
 #backlight:hover,
 #network:hover,
 #bluetooth:hover,
@@ -211,7 +211,7 @@ tooltip label {
     font-size: 11px;
 }
 
-#workspaces button.empty {
+#workspaces button.empty:not(.active):not(.urgent) {
     color: @outline;
     opacity: 0.4;
 }
@@ -233,6 +233,19 @@ tooltip label {
     padding: 0 8px;
     font-size: 11px;
     opacity: 0.85;
+}
+
+/* An empty workspace should not reserve an app indicator or its padding. */
+window#waybar.empty #window,
+window#waybar.empty #window label,
+window#waybar.empty #window image {
+    padding: 0;
+    margin: 0;
+    min-width: 0;
+    min-height: 0;
+    font-size: 0;
+    background: transparent;
+    opacity: 0;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -288,7 +301,7 @@ tooltip label {
 #cpu,
 #memory,
 #disk,
-#temperature {
+#custom-temperature {
     padding: 0px 5px;
     margin: 2px 1px;
     font-size: 10px;
@@ -322,11 +335,11 @@ tooltip label {
     background-color: @secondary_container;
 }
 
-#temperature {
+#custom-temperature {
     color: @on_surface_variant;
 }
 
-#temperature:hover {
+#custom-temperature:hover {
     color: @on_surface;
     background-color: @glass_hover;
 }
@@ -342,7 +355,7 @@ tooltip label {
 #cpu.critical,
 #memory.critical,
 #disk.critical,
-#temperature.critical {
+#custom-temperature.critical {
     color: @on_error;
     background-color: @error;
     font-weight: 600;
@@ -451,12 +464,12 @@ tooltip label {
     color: @on_tertiary_container;
 }
 
-#battery.warning {
+#battery.warning:not(.charging):not(.plugged) {
     color: @error;
     opacity: 0.9;
 }
 
-#battery.critical {
+#battery.critical:not(.charging):not(.plugged) {
     color: @on_error;
     background-color: @error;
     font-weight: 600;

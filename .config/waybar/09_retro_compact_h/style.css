@@ -2,7 +2,11 @@
    WAYBAR PREMIUM THEME - Compact Edition (Refined)
    ═══════════════════════════════════════════════════════════════════════════ */
 
-@import url("../../.config/matugen/generated/waybar-colors.css");
+@import url("../matugen/generated/waybar-colors.css");
+
+/* Tooltip colors participate in the visual-effects switch. */
+@define-color tooltip_surface alpha(@surface_container, 0.57);
+@define-color tooltip_surface_high alpha(@surface_container_high, 0.57);
 
 /* ─────────────────────────────────────────────────────────────────────────────
    TRANSLUCENCY CONTROLS (GLASSY MODE)
@@ -30,8 +34,10 @@
    ───────────────────────────────────────────────────────────────────────────── */
 
 /* WAYBAR_OPAQUE_SWITCH_START */
+@define-color tooltip_surface @surface_container;
+@define-color tooltip_surface_high @surface_container_high;
 
-@define-color glass_bar             alpha(@surface, 0.8);
+@define-color glass_bar             @surface;
 @define-color glass_module          @surface_container;
 @define-color glass_tooltip         @surface_container_high;
 @define-color glass_border          alpha(@primary, 0.6);
@@ -284,7 +290,7 @@ window#waybar > box {
   transition: all 0.2s ease-in-out;
 }
 
-#workspaces button.empty {
+#workspaces button.empty:not(.active):not(.urgent) {
   padding: 0 6px;
   min-width: 20px;
   background-color: @glass_ws_empty;
@@ -292,7 +298,7 @@ window#waybar > box {
   border: 1px solid @glass_border;
 }
 
-#workspaces button:not(.empty):not(.active) {
+#workspaces button:not(.empty):not(.active):not(.urgent) {
   color: alpha(@on_surface, 0.85);
   background-color: alpha(@primary, 0.12);
   border: 1px solid alpha(@primary, 0.2);
@@ -326,7 +332,7 @@ window#waybar > box {
 
 #workspaces button.urgent {
   background-color: @glass_ws_urgent;
-  color: @on_error;
+  color: @on_error_container;
   border: 1px solid @error;
   animation: pulse 1.5s ease-in-out infinite;
 }
@@ -582,13 +588,13 @@ window#waybar > box {
   border: 1px solid alpha(@tertiary, 0.15);
 }
 
-#battery.warning:not(.charging) {
+#battery.warning:not(.charging):not(.plugged) {
   color: @primary_fixed;
   background-color: @glass_battery_warn;
   border: 1px solid @glass_border;
 }
 
-#battery.critical:not(.charging) {
+#battery.critical:not(.charging):not(.plugged) {
   color: @on_error;
   background-image: linear-gradient(135deg, @error_container 0%, @error 100%);
   animation: critical-blink 1s ease-in-out infinite;
@@ -633,8 +639,8 @@ tooltip decoration {
 tooltip,
 tooltip.background,
 .tooltip {
-  background-color: alpha(@surface_container, 0.57);
-  background: linear-gradient(135deg, alpha(@surface_container, 0.57), alpha(@surface_container_high, 0.57));
+  background-color: @tooltip_surface;
+  background: linear-gradient(135deg, @tooltip_surface, @tooltip_surface_high);
   border: 1px solid alpha(@primary, 0.5);
   border-radius: 12px;
   box-shadow: none;

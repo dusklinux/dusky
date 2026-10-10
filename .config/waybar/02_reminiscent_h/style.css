@@ -1,4 +1,8 @@
-@import url("../../.config/matugen/generated/waybar-colors.css");
+@import url("../matugen/generated/waybar-colors.css");
+
+/* Tooltip colors participate in the visual-effects switch. */
+@define-color tooltip_surface alpha(@surface_container, 0.57);
+@define-color tooltip_surface_high alpha(@surface_container_high, 0.57);
 
 /* ─────────────────────────────────────────────────────────────────────────────
    TRANSLUCENCY CONTROLS (GLASSY MODE)
@@ -26,7 +30,9 @@
    ───────────────────────────────────────────────────────────────────────────── */
 
 /* WAYBAR_OPAQUE_SWITCH_START */
-@define-color glass_bar                       alpha(@surface, 0.6);
+@define-color tooltip_surface @surface_container;
+@define-color tooltip_surface_high @surface_container_high;
+@define-color glass_bar                       @surface;
 @define-color glass_module                    @surface_container;
 @define-color glass_hover_bg                  @on_secondary;
 @define-color glass_hover_border              @secondary_container;
@@ -51,14 +57,14 @@
 * {
     border: none;
     border-radius: 0;
-    font-family: "Atkinson Hyperlegible Next", "JetBrainsMono Nerd Font";
+    font-family: "Atkinson Hyperlegible", "JetBrainsMono Nerd Font";
     font-size: 14px;
     min-height: 0;
 }
 
 window#waybar {
-    background: @glass_bar; 
-    color: @on_surface;      
+    background: @glass_bar;
+    color: @on_surface;
 }
 
 tooltip decoration {
@@ -71,8 +77,8 @@ tooltip,
 tooltip.background,
 .tooltip {
     border-radius: 12px;
-    background-color: alpha(@surface_container, 0.57);
-    background: linear-gradient(135deg, alpha(@surface_container, 0.57), alpha(@surface_container_high, 0.57));
+    background-color: @tooltip_surface;
+    background: linear-gradient(135deg, @tooltip_surface, @tooltip_surface_high);
     border: 1px solid alpha(@primary, 0.5);
     box-shadow: none;
 }
@@ -117,7 +123,7 @@ tooltip label,
     padding: 2px 14px;
     margin: 4px;
     color: @on_surface;
-    border-radius: 25px; 
+    border-radius: 25px;
     border: 3px solid transparent;
     transition: all 0.3s ease-out;
 }
@@ -132,7 +138,7 @@ tooltip label,
     padding-right: 10px;
 }
 
-#custom-terminal, 
+#custom-terminal,
 #custom-text-editor,
 #custom-files {
     border-radius: 0px;
@@ -198,7 +204,7 @@ tooltip label,
 #custom-notifs:hover,
 #custom-inhibit-suspend:hover {
     color: @secondary;
-    background: @glass_hover_bg; 
+    background: @glass_hover_bg;
     border-color: @glass_hover_border;
 }
 
@@ -220,21 +226,21 @@ tooltip label,
    DYNAMIC NETWORK SPEED CLASSES
    ========================================================= */
 
-#custom-net-speed.network-kb { 
-    color: @secondary; 
+#custom-net-speed.network-kb {
+    color: @secondary;
     font-weight: bold;
 }
 
-#custom-net-speed.network-mb { 
-    color: @primary; 
+#custom-net-speed.network-mb {
+    color: @primary;
     background: @glass_primary_bg;
     border-color: @glass_primary_border;
     font-weight: 900;
     text-shadow: 0 0 5px @glass_primary_shadow;
 }
 
-#custom-net-speed.network-disconnected { 
-    color: @error; 
+#custom-net-speed.network-disconnected {
+    color: @error;
     background: @glass_error_bg;
 }
 
@@ -243,7 +249,7 @@ tooltip label,
    ========================================================= */
 
 #pulseaudio.muted {
-    background: @glass_muted_bg; 
+    background: @glass_muted_bg;
     color: @surface;
 }
 

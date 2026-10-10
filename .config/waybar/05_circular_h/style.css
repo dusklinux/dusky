@@ -1,11 +1,12 @@
-/* * RELATIVE PATH IMPORT
- * Goes up two levels from ~/.config/waybar/style.css to ~/.config/
- * then down to matugen/generated/waybar-colors.css
- */
-@import url("../../.config/matugen/generated/waybar-colors.css");
+/* Matugen palette; works through the active symlink and inside this theme. */
+@import url("../matugen/generated/waybar-colors.css");
 
-/* * COLOR MAPPING 
- * Connecting Matugen variables to the theme's logic 
+/* Tooltip colors participate in the visual-effects switch. */
+@define-color tooltip_surface alpha(@surface_container, 0.57);
+@define-color tooltip_surface_high alpha(@surface_container_high, 0.57);
+
+/* * COLOR MAPPING
+ * Connecting Matugen variables to the theme's logic
  */
 @define-color background @surface;
 @define-color foreground @on_surface;
@@ -45,6 +46,8 @@
    ───────────────────────────────────────────────────────────────────────────── */
 
 /* WAYBAR_OPAQUE_SWITCH_START */
+@define-color tooltip_surface @surface_container;
+@define-color tooltip_surface_high @surface_container_high;
 
 @define-color glass_bar               transparent;
 @define-color glass_module            @surface_container;
@@ -60,7 +63,7 @@
 * {
     border: none;
     border-radius: 0px;
-    font-family: "JetBrains Mono Nerd Font Propo", "JetBrainsMono Nerd Font", "Noto Sans", sans-serif;
+    font-family: "JetBrainsMono Nerd Font Propo", "JetBrainsMono Nerd Font", "Noto Sans", sans-serif;
     font-weight: 600;
     min-height: 0;
     padding: 0;
@@ -81,8 +84,8 @@ tooltip decoration {
 tooltip,
 tooltip.background,
 .tooltip {
-    background-color: alpha(@surface_container, 0.57);
-    background: linear-gradient(135deg, alpha(@surface_container, 0.57), alpha(@surface_container_high, 0.57));
+    background-color: @tooltip_surface;
+    background: linear-gradient(135deg, @tooltip_surface, @tooltip_surface_high);
     border: 1px solid alpha(@primary, 0.5);
     border-radius: 12px;
     box-shadow: none;
@@ -121,7 +124,7 @@ tooltip label,
     box-shadow: none;
 
     /* LIQUID PHYSICS: Elastic overshoot easing for organic blob movement */
-    transition: 
+    transition:
         min-width 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55),
         min-height 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55),
         border-radius 0.5s cubic-bezier(0.34, 1.56, 0.64, 1),
@@ -131,12 +134,12 @@ tooltip label,
         margin 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
 }
 
-#workspaces button.empty {
+#workspaces button.empty:not(.active):not(.urgent) {
     background-color: alpha(@primary, 0.12);
     color: alpha(@on_surface, 0.3);
 }
 
-#workspaces button:not(.empty):not(.active) {
+#workspaces button:not(.empty):not(.active):not(.urgent) {
     color: alpha(@on_surface, 0.85);
     background-color: alpha(@primary, 0.12);
     border: 1px solid alpha(@primary, 0.2);
@@ -150,9 +153,9 @@ tooltip label,
     color: @on_primary;
     font-size: 12px;
     margin: 0 4px;
-    
+
     /* Liquid glow - inset to prevent bleed */
-    box-shadow: 
+    box-shadow:
         inset 0 0 12px alpha(@primary, 0.6),
         inset 0 0 4px alpha(@primary, 0.4);
 }
@@ -162,8 +165,8 @@ tooltip label,
     min-height: 12px;
     border-radius: 10px;
     background-color: @tertiary;
-    
-    box-shadow: 
+
+    box-shadow:
         inset 0 0 10px alpha(@tertiary, 0.5),
         inset 0 0 3px alpha(@tertiary, 0.3);
 }
@@ -172,9 +175,9 @@ tooltip label,
     background-color: @error;
     min-width: 18px;
     border-radius: 10px;
-    
+
     animation: liquid-pulse 0.8s cubic-bezier(0.4, 0, 0.6, 1) infinite alternate;
-    box-shadow: 
+    box-shadow:
         inset 0 0 14px alpha(@error, 0.7),
         inset 0 0 6px alpha(@error, 0.5);
 }
@@ -182,13 +185,13 @@ tooltip label,
 @keyframes liquid-pulse {
     0% {
         min-width: 16px;
-        box-shadow: 
+        box-shadow:
             inset 0 0 10px alpha(@error, 0.5),
             inset 0 0 4px alpha(@error, 0.3);
     }
     100% {
         min-width: 22px;
-        box-shadow: 
+        box-shadow:
             inset 0 0 18px alpha(@error, 0.8),
             inset 0 0 8px alpha(@error, 0.6);
     }
@@ -223,7 +226,7 @@ tooltip label,
 /* ============================================================ */
 /* POWER GROUP                                                 */
 /* ============================================================ */
-#group-power {
+#power {
     background-color: transparent;
     padding: 0px 0px;
     margin: 0 6px 0 0;
@@ -260,39 +263,39 @@ tooltip label,
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-#custom-lock:hover { 
-    background-color: @secondary; 
-    color: @on_secondary; 
+#custom-lock:hover {
+    background-color: @secondary;
+    color: @on_secondary;
     border-color: @secondary;
     box-shadow: inset 0 0 10px alpha(@secondary, 0.4);
 }
 
 #custom-inhibit-suspend:hover {
-    background-color: @tertiary; 
-    color: @on_tertiary; 
+    background-color: @tertiary;
+    color: @on_tertiary;
     border-color: @tertiary;
     box-shadow: inset 0 0 10px alpha(@tertiary, 0.4);
 }
 #custom-inhibit-suspend.enabled { color: @primary; border-color: @primary; }
 #custom-inhibit-suspend.disabled { color: @error; border-color: @error; }
 
-#custom-logout:hover { 
-    background-color: @tertiary; 
-    color: @on_tertiary; 
+#custom-logout:hover {
+    background-color: @tertiary;
+    color: @on_tertiary;
     border-color: @tertiary;
     box-shadow: inset 0 0 10px alpha(@tertiary, 0.4);
 }
 
-#custom-reboot:hover { 
-    background-color: @primary; 
-    color: @on_primary; 
+#custom-reboot:hover {
+    background-color: @primary;
+    color: @on_primary;
     border-color: @primary;
     box-shadow: inset 0 0 10px alpha(@primary, 0.4);
 }
 
-#custom-shutdown:hover { 
-    background-color: @error; 
-    color: @on_error; 
+#custom-shutdown:hover {
+    background-color: @error;
+    color: @on_error;
     border-color: @error;
     box-shadow: inset 0 0 10px alpha(@error, 0.5);
 }
@@ -300,7 +303,7 @@ tooltip label,
 /* ============================================================ */
 /* UPDATES GROUP                                               */
 /* ============================================================ */
-#group-updates-drawer {
+#updates-drawer {
     background-color: transparent;
     margin: 0 6px 0 0;
     padding: 0;
@@ -338,8 +341,8 @@ tooltip label,
 /* ============================================================ */
 /* SYSTEM INDICATORS                                           */
 /* ============================================================ */
-#backlight { 
-    color: @primary; 
+#backlight {
+    color: @primary;
 }
 #backlight:hover {
     background-color: @tertiary;
@@ -348,9 +351,9 @@ tooltip label,
     box-shadow: inset 0 0 10px alpha(@tertiary, 0.4);
 }
 
-#pulseaudio { 
+#pulseaudio {
     font-size: 14px;
-    color: @primary; 
+    color: @primary;
 }
 #pulseaudio:hover {
     background-color: @secondary;
@@ -397,14 +400,14 @@ tooltip label,
     color: @on_primary;
     border-color: @primary;
     box-shadow: inset 0 0 10px alpha(@primary, 0.4);
-    text-shadow: none; 
+    text-shadow: none;
 }
 
 /* ============================================================ */
 /* BATTERY                                                     */
 /* ============================================================ */
-#battery { 
-    color: @primary; 
+#battery {
+    color: @primary;
     padding: 2px 12px;
     margin: 2px 4px;
 }
@@ -414,11 +417,11 @@ tooltip label,
     border-color: @tertiary;
     box-shadow: inset 0 0 10px alpha(@tertiary, 0.4);
 }
-#battery.warning {
+#battery.warning:not(.charging):not(.plugged) {
     color: @secondary;
     border-color: @secondary;
 }
-#battery.critical {
+#battery.critical:not(.charging):not(.plugged) {
     color: @error;
     border-color: @error;
     animation: blink 0.6s cubic-bezier(0.4, 0, 0.6, 1) infinite alternate;
@@ -433,9 +436,9 @@ tooltip label,
 /* ============================================================ */
 /* NOTIFICATIONS                                               */
 /* ============================================================ */
-#custom-notification { 
+#custom-notification {
     font-size: 15px;
-    color: @secondary; 
+    color: @secondary;
 }
 #custom-notification:hover {
     background-color: @secondary;

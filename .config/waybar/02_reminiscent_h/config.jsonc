@@ -1,7 +1,7 @@
 {
     "layer": "top",
     "position": "bottom",
-    "height": 38,
+    "height": 0,
     "spacing": 2,
     "margin-top": 0,
     "margin-bottom": 0,
@@ -162,7 +162,7 @@
 
     "custom/lock": { "format": "󰍁", "on-click": "$HOME/user_scripts/hyprlock/lock.sh" },
     "custom/reboot": { "format": "󰜉", "on-click": "systemctl reboot" },
-    "custom/quit": { "format": "󰗼", "on-click": "hyprctl dispatch exit" },
+    "custom/quit": { "format": "󰗼", "on-click": "hyprctl dispatch 'hl.dsp.exit()'" },
 
     "custom/firefox": { "format": "", "tooltip": true, "tooltip-format": "Browser", "on-click": "~/user_scripts/waybar/launch_app.sh browser" },
     "custom/terminal": { "format": "", "tooltip": true, "tooltip-format": "Terminal", "on-click": "~/user_scripts/waybar/launch_app.sh terminal" },
@@ -171,8 +171,7 @@
 
     "custom/updates-trigger": {
         "format": "",
-        "exec": "echo ''",
-        "exec-if": "grep -q '\"class\":\"pending\"' ~/.config/dusky/settings/waybar_update_counter_h 2>/dev/null",
+        "exec": "grep -qE '\"class\"[[:space:]]*:[[:space:]]*\"(pending|unknown)\"' \"$HOME/.config/dusky/settings/waybar_update_counter_h\" 2>/dev/null && printf '\\n'",
         "interval": 5,
         "tooltip": false
     },
@@ -243,14 +242,15 @@
     "custom/notifs": {
         "format": "{}",
         "return-type": "json",
-        "exec-if": "which makoctl",
+        "exec-if": "command -v makoctl >/dev/null 2>&1",
         "exec": "~/user_scripts/waybar/mako.sh",
         "on-click": "~/user_scripts/rofi/rofi_mako.sh",
         "on-click-middle": "~/user_scripts/waybar/mako.sh --clear && pkill -RTMIN+8 waybar",
         "on-click-right": "makoctl mode -t do-not-disturb && pkill -RTMIN+8 waybar",
         "signal": 8,
         "escape": true,
-        "tooltip-format": "Notifications\nLMB: Toggle Panel\nMMB: Clear All\nRMB: Do Not Disturb"
+        "tooltip-format": "{tooltip}\n\nLMB: Toggle Panel\nMMB: Clear All\nRMB: Do Not Disturb",
+        "interval": 2
     },
 
     "clock": {
@@ -274,8 +274,8 @@
             "on-scroll-up": "shift_up",
             "on-scroll-down": "shift_down"
         },
-        "on-click-right": "dusky-run gnome-clocks",
-        "on-click-middle": "dusky-run kitty --class peaclock -e peaclock"
+        "on-click-middle": "dusky-run kitty --class peaclock -e peaclock",
+        "on-click": "dusky-run gnome-clocks"
     },
 
     "battery": {
@@ -291,7 +291,6 @@
     },
 
     "backlight": {
-        "device": "intel_backlight",
         "format": "{icon} {percent}%",
         "format-icons": [" ", " "],
         "on-click": "\"$HOME/.local/bin/dusky-tray\"",

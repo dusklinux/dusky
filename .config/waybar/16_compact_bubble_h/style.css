@@ -2,7 +2,7 @@
    WAYBAR NEO THEME - Compact Edition
    ═══════════════════════════════════════════════════════════════════════════ */
 
-@import url("../../.config/matugen/generated/waybar-colors.css");
+@import url("../matugen/generated/waybar-colors.css");
 
 /* ─────────────────────────────────────────────────────────────────────────────
    TRANSLUCENCY CONTROLS (GLASSY MODE)
@@ -15,13 +15,6 @@
 @define-color glass_tooltip     alpha(@surface, 0.08);
 @define-color glass_mpris       alpha(@secondary_container, 0.5);
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   MASTER OPAQUE SWITCH
-   GTK3 CSS cannot compute variables inside alpha() functions. 
-   To toggle off ALL translucency, simply UNCOMMENT the block below by removing
-   the  from the first line. GTK's "last definition wins" rule will instantly 
-   overwrite the glassy variables above and hot-reload Waybar.
-   ───────────────────────────────────────────────────────────────────────────── */
 
 /* ─────────────────────────────────────────────────────────────────────────────
    TRANSPARENCY TOGGLE
@@ -182,7 +175,7 @@ window#waybar > box {
   transition: all 0.2s ease-in-out;
 }
 
-#workspaces button.empty {
+#workspaces button.empty:not(.active):not(.urgent) {
   padding: 0 6px;
   min-width: 20px;
   background-color: transparent;
@@ -289,9 +282,9 @@ window#waybar > box {
   background-color: @glass_hover;
 }
 
-#custom-net-speed.network-kb { 
-  color: @secondary; 
-  font-weight: bold; 
+#custom-net-speed.network-kb {
+  color: @secondary;
+  font-weight: bold;
 }
 
 #custom-net-speed.network-mb {
@@ -300,8 +293,8 @@ window#waybar > box {
   text-shadow: 0 0 5px alpha(@primary, 0.7);
 }
 
-#custom-net-speed.network-disconnected, #network.disconnected { 
-  color: @error; 
+#custom-net-speed.network-disconnected, #network.disconnected {
+  color: @error;
 }
 
 #network.linked, #network.ethernet { color: @tertiary; }
@@ -419,12 +412,12 @@ window#waybar > box {
   background-color: alpha(@tertiary_container, 0.25);
   border: 1px solid alpha(@tertiary, 0.15);
 }
-#battery.warning:not(.charging) {
+#battery.warning:not(.charging):not(.plugged) {
   color: @primary_fixed;
   background-color: alpha(@primary_container, 0.3);
   border: 1px solid alpha(@primary, 0.2);
 }
-#battery.critical:not(.charging) {
+#battery.critical:not(.charging):not(.plugged) {
   color: @on_error;
   background-image: linear-gradient(135deg, @error_container 0%, @error 100%);
   animation: critical-blink 1s ease-in-out infinite;
@@ -450,7 +443,7 @@ window#waybar > box {
   transition: all 0.2s ease-in-out;
 }
 
-#custom-inhibit-suspend:hover { background-color: alpha(@on_surface, 0.6); }
+#custom-inhibit-suspend:hover { background-color: @glass_hover; }
 
 #custom-inhibit-suspend.disabled {
   color: @tertiary;

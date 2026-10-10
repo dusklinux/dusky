@@ -1,4 +1,8 @@
-@import url("../../.config/matugen/generated/waybar-colors.css");
+@import url("../matugen/generated/waybar-colors.css");
+
+/* Tooltip colors participate in the visual-effects switch. */
+@define-color tooltip_surface alpha(@surface_container, 0.57);
+@define-color tooltip_surface_high alpha(@surface_container_high, 0.57);
 
 /* ─────────────────────────────────────────────────────────────────────────────
    TRANSLUCENCY CONTROLS (GLASSY MODE)
@@ -18,6 +22,8 @@
    ───────────────────────────────────────────────────────────────────────────── */
 
 /* WAYBAR_OPAQUE_SWITCH_START */
+@define-color tooltip_surface @surface_container;
+@define-color tooltip_surface_high @surface_container_high;
 
 @define-color glass_module           @surface_container;
 @define-color glass_module_low       @surface_container_low;
@@ -47,7 +53,7 @@ window#waybar {
 /* UNIFIED CAPSULE STYLE */
 #clock,
 #workspaces,
-#group-stats,
+#stats,
 #pulseaudio,
 #battery,
 #custom-network,
@@ -59,9 +65,9 @@ window#waybar {
     background-color: @glass_module;
     color: @on_surface;
     border-radius: 100px;
-    margin: 3px 1px; 
+    margin: 3px 1px;
     padding: 6px 0px;
-    
+
     /* FIX: Box-shadow and background-image removed completely to fix the compositor blur bleeding artifact */
     box-shadow: none;
     background-image: none;
@@ -72,16 +78,16 @@ window#waybar {
 #clock {
     background-color: @glass_primary;
     color: @on_primary;
-    font-size: 10px; 
+    font-size: 10px;
     padding-bottom: 7px;
 }
 
-#group-stats {
+#stats {
     background-color: @glass_module_low;
     padding: 8px 0;
 }
 
-#cpu, #memory, #temperature {
+#cpu, #memory, #custom-temperature {
     background: transparent;
     box-shadow: none;
     margin: 4px 0;
@@ -91,9 +97,9 @@ window#waybar {
     text-shadow: 1px 1px 2px rgba(0, 0, 0, 1.0);
 }
 
-#cpu.critical, 
-#memory.critical, 
-#temperature.critical {
+#cpu.critical,
+#memory.critical,
+#custom-temperature.critical {
     color: @error;
 }
 
@@ -130,12 +136,12 @@ window#waybar {
 }
 
 /* --- BOTTOM SECTION --- */
-#pulseaudio, 
+#pulseaudio,
 #battery,
 #custom-notification,
 #custom-updates,
 #backlight {
-    font-size: 10px; 
+    font-size: 10px;
     padding: 8px 0;
 }
 
@@ -145,7 +151,7 @@ window#waybar {
 }
 
 #battery.charging { color: @tertiary; }
-#battery.warning { color: @error; }
+#battery.warning:not(.charging):not(.plugged) { color: @error; }
 
 #custom-network {
     font-size: 7.5px;
@@ -158,7 +164,7 @@ window#waybar {
 }
 
 #custom-power {
-    font-size: 16px; 
+    font-size: 16px;
     border-radius: 100px;
     margin: 3px 1px;
     padding: 3px 4px 3px 10px;
@@ -182,8 +188,8 @@ tooltip decoration {
 tooltip,
 tooltip.background,
 .tooltip {
-    background-color: alpha(@surface_container, 0.57);
-    background: linear-gradient(135deg, alpha(@surface_container, 0.57), alpha(@surface_container_high, 0.57));
+    background-color: @tooltip_surface;
+    background: linear-gradient(135deg, @tooltip_surface, @tooltip_surface_high);
     border: 1px solid alpha(@primary, 0.5);
     border-radius: 12px;
     box-shadow: none;

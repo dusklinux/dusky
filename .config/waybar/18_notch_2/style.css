@@ -1,4 +1,4 @@
-@import url("../../.config/matugen/generated/waybar-colors.css");
+@import url("../matugen/generated/waybar-colors.css");
 
 /* ─────────────────────────────────────────────────────────────────────────────
    TRANSPARENCY TOGGLE
@@ -69,7 +69,7 @@ tooltip label {
     transition: background 0.3s ease-in-out, color 0.3s ease-in-out, min-width 0.3s ease-in-out;
 }
 
-#workspaces button.empty {
+#workspaces button.empty:not(.active):not(.urgent) {
     background-color: alpha(@tertiary, 0.05);
     color: alpha(@tertiary, 0.25);
 }
@@ -190,7 +190,7 @@ tooltip label {
 
 #tray .needs-attention {
     -gtk-icon-effect: highlight;
-    background-color: @accent;
+    background-color: @primary;
 }
 
 .hide-tray-drawer {

@@ -2,7 +2,7 @@
     "layer": "top",
     "position": "top",
     "spacing": 0,
-    "height": 28,
+    "height": 0,
     "margin-top": 2,
     "margin-bottom": 0,
     "margin-left": 4,
@@ -20,28 +20,28 @@
         "hyprland/submap",
         "hyprland/window"
     ],
-    
+
     "modules-center": [
         "custom/net-speed",
         "clock",
         "group/updates-drawer",
         "privacy"
     ],
-    
+
     "modules-right": [
-        "cpu", 
-        "memory", 
-        "disk", 
-        "temperature",
+        "cpu",
+        "memory",
+        "disk",
+        "custom/temperature",
         "custom/separator",
-        "backlight", 
-        "network", 
-        "bluetooth", 
-        "pulseaudio", 
+        "backlight",
+        "network",
+        "bluetooth",
+        "pulseaudio",
         "battery",
         "custom/separator-2",
-        "custom/theme", 
-        "custom/inhibit-suspend", 
+        "custom/theme",
+        "custom/inhibit-suspend",
         "custom/notification",
         "tray",
         "custom/power"
@@ -72,23 +72,9 @@
     },
 
     "hyprland/workspaces": {
-        "format": "{icon}",
-        "format-icons": {
-            "1": "1",
-            "2": "2",
-            "3": "3",
-            "4": "4",
-            "5": "5",
-            "6": "6",
-            "7": "7",
-            "8": "8",
-            "9": "9",
-            "10": "0",
-            "special": "󰠱",
-            "default": ""
-        },
+        "format": "{id}",
         "on-click": "activate",
-        "sort-by": "number",
+        "sort-by": "default",
         "all-outputs": true,
         "show-special": true,
         "special-visible-only": false,
@@ -104,26 +90,14 @@
     },
 
     "hyprland/window": {
-        "format": "{title}",
-        "max-length": 40,
+        "format": "{class}",
+        "max-length": 20,
         "separate-outputs": true,
         "icon": true,
         "icon-size": 14,
-        "rewrite": {
-            "(.*) — Mozilla Firefox": "󰈹",
-            "(.*) - Visual Studio Code": "󰨞",
-            "(.*) - Discord": "󰙯",
-            "(.*) - Obsidian(.*)": "󱓧",
-            "(.*) - Spotify": "󰓇",
-            "(.*) - Chromium": "",
-            "(.*) - Google Chrome": "",
-            "(.*) - Brave": "󰖟",
-            "(.*)Steam": "󰓓",
-            "kitty": "",
-            "Alacritty": "",
-            "foot": "",
-            "": "󰇄"
-        }
+        "icon-spacing": 4,
+        "tooltip-format": "{title}\n{class}",
+        "rewrite": { "^$": "󰇄" }
     },
 
     // ===================================================================
@@ -183,8 +157,7 @@
 
     "custom/updates-trigger": {
         "format": "",
-        "exec": "echo ''",
-        "exec-if": "grep -q '\"class\":\"pending\"' ~/.config/dusky/settings/waybar_update_counter_h 2>/dev/null",
+        "exec": "grep -qE '\"class\"[[:space:]]*:[[:space:]]*\"(pending|unknown)\"' \"$HOME/.config/dusky/settings/waybar_update_counter_h\" 2>/dev/null && printf '\\n'",
         "interval": 5,
         "tooltip": false
     },
@@ -238,24 +211,32 @@
     "disk": {
         "format": "󰋊 {percentage_used}%",
         "format-alt": "󰋊 {used}/{total}",
-        "path": "/",
         "interval": 60,
         "tooltip-format": "Disk Usage: {used}/{total} ({percentage_used}%)\nFree: {free}\nPath: {path}\n\nLMB: Toggle Format\nRMB: File Manager",
         "states": {
             "warning": 75,
             "critical": 90
         },
-        "on-click-right": "~/user_scripts/waybar/launch_app.sh file-manager"
+        "on-click-right": "~/user_scripts/waybar/launch_app.sh file-manager",
+        "paths": [
+            "/"
+        ]
     },
 
-    "temperature": {
-        "thermal-zone": 6,
-        "format": "{icon} {temperatureC}°",
-        "format-icons": ["󱃃", "󰔏", "󱃂"],
-        "critical-threshold": 75,
-        "format-critical": "󰸁 {temperatureC}°",
-        "tooltip-format": "CPU Package: {temperatureC}°C / {temperatureF}°F\nThermal Zone: 6",
-        "interval": 3
+    "custom/temperature": {
+        "exec": "\"$HOME/user_scripts/waybar/temperature.sh\" 3 75",
+        "return-type": "json",
+        "format": "{icon} {text}°",
+        "format-icons": {
+            "default": [
+                "󱃃",
+                "󰔏",
+                "󱃂"
+            ],
+            "critical": "󰸁"
+        },
+        "hide-empty-text": true,
+        "restart-interval": 5
     },
 
     // ===================================================================
@@ -263,7 +244,6 @@
     // FIXED: Removed bandwidth from ethernet format to prevent duplication
     // ===================================================================
     "backlight": {
-        "device": "intel_backlight",
         "format": "{icon} {percent}%",
         "format-icons": ["󰃞", "󰃟", "󰃠"],
         "tooltip-format": "Brightness: {percent}%\n\nLMB: Brightness Slider\nRMB: Hyprsunset Slider\nMMB: Shader Menu\nScroll: Adjust",
@@ -283,7 +263,7 @@
         "format-disconnected": "󰤭",
         "format-disabled": "󰀝",
         "format-icons": ["󰤯", "󰤟", "󰤢", "󰤥", "󰤨"],
-        "tooltip-format-wifi": " {essid}\n\nSignal: {signalStrength}% ({signaldBm} dBm)\nFrequency: {frequency} MHz\nInterface: {ifname}\nIP: {ipaddr}/{cidr}\n\n󰕒 {bandwidthUpBytes}  󰇚 {bandwidthDownBytes}\n\nLMB: Dusky Network\nRMB: WiFi ON\nMMB: WiFi OFF",
+        "tooltip-format-wifi": " {essid}\n\nSignal: {signalStrength}% ({signaldBm} dBm)\nFrequency: {frequency} GHz\nInterface: {ifname}\nIP: {ipaddr}/{cidr}\n\n󰕒 {bandwidthUpBytes}  󰇚 {bandwidthDownBytes}\n\nLMB: Dusky Network\nRMB: WiFi ON\nMMB: WiFi OFF",
         "tooltip-format-ethernet": "󰈀 Wired Connected\n\nInterface: {ifname}\nIP: {ipaddr}/{cidr}\nGateway: {gwaddr}\n\n(Speed shown in center meter)",
         "tooltip-format-disconnected": "No connection\n\nRMB: Turn WiFi ON",
         "interval": 2,
@@ -373,25 +353,17 @@
     },
 
     "custom/notification": {
-        "format": "{icon}",
-        "format-icons": {
-            "notification": "󱅫",
-            "none": "󰂚",
-            "dnd-notification": "󱏧",
-            "dnd-none": "󰂛",
-            "inhibited-notification": "󱅫",
-            "inhibited-none": "󰂚",
-            "dnd-inhibited-notification": "󱏧",
-            "dnd-inhibited-none": "󰂛"
-        },
+        "format": "{}",
         "return-type": "json",
-        "exec-if": "which makoctl",
+        "exec-if": "command -v makoctl >/dev/null 2>&1",
         "exec": "~/user_scripts/waybar/mako.sh",
         "on-click": "~/user_scripts/rofi/rofi_mako.sh",
         "on-click-right": "makoctl mode -t do-not-disturb && pkill -RTMIN+8 waybar",
         "signal": 8,
         "escape": true,
-        "tooltip-format": "Notifications\n\nLMB: Toggle Panel\nRMB: Do Not Disturb"
+        "tooltip-format": "{tooltip}\n\nLMB: Toggle Panel\nMMB: Clear All\nRMB: Do Not Disturb",
+        "interval": 2,
+        "on-click-middle": "~/user_scripts/waybar/mako.sh --clear && pkill -RTMIN+8 waybar"
     },
 
     "tray": {

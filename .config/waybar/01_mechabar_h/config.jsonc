@@ -30,13 +30,15 @@
 		"custom/right_div#5"
 	],
 	"modules-right": [
-		"custom/left_div#2",
-		"group/pulseaudio",
-		"custom/left_div#3",
-		"custom/left_div#4",
-		"group/backlight-drawer",
-		"group/power-drawer"
-	],
+    "custom/left_div#6",
+    "group/pulseaudio",
+    "custom/left_div#7",
+    "backlight",
+    "custom/left_div#8",
+    "battery",
+    "custom/left_inv#2",
+    "group/power-drawer"
+],
 
 	"layer": "top",
 	"tooltip": true,
@@ -44,7 +46,6 @@
 	"width": 0,
 	"margin": 0,
 	"spacing": 0,
-	"mode": "dock",
 	"reload_style_on_change": true,
 
 	"group/user": {
@@ -74,11 +75,7 @@
 	},
 
 	"hyprland/workspaces": {
-		"format": "{icon}",
-		"format-icons": {
-			"active": "",
-			"default": ""
-		},
+		"format": "{id}",
 		"on-scroll-up": "hyprctl dispatch 'hl.dsp.focus({ workspace = \"e-1\" })'",
 		"on-scroll-down": "hyprctl dispatch 'hl.dsp.focus({ workspace = \"e+1\" })'",
 		"cursor": true
@@ -139,7 +136,7 @@
 			"warning": 75,
 			"critical": 90
 		},
-		"tooltip-format": "Memory Used: {used:0.0f}/{total:0.0f} GB"
+		"tooltip-format": "Memory Used: {used:0.0f}/{total:0.0f} GiB"
 	},
 
 	"cpu": {
@@ -240,11 +237,10 @@
     },
 
   "custom/updates-trigger": {
-    "format": "",
-    "exec": "echo ''",
-    "exec-if": "grep -q '\"class\":\"pending\"' ~/.config/dusky/settings/waybar_update_counter_h 2>/dev/null",
-    "interval": 5,
-    "tooltip": false
+      "format": "",
+      "exec": "grep -qE '\"class\"[[:space:]]*:[[:space:]]*\"(pending|unknown)\"' \"$HOME/.config/dusky/settings/waybar_update_counter_h\" 2>/dev/null && printf '\\n'",
+      "interval": 5,
+      "tooltip": false
   },
 
 	"custom/updates": {
@@ -256,20 +252,20 @@
 	},
 
   "custom/notifications": {
-		"justify": "center",
-		"align": 0.5,
-		"tooltip-format": "Left Click: Launch Mako\nMiddle Click: Clear All\nRight Click: Do Not Disturb",
-		"format": "{}",
-		"return-type": "json",
-		"exec-if": "which makoctl",
-		"exec": "~/user_scripts/waybar/mako.sh --horizontal",
-		"interval": 2,
-		"on-click": "~/user_scripts/rofi/rofi_mako.sh",
-    "on-click-middle": "~/user_scripts/waybar/mako.sh --clear && pkill -RTMIN+8 waybar",
-		"on-click-right": "makoctl mode -t do-not-disturb && pkill -RTMIN+8 waybar",
-		"signal": 8,
-		"escape": true
-	},
+      "justify": "center",
+      "align": 0.5,
+      "tooltip-format": "{tooltip}\n\nLeft Click: Launch Mako\nMiddle Click: Clear All\nRight Click: Do Not Disturb",
+      "format": "{}",
+      "return-type": "json",
+      "exec-if": "command -v makoctl >/dev/null 2>&1",
+      "exec": "~/user_scripts/waybar/mako.sh --horizontal",
+      "interval": 2,
+      "on-click": "~/user_scripts/rofi/rofi_mako.sh",
+      "on-click-middle": "~/user_scripts/waybar/mako.sh --clear && pkill -RTMIN+8 waybar",
+      "on-click-right": "makoctl mode -t do-not-disturb && pkill -RTMIN+8 waybar",
+      "signal": 8,
+      "escape": true
+  },
 
 /*	"group/mpris-drawer": {
 		"orientation": "inherit",
@@ -350,7 +346,7 @@
 		"on-click": "pactl set-source-mute @DEFAULT_SOURCE@ toggle",
 		"on-scroll-up": "pactl set-source-volume @DEFAULT_SOURCE@ +5%",
 		"on-scroll-down": "pactl set-source-volume @DEFAULT_SOURCE@ -5%",
-		"tooltip-format": "<b>Input Device</b>: {desc}"
+		"tooltip-format": "<b>Input Device</b>: {source_desc}"
 	},
 
 	"backlight": {

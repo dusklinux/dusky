@@ -14,16 +14,16 @@
     // ===================================================================
     // MODULE LAYOUT
     // ===================================================================
-    "modules-left": [ 
-        "group/clock-drawer", 
+    "modules-left": [
+        "group/clock-drawer",
         "group/stats"
     ],
-    
-    "modules-center": [ 
-        "hyprland/workspaces" 
+
+    "modules-center": [
+        "hyprland/workspaces"
     ],
-    
-    "modules-right": [ 
+
+    "modules-right": [
         "group/audio-drawer",
         "battery",
         "group/power-drawer"
@@ -76,9 +76,9 @@
     },
 
     "hyprland/workspaces": {
-        "format": "{name}",
+        "format": "{id}",
         "on-click": "activate",
-        "sort-by": "number",
+        "sort-by": "default",
         "persistent-workspaces": {},
         "on-scroll-up": "hyprctl dispatch 'hl.dsp.focus({ workspace = \"e-1\" })'",
         "on-scroll-down": "hyprctl dispatch 'hl.dsp.focus({ workspace = \"e+1\" })'"
@@ -86,7 +86,7 @@
 
     "group/stats": {
         "orientation": "vertical",
-        "modules": [ "cpu", "memory", "temperature" ]
+        "modules": [ "cpu", "memory", "custom/temperature" ]
     },
 
     "cpu": {
@@ -111,13 +111,16 @@
         }
     },
 
-    "temperature": {
+    "custom/temperature": {
         "justify": "center",
-        "thermal-zone": 6,
-        "format": "\n{temperatureC}",
-        "critical-threshold": 80,
-        "format-critical": "🔥\n{temperatureC}",
-        "tooltip": false
+        "align": 0.5,
+        "tooltip": false,
+        "exec": "\"$HOME/user_scripts/waybar/temperature.sh\" 10 80",
+        "return-type": "json",
+        "format": "{icon}\n{text}",
+        "format-icons": { "default": "", "critical": "🔥" },
+        "hide-empty-text": true,
+        "restart-interval": 5
     },
 
     "clock": {
@@ -132,7 +135,6 @@
             "mode-mon-col": 3,
             "weeks-pos": "right",
             "on-scroll": 1,
-            "on-click-right": "mode",
             "format": {
                 "months": "<span color='#ffead3'><b>{}</b></span>",
                 "days": "<span color='#ecc6d9'><b>{}</b></span>",
@@ -151,10 +153,10 @@
     "custom/notification": {
         "justify": "center",
         "align": 0.5,
-        "tooltip-format": "Left Click: Launch Mako\nMiddle Click: Clear All\nRight Click: Do Not Disturb",
+        "tooltip-format": "{tooltip}\n\nLeft Click: Launch Mako\nMiddle Click: Clear All\nRight Click: Do Not Disturb",
         "format": "{}",
         "return-type": "json",
-        "exec-if": "which makoctl",
+        "exec-if": "command -v makoctl >/dev/null 2>&1",
         "exec": "~/user_scripts/waybar/mako.sh --vertical",
         "interval": 2,
         "on-click": "~/user_scripts/rofi/rofi_mako.sh",
@@ -190,7 +192,6 @@
 
     "backlight": {
         "justify": "center",
-        "device": "intel_backlight",
         "format": "{icon}\n{percent}",
         "format-icons": ["","","","","","","","","","","","","","",""],
         "tooltip": true,
@@ -216,7 +217,7 @@
         "justify": "center",
         "return-type": "json",
         "exec": "$HOME/user_scripts/waybar/network/network_meter_calling.sh vertical",
-        "interval": 1, 
+        "interval": 1,
         "on-click": "foot --app-id=dusky_tui python $HOME/user_scripts/dusky_tui/python/main/main.py $HOME/user_scripts/network_manager/tui_dusky_network.py",
         "on-click-right": "nmcli radio wifi on",
         "on-click-middle": "nmcli radio wifi off"

@@ -64,7 +64,7 @@
     "custom/logout": {
         "format": "󰍃",
         "tooltip-format": "Logout",
-        "on-click": "hyprctl dispatch exit"
+        "on-click": "hyprctl dispatch 'hl.dsp.exit()'"
     },
     "custom/reboot": {
         "format": "󰜉",
@@ -92,8 +92,7 @@
     },
     "custom/updates-trigger": {
         "format": "",
-        "exec": "echo ''",
-        "exec-if": "grep -q '\"class\":\"pending\"' ~/.config/dusky/settings/waybar_update_counter_h 2>/dev/null",
+        "exec": "grep -qE '\"class\"[[:space:]]*:[[:space:]]*\"(pending|unknown)\"' \"$HOME/.config/dusky/settings/waybar_update_counter_h\" 2>/dev/null && printf '\\n'",
         "interval": 5,
         "tooltip": false
     },
@@ -107,13 +106,7 @@
 
     // === MODULES: LEFT ===
     "hyprland/workspaces": {
-        "format": "{icon}",
-        "format-icons": {
-            "active": "󰮯",
-            "visible": "",
-            "default": "•",
-            "persistent": "•"
-        },
+        "format": "{id}",
         "on-click": "activate",
         "persistent-workspaces": {
             "*": 5
@@ -191,13 +184,14 @@
     "custom/notification": {
         "format": "{}",
         "return-type": "json",
-        "exec-if": "which makoctl",
+        "exec-if": "command -v makoctl >/dev/null 2>&1",
         "exec": "~/user_scripts/waybar/mako.sh",
         "on-click": "~/user_scripts/rofi/rofi_mako.sh",
         "on-click-middle": "~/user_scripts/waybar/mako.sh --clear && pkill -RTMIN+8 waybar",
         "on-click-right": "makoctl mode -t do-not-disturb && pkill -RTMIN+8 waybar",
         "signal": 8,
         "escape": true,
-        "tooltip-format": "Notifications\n\n LMB  Toggle Panel\n MMB  Clear All\n RMB  Do Not Disturb"
+        "tooltip-format": "{tooltip}\n\n LMB  Toggle Panel\n MMB  Clear All\n RMB  Do Not Disturb",
+        "interval": 2
     }
 }

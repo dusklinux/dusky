@@ -1,6 +1,8 @@
 [
     {
         "position": "top",
+        "height": 0,
+        "layer": "top",
         "reload_style_on_change": true,
         "margin-top": 8,
         "modules-center": [
@@ -19,7 +21,7 @@
 /*        "group/mpris-drawer": {
             "orientation": "inherit",
             "drawer": {
-                "transition-duration": "0.3",
+                "transition-duration": 300,
                 "children-class": "mpris-drawer",
                 "click-to-reveal": false
             },
@@ -72,13 +74,7 @@
         },
 
         "hyprland/workspaces": {
-            "format": "{icon}",
-            "format-icons": {
-                "active": "󰮯",
-                "visible": "",
-                "default": "󰊠",
-                "persistent": "󰊠"
-            },
+            "format": "{id}",
             "persistent-workspaces": {
                 "*": 5
             },
@@ -90,7 +86,7 @@
         "group/battery-drawer": {
             "orientation": "inherit",
             "drawer": {
-                "transition-duration": "0.3",
+                "transition-duration": 300,
                 "children-class": "battery-drawer",
                 "click-to-reveal": false,
                 "transition-left-to-right": false
@@ -159,7 +155,7 @@
 
         "custom/inhibit-suspend": {
             "format": "{}",
-            "exec": "if pgrep -f 'hypridle' > /dev/null; then echo '{\"text\": \"󰾪\", \"tooltip\": \"Idle enabled. Click to disable.\", \"class\": \"enabled\"}'; else echo '{\"text\": \"󰅶\", \"tooltip\": \"Idle disabled. Click to enable.\", \"class\": \"disabled\"}'; fi",
+            "exec": "if pgrep -x 'hypridle' > /dev/null; then echo '{\"text\": \"󰾪\", \"tooltip\": \"Idle enabled. Click to disable.\", \"class\": \"enabled\"}'; else echo '{\"text\": \"󰅶\", \"tooltip\": \"Idle disabled. Click to enable.\", \"class\": \"disabled\"}'; fi",
             "return-type": "json",
             "interval": 30,
             "signal": 9,
@@ -174,7 +170,7 @@
         "group/hide-tray": {
             "orientation": "inherit",
             "drawer": {
-                "transition-duration": "0.5",
+                "transition-duration": 500,
                 "children-class": "hide-tray-drawer",
                 "transition-left-to-right": true,
                 "click-to-reveal": false
@@ -190,22 +186,23 @@
 
         "custom/notification": {
             "tooltip": true,
-            "tooltip-format": "Left Click: Launch Notifications\nMiddle Click: Clear All\nRight Click: Do Not Disturb",
+            "tooltip-format": "{tooltip}\n\nLeft Click: Launch Notifications\nMiddle Click: Clear All\nRight Click: Do Not Disturb",
             "format": "{}",
             "return-type": "json",
-            "exec-if": "which makoctl",
+            "exec-if": "command -v makoctl >/dev/null 2>&1",
             "exec": "~/user_scripts/waybar/mako.sh",
             "on-click": "~/user_scripts/rofi/rofi_mako.sh",
             "on-click-middle": "~/user_scripts/waybar/mako.sh --clear && pkill -RTMIN+8 waybar",
             "on-click-right": "makoctl mode -t do-not-disturb && pkill -RTMIN+8 waybar",
             "signal": 8,
-            "escape": true
+            "escape": true,
+            "interval": 2
         },
 
         "group/updates-drawer": {
             "orientation": "inherit",
             "drawer": {
-                "transition-duration": "0.3",
+                "transition-duration": 300,
                 "children-class": "updates-drawer",
                 "click-to-reveal": false,
                 "transition-left-to-right": true
@@ -218,9 +215,8 @@
 
         "custom/updates-trigger": {
             "format": "",
-            "exec": "echo ''",
-            "exec-if": "grep -q '\"class\":\"pending\"' ~/.config/dusky/settings/waybar_update_counter_h 2>/dev/null",
-            "interval": 18000,
+            "exec": "grep -qE '\"class\"[[:space:]]*:[[:space:]]*\"(pending|unknown)\"' \"$HOME/.config/dusky/settings/waybar_update_counter_h\" 2>/dev/null && printf '\\n'",
+            "interval": 5,
             "tooltip": false
         },
 
@@ -239,9 +235,9 @@
         },
 
         "memory": {
-            "format": " {used:.1f} GB",
+            "format": " {used:.1f} GiB",
             "interval": 10,
-            "tooltip-format": "{used:.1f} GB / {total:.1f} GB"
+            "tooltip-format": "{used:.1f} GiB / {total:.1f} GiB"
         },
 
         "cpu": {

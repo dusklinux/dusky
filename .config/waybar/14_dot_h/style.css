@@ -1,5 +1,15 @@
 @import url("../matugen/generated/waybar-colors.css");
 
+@define-color glass_workspace alpha(@surface_container_highest, 0.35);
+@define-color glass_workspace_empty alpha(@surface_container_high, 0.18);
+@define-color glass_workspace_visible alpha(@surface_container_highest, 0.6);
+@define-color glass_workspace_primary alpha(@primary, 0.95);
+@define-color glass_workspace_tertiary alpha(@tertiary, 0.8);
+
+/* Tooltip colors participate in the visual-effects switch. */
+@define-color tooltip_surface alpha(@surface_container, 0.57);
+@define-color tooltip_surface_high alpha(@surface_container_high, 0.57);
+
 /* ─────────────────────────────────────────────────────────────────────────────
    TRANSLUCENCY BASE VARIABLES
    ───────────────────────────────────────────────────────────────────────────── */
@@ -122,44 +132,45 @@ window#waybar {
     border: none;
     border-radius: 12px;
     padding: 0px 2px;
-    margin: 2px 2px 4px 2px;
+    margin: 2px;
 }
 
+/* Compensate the numeric font's side bearing while retaining pill width. */
 #workspaces button {
-    padding: 2px 6px 2px 4px;
+    padding: 2px 4px 2px 6px;
     margin: 2px 2px 2px 2px;
     min-width: 12px;
     border-radius: 12px;
-    background-color: alpha(@surface_container_highest, 0.35);
+    background-color: @glass_workspace;
     color: @on_surface_variant;
     font-size: 10px;
     transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-#workspaces button.empty {
-    padding: 2px 6px 2px 4px;
+#workspaces button.empty:not(.active):not(.urgent) {
+    padding: 2px 4px 2px 6px;
     margin: 2px 2px 2px 2px;
     min-width: 12px;
     border-radius: 12px;
-    background-color: alpha(@surface_container_high, 0.18);
+    background-color: @glass_workspace_empty;
     color: alpha(@on_surface_variant, 0.4);
 }
 
 #workspaces button.visible {
-    padding: 2px 6px 2px 4px;
+    padding: 2px 4px 2px 6px;
     margin: 2px 2px 2px 2px;
     min-width: 12px;
     border-radius: 12px;
-    background-color: alpha(@surface_container_highest, 0.6);
+    background-color: @glass_workspace_visible;
     color: @on_surface;
 }
 
 #workspaces button.active {
-    padding: 2px 6px 2px 4px;
+    padding: 2px 4px 2px 6px;
     margin: 2px 2px 2px 2px;
     min-width: 12px;
     border-radius: 12px;
-    background-image: linear-gradient(135deg, alpha(@primary, 0.95), alpha(@tertiary, 0.8));
+    background-image: linear-gradient(135deg, @glass_workspace_primary, @glass_workspace_tertiary);
     color: @on_primary;
     font-weight: 800;
     box-shadow: none;
@@ -175,7 +186,7 @@ window#waybar {
 }
 
 #workspaces button.urgent {
-    padding: 2px 6px 2px 4px;
+    padding: 2px 4px 2px 6px;
     margin: 2px 2px 2px 2px;
     min-width: 12px;
     border-radius: 12px;
@@ -216,7 +227,7 @@ window#waybar {
 #cpu,
 #memory,
 #disk,
-#temperature {
+#custom-temperature {
     padding: 2px 6px;
     margin: 2px 2px 2px 2px;
     min-width: 12px;
@@ -230,7 +241,7 @@ window#waybar {
 #cpu:hover,
 #memory:hover,
 #disk:hover,
-#temperature:hover {
+#custom-temperature:hover {
     background-color: @glass_hover;
 }
 
@@ -322,9 +333,9 @@ window#waybar {
     background-color: @glass_battery_charging;
     border: 1px solid alpha(@tertiary, 0.15);
 }
-#battery.warning:not(.charging) { color: @error; }
-#battery.critical:not(.charging) {
-    color: @error;
+#battery.warning:not(.charging):not(.plugged) { color: @error; }
+#battery.critical:not(.charging):not(.plugged) {
+    color: @on_error;
     background-color: @glass_battery_critical;
     animation: blink 1s infinite;
 }
@@ -392,8 +403,8 @@ tooltip decoration {
 tooltip,
 tooltip.background,
 .tooltip {
-    background-color: alpha(@surface_container, 0.57);
-    background: linear-gradient(135deg, alpha(@surface_container, 0.57), alpha(@surface_container_high, 0.57));
+    background-color: @tooltip_surface;
+    background: linear-gradient(135deg, @tooltip_surface, @tooltip_surface_high);
     border: 1px solid alpha(@primary, 0.5);
     border-radius: 12px;
     box-shadow: none;
@@ -412,6 +423,20 @@ tooltip label,
    TRANSPARENCY TOGGLE (MASTER SWITCH AT BOTTOM)
    ───────────────────────────────────────────────────────────────────────────── */
 /* WAYBAR_OPAQUE_SWITCH_START */
+@define-color glass_workspace @surface_container_highest;
+@define-color glass_workspace_empty @surface_container_high;
+@define-color glass_workspace_visible @surface_container_highest;
+@define-color glass_workspace_primary @primary;
+@define-color glass_workspace_tertiary @tertiary;
+@define-color tooltip_surface @surface_container;
+@define-color tooltip_surface_high @surface_container_high;
+
+@define-color glass_group @surface_container;
+@define-color glass_module @surface_container;
+@define-color glass_hover @surface_container_high;
+@define-color glass_hover_bright @surface_container_highest;
+@define-color glass_battery_charging @tertiary_container;
+@define-color glass_battery_critical @error;
 
 #left-pill,
 #expandable,

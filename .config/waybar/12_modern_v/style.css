@@ -1,4 +1,8 @@
-@import url("../../.config/matugen/generated/waybar-colors.css");
+@import url("../matugen/generated/waybar-colors.css");
+
+/* Tooltip colors participate in the visual-effects switch. */
+@define-color tooltip_surface alpha(@surface_container, 0.57);
+@define-color tooltip_surface_high alpha(@surface_container_high, 0.57);
 
 /* ─────────────────────────────────────────────────────────────────────────────
    TRANSLUCENCY CONTROLS (GLASSY MODE)
@@ -15,6 +19,8 @@
    ───────────────────────────────────────────────────────────────────────────── */
 
 /* WAYBAR_OPAQUE_SWITCH_START */
+@define-color tooltip_surface @surface_container;
+@define-color tooltip_surface_high @surface_container_high;
 
 @define-color glass_module            @surface_container;
 @define-color glass_module_low        @surface_container_low;
@@ -53,8 +59,8 @@ tooltip decoration {
 tooltip,
 tooltip.background,
 .tooltip {
-    background-color: alpha(@surface_container, 0.57);
-    background: linear-gradient(135deg, alpha(@surface_container, 0.57), alpha(@surface_container_high, 0.57));
+    background-color: @tooltip_surface;
+    background: linear-gradient(135deg, @tooltip_surface, @tooltip_surface_high);
     border: 1px solid alpha(@primary, 0.5);
     border-radius: 12px;
     box-shadow: none;
@@ -72,7 +78,7 @@ tooltip label,
 /* UNIFIED CAPSULE STYLE */
 #clock,
 #workspaces,
-#group-stats,
+#stats,
 #pulseaudio,
 #backlight,
 #bluetooth,
@@ -84,7 +90,7 @@ tooltip label,
     background-color: @glass_module;
     color: @on_surface;
     border-radius: 10px;
-    margin: 3px 1px; 
+    margin: 3px 1px;
     padding: 6px 2px 6px 3px;
 }
 
@@ -92,7 +98,7 @@ tooltip label,
 #clock {
     background-color: @glass_primary_container;
     color: @on_primary_container;
-    font-size: 10px; 
+    font-size: 10px;
     padding-bottom: 8px;
 }
 
@@ -102,19 +108,19 @@ tooltip label,
     font-size: 10px;
 }
 
-#group-stats {
+#stats {
     background-color: @glass_module_low;
     padding: 8px 0;
 }
 
-#cpu label, 
-#memory label, 
-#temperature label {
+#cpu label,
+#memory label,
+#custom-temperature label {
     -gtk-icon-transform: scale(1);
-    margin: 0 1px; 
+    margin: 0 1px;
 }
 
-#cpu, #memory, #temperature {
+#cpu, #memory, #custom-temperature {
     background: transparent;
     margin: 4px 0;
     padding: 0px 1px 0px 1px;
@@ -123,10 +129,15 @@ tooltip label,
     min-width: 22px;
 }
 
-#cpu.critical, 
-#memory.critical, 
-#temperature.critical {
+#cpu.critical,
+#memory.critical,
+#custom-temperature.critical {
     color: @error;
+}
+
+/* The custom module's label must span the stats capsule's inner width. */
+#custom-temperature label {
+    min-width: 25px;
 }
 
 /* --- CENTER SECTION --- */
@@ -165,12 +176,12 @@ tooltip label,
 }
 
 #pulseaudio, #backlight, #bluetooth, #battery {
-    font-size: 10px; 
+    font-size: 10px;
     padding: 8px 0;
 }
 
 #battery.charging { color: @tertiary; }
-#battery.warning { color: @error; }
+#battery.warning:not(.charging):not(.plugged) { color: @error; }
 
 #custom-power {
     background-color: transparent;
@@ -182,7 +193,7 @@ tooltip label,
 }
 
 #custom-power:hover {
-    color: @error_container;
+    color: @error;
 }
 
 #custom-inhibit-suspend {

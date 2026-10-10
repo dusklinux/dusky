@@ -2,7 +2,7 @@
     "layer": "top",
     "position": "top",
     "spacing": 4,
-    "height": 36,
+    "height": 0,
     "margin-top": 5,
     "margin-bottom": 0,
     "margin-left": 8,
@@ -20,7 +20,7 @@
         "hyprland/submap",
         "hyprland/window"
     ],
-    
+
     "modules-center": [
         "group/network-drawer",
         "clock",
@@ -28,15 +28,15 @@
         // "group/mpris-drawer",
         "group/updates-drawer"
     ],
-    
+
     "modules-right": [
-        "cpu", 
-        "memory", 
-        "temperature",
+        "cpu",
+        "memory",
+        "custom/temperature",
         "custom/separator",
-        "group/backlight-drawer", 
-        "bluetooth", 
-        "pulseaudio", 
+        "group/backlight-drawer",
+        "bluetooth",
+        "pulseaudio",
         "battery",
         "custom/separator-2",
         "custom/notification",
@@ -142,23 +142,9 @@
     },
 
     "hyprland/workspaces": {
-        "format": "{icon}",
-        "format-icons": {
-            "1": "1",
-            "2": "2",
-            "3": "3",
-            "4": "4",
-            "5": "5",
-            "6": "6",
-            "7": "7",
-            "8": "8",
-            "9": "9",
-            "10": "0",
-            "special": "󰠱",
-            "default": ""
-        },
+        "format": "{id}",
         "on-click": "activate",
-        "sort-by": "number",
+        "sort-by": "default",
         "all-outputs": true,
         "show-special": true,
         "special-visible-only": false,
@@ -174,10 +160,14 @@
     },
 
     "hyprland/window": {
-        "format": "",
+        "format": "{class}",
+        "max-length": 20,
         "separate-outputs": true,
         "icon": true,
-        "icon-size": 16
+        "icon-size": 16,
+        "icon-spacing": 4,
+        "tooltip-format": "{title}\n{class}",
+        "rewrite": { "^$": "󰇄" }
     },
 
     // ===================================================================
@@ -260,8 +250,7 @@
 
     "custom/updates-trigger": {
         "format": "",
-        "exec": "echo ''",
-        "exec-if": "grep -q '\"class\":\"pending\"' ~/.config/dusky/settings/waybar_update_counter_h 2>/dev/null",
+        "exec": "grep -qE '\"class\"[[:space:]]*:[[:space:]]*\"(pending|unknown)\"' \"$HOME/.config/dusky/settings/waybar_update_counter_h\" 2>/dev/null && printf '\\n'",
         "interval": 5,
         "tooltip": false
     },
@@ -301,21 +290,26 @@
         }
     },
 
-    "temperature": {
-        "thermal-zone": 6,
-        "format": "{icon} {temperatureC}°",
-        "format-icons": ["󱃃", "󰔏", "󱃂"],
-        "critical-threshold": 75,
-        "format-critical": "󰸁 {temperatureC}°",
-        "tooltip-format": "CPU Package: {temperatureC}°C / {temperatureF}°F\nThermal Zone: 6",
-        "interval": 3
+    "custom/temperature": {
+        "exec": "\"$HOME/user_scripts/waybar/temperature.sh\" 3 75",
+        "return-type": "json",
+        "format": "{icon} {text}°",
+        "format-icons": {
+            "default": [
+                "󱃃",
+                "󰔏",
+                "󱃂"
+            ],
+            "critical": "󰸁"
+        },
+        "hide-empty-text": true,
+        "restart-interval": 5
     },
 
     // ===================================================================
     // RIGHT MODULES - Connectivity & System Controls
     // ===================================================================
     "backlight": {
-        "device": "intel_backlight",
         "format": "{icon} {percent}%",
         "format-icons": ["󰃞", "󰃟", "󰃠"],
         "tooltip-format": "Brightness: {percent}%\n\nLMB: Brightness Slider\nRMB: Hyprsunset Slider\nMMB: Shader Menu\nScroll: Adjust",
@@ -343,7 +337,7 @@
         "format-disconnected": "󰤭 Off",
         "format-disabled": "󰀝",
         "format-icons": ["󰤯", "󰤟", "󰤢", "󰤥", "󰤨"],
-        "tooltip-format-wifi": " {essid}\n\nSignal: {signalStrength}% ({signaldBm} dBm)\nFrequency: {frequency} MHz\nInterface: {ifname}\nIP: {ipaddr}/{cidr}\n\n󰕒 {bandwidthUpBytes}  󰇚 {bandwidthDownBytes}\n\nLMB: Dusky Network\nRMB: WiFi ON\nMMB: WiFi OFF",
+        "tooltip-format-wifi": " {essid}\n\nSignal: {signalStrength}% ({signaldBm} dBm)\nFrequency: {frequency} GHz\nInterface: {ifname}\nIP: {ipaddr}/{cidr}\n\n󰕒 {bandwidthUpBytes}  󰇚 {bandwidthDownBytes}\n\nLMB: Dusky Network\nRMB: WiFi ON\nMMB: WiFi OFF",
         "tooltip-format-ethernet": "󰈀 {ifname}\n\nIP: {ipaddr}/{cidr}\nGateway: {gwaddr}\n\n󰕒 {bandwidthUpBytes}  󰇚 {bandwidthDownBytes}",
         "tooltip-format-disconnected": "No connection\n\nRMB: Turn WiFi ON",
         "interval": 2,
@@ -412,20 +406,20 @@
     },
 
 "custom/notification": {
-        "justify": "center",
-        "align": 0.5,
-        "tooltip-format": "Left Click: Launch Mako\nMiddle Click: Clear All\nRight Click: Do Not Disturb",
-        "format": "{}",
-        "return-type": "json",
-        "exec-if": "which makoctl",
-        "exec": "~/user_scripts/waybar/mako.sh --horizontal",
-        "interval": 2,
-        "on-click": "~/user_scripts/rofi/rofi_mako.sh",
-        "on-click-middle": "~/user_scripts/waybar/mako.sh --clear && pkill -RTMIN+8 waybar",
-        "on-click-right": "makoctl mode -t do-not-disturb && pkill -RTMIN+8 waybar",
-        "signal": 8,
-        "escape": true
-    },
+    "justify": "center",
+    "align": 0.5,
+    "tooltip-format": "{tooltip}\n\nLeft Click: Launch Mako\nMiddle Click: Clear All\nRight Click: Do Not Disturb",
+    "format": "{}",
+    "return-type": "json",
+    "exec-if": "command -v makoctl >/dev/null 2>&1",
+    "exec": "~/user_scripts/waybar/mako.sh --horizontal",
+    "interval": 2,
+    "on-click": "~/user_scripts/rofi/rofi_mako.sh",
+    "on-click-middle": "~/user_scripts/waybar/mako.sh --clear && pkill -RTMIN+8 waybar",
+    "on-click-right": "makoctl mode -t do-not-disturb && pkill -RTMIN+8 waybar",
+    "signal": 8,
+    "escape": true
+},
 
     "tray": {
         "icon-size": 16,

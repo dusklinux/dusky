@@ -8,13 +8,23 @@
 /* ========================================================================== */
 @define-color hover-fg      alpha(@on_surface, 0.75);
 @define-color border-accent shade(@primary, 0.7);
+@define-color glass_module alpha(@surface, 0.7);
+@define-color glass_workspace alpha(@surface_container, 0.5);
+@define-color glass_tooltip alpha(@surface, 0.85);
+
+/* WAYBAR_OPAQUE_SWITCH_START */
+@define-color glass_module @surface;
+@define-color glass_workspace @surface_container;
+@define-color glass_tooltip @surface;
+/* WAYBAR_OPAQUE_SWITCH_END */
+
 
 /* ========================================================================== */
 /* Base */
 /* ========================================================================== */
 * {
   border: none;
-  font-family: "JetBrains Mono Nerd Font Propo", "CaskaydiaMono Nerd Font Propo", monospace;
+  font-family: "JetBrainsMono Nerd Font Propo", "CaskaydiaMono Nerd Font Propo", monospace;
   font-size: 13px;
   min-height: 0;
 }
@@ -31,7 +41,7 @@ window#waybar {
 .modules-right,
 .modules-center {
   border: 2px solid @border-accent;
-  background-color: @surface;
+  background-color: @glass_module;
   box-shadow: 1px 1px 3px 2px alpha(#000000, 0.8);
 }
 
@@ -43,11 +53,10 @@ window#waybar {
 
 #clock {
   border: 2px solid @border-accent;
-  background-color: @surface;
+  background-color: @glass_module;
   box-shadow: 1px 1px 3px 2px alpha(#000000, 0.8);
 }
 
-#hyprland-window,
 #window {
   border: none;
   background: transparent;
@@ -58,7 +67,7 @@ window#waybar {
 /* ========================================================================== */
 /* Modules */
 /* ========================================================================== */
-#hyprland-window,
+#window,
 #cpu,
 #memory,
 #battery,
@@ -89,7 +98,7 @@ window#waybar {
   padding: 0px 2px;
   margin: 2px 6px;
   border-radius: 8px;
-  background-color: alpha(@surface_container, 0.5);
+  background-color: @glass_workspace;
 }
 
 #workspaces button {
@@ -104,7 +113,7 @@ window#waybar {
   transition: all 0.2s ease-in-out;
 }
 
-#workspaces button.empty {
+#workspaces button.empty:not(.active):not(.urgent) {
   padding: 0 6px;
   min-width: 16px;
   background-color: transparent;
@@ -130,12 +139,13 @@ window#waybar {
 }
 
 #workspaces button.active:hover {
+  color: @on_primary;
   background-color: @primary_fixed_dim;
 }
 
 #workspaces button.urgent {
   background-color: @error_container;
-  color: @on_error;
+  color: @on_error_container;
 }
 
 /* ========================================================================== */
@@ -146,8 +156,8 @@ window#waybar {
 }
 
 tooltip {
-  opacity: 0.95;
-  background: @surface;
+  opacity: 1;
+  background: @glass_tooltip;
   font-size: 9px;
   border: 2px solid @border-accent;
   padding: 4px;

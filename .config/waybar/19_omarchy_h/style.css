@@ -1,6 +1,14 @@
-@import url("../../.config/matugen/generated/waybar-colors.css");
+@import url("../matugen/generated/waybar-colors.css");
 
 @define-color foreground @on_surface;
+@define-color glass_bar alpha(@background, 0.7);
+@define-color glass_tooltip alpha(@surface_container, 0.85);
+
+/* WAYBAR_OPAQUE_SWITCH_START */
+@define-color glass_bar @background;
+@define-color glass_tooltip @surface_container;
+/* WAYBAR_OPAQUE_SWITCH_END */
+
 
 * {
   background-color: transparent;
@@ -14,7 +22,7 @@
 }
 
 window#waybar {
-  background-color: @background;
+  background-color: @glass_bar;
 }
 
 .modules-left {
@@ -32,7 +40,7 @@ window#waybar {
   min-width: 8px;
 }
 
-#workspaces button.empty {
+#workspaces button.empty:not(.active):not(.urgent) {
   opacity: 0.5;
 }
 
@@ -67,7 +75,7 @@ window#waybar {
 }
 
 tooltip {
-  background-color: @surface_container;
+  background-color: @glass_tooltip;
   border: 1px solid @outline_variant;
   border-radius: 6px;
   padding: 6px;
@@ -94,12 +102,12 @@ tooltip label {
 }
 
 #custom-screenrecording-indicator.active {
-  color: #a55555;
+  color: @error;
 }
 
 #custom-idle-indicator.active,
 #custom-notification-silencing-indicator.active {
-  color: #a55555;
+  color: @error;
 }
 
 #custom-voxtype {
@@ -108,7 +116,7 @@ tooltip label {
 }
 
 #custom-voxtype.recording {
-  color: #a55555;
+  color: @error;
 }
 
 .left .modules-left,

@@ -1,4 +1,8 @@
-@import url("../../.config/matugen/generated/waybar-colors.css");
+@import url("../matugen/generated/waybar-colors.css");
+
+/* Tooltip colors participate in the visual-effects switch. */
+@define-color tooltip_surface alpha(@surface_container, 0.57);
+@define-color tooltip_surface_high alpha(@surface_container_high, 0.57);
 
 /* ─────────────────────────────────────────────────────────────────────────────
    TRANSPARENCY TOGGLE
@@ -9,6 +13,8 @@
 @define-color glass_tooltip         alpha(@surface_container, 0.72);
 
 /* WAYBAR_OPAQUE_SWITCH_START */
+@define-color tooltip_surface @surface_container;
+@define-color tooltip_surface_high @surface_container_high;
 
 @define-color glass_surface         @surface;
 @define-color glass_module          @surface_container;
@@ -47,8 +53,8 @@ tooltip decoration {
 tooltip,
 tooltip.background,
 .tooltip {
-    background-color: alpha(@surface_container, 0.57);
-    background: linear-gradient(135deg, alpha(@surface_container, 0.57), alpha(@surface_container_high, 0.57));
+    background-color: @tooltip_surface;
+    background: linear-gradient(135deg, @tooltip_surface, @tooltip_surface_high);
     border: 1px solid alpha(@primary, 0.5);
     border-radius: 12px;
     box-shadow: none;
@@ -77,7 +83,7 @@ tooltip label,
     transition: all 0.3s ease-in-out;
 }
 
-#workspaces button:not(.empty):not(.active) {
+#workspaces button:not(.empty):not(.active):not(.urgent) {
     color: alpha(@on_surface, 0.85);
     background-color: alpha(@primary, 0.12);
     border: 1px solid alpha(@primary, 0.2);
@@ -89,6 +95,11 @@ tooltip label,
     min-height: 16px;
     min-width: 24px;
     transition: all 0.3s ease-in-out;
+}
+
+/* Optically center the active digit without changing the pill's size. */
+#workspaces button.active label {
+    padding-top: 1px;
 }
 
 #workspaces button:hover {
@@ -197,7 +208,7 @@ tooltip label,
 
 #tray .needs-attention {
     -gtk-icon-effect: highlight;
-    background-color: @accent;
+    background-color: @primary;
 }
 
 .hide-tray-drawer {

@@ -1,16 +1,15 @@
 /*
  * ~/.config/waybar/style.css
- * Precision Vertical Layout - Width 10 (Strict) - Numbered Workspaces & Adaptive Network
+ * Compact Vertical Layout - Centered Modules & Adaptive Network
  */
 
-@import url("../../.config/matugen/generated/waybar-colors.css");
+@import url("../matugen/generated/waybar-colors.css");
 
 /* ─────────────────────────────────────────────────────────────────────────────
    TRANSLUCENCY CONTROLS (GLASSY MODE)
    Tweak the decimals (0.0 to 1.0) here to adjust granular glassiness.
    ───────────────────────────────────────────────────────────────────────────── */
 @define-color glass_bar         alpha(@background, 0.55);
-@define-color glass_group       alpha(@surface_container_highest, 0.55);
 @define-color glass_module      alpha(@surface_container_highest, 0.55);
 @define-color glass_tooltip     alpha(@surface_container, 0.55);
 @define-color glass_active_ws   alpha(@primary, 0.55);
@@ -24,7 +23,6 @@
 /* WAYBAR_OPAQUE_SWITCH_START */
 
 @define-color glass_bar         @background;
-@define-color glass_group       @surface_container_highest;
 @define-color glass_module      @surface_container_highest;
 @define-color glass_tooltip     @surface_container;
 @define-color glass_active_ws   @primary_container;
@@ -41,7 +39,7 @@
     font-family: "JetBrainsMono Nerd Font Propo", "JetBrainsMono Nerd Font", sans-serif;
     font-size: 10px;
     font-weight: 600;
-    font-feature-settings: "tnum"; 
+    font-feature-settings: "tnum";
     min-height: 0;
     min-width: 0;
     border: none;
@@ -51,7 +49,7 @@
 }
 
 window#waybar {
-    background: @glass_bar; 
+    background: @glass_bar;
     color: @on_surface;
     border: none;
 }
@@ -85,24 +83,48 @@ tooltip label {
     margin: 4px 0px;
 }
 
-/* --- Group Pill Backgrounds (Fixed Visibility) --- */
-box#group-media, box#group-hardware, box#group-updates-drawer, box#group-utils, box#group-connections, box#group-bottom {
-    background-color: @glass_group;
-    border-radius: 12px;
+/* Groups provide spacing; only the clock has a pill background. */
+box#media, box#hardware, box#updates-drawer, box#utils, box#connections, box#bottom {
+    background-color: transparent;
+    border-radius: 0;
     padding: 6px 0px;
     margin: 4px 0px;
 }
 
 /* --- Internal Module Spacing --- */
-#battery, #cpu, #memory, #temperature,
+#battery, #cpu, #memory, #custom-temperature,
 #pulseaudio, #backlight, #network, #bluetooth, #tray,
 #custom-theme, #custom-power, #custom-notification, #custom-inhibit-suspend,
-#custom-app-tray, #custom-network, #custom-audiorouter, #custom-cava, 
+#custom-app-tray, #custom-network, #custom-audiorouter, #custom-cava,
 #custom-updates, #custom-updates-trigger {
     padding: 0px;
-    margin: 3px 0px; 
+    margin: 3px 0px;
     background-color: transparent;
     transition: all 0.2s ease-in-out;
+}
+
+/* Keep group boundaries compact and leave 6px between top modules. */
+.modules-left > widget > *,
+box#media,
+box#hardware {
+    padding: 0;
+    margin: 0;
+}
+
+#battery,
+#pulseaudio,
+#backlight,
+#cpu,
+#memory,
+#custom-temperature {
+    padding: 0;
+    margin: 3px 0;
+}
+
+/* Custom modules contain a non-expanding label inside a horizontal box.
+ * Use the original compact rail's 23px content width for centered labels. */
+box.module > label {
+    min-width: 23px;
 }
 
 /* ===================================================================
@@ -126,8 +148,8 @@ box#group-media, box#group-hardware, box#group-updates-drawer, box#group-utils, 
     transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-#workspaces button.empty {
-    color: alpha(@on_surface, 0.3); 
+#workspaces button.empty:not(.active):not(.urgent) {
+    color: alpha(@on_surface, 0.3);
     background-color: transparent;
     box-shadow: none;
 }
@@ -148,22 +170,22 @@ box#group-media, box#group-hardware, box#group-updates-drawer, box#group-utils, 
 /* --- Clock and Bottom Gap Control --- */
 #clock {
     font-weight: 900;
-    background-color: @glass_module; 
+    background-color: @glass_module;
     border-radius: 6px;
     color: @primary;
     padding: 4px 0px;
     margin-top: 3px;
-    margin-bottom: 0px; 
+    margin-bottom: 0px;
     margin-left: 2px;
     margin-right: 2px;
 }
 
-box#group-bottom {
-    margin-top: 2px; 
+box#bottom {
+    margin-top: 2px;
 }
 
 /* --- Hardware Group (Tertiary Color Map) --- */
-#cpu, #memory, #temperature {
+#cpu, #memory, #custom-temperature {
     color: @tertiary;
     font-weight: bold;
 }
@@ -181,30 +203,30 @@ box#group-bottom {
     color: @secondary;
 }
 #battery.charging, #battery.plugged { color: @primary; }
-#battery.warning { color: @error; animation: blink-critical 1s infinite alternate; }
-#battery.critical { color: @error_container; }
+#battery.warning:not(.charging):not(.plugged) { color: @error; animation: blink-critical 1s infinite alternate; }
+#battery.critical:not(.charging):not(.plugged) { color: @error; }
 
 /* --- NETWORK METER DYNAMIC CLASSES --- */
 #custom-network {
     font-size: 9px;
     transition: color 0.1s ease-in-out, text-shadow 0.1s ease-in-out;
-    padding: 2px 0px 6px 2px;
+    padding: 2px 0px 6px;
     margin: 0px 0px 0px 0px;
 }
 /* Subtle when idling or browsing lightly */
-#custom-network.network-kb { 
-    color: @secondary; 
+#custom-network.network-kb {
+    color: @secondary;
     font-weight: bold;
 }
 /* Glowing Alert State when pulling massive bandwidth */
-#custom-network.network-mb { 
-    color: @primary; 
+#custom-network.network-mb {
+    color: @primary;
     font-weight: 900;
     text-shadow: 0 0 5px alpha(@primary, 0.7);
 }
 /* Absolute disconnect */
-#custom-network.network-disconnected { 
-    color: @error; 
+#custom-network.network-disconnected {
+    color: @error;
 }
 
 /* --- Drawer Container & Tray Centering --- */
@@ -241,30 +263,30 @@ widget > box {
     color: @error;
     font-size: 12px;
     margin: 4px 0;
-    padding: 2px 0px 2px 7px;
+    padding: 2px 0;
 }
 #custom-inhibit-suspend {
     color: @on_surface_variant;
     font-size: 10px;
     margin: 4px 0;
-    padding: 2px 0px 2px 8px;
+    padding: 2px 0;
 }
 #custom-theme {
     color: @secondary;
     font-size: 11px;
     margin: 4px 0;
-    padding: 2px 0px 2px 7px;
+    padding: 2px 0;
 }
 #custom-notification {
     color: @on_surface_variant;
     font-size: 10px;
     margin: 4px 0;
-    padding: 2px 0px 2px 2px;
+    padding: 2px 0;
 }
 #custom-updates, #custom-updates-trigger { color: @tertiary; font-weight: bold; }
 
 /* --- Unified Hover States --- */
-#battery:hover, #clock:hover, #cpu:hover, #memory:hover, #temperature:hover,
+#battery:hover, #clock:hover, #cpu:hover, #memory:hover, #custom-temperature:hover,
 #pulseaudio:hover, #backlight:hover, #bluetooth:hover, #custom-network:hover,
 #custom-theme:hover, #custom-power:hover, #custom-notification:hover,
 #custom-audiorouter:hover, #custom-app-tray:hover,

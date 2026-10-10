@@ -1,13 +1,13 @@
 {
     "layer": "top",
     "position": "top",
-    "height": 32,
+    "height": 0,
     "margin-top": 4,
     "margin-left": 8,
     "margin-right": 8,
     "spacing": 0,
     "reload_style_on_change": true,
-    
+
     // --- MODULE LAYOUT ---
     "modules-left": [
         "group/left-pill",
@@ -32,7 +32,7 @@
             "clock"
         ]
     },
-    
+
     "group/expandable": {
         "orientation": "horizontal",
         "drawer": {
@@ -45,7 +45,7 @@
             "cpu",
             "memory",
             "disk",
-            "temperature"
+            "custom/temperature"
         ]
     },
 
@@ -100,7 +100,7 @@
         "on-click": "python3 ~/user_scripts/dusky_system/control_center/dusky_control_center.py",
         "on-click-right": "\"$HOME/.local/bin/dusky-tray\""
     },
-    
+
     "clock": {
         "format": "{:%I:%M %p}",
         "tooltip-format": "<tt>{calendar}</tt>",
@@ -128,10 +128,10 @@
     "custom/notification": {
         "justify": "center",
         "align": 0.5,
-        "tooltip-format": "Left Click: Launch Mako\nMiddle Click: Clear All\nRight Click: Do Not Disturb",
+        "tooltip-format": "{tooltip}\n\nLeft Click: Launch Mako\nMiddle Click: Clear All\nRight Click: Do Not Disturb",
         "format": "{}",
         "return-type": "json",
-        "exec-if": "which makoctl",
+        "exec-if": "command -v makoctl >/dev/null 2>&1",
         "exec": "~/user_scripts/waybar/mako.sh --horizontal",
         "interval": 2,
         "on-click": "~/user_scripts/rofi/rofi_mako.sh",
@@ -143,8 +143,7 @@
 
     "custom/updates-trigger": {
         "format": "",
-        "exec": "echo ''",
-        "exec-if": "grep -q '\"class\":\"pending\"' ~/.config/dusky/settings/waybar_update_counter_h 2>/dev/null",
+        "exec": "grep -qE '\"class\"[[:space:]]*:[[:space:]]*\"(pending|unknown)\"' \"$HOME/.config/dusky/settings/waybar_update_counter_h\" 2>/dev/null && printf '\\n'",
         "interval": 5,
         "tooltip": false
     },
@@ -160,7 +159,7 @@
     "hyprland/workspaces": {
         "active-only": false,
         "all-outputs": true,
-        "format": "",
+        "format": "{id}",
         "on-click": "activate",
         "persistent-workspaces": {
             "*": 5
@@ -168,34 +167,37 @@
         "on-scroll-up": "hyprctl dispatch 'hl.dsp.focus({ workspace = \"e-1\" })'",
         "on-scroll-down": "hyprctl dispatch 'hl.dsp.focus({ workspace = \"e+1\" })'"
     },
-    
+
     "custom/expand": {
         "format": "󰅂",
         "tooltip": false
     },
-    
+
     "cpu": {
         "interval": 2,
         "format": " {usage}%",
         "on-click": "dusky-run kitty -e btop"
     },
-    
+
     "memory": {
         "interval": 2,
         "format": " {percentage}%"
     },
-    
+
     "disk": {
         "interval": 30,
         "format": " {percentage_used}%",
-        "path": "/"
+        "paths": [
+            "/"
+        ]
     },
-    
-    "temperature": {
-        "thermal-zone": 8,
-        "interval": 2,
-        "format": " {temperatureC}°C",
-        "critical-threshold": 80
+
+    "custom/temperature": {
+        "exec": "\"$HOME/user_scripts/waybar/temperature.sh\" 2 80",
+        "return-type": "json",
+        "format": " {text}°C",
+        "hide-empty-text": true,
+        "restart-interval": 5
     },
 
     "custom/net-speed": {
@@ -205,7 +207,7 @@
         "interval": 1,
         "tooltip": true
     },
-    
+
     "network": {
         "format-wifi": "",
         "format-ethernet": "󰈀",
@@ -213,14 +215,14 @@
         "tooltip-format-wifi": "{essid} ({signalStrength}%)",
         "on-click": "foot --app-id=dusky_tui python $HOME/user_scripts/dusky_tui/python/main/main.py $HOME/user_scripts/network_manager/tui_dusky_network.py"
     },
-    
+
     "bluetooth": {
         "format": "",
         "format-connected": " {num_connections}",
         "tooltip-format": "{controller_alias}\n{num_connections} connected",
         "on-click": "dusky-run blueman-manager"
     },
-    
+
     "battery": {
         "states": {
             "good": 95,

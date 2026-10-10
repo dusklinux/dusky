@@ -3,7 +3,7 @@
   "layer": "top",
   "position": "top",
   "spacing": 0,
-  "height": 15,
+  "height": 0,
   "width": 0,
   "margin-top": 0,
   "margin-bottom": 0,
@@ -19,21 +19,7 @@
   ],
   "hyprland/workspaces": {
     "on-click": "activate",
-    "format": "{icon}",
-    "format-icons": {
-      "default": "",
-      "1": "1",
-      "2": "2",
-      "3": "3",
-      "4": "4",
-      "5": "5",
-      "6": "6",
-      "7": "7",
-      "8": "8",
-      "9": "9",
-      "10": "0",
-      "active": "󱓻"
-    },
+    "format": "{id}",
     "persistent-workspaces": {
       "1": [],
       "2": [],
@@ -162,15 +148,17 @@
     }
   },
   "custom/screenrecording-indicator": {
-    "exec": "if pgrep -x -f 'gpu-screen-recorder|wf-recorder|obs' > /dev/null; then echo '{\"text\": \"󰑋 Recording\", \"class\": \"active\"}'; else echo ''; fi",
-    "interval": 2,
-    "return-type": "json"
+      "exec": "if pgrep -x wf-recorder >/dev/null || pgrep -f '^([^[:space:]]*/)?gpu-screen-recorder([[:space:]]|$)' >/dev/null; then printf '%s\\n' '{\"text\":\"󰑋\",\"tooltip\":\"Screen recorder running\",\"class\":\"active\"}'; else printf '%s\\n' '{\"text\":\"\",\"class\":\"inactive\"}'; fi",
+      "interval": 2,
+      "return-type": "json",
+      "hide-empty-text": true
   },
   "custom/notification-silencing-indicator": {
-    "exec": "if makoctl mode | grep -q 'do-not-disturb'; then echo '{\"text\": \"󰂛 DND\", \"class\": \"active\"}'; else echo ''; fi",
-    "interval": 2,
-    "return-type": "json",
-    "on-click": "makoctl mode -t do-not-disturb"
+      "exec": "if makoctl mode | grep -q 'do-not-disturb'; then echo '{\"text\": \"󰂛 DND\", \"class\": \"active\"}'; else echo ''; fi",
+      "interval": 2,
+      "return-type": "json",
+      "on-click": "makoctl mode -t do-not-disturb",
+      "hide-empty-text": true
   },
   "custom/voxtype": {
     "exec": "echo ''",

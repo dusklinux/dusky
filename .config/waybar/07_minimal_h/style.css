@@ -1,10 +1,15 @@
-@import url("../../.config/matugen/generated/waybar-colors.css");
+@import url("../matugen/generated/waybar-colors.css");
+
+/* Tooltip colors participate in the visual-effects switch. */
+@define-color tooltip_surface alpha(@surface_container, 0.57);
+@define-color tooltip_surface_high alpha(@surface_container_high, 0.57);
 
 /* ─────────────────────────────────────────────────────────────────────────────
    TRANSPARENCY CONTROLS (GLASSY MODE)
    ───────────────────────────────────────────────────────────────────────────── */
 @define-color glass_module      alpha(@surface_container, 0.55);
 @define-color glass_module_low  alpha(@surface_container_low, 0.55);
+@define-color glass_workspace   alpha(@surface_container_high, 0.6);
 @define-color glass_primary     alpha(@primary, 0.85);
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -12,9 +17,12 @@
    ───────────────────────────────────────────────────────────────────────────── */
 
 /* WAYBAR_OPAQUE_SWITCH_START */
+@define-color tooltip_surface @surface_container;
+@define-color tooltip_surface_high @surface_container_high;
 
 @define-color glass_module      @surface_container;
 @define-color glass_module_low  @surface_container_low;
+@define-color glass_workspace   @surface_container_high;
 @define-color glass_primary     @primary;
 
 /* WAYBAR_OPAQUE_SWITCH_END */
@@ -83,7 +91,7 @@ window#waybar {
 
 /* --- CENTER SECTION --- */
 #workspaces {
-    background-color: alpha(@surface_container_high, 0.6);
+    background-color: @glass_workspace;
     padding: 0 6px;
 }
 
@@ -96,7 +104,7 @@ window#waybar {
     transition: all 0.2s ease;
 }
 
-#workspaces button:not(.empty):not(.active) {
+#workspaces button:not(.empty):not(.active):not(.urgent) {
     color: alpha(@tertiary, 0.9);
     background-color: alpha(@primary, 0.2);
 }
@@ -118,7 +126,7 @@ window#waybar {
 
 /* --- RIGHT SECTION --- */
 #pulseaudio, #battery {
-    font-size: 12px; 
+    font-size: 12px;
     padding: 0 14px;
 }
 
@@ -130,7 +138,7 @@ window#waybar {
 #network.disconnected { color: @error; }
 
 #battery.charging { color: @tertiary; }
-#battery.warning { color: @error; }
+#battery.warning:not(.charging):not(.plugged) { color: @error; }
 
 #cpu, #memory {
     font-size: 12px;
@@ -168,16 +176,6 @@ revealer {
     transition: all 0.3s ease;
 }
 
-revealer:not(:checked),
-revealer:not(:checked) *,
-.drawer revealer:not(:checked),
-.drawer revealer:not(:checked) * {
-    min-width: 0;
-    min-height: 0;
-    margin: 0;
-    padding: 0;
-    border: none;
-}
 
 #custom-power {
     background-color: @glass_module;
@@ -221,8 +219,8 @@ tooltip decoration {
 tooltip,
 tooltip.background,
 .tooltip {
-    background-color: alpha(@surface_container, 0.57);
-    background: linear-gradient(135deg, alpha(@surface_container, 0.57), alpha(@surface_container_high, 0.57));
+    background-color: @tooltip_surface;
+    background: linear-gradient(135deg, @tooltip_surface, @tooltip_surface_high);
     border: 1px solid alpha(@primary, 0.5);
     border-radius: 12px;
     box-shadow: none;

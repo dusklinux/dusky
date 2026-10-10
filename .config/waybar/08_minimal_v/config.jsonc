@@ -14,15 +14,15 @@
     // ===================================================================
     // MODULE LAYOUT
     // ===================================================================
-    "modules-left": [ 
+    "modules-left": [
         "group/clock-drawer"
         //"group/stats"
     ],
-    
-    "modules-center": [ 
+
+    "modules-center": [
         "hyprland/workspaces"
     ],
-    
+
     "modules-right": [
         "group/media-drawer",
         "battery",
@@ -77,7 +77,7 @@
 
     "group/stats": {
         "orientation": "vertical",
-        "modules": [ "cpu", "memory", "temperature" ]
+        "modules": [ "cpu", "memory", "custom/temperature" ]
     },
 
     // ===================================================================
@@ -88,7 +88,7 @@
         //"format": "{name}",
         "format": "",
         "on-click": "activate",
-        "sort-by": "number",
+        "sort-by": "default",
         "persistent-workspaces": {},
         "on-scroll-up": "hyprctl dispatch 'hl.dsp.focus({ workspace = \"e-1\" })'",
         "on-scroll-down": "hyprctl dispatch 'hl.dsp.focus({ workspace = \"e+1\" })'"
@@ -116,13 +116,14 @@
         }
     },
 
-    "temperature": {
+    "custom/temperature": {
         "justify": "center",
-        "thermal-zone": 6,
-        "format": "\n{temperatureC}",
-        "critical-threshold": 80,
-        "format-critical": "🔥\n{temperatureC}",
-        "tooltip-format": "Temp: {temperatureC}°C"
+        "exec": "\"$HOME/user_scripts/waybar/temperature.sh\" 10 80",
+        "return-type": "json",
+        "format": "{icon}\n{text}",
+        "format-icons": { "default": "", "critical": "🔥" },
+        "hide-empty-text": true,
+        "restart-interval": 5
     },
 
     "clock": {
@@ -154,10 +155,10 @@
     "custom/notification": {
         "justify": "center",
         "align": 0.5,
-        "tooltip-format": "Left Click: Launch Mako\nMiddle Click: Clear All\nRight Click: Do Not Disturb",
+        "tooltip-format": "{tooltip}\n\nLeft Click: Launch Mako\nMiddle Click: Clear All\nRight Click: Do Not Disturb",
         "format": "{}",
         "return-type": "json",
-        "exec-if": "which makoctl",
+        "exec-if": "command -v makoctl >/dev/null 2>&1",
         "exec": "~/user_scripts/waybar/mako.sh --vertical",
         "interval": 2,
         "on-click": "~/user_scripts/rofi/rofi_mako.sh",
@@ -190,7 +191,6 @@
     "backlight": {
         "justify": "center",
         "align": 0.5,
-        "device": "intel_backlight",
         "format": "{icon}\n{percent}",
         "format-icons": ["","","","","","","","","","","","","","",""],
         "tooltip": true,

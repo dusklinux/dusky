@@ -1,7 +1,6 @@
 {
     "layer": "top",
     "position": "top",
-    "mod": "dock",
     "name": "waybar",
     "exclusive": true,
     "passthrough": false,
@@ -66,10 +65,10 @@
     },
 
     "hyprland/workspaces": {
-        "format": "{icon}",
+        "format": "{id}",
         "on-click": "activate",
         "all-outputs": true,
-        "sort-by": "number",
+        "sort-by": "default",
         "persistent-workspaces": {
             "1": [],
             "2": [],
@@ -78,18 +77,12 @@
             "5": []
         },
         "on-scroll-up": "hyprctl dispatch 'hl.dsp.focus({ workspace = \"e-1\" })'",
-        "on-scroll-down": "hyprctl dispatch 'hl.dsp.focus({ workspace = \"e+1\" })'",
-        "format-icons": {
-            "active": "󰮯",
-            "default": "󰊠",
-            "persistent": "󰊠"
-        }
+        "on-scroll-down": "hyprctl dispatch 'hl.dsp.focus({ workspace = \"e+1\" })'"
     },
 
     "custom/updates-trigger": {
         "format": "",
-        "exec": "echo ''",
-        "exec-if": "grep -q '\"class\":\"pending\"' ~/.config/dusky/settings/waybar_update_counter_h 2>/dev/null",
+        "exec": "grep -qE '\"class\"[[:space:]]*:[[:space:]]*\"(pending|unknown)\"' \"$HOME/.config/dusky/settings/waybar_update_counter_h\" 2>/dev/null && printf '\\n'",
         "interval": 5,
         "tooltip": false
     },
@@ -103,19 +96,19 @@
     },
 
   "custom/notification": {
-    "justify": "center",
-    "align": 0.5,
-    "tooltip-format": "Left Click: Launch Mako\nMiddle Click: Clear All\nRight Click: Do Not Disturb",
-    "format": "{}",
-    "return-type": "json",
-    "exec-if": "which makoctl",
-    "exec": "~/user_scripts/waybar/mako.sh --horizontal",
-    "interval": 2,
-    "on-click": "~/user_scripts/rofi/rofi_mako.sh",
-    "on-click-middle": "~/user_scripts/waybar/mako.sh --clear && pkill -RTMIN+8 waybar",
-    "on-click-right": "makoctl mode -t do-not-disturb && pkill -RTMIN+8 waybar",
-    "signal": 8,
-    "escape": true
+      "justify": "center",
+      "align": 0.5,
+      "tooltip-format": "{tooltip}\n\nLeft Click: Launch Mako\nMiddle Click: Clear All\nRight Click: Do Not Disturb",
+      "format": "{}",
+      "return-type": "json",
+      "exec-if": "command -v makoctl >/dev/null 2>&1",
+      "exec": "~/user_scripts/waybar/mako.sh --horizontal",
+      "interval": 2,
+      "on-click": "~/user_scripts/rofi/rofi_mako.sh",
+      "on-click-middle": "~/user_scripts/waybar/mako.sh --clear && pkill -RTMIN+8 waybar",
+      "on-click-right": "makoctl mode -t do-not-disturb && pkill -RTMIN+8 waybar",
+      "signal": 8,
+      "escape": true
   },
 
     "clock": {
@@ -141,7 +134,7 @@
             "on-scroll-down": "shift_down"
         }
     },
-    
+
     "custom/inhibit-suspend": {
         "format": "{}",
         "exec": "if pgrep -x 'hypridle' > /dev/null; then echo '{\"text\": \"󰛊\", \"tooltip\": \"Auto-suspend ENABLED\\nClick to disable hypridle\", \"class\": \"enabled\"}'; else echo '{\"text\": \"󰅶\", \"tooltip\": \"Auto-suspend DISABLED\\nClick to enable hypridle\", \"class\": \"disabled\"}'; fi",
@@ -170,7 +163,7 @@
         "tooltip-format-disconnected": "󰤭 Disconnected",
         "on-click": "foot --app-id=dusky_tui python $HOME/user_scripts/dusky_tui/python/main/main.py $HOME/user_scripts/network_manager/tui_dusky_network.py"
     },
-    
+
     "cpu": {
       "interval": 2,
       "format": "󰍛 {usage}%",
@@ -180,7 +173,7 @@
         "critical": 90
       }
     },
-    
+
     "memory": {
         "format": "󰍛 {percentage}%",
         "format-alt": "󰍛 {used:0.1f}G",
@@ -192,7 +185,7 @@
             "critical": 85
         }
     },
-    
+
     "pulseaudio": {
       "format": "{icon} {volume}%",
       "format-muted": "󰖁",
@@ -227,7 +220,7 @@
       "on-scroll-down": "brightnessctl set 5%-",
       "format-icons": ["󰃞", "󰃟", "󰃠"]
     },
-    
+
     "battery": {
         "format": "{icon} {capacity}%",
         "format-alt": "{icon} {capacity}% {power:.1f}W",
@@ -245,13 +238,13 @@
         "tooltip-format": "{timeTo}\nHealth: {health}%\nPower Draw: {power:.2f} W\nCycles: {cycles}\n\nLMB: Toggle Format\nRMB: Timeout Settings",
         "on-click-right": "dusky-run kitty --class dusky_tui -e python3 $HOME/user_scripts/hypridle/tui_dusky_hypridle.py"
     },
-    
+
     "tray": {
       "icon-size": 15,
       "spacing": 6,
       "show-passive-items": true
     },
-    
+
     "custom/power": {
       "format": "⏻",
       "on-click": "dusky-run ~/user_scripts/wlogout/wlogout_scale.sh",

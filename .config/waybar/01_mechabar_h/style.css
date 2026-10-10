@@ -1,5 +1,9 @@
 @import url("../matugen/generated/waybar-colors.css");
 
+/* Tooltip colors participate in the visual-effects switch. */
+@define-color tooltip_surface alpha(@surface_container, 0.57);
+@define-color tooltip_surface_high alpha(@surface_container_high, 0.57);
+
 @define-color hover-fg      alpha(@on_surface, 0.75);
 @define-color outline       shade(@background, 0.5);
 
@@ -7,20 +11,22 @@
    TRANSLUCENCY CONTROLS (GLASSY MODE)
    Tweak the decimals (0.0 to 1.0) here to adjust granular glassiness.
    ───────────────────────────────────────────────────────────────────────────── */
-@define-color glass_bar         alpha(@background, 1.0);
-@define-color glass_outline     alpha(@outline, 1.0);
-@define-color glass_tier_low    alpha(@surface_container_low, 1.0);
-@define-color glass_tier_mid    alpha(@surface, 1.0);
-@define-color glass_tier_high   alpha(@surface_container_high, 1.0);
-@define-color glass_apex        alpha(@secondary, 1.0);
-@define-color glass_tooltip     alpha(@background, 0.06);
-@define-color glass_menu        alpha(@background, 1.0);
+@define-color glass_bar         alpha(@background, 0.7);
+@define-color glass_outline     alpha(@outline, 0.7);
+@define-color glass_tier_low    alpha(@surface_container_low, 0.7);
+@define-color glass_tier_mid    alpha(@surface, 0.7);
+@define-color glass_tier_high   alpha(@surface_container_high, 0.7);
+@define-color glass_apex        alpha(@secondary, 0.7);
+@define-color glass_tooltip     alpha(@background, 0.85);
+@define-color glass_menu        alpha(@background, 0.7);
 
 /* ─────────────────────────────────────────────────────────────────────────────
    TRANSPARENCY TOGGLE
    ───────────────────────────────────────────────────────────────────────────── */
 
 /* WAYBAR_OPAQUE_SWITCH_START */
+@define-color tooltip_surface @surface_container;
+@define-color tooltip_surface_high @surface_container_high;
 
 @define-color glass_bar         @background;
 @define-color glass_outline     @outline;
@@ -38,7 +44,7 @@
 }
 
 * {
-	font-family: "Commit Mono Nerd Font";
+	font-family: "JetBrainsMono Nerd Font", monospace;
 	font-weight: bold;
 	font-size: 16px;
 }
@@ -247,8 +253,8 @@ tooltip label {
 #custom-inhibit-suspend.disabled,
 #custom-net-speed.network-disconnected,
 #custom-updates.updated,
-#custom-notifications.dnd-none,
-#custom-notifications.dnd-inhibited-none,
+#custom-notifications.dnd,
+#custom-notifications.dnd,
 #mpris.paused,
 #pulseaudio.output.muted,
 #pulseaudio.input.source-muted,
@@ -262,13 +268,13 @@ tooltip label {
 
 #memory.warning,
 #cpu.warning,
-#battery.warning {
+#battery.warning:not(.charging):not(.plugged) {
 	color: @on_secondary_container;
 }
 
 #memory.critical,
 #cpu.critical,
-#battery.critical {
+#battery.critical:not(.charging):not(.plugged) {
 	color: @error;
 }
 
@@ -307,8 +313,8 @@ tooltip decoration {
 tooltip,
 tooltip.background,
 .tooltip {
-    background-color: alpha(@surface_container, 0.57);
-    background: linear-gradient(135deg, alpha(@surface_container, 0.57), alpha(@surface_container_high, 0.57));
+    background-color: @tooltip_surface;
+    background: linear-gradient(135deg, @tooltip_surface, @tooltip_surface_high);
     border: 1px solid alpha(@primary, 0.5);
     border-radius: 12px;
     box-shadow: none;
