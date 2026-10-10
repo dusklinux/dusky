@@ -23,6 +23,7 @@ readonly ICON_DIR="󰹹"
 readonly ICON_BACK=""
 readonly ICON_ERROR=""
 readonly ICON_DISABLE=""
+readonly ROFI_THEME='window { width: 380px; }'
 
 # -----------------------------------------------------------------------------
 # HELPER FUNCTIONS
@@ -258,6 +259,7 @@ if [[ "$selection" == DIR:* ]]; then
     printf '\0prompt\x1fAnimations (%s)\n' "${target_orient^}"
     printf '\0markup-rows\x1ftrue\n'
     printf '\0no-custom\x1ftrue\n'
+    printf '\0theme\x1f%s\n' "$ROFI_THEME"
     printf '\0message\x1fSelect a configuration to apply instantly\n'
 
     printf '<span weight="bold">⬅ Back</span>\0icon\x1f%s\x1finfo\x1fBACK\n' "$ICON_BACK"
@@ -295,6 +297,7 @@ if [[ -z "$selection" || "$selection" == "BACK" ]]; then
     printf '\0prompt\x1fOrientation\n'
     printf '\0markup-rows\x1ftrue\n'
     printf '\0no-custom\x1ftrue\n'
+    printf '\0theme\x1f%s\n' "$ROFI_THEME"
     printf '\0message\x1fSelect animation layout orientation\n'
 
     # Check for disable.lua and list it as the first option if it exists
