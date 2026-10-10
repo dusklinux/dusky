@@ -50,6 +50,10 @@
 
 window#waybar {
     background: @glass_bar;
+    background-image: linear-gradient(to bottom,
+        mix(@glass_bar, @primary, 0.035),
+        @glass_bar,
+        mix(@glass_bar, @tertiary, 0.035));
     color: @on_surface;
     border: none;
 }
@@ -106,7 +110,8 @@ box#media, box#hardware, box#updates-drawer, box#utils, box#bottom {
 /* Keep group boundaries compact and leave 8px between top modules. */
 .modules-left > widget > *,
 box#media,
-box#hardware {
+box#hardware,
+box#updates-drawer {
     padding: 0;
     margin: 0;
 }
@@ -143,13 +148,13 @@ box.module > label {
     margin: 2px 2px;
     min-width: 14px;
     border-radius: 6px;
-    color: @on_surface_variant;
+    color: @secondary;
     background-color: transparent;
     transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 #workspaces button.empty:not(.active):not(.urgent) {
-    color: alpha(@on_surface, 0.3);
+    color: alpha(@on_surface, 0.4);
     background-color: transparent;
     box-shadow: none;
 }
@@ -171,6 +176,8 @@ box.module > label {
 #clock {
     font-weight: 900;
     background-color: @glass_module;
+    background-image: linear-gradient(to bottom,
+        mix(@glass_module, @primary_container, 0.45), @glass_module);
     border-radius: 6px;
     color: @primary;
     padding: 4px 0px;
@@ -184,14 +191,13 @@ box#bottom {
     margin-top: 2px;
 }
 
-/* --- Top Modules: Primary → Secondary → Tertiary ---
- * Blend the wallpaper palette gradually down the rail without adding fills. */
+/* --- Palette Roles: Power & CPU / Audio / Light & Temperature --- */
 #battery { color: @primary; }
-#pulseaudio { color: mix(@primary, @secondary, 0.5); }
-#backlight { color: @secondary; }
-#cpu { color: mix(@secondary, @tertiary, 0.33); }
-#memory { color: mix(@secondary, @tertiary, 0.67); }
-#custom-temperature { color: @tertiary; }
+#pulseaudio { color: @on_surface; }
+#backlight { color: @tertiary; }
+#cpu { color: @primary; }
+#memory { color: @secondary; }
+#custom-temperature { color: mix(@tertiary, @error, 0.28); }
 
 #cpu, #memory, #custom-temperature {
     font-weight: bold;
@@ -270,19 +276,20 @@ widget > box {
     padding: 0;
 }
 #custom-inhibit-suspend {
-    color: @on_surface_variant;
+    color: @secondary;
     font-size: 10px;
-    margin: 4px 0;
+    margin: 4px 0 2px;
     padding: 0;
 }
+#custom-inhibit-suspend.disabled { color: @error; }
 #custom-theme {
-    color: @secondary;
+    color: @tertiary;
     font-size: 11px;
-    margin: 4px 0;
+    margin: 3px 0;
     padding: 2px 0;
 }
 #custom-notification {
-    color: @on_surface_variant;
+    color: @primary;
     font-size: 10px;
     margin: 4px 0;
     padding: 2px 0;

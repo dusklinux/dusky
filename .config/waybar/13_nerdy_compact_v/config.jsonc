@@ -255,10 +255,10 @@
             "align": 0.5,
             "format": "",
             "tooltip": true,
-            "tooltip-format": "Switch wallpapers\nLMB: Dark Mode\nRMB: Light Mode\nMMB: Wallpaper Selector",
-            "on-click": "dusky-run \"$HOME/user_scripts/theme_matugen/theme_ctl.sh\" set --mode dark",
+            "tooltip-format": "Wallpaper and Appearance\nLMB: Dusky Papers\nRMB: Light Mode\nMMB: Dusky Papers",
+            "on-click": "\"$HOME/.local/bin/dusky-papers\"",
             "on-click-right": "dusky-run \"$HOME/user_scripts/theme_matugen/theme_ctl.sh\" set --mode light",
-            "on-click-middle": "dusky-run ~/user_scripts/images/wallpaper_selector.py"
+            "on-click-middle": "\"$HOME/.local/bin/dusky-papers\""
         },
 
 
