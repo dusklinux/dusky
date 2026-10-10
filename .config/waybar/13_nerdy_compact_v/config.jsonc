@@ -255,8 +255,8 @@
             "align": 0.5,
             "format": "",
             "tooltip": true,
-            "tooltip-format": "Wallpaper and Appearance\nLMB: Dusky Papers\nRMB: Light Mode\nMMB: Dusky Papers",
-            "on-click": "\"$HOME/.local/bin/dusky-papers\"",
+            "tooltip-format": "Wallpaper and Appearance\nLMB: Dark Mode\nRMB: Light Mode\nMMB: Dusky Papers",
+            "on-click": "dusky-run \"$HOME/user_scripts/theme_matugen/theme_ctl.sh\" set --mode dark",
             "on-click-right": "dusky-run \"$HOME/user_scripts/theme_matugen/theme_ctl.sh\" set --mode light",
             "on-click-middle": "\"$HOME/.local/bin/dusky-papers\""
         },
