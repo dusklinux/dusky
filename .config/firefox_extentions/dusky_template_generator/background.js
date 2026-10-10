@@ -161,7 +161,7 @@ async function page(tabId, msg) {
   } catch {
     await browser.scripting.executeScript({
       target: { tabId, allFrames: false },
-      files: ["content.js"],
+      files: ["theme.js", "content.js"],
       injectImmediately: true,
     });
     return browser.tabs.sendMessage(tabId, msg, opts);
@@ -280,7 +280,7 @@ browser.commands.onCommand.addListener(async (command) => {
      * optional_host_permissions prompt), or the command's activeTab grant. */
     await browser.scripting.executeScript({
       target: { tabId: tab.id, allFrames: false },
-      files: ["content.js"],
+      files: ["theme.js", "content.js"],
       injectImmediately: true,
     });
     await browser.tabs.sendMessage(tab.id, { type: "picker" }, { frameId: 0 });

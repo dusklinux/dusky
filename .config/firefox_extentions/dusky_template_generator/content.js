@@ -107,6 +107,8 @@
     "pointer-events": "none", isolation: "isolate",
   })) hostEl.style.setProperty(p, v, "important");
   const root = hostEl.attachShadow({ mode: "closed" });
+  const theme = globalThis.__duskyTemplateTheme;
+  theme.apply(hostEl);
 
   /* ══ Perceptual colour engine ═══════════════════════════════════════ */
   /* A detached style object handles ordinary colours; a reusable shadow node
@@ -770,7 +772,7 @@
     active: false, hydrated: false, note: "", paletteNote: "", rev: 0, warnings: [],
     rules: Object.freeze([]), undo: [], redo: [], stack: [], depth: 0,
     locked: false, targetMode: "variable", pickStep: "target", group: "bg",
-    elementVars: [], raf: 0, editKey: null, generation: 0,
+    elementVars: [], selectors: [], raf: 0, editKey: null, generation: 0,
   };
 
   const US = "\u001F";
@@ -1183,11 +1185,16 @@
       else {
         const palette = getComputedStyle(document.documentElement);
         const declarations = [];
+        const colors = {};
         for (const token of PALETTE_OWNED) for (const suffix of ["", "_rgb", "_rgb_comma", "_hsl"]) {
           const value = palette.getPropertyValue(`--${token}${suffix}`).trim();
-          if (value && !/[;{}]/.test(value)) declarations.push(`--dusky-picker-${token}${suffix}:${value} !important;`);
+          if (value && !/[;{}]/.test(value)) {
+            declarations.push(`--dusky-picker-${token}${suffix}:${value} !important;`);
+            colors[`--${token}${suffix}`] = value;
+          }
         }
         paletteCss = `:root{${declarations.join("")}}`;
+        theme.apply(hostEl, colors);
       }
       baseState();
       return;
@@ -1199,9 +1206,10 @@
       declarations.push(`--dusky-picker-${name.slice(2)}:${value} !important;`);
     }
     paletteCss = `:root{${declarations.join("")}}`;
+    theme.apply(hostEl, reply.colors);
   }
 
-  const OUTLINE = "outline:2px dashed #e6c280 !important;outline-offset:-2px !important";
+  const OUTLINE = "outline:2px dashed var(--dusky-picker-primary, #a8ceff) !important;outline-offset:-2px !important";
 
   /* THE single preview entry point — pick mode, edit mode, chips, drawer rows
    * and the extra buttons all go through here, so they cannot diverge. */
@@ -1248,64 +1256,62 @@
 
   /* ══ Shadow UI ══════════════════════════════════════════════════════ */
   const UI_CSS = `
-:host{all:initial!important;display:block!important;position:fixed!important;inset:0 auto auto 0!important;width:0!important;height:0!important;overflow:visible!important;z-index:2147483647!important;pointer-events:none!important;isolation:isolate!important}
+:host{all:initial!important;color-scheme:var(--dusky-ui-scheme,dark)!important;display:block!important;position:fixed!important;inset:0 auto auto 0!important;width:0!important;height:0!important;overflow:visible!important;z-index:2147483647!important;pointer-events:none!important;isolation:isolate!important}
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 button,input,select,textarea{font:inherit;color:inherit;background:none;border:0}
-.mask{position:fixed;display:none;pointer-events:none;outline:2px dashed #e6c280;outline-offset:-2px;background:rgba(230,194,128,.07);border-radius:2px}
-.panel{position:fixed;pointer-events:auto;background:#191614;color:#f5ebe0;border:1px solid #3d342c;border-radius:10px;box-shadow:0 14px 44px rgba(0,0,0,.65);font:13px/1.45 system-ui,sans-serif;display:flex;flex-direction:column;gap:6px;padding:8px;transition:opacity .12s ease}
-.panel.ghost{opacity:.25}
-.panel.ghost:hover,.panel.ghost:focus-within{opacity:1}
+.mask{position:fixed;display:none;pointer-events:none;outline:2px dashed var(--dusky-ui-primary);outline-offset:-2px;background:color-mix(in srgb,var(--dusky-ui-primary) 7%,transparent);border-radius:2px}
+.panel{position:fixed;pointer-events:auto;background:var(--dusky-ui-panel);color:var(--dusky-ui-text);border:1px solid var(--dusky-ui-border);border-radius:10px;box-shadow:0 14px 44px rgba(0,0,0,.65);font:13px/1.45 system-ui,sans-serif;display:flex;flex-direction:column;gap:6px;padding:8px}
 .bar{top:10px;left:50%;transform:translateX(-50%);flex-direction:row;align-items:center;gap:6px;padding:6px 8px;max-width:min(96vw,980px)}
 .dlg{top:var(--dusky-dialog-top,64px);right:16px;width:440px;max-width:calc(100vw - 32px);max-height:calc(100vh - var(--dusky-dialog-top,64px) - 24px);overflow:auto}
 .drawer{right:16px;bottom:16px;width:420px;max-width:calc(100vw - 32px);max-height:62vh;overflow:hidden}
 .head{display:flex;align-items:center;gap:6px;cursor:grab;user-select:none}
 .head:active{cursor:grabbing}
-.grip{color:#6d645a;font-size:12px}
-.title{flex:1;font-weight:700;color:#e6c280;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.info{color:#c4b8aa;font:11.5px ui-monospace,monospace;max-width:38ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.state{font-size:11px;color:#c4b8aa;max-width:34ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.state.ok{color:#81c784}.state.err{color:#e57373}.state.warn{color:#e6c280}
-.panel button{cursor:pointer;background:#2d2722;border:1px solid #3d342c;border-radius:7px;padding:4px 8px;color:#f5ebe0;white-space:nowrap}
-.panel button:hover:not(:disabled){border-color:#d4a359}
+.grip{color:var(--dusky-ui-muted);font-size:12px}
+.title{flex:1;font-weight:700;color:var(--dusky-ui-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.info{color:var(--dusky-ui-muted);font:11.5px ui-monospace,monospace;max-width:38ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.state{font-size:11px;color:var(--dusky-ui-muted);max-width:34ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.state.ok{color:var(--dusky-ui-success)}.state.err{color:var(--dusky-ui-error)}.state.warn{color:var(--dusky-ui-warning)}
+.panel button{cursor:pointer;background:var(--dusky-ui-control);border:1px solid var(--dusky-ui-border);border-radius:7px;padding:4px 8px;color:var(--dusky-ui-text);white-space:nowrap}
+.panel button:hover:not(:disabled):not([aria-pressed="true"]){border-color:var(--dusky-ui-primary);background:var(--dusky-ui-hover)}
 .panel button:disabled{opacity:.4;cursor:default}
-.panel button:focus-visible,.panel select:focus-visible,.panel input:focus-visible,.panel textarea:focus-visible{outline:2px solid #e6c280;outline-offset:1px}
-.panel button.x{border-color:#6d3b40;color:#ffb4ab}
+.panel button:focus-visible,.panel select:focus-visible,.panel input:focus-visible,.panel textarea:focus-visible{outline:2px solid var(--dusky-ui-primary);outline-offset:1px}
+.panel button.x{border-color:var(--dusky-ui-error);color:var(--dusky-ui-error)}
 .panel button.grow{flex:1;justify-content:center;text-align:center}
 .row{display:flex;align-items:center;gap:6px}
 .row[hidden]{display:none!important}
-.lbl{flex:0 0 68px;color:#8f857a;font-size:11.5px}
-.tag{flex:1;font:11.5px ui-monospace,monospace;color:#e6c280;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.panel select,.panel input[type=text],.panel textarea{flex:1;min-width:0;background:#0f0d0c;border:1px solid #3d342c;border-radius:7px;padding:4px 6px;font:11.5px ui-monospace,monospace;color:#f5ebe0}
+.lbl{flex:0 0 68px;color:var(--dusky-ui-muted);font-size:11.5px}
+.tag{flex:1;font:11.5px ui-monospace,monospace;color:var(--dusky-ui-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.panel select,.panel input[type=text],.panel textarea{flex:1;min-width:0;background:var(--dusky-ui-field);border:1px solid var(--dusky-ui-border);border-radius:7px;padding:4px 6px;font:11.5px ui-monospace,monospace;color:var(--dusky-ui-text)}
 .panel textarea{min-height:64px;resize:vertical}
-.panel input[type=range]{flex:1;accent-color:#e6c280}
-.seg{display:flex;flex:1;gap:2px;background:#0f0d0c;border:1px solid #3d342c;border-radius:7px;padding:2px}
+.panel input[type=range]{flex:1;accent-color:var(--dusky-ui-primary)}
+.seg{display:flex;flex:1;gap:2px;background:var(--dusky-ui-field);border:1px solid var(--dusky-ui-border);border-radius:7px;padding:2px}
 .seg button{flex:1;border:0;background:transparent;padding:3px 4px;font-size:11.5px;border-radius:5px}
-.seg button[aria-pressed="true"]{background:#e6c280;color:#191614;font-weight:700}
-.panel button[aria-pressed="true"]{background:#e6c280;color:#191614;border-color:#e6c280}
+.seg button[aria-pressed="true"]{background:var(--dusky-ui-primary);color:var(--dusky-ui-on-primary);font-weight:700}
+.panel button[aria-pressed="true"]{background:var(--dusky-ui-primary);color:var(--dusky-ui-on-primary);border-color:var(--dusky-ui-primary)}
 .swatches{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;max-height:260px;overflow:auto;padding:2px 0}
 .swatch{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:5px 8px}
-.swatch[aria-pressed="true"]{border-color:#e6c280}
-.chip,.dot{width:14px;height:14px;border-radius:4px;border:1px solid #3d342c;flex:0 0 auto;display:inline-block;background:#333}
+.swatch[aria-pressed="true"]{border-color:var(--dusky-ui-primary)}
+.chip,.dot{width:14px;height:14px;border-radius:4px;border:1px solid var(--dusky-ui-border);flex:0 0 auto;display:inline-block;background:var(--dusky-ui-control)}
 .swatch-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px}
-.hint,.lead{color:#8f857a;font-size:11.5px;line-height:1.4}
-.lead{color:#c4b8aa}
+.hint,.lead{color:var(--dusky-ui-muted);font-size:11.5px;line-height:1.4}
+.lead{color:var(--dusky-ui-muted)}
 .list{overflow:auto;max-height:48vh;display:flex;flex-direction:column;gap:4px}
 .item{display:flex;gap:4px;align-items:stretch}
 .item .open{flex:1;display:flex;align-items:center;gap:8px;min-width:0;text-align:left}
-.item .sel{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:11.5px ui-monospace,monospace;color:#e6c280}
-.item .meta{color:#8f857a;font-size:10.5px;white-space:nowrap}
+.item .sel{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:11.5px ui-monospace,monospace;color:var(--dusky-ui-primary)}
+.item .meta{color:var(--dusky-ui-muted);font-size:10.5px;white-space:nowrap}
 .item .del{flex:0 0 auto}
 .bar{flex-wrap:wrap}
 .seg{flex-wrap:wrap}
 .panel [hidden]{display:none!important}
 .targets{display:flex;flex-direction:column;gap:4px;max-height:280px;overflow:auto;padding:2px}
 .panel .target-choice{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;white-space:normal;width:100%}
-.target-choice .name{font:11.5px ui-monospace,monospace;overflow-wrap:anywhere;color:#e6c280}
-.target-choice .detail{font-size:11px;color:#c4b8aa}
+.target-choice .name{font:11.5px ui-monospace,monospace;overflow-wrap:anywhere;color:var(--dusky-ui-primary)}
+.target-choice .detail{font-size:11px;color:var(--dusky-ui-muted)}
 `;
 
   const uiStyle = document.createElement("style");
-  uiStyle.textContent = UI_CSS;
+  uiStyle.textContent = theme.css + UI_CSS;
   root.append(uiStyle);
 
   const maskEl = document.createElement("div");
@@ -1581,7 +1587,7 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
   function selected() {
     const box = q("psel");
     if (box?.value) return box.value.trim();
-    return candidates(target()).at(0)?.sel ?? "";
+    return S.selectors.at(0)?.sel ?? "";
   }
 
   function describe(node) {
@@ -1634,7 +1640,7 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
           "data-token": token, "aria-label": label,
         });
         b.append(
-          el("i", { class: "chip", style: { background: `var(--dusky-picker-${token}, #333)` } }),
+          el("i", { class: "chip", style: { background: `var(--dusky-picker-${token}, var(--dusky-ui-control))` } }),
           el("span", { class: "swatch-name", text: label }),
         );
         b.addEventListener("pointerenter", () => { if (!b.disabled) this.onHover?.(token); });
@@ -1726,7 +1732,7 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
     list.textContent = "";
     list.dataset.mode = S.targetMode;
     const variable = S.targetMode === "variable";
-    const choices = variable ? S.elementVars : candidates(target());
+    const choices = variable ? S.elementVars : S.selectors;
     for (const choice of choices) {
       const value = variable ? choice.name : choice.sel;
       const detail = variable ? `${choice.used ? "Referenced" : "Not found in this element's color rules"} · ${choice.value}`
@@ -1759,7 +1765,7 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
     if (!choices.length) list.append(el("p", { class: "hint", text: "No targets found — choose another page element." }));
   }
 
-  function refreshPick(rebuildSels = false) {
+  function refreshPick(rebuildTargets = false) {
     if (panelKind !== "pick" || !panel) return;
     const t = target();
     q("ptitle").textContent = t ? `Theme <${t.localName}>` : "Theme this element";
@@ -1798,7 +1804,7 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
     q("pcolors").hidden = choosing;
     q("pchosen").textContent = varMode ? q("pvar").value : selected();
     q("pchosen").title = q("pchosen").textContent;
-    if (rebuildSels || q("ptargets").dataset.mode !== S.targetMode) buildPickTargets();
+    if (rebuildTargets || q("ptargets").dataset.mode !== S.targetMode) buildPickTargets();
 
     for (const b of q("pseg").children) {
       b.setAttribute("aria-pressed", String(b.dataset.group === S.group));
@@ -1870,7 +1876,7 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
     }
     const dt = q("pdepth");
     if (dt) dt.textContent = S.stack.length > 1 ? `${S.depth}/${S.stack.length - 1}` : "";
-    Preview.show(previewOf(null));
+    Preview.clear();
   }
 
   function bindPick() {
@@ -1958,6 +1964,7 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
   function openPick() {
     S.locked = true;
     dropIndex();
+    S.selectors = candidates(target());
     S.elementVars = getElementVars(target());
     resetVarSelection();
     S.targetMode = S.elementVars.length ? "variable" : "selector";
@@ -1966,7 +1973,7 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
       panel?.remove();
       editGrid = null;
       panelKind = "pick";
-      panel = el("section", { class: "panel dlg ghost", role: "dialog", "aria-label": "Theme this element" });
+      panel = el("section", { class: "panel dlg", role: "dialog", "aria-label": "Theme this element" });
       panel.innerHTML = PICK_HTML;
       root.append(panel);
       drag(panel, q("phead"));
@@ -2027,7 +2034,7 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
       panel?.remove();
       pickGrid = null;
       panelKind = "edit";
-      panel = el("section", { class: "panel dlg ghost", role: "dialog", "aria-label": "Edit a saved rule" });
+      panel = el("section", { class: "panel dlg", role: "dialog", "aria-label": "Edit a saved rule" });
       panel.innerHTML = EDIT_HTML;
       root.append(panel);
       drag(panel, q("ehead"));
@@ -2443,6 +2450,7 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
       dropIndex();
       resetVarSelection();
       S.pickStep = "target";
+      S.selectors = candidates(target());
       S.elementVars = getElementVars(target());
       q("pvarbtn").disabled = S.elementVars.length === 0;
       if (!S.elementVars.length) S.targetMode = "selector";

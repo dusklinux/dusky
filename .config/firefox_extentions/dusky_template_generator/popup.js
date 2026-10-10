@@ -17,6 +17,12 @@
  */
 "use strict";
 
+const theme = globalThis.__duskyTemplateTheme;
+const themeStyle = document.createElement("style");
+themeStyle.textContent = theme.css;
+document.head.append(themeStyle);
+theme.apply(document.documentElement);
+
 const $ = (id) => document.getElementById(id);
 const ui = {
   domain: $("domain"), css: $("css"), path: $("path"), status: $("status"),
@@ -284,6 +290,8 @@ browser.runtime.onMessage.addListener((msg) => {
 
 /* ── Init ─────────────────────────────────────────────────────────────── */
 (async function init() {
+  void bg({ type: "palette" }).then((reply) => theme.apply(document.documentElement, reply.colors))
+    .catch(() => {}); // Neutral, readable defaults remain available when the host is offline.
   busy(true);
   const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
   view.tab = tab;

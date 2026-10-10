@@ -8,45 +8,45 @@
   * { box-sizing: border-box; }
   body {
     width: 470px; margin: 0; padding: 12px;
-    background: #191614; color: #f5ebe0;
+    background: var(--dusky-ui-canvas); color: var(--dusky-ui-text);
     font: 13px/1.45 system-ui, sans-serif;
   }
   header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
-  h1 { flex: 1; margin: 0; font-size: 13px; color: #e6c280; }
-  #domain { font: 12px ui-monospace, monospace; color: #d4a359; }
-  #path { margin: 0 0 8px; font: 10.5px ui-monospace, monospace; color: #8f857a;
+  h1 { flex: 1; margin: 0; font-size: 13px; color: var(--dusky-ui-primary); }
+  #domain { font: 12px ui-monospace, monospace; color: var(--dusky-ui-primary); }
+  #path { margin: 0 0 8px; font: 10.5px ui-monospace, monospace; color: var(--dusky-ui-muted);
           overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #path b { color: #e6c280; font-weight: 600; }
+  #path b { color: var(--dusky-ui-primary); font-weight: 600; }
   textarea {
     width: 100%; height: 300px; resize: vertical;
-    font: 11.5px/1.5 ui-monospace, monospace; color: #f5ebe0;
-    background: #0f0d0c; border: 1px solid #3d342c; border-radius: 8px; padding: 8px;
+    font: 11.5px/1.5 ui-monospace, monospace; color: var(--dusky-ui-text);
+    background: var(--dusky-ui-field); border: 1px solid var(--dusky-ui-border); border-radius: 8px; padding: 8px;
     tab-size: 4; white-space: pre; overflow: auto;
   }
-  textarea::placeholder { color: #8f857a; }
-  textarea:focus-visible { outline: 2px solid #e6c280; outline-offset: 1px; }
+  textarea::placeholder { color: var(--dusky-ui-muted); }
+  textarea:focus-visible { outline: 2px solid var(--dusky-ui-primary); outline-offset: 1px; }
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; }
   button {
     display: flex; flex-direction: column; gap: 1px; align-items: flex-start;
-    font: inherit; color: #f5ebe0; background: #2d2722;
-    border: 1px solid #3d342c; border-radius: 8px; padding: 7px 10px;
+    font: inherit; color: var(--dusky-ui-text); background: var(--dusky-ui-control);
+    border: 1px solid var(--dusky-ui-border); border-radius: 8px; padding: 7px 10px;
     cursor: pointer; text-align: left;
   }
-  button:hover:not(:disabled) { border-color: #d4a359; }
+  button:hover:not(:disabled):not(.on) { border-color: var(--dusky-ui-primary); background: var(--dusky-ui-hover); }
   button:disabled { opacity: .4; cursor: default; }
-  button:focus-visible { outline: 2px solid #e6c280; outline-offset: 1px; }
+  button:focus-visible { outline: 2px solid var(--dusky-ui-primary); outline-offset: 1px; }
   button .t { font-weight: 700; }
-  button .s { color: #8f857a; font-size: 10.5px; }
-  .attention { border-color: #e6c280; }
-  .danger { border-color: #b8545e; }
-  .on { background: #e6c280; color: #191614; border-color: #e6c280; }
-  .on .s { color: #4a3a1e; }
+  button .s { color: var(--dusky-ui-muted); font-size: 10.5px; }
+  .attention { border-color: var(--dusky-ui-primary); }
+  .danger { border-color: var(--dusky-ui-error); }
+  .on { background: var(--dusky-ui-primary); color: var(--dusky-ui-on-primary); border-color: var(--dusky-ui-primary); }
+  .on .s { color: var(--dusky-ui-on-primary); }
   .wide { grid-column: 1 / -1; }
-  .status { min-height: 2.6em; margin: 8px 0 0; font-size: 11.5px; color: #c4b8aa; }
-  .status.ok { color: #81c784; } .status.err { color: #e57373; }
-  .status.warn { color: #e6c280; } .status.busy { color: #d4a359; }
-  kbd { font: 10.5px ui-monospace, monospace; background: #0f0d0c;
-        border: 1px solid #3d342c; border-radius: 4px; padding: 0 4px; }
+  .status { min-height: 2.6em; margin: 8px 0 0; font-size: 11.5px; color: var(--dusky-ui-muted); }
+  .status.ok { color: var(--dusky-ui-success); } .status.err { color: var(--dusky-ui-error); }
+  .status.warn { color: var(--dusky-ui-warning); } .status.busy { color: var(--dusky-ui-primary); }
+  kbd { font: 10.5px ui-monospace, monospace; background: var(--dusky-ui-field);
+        border: 1px solid var(--dusky-ui-border); border-radius: 4px; padding: 0 4px; }
 </style>
 </head>
 <body>
@@ -65,6 +65,7 @@
     <button id="delete" class="wide danger"><b class="t">🗑 Delete</b><small class="s">remove this file from disk</small></button>
   </div>
   <p class="status" id="status" role="status" aria-live="polite"></p>
+  <script src="theme.js"></script>
   <script src="popup.js" type="module"></script>
 </body>
 </html>
