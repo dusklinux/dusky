@@ -120,7 +120,7 @@ SCHEMA = {
             extended_help="**Heal Broken Configuration**\n\nRestore the saved theme by name, or by its saved index if the folder was renamed. Rebuild the configuration and style links, then restart Waybar."
         ),
         ConfigItem(
-            label="Theme Number",
+            label="Theme Number (Live Preview)",
             key="waybar",
             scope="DEFAULT",
             type_="int",
@@ -130,22 +130,11 @@ SCHEMA = {
             step=1,
             group="Themes",
             extended_help="**System Theme Tracker**\n\nChoose a theme by its 1-based number in the alphabetically sorted list below."
-        ),
-        ConfigItem(
-            label="Available Themes (Live Preview)",
-            key="active_theme_folder",
-            scope="DEFAULT",
-            type_="menu",
-            default=None,
-            is_parent=True,
-            expanded=True,
-            group="Themes",
-            extended_help="**Waybar Themes**\n\nArrow down and hit Enter on any theme to instantly apply and preview it. The list acts as a strict radio-button selection."
         )
     ]
 }
 
-# --- Inject dynamic menu items contiguous to the parent folder ---
+# --- Inject dynamic theme preset items ---
 dynamic_theme_items = []
 for i, name in enumerate(THEMES):
     dynamic_theme_items.append(
@@ -155,7 +144,6 @@ for i, name in enumerate(THEMES):
             scope="DEFAULT",
             type_="preset",
             default=None,
-            parent_ref="active_theme_folder",
             group="Themes",
             preset_payload={
                 "waybar": i + 1
