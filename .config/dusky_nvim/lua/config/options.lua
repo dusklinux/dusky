@@ -4,7 +4,7 @@
 -- ================================================================================================
 
 -- Basic Settings
-vim.opt.background = "dark" -- Force dark background to bypass terminal DSR query delay
+vim.opt.background = "dark" -- Dusky uses a dark palette.
 vim.opt.number = true -- Line numbers
 vim.opt.relativenumber = true -- Relative line numbers
 -- vim.opt.cursorline = true -- Highlight current line
@@ -73,6 +73,7 @@ vim.opt.autochdir = false -- Don't change directory automatically
 vim.opt.path:append("**") -- Search into subfolders with `gf`
 vim.opt.selection = "inclusive" -- Use inclusive selection
 vim.opt.mouse = "a" -- Enable mouse support
+vim.opt.guicursor = "n-v-c:hor20-Cursor,i-ci-ve:ver25-Cursor,r-cr-o:hor20-Cursor"
 vim.opt.clipboard:append("unnamedplus") -- Use system clipboard
 vim.opt.modifiable = true -- Allow editing buffers
 vim.opt.wildmenu = true -- Enable command-line completion menu
@@ -80,7 +81,7 @@ vim.opt.wildmode = "longest:full,full" -- Completion mode for command-line
 vim.opt.wildignorecase = true -- Case-insensitive tab completion in commands
 
 -- Folding Settings (0.12 native: foldexpr requires treesitter parser for buffer, else fallback)
-vim.opt.foldmethod = "expr"
+vim.opt.foldmethod = "manual" -- Enable expression folds only with a working parser.
 vim.opt.foldexpr = "v:lua.vim.treesitter.foldexpr()"
 vim.opt.foldlevel = 99
 vim.opt.foldlevelstart = 99 -- Ensure folds open on new buffers

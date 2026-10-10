@@ -1,7 +1,6 @@
 -- lua/plugins/conform.lua
 return {
 	"stevearc/conform.nvim",
-	event = { "BufReadPost", "BufNewFile" },
 	cmd = { "ConformInfo" },
 	keys = {
 		{
@@ -24,9 +23,12 @@ return {
 			-- Web / Config standards
 			javascript = { "prettier" },
 			typescript = { "prettier" },
+			javascriptreact = { "prettier" },
+			typescriptreact = { "prettier" },
 			css = { "prettier" },
 			html = { "prettier" },
 			json = { "prettier" },
+			jsonc = { "prettier" },
 			yaml = { "prettier" },
 			markdown = { "prettier" },
 		},

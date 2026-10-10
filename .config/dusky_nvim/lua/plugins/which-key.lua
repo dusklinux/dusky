@@ -8,7 +8,18 @@
 return {
 	"folke/which-key.nvim",
 	event = "VeryLazy",
-	opts = {},
+	opts = {
+		spec = {
+			{ "<leader>b", group = "Buffers" },
+			{ "<leader>c", group = "Code" },
+			{ "<leader>f", group = "Find" },
+			{ "<leader>g", group = "Git" },
+			{ "<leader>h", group = "Highlights" },
+			{ "<leader>r", group = "Config / Rename" },
+			{ "<leader>s", group = "Split / Search and Replace" },
+			{ "<leader>w", group = "Workspace" },
+		},
+	},
 	keys = {
 		{
 			"<leader>?",

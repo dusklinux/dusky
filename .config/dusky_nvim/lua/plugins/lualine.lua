@@ -21,8 +21,8 @@ return {
 		-- Update on file open
 		vim.api.nvim_create_autocmd({ "BufReadPost", "BufEnter" }, {
 			group = augroup,
-			callback = function()
-				if vim.b.last_saved then
+			callback = function(args)
+				if args.event ~= "BufReadPost" and vim.b.last_saved then
 					return
 				end
 				local file = vim.api.nvim_buf_get_name(0)

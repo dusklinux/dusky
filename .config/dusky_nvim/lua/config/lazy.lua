@@ -15,8 +15,8 @@ vim.opt.rtp:prepend(lazypath)
 
 -- importing.
 
-require("config.options")
 require("config.globals")
+require("config.options")
 require("config.keymaps")
 require("config.autocmds")
 
@@ -44,7 +44,7 @@ require("lazy").setup({
 		},
 	},
 	checker = {
-		enabled = true,
+		enabled = false, -- Updates belong to explicit :Lazy update / deployment sync.
 		notify = false,
 	},
 	change_detection = {

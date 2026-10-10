@@ -8,3 +8,7 @@ vim.g.loaded_ruby_provider = 0
 -- LEADER DEFINED AS SPACE --
 vim.g.mapleader = " "
 vim.g.maplocalleader = " "
+
+-- Native Markdown Tree-sitter mappings replace the legacy ftplugin mappings.
+-- Avoid duplicate mapping cleanup when lazy.nvim replays FileType.
+vim.g.no_markdown_maps = 1

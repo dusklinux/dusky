@@ -19,6 +19,9 @@ return {
 
 		-- Critical for dotfiles: show the "new file" bar for untracked files
 		attach_to_untracked = true,
+		on_attach = function(buf)
+			return not vim.b[buf].dusky_bigfile
+		end,
 
 		-- 3. The "Dual Mode" Logic
 		worktrees = {
@@ -28,16 +31,4 @@ return {
 			},
 		},
 	},
-	-- Match Git signs to the active diagnostic palette.
-	config = function(_, opts)
-		require("gitsigns").setup(opts)
-
-		vim.api.nvim_set_hl(0, "GitSignsAdd", { link = "DiagnosticOk" })
-		vim.api.nvim_set_hl(0, "GitSignsUntracked", { link = "DiagnosticOk" })
-		vim.api.nvim_set_hl(0, "GitSignsChange", { link = "DiagnosticWarn" })
-		vim.api.nvim_set_hl(0, "GitSignsChangeDelete", { link = "DiagnosticWarn" })
-		vim.api.nvim_set_hl(0, "GitSignsDelete", { link = "DiagnosticError" })
-		vim.api.nvim_set_hl(0, "GitSignsTopDelete", { link = "DiagnosticError" })
-		vim.api.nvim_set_hl(0, "GitSignsCurrentLineBlame", { link = "NonText", default = true })
-	end,
 }

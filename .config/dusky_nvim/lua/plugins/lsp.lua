@@ -78,17 +78,6 @@ return {
 				},
 				-- Python LSP config
 				pyright = {
-					-- Pyright otherwise creates an invalid default workspace for single files.
-					root_dir = function(buf, on_dir)
-						local root
-						for _, marker in ipairs(vim.lsp.config.pyright.root_markers) do
-							root = vim.fs.root(buf, marker)
-							if root then
-								break
-							end
-						end
-						on_dir(root or vim.fs.dirname(vim.api.nvim_buf_get_name(buf)) or vim.uv.cwd())
-					end,
 					settings = {
 						pyright = { disableOrganizeImports = false },
 						python = { analysis = { typeCheckingMode = "basic", autoSearchPaths = true } },
@@ -100,10 +89,23 @@ return {
 
 			-- Define configs before Mason enables installed servers.
 			for name, config in pairs(servers) do
+				config.root_dir = function(buf, on_dir)
+					if vim.b[buf].dusky_bigfile then
+						return
+					end
+					local root
+					for _, marker in ipairs(vim.lsp.config[name].root_markers or {}) do
+						root = vim.fs.root(buf, marker)
+						if root then
+							break
+						end
+					end
+					on_dir(root or vim.fs.dirname(vim.api.nvim_buf_get_name(buf)) or vim.uv.cwd())
+				end
 				vim.lsp.config(name, config)
 			end
 			require("mason-lspconfig").setup({
-				ensure_installed = { "lua_ls", "pyright", "bashls" },
+				ensure_installed = {}, -- The deployment sync installs tools explicitly.
 				automatic_enable = { "lua_ls", "pyright", "bashls" },
 			})
 		end,

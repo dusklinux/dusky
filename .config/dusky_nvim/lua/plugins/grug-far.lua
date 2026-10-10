@@ -26,7 +26,4 @@ return {
 	opts = {
 		headerInfoMuted = true,
 	},
-	config = function(_, opts)
-		require("grug-far").setup(opts)
-	end,
 }

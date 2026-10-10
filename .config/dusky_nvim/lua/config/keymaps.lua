@@ -16,9 +16,9 @@ vim.keymap.set("n", "<leader>z", "]sz=", { desc = "Next Spell Suggestion" })
 -- Clear search highlights and dismiss notifications on Esc
 vim.keymap.set("n", "<Esc>", function()
 	vim.cmd("nohlsearch")
-	pcall(function()
+	if package.loaded["notify"] then
 		require("notify").dismiss()
-	end)
+	end
 end, { desc = "Clear search highlight and notifications" })
 
 -- Better window navigation
@@ -44,12 +44,16 @@ vim.keymap.set("n", "J", "mzJ`z", { desc = "Join lines and keep cursor position"
 
 -- Quick config editing
 vim.keymap.set("n", "<leader>rc", function()
-	vim.cmd.edit(vim.fs.joinpath(vim.fn.stdpath("config"), "init.lua"))
-end, { desc = "Edit config" })
+	local config = vim.fn.stdpath("config")
+	local source = vim.fs.joinpath(vim.fs.dirname(config), "dusky_nvim", "init.lua")
+	vim.cmd.edit(vim.uv.fs_stat(source) and source or vim.fs.joinpath(config, "init.lua"))
+end, { desc = "Edit DuskyNVIM config" })
+
+vim.keymap.set("n", "<leader>cd", vim.diagnostic.open_float, { desc = "Line diagnostics" })
 
 -- Buffer Management
 vim.keymap.set("n", "<leader>fn", "<Cmd>enew<CR>", { desc = "New Empty Buffer" })
-vim.keymap.set("n", "<leader>bd", "<Cmd>bdelete<CR>", { desc = "Delete/Close Buffer" })
+-- mini.bufremove owns this mapping and keeps the window layout intact.
 
 -- Custom user command to push current file to dusky bare repo
 vim.api.nvim_create_user_command("DuskyPush", function()

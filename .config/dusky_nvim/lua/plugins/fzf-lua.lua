@@ -7,8 +7,37 @@
 
 return {
 	"ibhagwan/fzf-lua",
+	cmd = "FzfLua",
 	dependencies = { "nvim-tree/nvim-web-devicons" },
 	keys = {
+		{
+			"<leader>fr",
+			function()
+				require("fzf-lua").oldfiles()
+			end,
+			desc = "Recent Files",
+		},
+		{
+			"<leader>fd",
+			function()
+				require("fzf-lua").diagnostics_workspace()
+			end,
+			desc = "Workspace Diagnostics",
+		},
+		{
+			"<leader>fw",
+			function()
+				require("fzf-lua").grep_cword()
+			end,
+			desc = "Find Word in Workspace",
+		},
+		{
+			"<leader>/",
+			function()
+				require("fzf-lua").blines()
+			end,
+			desc = "Find in Current Buffer",
+		},
 		{
 			"<leader>ff",
 			function()

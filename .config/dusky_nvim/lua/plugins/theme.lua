@@ -36,8 +36,10 @@ return {
 			-- Function to safely source the theme
 			local function load_theme()
 				if vim.uv.fs_stat(matugen_path) then
+					local base16 = require("base16-colorscheme")
+					local revision = base16.revision
 					local ok, err = pcall(dofile, matugen_path)
-					if ok and vim.g.base16_gui00 then
+					if ok and base16.revision > revision then
 						return
 					end
 					if not ok then
@@ -55,7 +57,7 @@ return {
 				vim.api.nvim_set_hl(0, "Comment", { italic = true, update = true })
 
 				-- Match the transparent file explorer to the terminal.
-				vim.api.nvim_set_hl(0, "NvimTreeNormal", { bg = "NONE", ctermbg = "NONE" })
+				vim.api.nvim_set_hl(0, "NvimTreeNormal", { fg = vim.g.base16_gui05, bg = "NONE" })
 				-- Also ensure NvimTree window separator contrasts
 				vim.api.nvim_set_hl(0, "NvimTreeWinSeparator", { fg = vim.g.base16_gui03 or "#9e8e82", bg = "NONE" })
 
@@ -70,8 +72,6 @@ return {
 				}) do
 					vim.api.nvim_set_hl(0, group, { link = link })
 				end
-
-				vim.opt.guicursor = "n-v-c:hor20-Cursor,i-ci-ve:ver25-Cursor,r-cr-o:hor20-Cursor"
 			end
 
 			apply_tweaks()
@@ -91,7 +91,7 @@ return {
 							require("lualine").refresh()
 						end
 
-						vim.notify("Theme dynamically reloaded via Matugen", vim.log.levels.INFO)
+						vim.notify("DuskyNVIM theme reloaded", vim.log.levels.INFO)
 					end)
 				end,
 			})

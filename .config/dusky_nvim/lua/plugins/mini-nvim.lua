@@ -29,5 +29,17 @@ return {
 	{ "nvim-mini/mini.indentscope", event = { "BufReadPost", "BufNewFile" }, opts = {} },
 	{ "nvim-mini/mini.pairs", event = "InsertEnter", opts = {} }, -- Optimized for Insert Mode
 	{ "nvim-mini/mini.trailspace", event = { "BufReadPost", "BufNewFile" }, opts = {} },
-	{ "nvim-mini/mini.bufremove", event = { "BufReadPost", "BufNewFile" }, opts = {} },
+	{
+		"nvim-mini/mini.bufremove",
+		keys = {
+			{
+				"<leader>bd",
+				function()
+					require("mini.bufremove").delete()
+				end,
+				desc = "Delete Buffer (keep splits)",
+			},
+		},
+		opts = {},
+	},
 }

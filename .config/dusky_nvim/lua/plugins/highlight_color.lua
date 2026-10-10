@@ -8,6 +8,9 @@ return {
 		opts = {
 			render = "background",
 			enable_named_colors = true,
+			exclude_buffer = function(buf)
+				return vim.b[buf].dusky_bigfile == true
+			end,
 		},
 	},
 }
