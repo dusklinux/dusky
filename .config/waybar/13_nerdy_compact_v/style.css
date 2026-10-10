@@ -84,7 +84,7 @@ tooltip label {
 }
 
 /* Groups provide spacing; only the clock has a pill background. */
-box#media, box#hardware, box#updates-drawer, box#utils, box#connections, box#bottom {
+box#media, box#hardware, box#updates-drawer, box#utils, box#bottom {
     background-color: transparent;
     border-radius: 0;
     padding: 6px 0px;
@@ -93,7 +93,7 @@ box#media, box#hardware, box#updates-drawer, box#utils, box#connections, box#bot
 
 /* --- Internal Module Spacing --- */
 #battery, #cpu, #memory, #custom-temperature,
-#pulseaudio, #backlight, #network, #bluetooth, #tray,
+#pulseaudio, #backlight, #network, #tray,
 #custom-theme, #custom-power, #custom-notification, #custom-inhibit-suspend,
 #custom-app-tray, #custom-network, #custom-audiorouter, #custom-cava,
 #custom-updates, #custom-updates-trigger {
@@ -103,7 +103,7 @@ box#media, box#hardware, box#updates-drawer, box#utils, box#connections, box#bot
     transition: all 0.2s ease-in-out;
 }
 
-/* Keep group boundaries compact and leave 6px between top modules. */
+/* Keep group boundaries compact and leave 8px between top modules. */
 .modules-left > widget > *,
 box#media,
 box#hardware {
@@ -118,7 +118,7 @@ box#hardware {
 #memory,
 #custom-temperature {
     padding: 0;
-    margin: 3px 0;
+    margin: 4px 0;
 }
 
 /* Custom modules contain a non-expanding label inside a horizontal box.
@@ -174,7 +174,7 @@ box.module > label {
     border-radius: 6px;
     color: @primary;
     padding: 4px 0px;
-    margin-top: 3px;
+    margin-top: 4px;
     margin-bottom: 0px;
     margin-left: 2px;
     margin-right: 2px;
@@ -210,8 +210,8 @@ box#bottom {
 #custom-network {
     font-size: 9px;
     transition: color 0.1s ease-in-out, text-shadow 0.1s ease-in-out;
-    padding: 2px 0px 6px;
-    margin: 0px 0px 0px 0px;
+    padding: 0;
+    margin: 4px 0;
 }
 /* Subtle when idling or browsing lightly */
 #custom-network.network-kb {
@@ -258,18 +258,17 @@ widget > box {
     margin: 3px 0px;
 }
 
-#bluetooth { color: @secondary; }
 #custom-power {
     color: @error;
     font-size: 12px;
     margin: 4px 0;
-    padding: 2px 0;
+    padding: 0;
 }
 #custom-inhibit-suspend {
     color: @on_surface_variant;
     font-size: 10px;
     margin: 4px 0;
-    padding: 2px 0;
+    padding: 0;
 }
 #custom-theme {
     color: @secondary;
@@ -287,7 +286,7 @@ widget > box {
 
 /* --- Unified Hover States --- */
 #battery:hover, #clock:hover, #cpu:hover, #memory:hover, #custom-temperature:hover,
-#pulseaudio:hover, #backlight:hover, #bluetooth:hover, #custom-network:hover,
+#pulseaudio:hover, #backlight:hover, #custom-network:hover,
 #custom-theme:hover, #custom-power:hover, #custom-notification:hover,
 #custom-audiorouter:hover, #custom-app-tray:hover,
 #custom-updates:hover, #custom-updates-trigger:hover {

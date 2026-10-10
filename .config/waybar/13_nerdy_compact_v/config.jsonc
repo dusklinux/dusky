@@ -25,7 +25,7 @@
             "group/updates-drawer",
             "custom/notification",
             "custom/theme",
-            "group/connections",
+            "custom/network",
             "clock",
             "tray",
             "custom/inhibit-suspend",
@@ -60,14 +60,6 @@
             "modules": [
                 "custom/updates-trigger",
                 "custom/updates"
-            ]
-        },
-
-        "group/connections": {
-            "orientation": "inherit",
-            "modules": [
-                "custom/network",
-                "bluetooth"
             ]
         },
 
@@ -167,17 +159,6 @@
             "format-icons": { "default": "", "critical": "🔥" },
             "hide-empty-text": true,
             "restart-interval": 5
-        },
-
-        "bluetooth": {
-            "justify": "center",
-            "align": 0.5,
-            "format": "",
-            "format-disabled": "󰂲",
-            "format-connected": "",
-            "tooltip-format": "Devices connected: {num_connections}",
-            "on-click": "dusky-run blueman-manager",
-            "on-click-right": "dusky-run kitty --class bluetui -e bluetui"
         },
 
         "clock": {
