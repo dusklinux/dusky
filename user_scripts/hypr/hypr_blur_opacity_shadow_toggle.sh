@@ -15,7 +15,8 @@ keeps glow/wobble/motion blur as configured.
 --only accepts a comma-separated list:
   blur,shadow,opacity,glow,wobble,motion-blur
 Selected boolean effects toggle independently. Opacity includes window and
-Mako/Rofi/Waybar transparency; its previous values are restored on ON.
+Mako/Rofi/Waybar transparency. ON restores window/Mako/Rofi values and enables
+transparency in every Waybar stylesheet with an opaque-switch block.
 Examples:
   hypr_blur_opacity_shadow_toggle.sh off
   hypr_blur_opacity_shadow_toggle.sh toggle --only wobble
@@ -162,14 +163,13 @@ def ui_values(text, kind):
 def ui_transform(text, kind, mode, saved=None):
     if kind == "waybar":
         lines = text.splitlines(keepends=True)
-        original = saved.get("markers", []) if saved is not None else []
-        for ordinal, (index, line, marker) in enumerate(switch_markers(text)):
-            if ordinal < len(original):
-                lines[index] = original[ordinal]
-            else:
-                ending = "\r\n" if line.endswith("\r\n") else "\n" if line.endswith("\n") else ""
-                lines[index] = ("/* WAYBAR_OPAQUE_SWITCH_START" + (" */" if mode == "off" else "") if marker == "start"
-                                else ("/* " if mode == "off" else "") + "WAYBAR_OPAQUE_SWITCH_END */") + ending
+        # Waybar is one shared switch, including inactive themes. Restoring
+        # individual markers can leave themes opaque after ON (old snapshots
+        # may already contain this mixed state).
+        for index, line, marker in switch_markers(text):
+            ending = "\r\n" if line.endswith("\r\n") else "\n" if line.endswith("\n") else ""
+            lines[index] = ("/* WAYBAR_OPAQUE_SWITCH_START" + (" */" if mode == "off" else "") if marker == "start"
+                            else ("/* " if mode == "off" else "") + "WAYBAR_OPAQUE_SWITCH_END */") + ending
         return "".join(lines)
     defaults = {"surface": "66", "base:background-color": "1a", "base:border-color": "33",
                 "base:progress-color": "59", "osd:background-color": "0d"}
@@ -202,7 +202,10 @@ def ui_files():
         if actual in seen or not os.access(actual, os.W_OK) or not os.access(actual.parent, os.W_OK):
             continue
         seen.add(actual)
-        yield path.relative_to(home).as_posix(), actual, kind, actual.read_bytes().decode("utf-8", "surrogateescape")
+        # style.css is a movable theme symlink; identify Waybar snapshots by
+        # their resolved target, independent of discovery order/theme changes.
+        key_path = actual if kind == "waybar" else path
+        yield os.path.relpath(key_path, home), actual, kind, actual.read_bytes().decode("utf-8", "surrogateescape")
 
 
 def opacity_active(values):
@@ -382,7 +385,7 @@ def main():
     atomic_write(indicator_path, b"True" if enabled else b"False")
     if "opacity" in selected:
         run_optional(["makoctl", "reload"])
-        run_optional(["pkill", "-SIGUSR2", "waybar"])
+        run_optional(["pkill", "-SIGUSR2", "-x", "waybar"])
     label = "Visual effects " + action.upper() if master else ("Toggled " if action == "toggle" else action.capitalize() + ": ") + ", ".join(selected)
     run_optional(["notify-send", "--app-name=hypr-visuals", "--icon=display-symbolic",
                   "-h", "string:x-canonical-private-synchronous:hypr-visuals", "-t", "1500", label])
