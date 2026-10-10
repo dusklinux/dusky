@@ -184,23 +184,28 @@ box#bottom {
     margin-top: 2px;
 }
 
-/* --- Hardware Group (Tertiary Color Map) --- */
+/* --- Top Modules: Primary → Secondary → Tertiary ---
+ * Blend the wallpaper palette gradually down the rail without adding fills. */
+#battery { color: @primary; }
+#pulseaudio { color: mix(@primary, @secondary, 0.5); }
+#backlight { color: @secondary; }
+#cpu { color: mix(@secondary, @tertiary, 0.33); }
+#memory { color: mix(@secondary, @tertiary, 0.67); }
+#custom-temperature { color: @tertiary; }
+
 #cpu, #memory, #custom-temperature {
-    color: @tertiary;
     font-weight: bold;
 }
 
-/* --- Interactive Elements (Secondary Color Map) --- */
 #pulseaudio, #backlight {
-    color: @secondary;
     font-weight: bold;
 }
 #pulseaudio.muted { color: @error; }
+#custom-temperature.critical { color: @error; }
 
 /* --- Battery --- */
 #battery {
     font-weight: 700;
-    color: @secondary;
 }
 #battery.charging, #battery.plugged { color: @primary; }
 #battery.warning:not(.charging):not(.plugged) { color: @error; animation: blink-critical 1s infinite alternate; }
