@@ -38,38 +38,38 @@ post_hook   = '''
   gsettings set org.gnome.desktop.interface icon-theme "Papirus-Dark" || :
 '''
 
-[templates.papirus-folders]
-input_path = '~/.config/matugen/templates/papirus-color'
-output_path = '~/.config/matugen/generated/papirus'
-colors_to_compare = [
-    { name = "adwaita",    color = "#93c0ea" },
-    { name = "black",      color = "#4f4f4f" },
-    { name = "blue",       color = "#5294e2" },
-    { name = "bluegrey",   color = "#607d8b" },
-    { name = "breeze",     color = "#57b8ec" },
-    { name = "brown",      color = "#ae8e6c" },
-    { name = "carmine",    color = "#a30002" },
-    { name = "cyan",       color = "#00bcd4" },
-    { name = "darkcyan",   color = "#45abb7" },
-    { name = "deeporange", color = "#eb6637" },
-    { name = "green",      color = "#87b158" },
-    { name = "grey",       color = "#8e8e8e" },
-    { name = "indigo",     color = "#5c6bc0" },
-    { name = "magenta",    color = "#ca71df" },
-    { name = "nordic",     color = "#81a1c1" },
-    { name = "orange",     color = "#ee923a" },
-    { name = "palebrown",  color = "#d1bfae" },
-    { name = "paleorange", color = "#eeca8f" },
-    { name = "pink",       color = "#f06292" },
-    { name = "red",        color = "#e25252" },
-    { name = "teal",       color = "#16a085" },
-    { name = "violet",     color = "#7e57c2" },
-    { name = "white",      color = "#e4e4e4" },
-    { name = "yaru",       color = "#676767" },
-    { name = "yellow",     color = "#f9bd30" },
-]
-compare_to = "{{ colors.primary.default.hex }}"
-post_hook = 'bash "$HOME/user_scripts/theme_matugen/global/papirus_folders.sh" "{{ closest_color }}"'
+# [templates.papirus-folders]
+# input_path = '~/.config/matugen/templates/papirus-color'
+# output_path = '~/.config/matugen/generated/papirus'
+# colors_to_compare = [
+#     { name = "adwaita",    color = "#93c0ea" },
+#     { name = "black",      color = "#4f4f4f" },
+#     { name = "blue",       color = "#5294e2" },
+#     { name = "bluegrey",   color = "#607d8b" },
+#     { name = "breeze",     color = "#57b8ec" },
+#     { name = "brown",      color = "#ae8e6c" },
+#     { name = "carmine",    color = "#a30002" },
+#     { name = "cyan",       color = "#00bcd4" },
+#     { name = "darkcyan",   color = "#45abb7" },
+#     { name = "deeporange", color = "#eb6637" },
+#     { name = "green",      color = "#87b158" },
+#     { name = "grey",       color = "#8e8e8e" },
+#     { name = "indigo",     color = "#5c6bc0" },
+#     { name = "magenta",    color = "#ca71df" },
+#     { name = "nordic",     color = "#81a1c1" },
+#     { name = "orange",     color = "#ee923a" },
+#     { name = "palebrown",  color = "#d1bfae" },
+#     { name = "paleorange", color = "#eeca8f" },
+#     { name = "pink",       color = "#f06292" },
+#     { name = "red",        color = "#e25252" },
+#     { name = "teal",       color = "#16a085" },
+#     { name = "violet",     color = "#7e57c2" },
+#     { name = "white",      color = "#e4e4e4" },
+#     { name = "yaru",       color = "#676767" },
+#     { name = "yellow",     color = "#f9bd30" },
+# ]
+# compare_to = "{{ colors.primary.default.hex }}"
+# post_hook = 'bash "$HOME/user_scripts/theme_matugen/global/papirus_folders.sh" "{{ closest_color }}"'
 
 [templates.qt5ct]
 input_path  = '~/.config/matugen/templates/qtct-colors.conf'
@@ -145,10 +145,10 @@ post_hook   = 'hyprctl reload config-only || :'
 input_path  = '~/.config/matugen/templates/hyprlock-colors.conf'
 output_path = '~/.config/matugen/generated/hyprlock-colors.conf'
 
-[templates.dusky_cursor]
-input_path  = '~/.config/matugen/templates/dusky-cursor.env'
-output_path = '~/.config/matugen/generated/dusky-cursor.env'
-post_hook   = 'python3 "$HOME/user_scripts/cursor/color/dusky_cursor.py" --apply --quiet || echo "dusky_cursor: exit $?" >&2'
+# [templates.dusky_cursor]
+# input_path  = '~/.config/matugen/templates/dusky-cursor.env'
+# output_path = '~/.config/matugen/generated/dusky-cursor.env'
+# post_hook   = 'python3 "$HOME/user_scripts/cursor/color/dusky_cursor.py" --apply --quiet || echo "dusky_cursor: exit $?" >&2'
 
 # The script owns its own rotating log ($XDG_CACHE_HOME/dusky-cursor/hook.log),
 # so no shell redirection is needed. --quiet keeps matugen's terminal clean
