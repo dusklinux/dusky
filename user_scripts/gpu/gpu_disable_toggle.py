@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""gpu-disable-toggle — completely disable dedicated GPU(s) on Arch / kernel 7.2+.
+"""gpu-disable-toggle — stage PCI removal of dedicated GPU(s) on Arch / kernel 7.3+.
 
-Disables a discrete GPU so no userspace DRM driver ever binds it (hibernates
-hybrid laptops, silences a dGPU you never use). Vendor-agnostic: NVIDIA, AMD,
+Disables a discrete GPU for subsequent boots (for hybrid laptops
+and systems with an unused dGPU). Vendor-agnostic: NVIDIA, AMD,
 Intel-dGPU, or anything else presenting as VGA/3D/Display in sysfs.
 
-Method (minimal, proven):
+Method:
   1. udev hide rule → ATTR{remove}="1" on add for exact PCI addresses and IDs,
      so the GPU is logically removed from the PCI bus at boot coldplug and any
-     rescan. Undetectable to lspci / fastfetch / apps; can never be woken.
+     rescan. Hidden from normal PCI enumeration after the rule runs.
   2. /etc/modprobe.d/99-gpu-disable.conf → options vfio-pci ids=<slot IDs>,
      blacklist <vendor DRM drivers>, softdep <each> pre: vfio-pci (safety net
      if the bus is ever rescanned). Shared audio/USB are softdep'd, NEVER
@@ -19,17 +19,25 @@ Method (minimal, proven):
 
 Enable reverses all of the above from /var/lib/gpu-disable/state.json.
 
-Targets kernel 7.2+ and Python 3.14.7+ only. No legacy fallbacks.
+PCI removal does not guarantee physical power-off or prevent built-in drivers
+from probing before userspace. Firmware and kernel configuration still matter.
+Targets kernel 7.3+ and Python 3.15+ only.
 
 Usage:
   ./gpu_disable_toggle.py --status
   ./gpu_disable_toggle.py --disable [--slot 0000:01:00] [--all] [--dry-run] [--no-rebuild]
   ./gpu_disable_toggle.py --enable [--dry-run] [--no-rebuild]
+  Optional ASUS notebook firmware gate: --disable --asus-power-gate
+
+Supported boot pipeline: systemd-boot Type #1/#2 with mkinitcpio presets using
+default configuration and command-line sources. Other generators need separate
+configuration and are not silently substituted.
 """
 
-from __future__ import annotations
-
 import argparse
+import errno
+import fcntl
+import fnmatch
 import json
 import os
 import re
@@ -44,20 +52,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import NoReturn
 
-MIN_PY = (3, 14, 7)
-MIN_KERNEL = (7, 2)
+MIN_PY = (3, 15, 0)
+MIN_KERNEL = (7, 3)
 
 
 def check_versions() -> None:
-    if sys.version_info[:3] < MIN_PY:
-        sys.stderr.write(
-            f"[FATAL] Python {MIN_PY[0]}.{MIN_PY[1]}.{MIN_PY[2]}+ required, "
-            f"have {sys.version.split()[0]}.\n"
-        )
-        raise SystemExit(1)
-    m = re.match(r"(\d+)\.(\d+)", Path("/proc/sys/kernel/osrelease").read_text(encoding="utf-8").strip())
+    m = re.prefixmatch(r"(\d+)\.(\d+)", Path("/proc/sys/kernel/osrelease").read_text(encoding="utf-8").strip())
     if not m or (int(m.group(1)), int(m.group(2))) < MIN_KERNEL:
-        sys.stderr.write("[FATAL] Kernel 7.2+ required.\n")
+        sys.stderr.write("[FATAL] Kernel 7.3+ required.\n")
         raise SystemExit(1)
 
 
@@ -82,10 +84,12 @@ console = Console()
 
 MODPROBE_FILE = Path("/etc/modprobe.d/99-gpu-disable.conf")
 UDEV_RULE = Path("/etc/udev/rules.d/99-gpu-hide.rules")
+PRESET_DIR = Path("/etc/mkinitcpio.d")
 MKINITCPIO_CONF = Path("/etc/mkinitcpio.conf")
 MKINITCPIO_DROPIN_DIR = Path("/etc/mkinitcpio.conf.d")
 MKINITCPIO_DROPIN = MKINITCPIO_DROPIN_DIR / "99-gpu-disable.conf"
 KERNEL_CMDLINE = Path("/etc/kernel/cmdline")
+VENDOR_CMDLINE = Path("/usr/lib/kernel/cmdline")
 CMDLINE_D = Path("/etc/cmdline.d")
 CMDLINE_D_DROPIN = CMDLINE_D / "99-gpu-disable.conf"
 STATE_DIR = Path("/var/lib/gpu-disable")
@@ -107,12 +111,12 @@ VOLATILE_PREFIXES = ("BOOT_IMAGE=", "initrd=")
 GPU_CLASSES = {"0300", "0301", "0302", "0380"}
 
 # DRM drivers to keep off the disabled card, per PCI GPU vendor.
-VENDOR_DRM: dict[str, list[str]] = {
-    "10de": ["nouveau", "nvidia", "nvidia_drm", "nvidia_modeset", "nvidia_uvm", "nvidia_peermem"],
-    "1002": ["amdgpu", "radeon"],
-    "8086": ["i915", "xe"],
-    "1af4": ["virtio_gpu"],
-}
+VENDOR_DRM = frozendict({
+    "10de": ("nouveau", "nvidia", "nvidia_drm", "nvidia_modeset", "nvidia_uvm", "nvidia_peermem"),
+    "1002": ("amdgpu", "radeon"),
+    "8086": ("i915", "xe"),
+    "1af4": ("virtio_gpu",),
+})
 
 # Shared host infrastructure: reroute ordering only, never blacklist.
 NEVER_BLACKLIST = {
@@ -149,12 +153,14 @@ def bail(msg: str) -> NoReturn:
     raise SystemExit(1)
 
 
-def run(argv: list[str], *, timeout: float = 30.0) -> subprocess.CompletedProcess[str]:
+def run(argv: list[str], *, timeout: float = 30.0, input: str | None = None) -> subprocess.CompletedProcess[str]:
     """Execute command safely, converting missing binary or timeout into a CompletedProcess."""
     try:
         return subprocess.run(
-            argv, text=True, capture_output=True, timeout=timeout,
-            stdin=subprocess.DEVNULL, check=False,
+            argv, text=True, encoding="utf-8", errors="replace", capture_output=True,
+            timeout=timeout, input=input,
+            stdin=subprocess.DEVNULL if input is None else None, check=False,
+            env=os.environ | {"LC_ALL": "C.UTF-8"},
         )
     except FileNotFoundError:
         return subprocess.CompletedProcess(argv, 127, "", f"{argv[0]}: command not found\n")
@@ -165,22 +171,46 @@ def run(argv: list[str], *, timeout: float = 30.0) -> subprocess.CompletedProces
         return subprocess.CompletedProcess(argv, 126, "", str(exc))
 
 
+def sync_directory(path: Path) -> None:
+    """Persist rename/unlink metadata; report actual I/O failures."""
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        try:
+            os.fsync(fd)
+        except OSError as exc:
+            if exc.errno not in {errno.EINVAL, errno.EOPNOTSUPP}:
+                raise
+    finally:
+        os.close(fd)
+
+
+def remove_file(path: Path) -> None:
+    if DRY_RUN:
+        console.print(f"[magenta]  (dry-run) would remove {path}[/magenta]")
+        return
+    path.unlink(missing_ok=True)
+    sync_directory(path.parent)
+
+
 def atomic_write(path: Path, content: str) -> bool:
     """Write atomically and durably, inheriting existing mode/ownership. Returns True if changed."""
     if path.is_symlink():
         path = Path(os.path.realpath(path))
     if path.exists():
         try:
-            if path.read_text(encoding="utf-8") == content:
-                return False
+            unchanged = path.read_text(encoding="utf-8") == content
         except (UnicodeDecodeError, OSError):
-            pass
+            unchanged = False
+        if unchanged:
+            if not DRY_RUN:
+                sync_directory(path.parent)
+            return False
         st = path.stat()
         mode, uid, gid = stat.S_IMODE(st.st_mode), st.st_uid, st.st_gid
     else:
         mode, uid, gid = 0o644, 0, 0
     if DRY_RUN:
-        console.print(f"[magenta]  [dry-run] would write {path}[/magenta]")
+        console.print(f"[magenta]  (dry-run) would write {path}[/magenta]")
         return True
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
@@ -189,23 +219,17 @@ def atomic_write(path: Path, content: str) -> bool:
         with os.fdopen(fd, "w", encoding="utf-8") as h:
             h.write(content)
             h.flush()
+            # FAT uses mount-wide ownership. Ignore only unsupported permission
+            # changes, never media errors or read-only filesystem failures.
+            for operation, arguments in ((os.fchmod, (mode,)), (os.fchown, (uid, gid))):
+                try:
+                    operation(h.fileno(), *arguments)
+                except OSError as exc:
+                    if exc.errno not in {errno.EPERM, errno.EOPNOTSUPP}:
+                        raise
             os.fsync(h.fileno())
-        # vfat rejects chown/chmod outside mount options; ignore failure gracefully
-        try:
-            os.chmod(tmp, mode)
-            os.chown(tmp, uid, gid)
-        except OSError:
-            pass
         os.replace(tmp, path)
-        # Flush directory metadata on parent directory (critical for durability on vfat ESP)
-        try:
-            dfd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
-            try:
-                os.fsync(dfd)
-            finally:
-                os.close(dfd)
-        except OSError:
-            pass
+        sync_directory(path.parent)
         return True
     except BaseException:
         tmp.unlink(missing_ok=True)
@@ -215,9 +239,33 @@ def atomic_write(path: Path, content: str) -> bool:
 def state_load() -> dict:
     try:
         data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
+    except FileNotFoundError:
         return {}
+    except (OSError, ValueError) as exc:
+        bail(f"Cannot read recovery state {STATE_FILE}: {exc}")
+    if not isinstance(data, dict):
+        bail(f"Invalid recovery state in {STATE_FILE}: expected an object.")
+    for key in ("preserved_cmdline", "bridges"):
+        value = data.get(key, {})
+        if not isinstance(value, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in value.items()):
+            bail(f"Invalid recovery state: {key} must map strings to strings.")
+    for key in ("action", "pending_action"):
+        value = data.get(key)
+        allowed = {None, "disabled", "enabled"} if key == "action" else {None, "disable", "enable"}
+        if not isinstance(value, (str, type(None))) or value not in allowed:
+            bail(f"Invalid recovery state: unexpected {key}.")
+    for key in ("rebuilt", "asus_power_gate"):
+        if key in data and not isinstance(data[key], bool):
+            bail(f"Invalid recovery state: {key} must be boolean.")
+    if data.get("asus_restore", "0") not in ("0", "1"):
+        bail("Invalid recovery state: ASUS restore value must be 0 or 1.")
+    if data.get("boot_id") is not None and not isinstance(data["boot_id"], str):
+        bail("Invalid recovery state: boot_id must be a string.")
+    for key in ("ids", "addrs", "slots", "blacklist"):
+        if key in data and (not isinstance(data[key], list)
+                            or not all(isinstance(v, str) for v in data[key])):
+            bail(f"Invalid recovery state: {key} must be a list of strings.")
+    return data
 
 
 def state_save(**kv: object) -> None:
@@ -300,7 +348,7 @@ def enumerate_pci() -> list[PciDevice]:
     return devs
 
 
-@dataclass
+@dataclass(slots=True)
 class Claim:
     """Whole-slot claim: every PCI function in the slot(s) moves together."""
     functions: list[PciDevice] = field(default_factory=list)
@@ -323,6 +371,9 @@ def gpu_slots(devices: list[PciDevice]) -> list[str]:
 
 
 def normalize_slot(slot_arg: str, slots: list[str]) -> str | None:
+    slot_arg = slot_arg.lower()
+    if not re.fullmatch(r"(?:[0-9a-f]{4}:)?[0-9a-f]{2}:[0-9a-f]{2}(?:\.[0-7])?", slot_arg):
+        return None
     if "." in slot_arg:
         slot_arg = slot_arg.rsplit(".", 1)[0]
     if slot_arg in slots:
@@ -337,30 +388,28 @@ def claim_from_state(state: dict) -> Claim | None:
     After bus removal sysfs no longer enumerates the functions, so the live
     lookup fails. State (written by the run that hid it) is the source of truth.
     """
-    funcs_meta = state.get("functions", [])
-    if funcs_meta:
-        funcs = [
-            PciDevice(addr=f["addr"], vendor=f["ids"].split(":")[0],
-                      device=f["ids"].split(":")[1], klass=f.get("klass4", "0300") + "00",
-                      driver=None, boot_vga=False, label="hidden (removed from PCI bus)")
-            for f in funcs_meta if "addr" in f and "ids" in f and ":" in f["ids"]
-        ]
-        if funcs:
-            return Claim(functions=funcs)
-    addrs = sorted(state.get("addrs", []))
-    ids = state.get("ids", [])
-    if not addrs and not ids:
-        return None
-    funcs = []
-    for i, addr in enumerate(addrs):
-        id_str = ids[i] if i < len(ids) else (ids[0] if ids else "unknown:unknown")
-        ven, did = id_str.split(":", 1) if ":" in id_str else ("unknown", "unknown")
-        funcs.append(PciDevice(
-            addr=addr, vendor=ven, device=did,
-            klass="030000", driver=None, boot_vga=False,
-            label="hidden (removed from PCI bus)"
-        ))
-    return Claim(functions=funcs) if funcs else None
+    metadata = state.get("functions", [])
+    if not isinstance(metadata, list):
+        bail("Invalid recovery state: functions must be a list.")
+    functions = []
+    for item in metadata:
+        if not isinstance(item, dict):
+            bail("Invalid recovery state: function must be an object.")
+        addr, ids, klass = item.get("addr"), item.get("ids"), item.get("klass4")
+        if (not isinstance(addr, str) or not re.fullmatch(r"[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]", addr)
+                or not isinstance(ids, str) or not re.fullmatch(r"[0-9a-f]{4}:[0-9a-f]{4}", ids)
+                or not isinstance(klass, str) or not re.fullmatch(r"[0-9a-f]{4}", klass)):
+            bail("Invalid recovery state: malformed PCI function metadata.")
+        driver = item.get("driver")
+        if driver is not None and not isinstance(driver, str):
+            bail("Invalid recovery state: driver must be a string or null.")
+        vendor, device = ids.split(":")
+        functions.append(PciDevice(addr, vendor, device, klass + "00", driver, False,
+                                   "hidden (removed from PCI bus)"))
+    # Sorted unique IDs cannot be paired with addresses reliably. Never guess.
+    if not functions and state.get("addrs"):
+        bail("Recovery state lacks per-function metadata. Use --enable first.")
+    return Claim(functions) if functions else None
 
 
 def drm_blacklist_for(devices: list[PciDevice], claim: Claim) -> tuple[set[str], set[str]]:
@@ -394,7 +443,9 @@ def drm_blacklist_for(devices: list[PciDevice], claim: Claim) -> tuple[set[str],
         if drv and drv not in NEVER_BLACKLIST and drv != "vfio_pci":
             # Live driver unknown to the map: still block it.
             blacklist.add(drv)
-    blacklist -= NEVER_BLACKLIST
+    surviving_drivers = {d.driver.replace("-", "_") for d in devices
+                         if d.addr not in claim.addrs and d.driver}
+    blacklist -= NEVER_BLACKLIST | surviving_drivers
     softdeps -= {"vfio_pci"}
     return softdeps, blacklist
 
@@ -420,7 +471,7 @@ def render_gpus(devices: list[PciDevice], slots: list[str]) -> None:
 
 
 def select_claim(devices: list[PciDevice], slots: list[str], args: argparse.Namespace) -> Claim:
-    if args.slot:
+    if args.slot is not None:
         slot = normalize_slot(args.slot, slots)
         if slot is None:
             # May already be hidden from the bus — caller falls back to state.
@@ -455,7 +506,7 @@ def select_claim(devices: list[PciDevice], slots: list[str], args: argparse.Name
 
 
 def check_id_collisions(devices: list[PciDevice], claim: Claim) -> None:
-    """vfio-pci.ids and module_blacklist are ID-based, not address-based.
+    """vfio-pci.ids is ID-based; module_blacklist blocks entire modules.
 
     If a device outside the claim shares vendor:device with one inside it, the
     selection cannot be expressed without collateral damage -- the surviving
@@ -470,7 +521,7 @@ def check_id_collisions(devices: list[PciDevice], claim: Claim) -> None:
         detail = "\n  ".join(strays)
         bail(f"ID collision: the following devices outside the selected claim share "
              f"IDs with claimed hardware:\n  {detail}\n\n"
-             "vfio-pci.ids and module_blacklist are ID-based, so they would be disabled too.\n"
+             "vfio-pci.ids is ID-based, so these devices would be claimed too.\n"
              "Use --all to take all matching GPU slots, or pick a different slot.")
 
 
@@ -493,25 +544,29 @@ def guard_claim(claim: Claim, devices: list[PciDevice], allow_boot_vga: bool,
              "--allow-boot-vga (and preferably SSH access) if you mean it.")
     if not remaining:
         console.print("[bold yellow]  ! This disables the last display GPU in the system.[/bold yellow]")
-        if sys.stdin.isatty():
-            if not Confirm.ask("Disable the last GPU anyway?", default=False):
-                raise SystemExit(0)
 
 
 def warn_modprobe_conflicts() -> None:
     """modprobe concatenates every matching 'options' line -- duplicates are
     ambiguous. Also flag any hybrid-GPU managers which fight this tool."""
+    conflicts = []
+    seen = set()
     pat = re.compile(r"^\s*options\s+vfio[-_]pci\b.*\bids=", re.MULTILINE)
-    for d in (Path("/etc/modprobe.d"), Path("/run/modprobe.d"), Path("/usr/lib/modprobe.d")):
+    for d in (Path("/etc/modprobe.d"), Path("/run/modprobe.d"),
+              Path("/usr/local/lib/modprobe.d"), Path("/usr/lib/modprobe.d")):
         if not d.is_dir():
             continue
         for f in sorted(d.glob("*.conf")):
+            if f.name in seen:
+                continue
+            seen.add(f.name)
             if f.name == MODPROBE_FILE.name:
                 continue
-            if pat.search(_read(f)):
-                console.print(f"[bold yellow]  ! {f} also sets 'options vfio-pci ids=' -- "
-                              "modprobe merges both lines and the winner is undefined. "
-                              "Remove or merge it.[/bold yellow]")
+            if pat.search(_read(f).replace("\\\n", "")):
+                conflicts.append(str(f))
+    if conflicts:
+        bail("Conflicting vfio-pci ids settings: " + ", ".join(conflicts)
+             + ". Consolidate them before disabling a GPU.")
     for unit in ("optimus-manager.service", "supergfxd.service"):
         if run(["systemctl", "is-enabled", "--quiet", unit]).returncode == 0:
             console.print(f"[bold yellow]  ! {unit} is enabled; it rebinds GPU drivers at "
@@ -522,8 +577,10 @@ def warn_modprobe_conflicts() -> None:
 # kernel cmdline merge
 # --------------------------------------------------------------------------
 
-def desired_params(blacklist: set[str], ids: list[str], vendor: str, amd_force: bool) -> dict[str, str]:
-    params: dict[str, str] = {"iommu": "pt"}
+def desired_params(blacklist: set[str], ids: list[str], vendor: str, amd_force: bool,
+                   baseline: dict[str, str] | None = None) -> dict[str, str]:
+    params = dict(baseline or {})
+    params["iommu"] = "pt"
     match vendor:
         case "intel":
             params["intel_iommu"] = "on"
@@ -533,10 +590,11 @@ def desired_params(blacklist: set[str], ids: list[str], vendor: str, amd_force: 
                 params["amd_iommu"] = "force_enable"
         case _:
             console.print("[yellow]  ! Unknown CPU vendor; emitting iommu=pt only.[/yellow]")
-    if ids:
-        params["vfio-pci.ids"] = ",".join(sorted(ids))
-    if blacklist:
-        params["module_blacklist"] = ",".join(sorted(blacklist))
+    for key, additions in (("vfio-pci.ids", ids), ("module_blacklist", blacklist)):
+        values = {v for v in params.get(key, "").strip('"').split(",") if v}
+        values.update(additions)
+        if values:
+            params[key] = ",".join(sorted(values))
     return params
 
 
@@ -549,23 +607,28 @@ def cpu_vendor() -> str:
     return "unknown"
 
 
-def merge_cmdline(current: str, desired: dict[str, str]) -> str:
-    """Strip volatile + managed tokens from `current`, then append `desired`."""
-    try:
-        tokens = shlex.split(current, posix=False)
-    except ValueError:
-        tokens = current.split()
+def cmdline_tokens(text: str) -> list[str]:
+    """Preserve kernel double-quoted values, including quotes after '='."""
+    text = " ".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+    if text.count('"') % 2:
+        bail("Unbalanced double quotes in kernel command line.")
+    return re.findall(r'(?:[^\s"]|"[^"]*")+', text)
+
+
+def merge_cmdline(current: str, desired: dict[str, str], *, running_seed: bool = False) -> str:
+    """Replace managed tokens, preserving unrelated persistent boot arguments."""
+    tokens = cmdline_tokens(current)
     kept: list[str] = []
     tail: list[str] = []
     seen_sep = False
     for tok in tokens:
-        if tok == "--":
-            seen_sep = True
-            continue
         if seen_sep:
             tail.append(tok)
             continue
-        if tok in VOLATILE_TOKENS or tok.startswith(VOLATILE_PREFIXES):
+        if tok == "--":
+            seen_sep = True
+            continue
+        if running_seed and (tok in VOLATILE_TOKENS or tok.startswith(VOLATILE_PREFIXES)):
             continue
         if tok.split("=", 1)[0].replace("vfio_pci.", "vfio-pci.") in MANAGED_KEYS:
             continue
@@ -573,7 +636,7 @@ def merge_cmdline(current: str, desired: dict[str, str]) -> str:
     for key in MANAGED_KEYS:
         if key in desired:
             kept.append(f"{key}={desired[key]}")
-    if tail:
+    if seen_sep:
         kept += ["--", *tail]
     return " ".join(kept)
 
@@ -592,7 +655,7 @@ class BootEntry:
 
 def _esp_roots() -> list[Path]:
     roots: list[Path] = []
-    for flag in ("-x", "-p"):
+    for flag in ("--print-boot-path", "--print-esp-path"):
         res = run(["bootctl", flag])
         if res.returncode == 0 and res.stdout.strip():
             cand = Path(res.stdout.splitlines()[0].strip())
@@ -605,44 +668,36 @@ def _esp_roots() -> list[Path]:
 
 
 def scan_entries_on_disk() -> BootEntry | None:
-    """Fallback for ESPs bootctl rejects (e.g. non-ESP partition type):
-    scan /boot and /efi directly, honouring loader.conf default."""
+    """Use an unambiguous on-disk default when bootctl cannot inspect the ESP."""
+    candidates = []
     for root in _esp_roots():
-        entries = root / "loader" / "entries"
-        if not entries.is_dir():
-            continue
-        confs = sorted(entries.glob("*.conf"))
-        if not confs:
-            continue
-        lc = root / "loader" / "loader.conf"
-        if lc.is_file():
-            m = re.search(r"^default\s+(\S+)", lc.read_text(encoding="utf-8"), re.MULTILINE)
-            if m:
-                want = m.group(1) if m.group(1).endswith(".conf") else m.group(1) + ".conf"
-                hit = [c for c in confs if c.name == want]
-                if hit:
-                    return BootEntry("type1", hit[0], "", hit[0].name)
-        for name in ("arch-linux.conf", "arch.conf"):
-            hit = entries / name
-            if hit.exists():
-                return BootEntry("type1", hit, "", hit.name)
-        return BootEntry("type1", confs[0], "", confs[0].name)
+        confs = sorted((root / "loader" / "entries").glob("*.conf"))
+        candidates.extend(confs)
+        defaults = re.findall(r"^default[ \t]+(\S+)", _read(root / "loader" / "loader.conf"), re.MULTILINE)
+        if defaults:
+            pattern = defaults[-1]
+            if not pattern.endswith(".conf"):
+                pattern += ".conf"
+            matches = [p for p in confs if fnmatch.fnmatchcase(p.name, pattern)]
+            if len(matches) == 1:
+                return BootEntry("type1", matches[0], "", matches[0].name)
+    if len(candidates) == 1:
+        return BootEntry("type1", candidates[0], "", candidates[0].name)
     return None
 
 
 def _patchable_type(typ: str) -> bool:
-    """Accept both bootctl JSON schemas: 'Type #1' (older) and 'type1' (systemd 261+)."""
-    return typ in ("type1", "type2") or typ.startswith("Type #")
+    """Accept the documented systemd 262 boot entry types."""
+    return typ in ("type1", "type2")
 
 
 def _resolve_entry_path(entry: dict, ident: str) -> Path | None:
-    # New schema: absolute "path". Old schema: ESP-relative "source".
-    for key in ("path", "source"):
-        ps = entry.get(key)
-        if isinstance(ps, str) and ps and ps != "esp":
-            cand = Path(re.sub(r"/{2,}", "/", ps))
-            if cand.suffix == ".conf" and cand.exists():
-                return cand
+    # systemd 262 exposes the absolute entry path.
+    ps = entry.get("path")
+    if isinstance(ps, str) and ps:
+        cand = Path(ps)
+        if cand.suffix in {".conf", ".efi"} and cand.is_file():
+            return cand
     if ident.endswith(".conf"):
         for root in _esp_roots():
             hit = root / "loader" / "entries" / ident
@@ -651,8 +706,8 @@ def _resolve_entry_path(entry: dict, ident: str) -> Path | None:
     return None
 
 
-def find_boot_entry(*, quiet: bool = False) -> BootEntry | None:
-    res = run(["bootctl", "list", "--json=short"])
+def find_boot_entry(*, quiet: bool = False, ident: str | None = None) -> BootEntry | None:
+    res = run(["bootctl", "--no-pager", "list", "--json=short"])
     raw: list[dict] = []
     if res.returncode == 0 and res.stdout.strip().startswith(("[", "{")):
         try:
@@ -662,15 +717,19 @@ def find_boot_entry(*, quiet: bool = False) -> BootEntry | None:
             raw = []
     if raw:
         def score(e: dict) -> int:
-            # The DEFAULT entry boots next — it outranks merely-selected.
-            dfl = bool(e.get("isDefault", e.get("is_default", False)))
-            sel = bool(e.get("isSelected", e.get("is_selected", False)))
+            # Prefer the configured default over the currently selected entry.
+            dfl = bool(e.get("isDefault", False))
+            sel = bool(e.get("isSelected", False))
             return (2 if dfl else 0) + (1 if sel else 0)
         cands = [e for e in raw if isinstance(e, dict) and _patchable_type(str(e.get("type", "")))]
+        if ident is not None:
+            cands = [e for e in cands if e.get("id") == ident]
         if cands:
+            if ident is None and not any(score(e) for e in cands) and len(cands) != 1:
+                return None
             best = max(cands, key=score)
             typ = str(best.get("type", ""))
-            kind = "type2" if typ == "type2" or typ.startswith("Type #2") else "type1"
+            kind = "type2" if typ == "type2" else "type1"
             ident = str(best.get("id", "?"))
             path = _resolve_entry_path(best, ident)
             why = "default" if score(best) >= 2 else "selected"
@@ -682,9 +741,12 @@ def find_boot_entry(*, quiet: bool = False) -> BootEntry | None:
                                   "falling back to an on-disk scan.[/yellow]")
             else:
                 return BootEntry(kind, path,
-                                 str(best.get("options", best.get("cmdline", "")) or ""),
+                                 str(best.get("options", "") or ""),
                                  ident)
     # Fallback: on-disk scan (covers ESPs bootctl rejects by partition type).
+    if ident is not None:
+        path = _resolve_entry_path({}, ident)
+        return BootEntry("type1", path, "", ident) if path else None
     found = scan_entries_on_disk()
     if found is not None:
         if not quiet:
@@ -693,57 +755,49 @@ def find_boot_entry(*, quiet: bool = False) -> BootEntry | None:
     return None
 
 
-def resolve_boot_entry() -> BootEntry:
-    entry = find_boot_entry()
+def resolve_boot_entry(state: dict | None = None) -> BootEntry:
+    ident = (state or {}).get("boot_id")
+    entry = find_boot_entry(ident=ident)
     if entry is None:
-        bail("No systemd-boot Type #1/#2 entry found to patch.")
+        bail(f"No unambiguous systemd-boot entry found to patch ({ident or 'default'}).")
     return entry
 
 
 def read_target_options(entry: BootEntry) -> str:
     """Return the raw options text of whichever file patch_bootloader would edit."""
     if entry.kind == "type1" and entry.path is not None and entry.path.exists():
-        m = re.search(r"^options[ \t]+(.*)$",
-                      entry.path.read_text(encoding="utf-8"), re.MULTILINE)
-        return m.group(1) if m else ""
-    if KERNEL_CMDLINE.is_file():
-        return KERNEL_CMDLINE.read_text(encoding="utf-8")
-    if CMDLINE_D.is_dir() and sorted(CMDLINE_D.glob("*.conf")):
-        return " ".join(p.read_text(encoding="utf-8").strip()
-                        for p in sorted(CMDLINE_D.glob("*.conf")))
-    return entry.options
+        return " ".join(re.findall(r"^[ \t]*options[ \t]+(.*)$",
+                                  entry.path.read_text(encoding="utf-8"), re.MULTILINE))
+    parts = []
+    for path in (KERNEL_CMDLINE, VENDOR_CMDLINE):
+        if path.is_file():
+            parts.append(path.read_text(encoding="utf-8"))
+            break
+    parts.extend(p.read_text(encoding="utf-8") for p in sorted_dropins(CMDLINE_D))
+    return "\n".join(parts) if parts else entry.options
 
 
 def parse_managed_keys(options_text: str) -> dict[str, str]:
     """Parse and normalize all MANAGED_KEYS present in options_text."""
     snap: dict[str, str] = {}
-    try:
-        tokens = shlex.split(options_text, posix=False)
-    except ValueError:
-        tokens = options_text.split()
+    tokens = cmdline_tokens(options_text)
     for tok in tokens:
-        if tok == "--" or "=" not in tok:
+        if tok == "--":
+            break
+        if "=" not in tok:
             continue
         k, v = tok.split("=", 1)
         key = k.replace("vfio_pci.", "vfio-pci.")
         if key in MANAGED_KEYS:
+            if key in snap:
+                bail(f"Duplicate managed kernel parameter: {key}.")
             snap[key] = v
     return snap
 
 
 def managed_snapshot(options_text: str) -> dict[str, str]:
-    """Extract pre-existing managed keys so --enable can restore (not just sweep).
-
-    Keys this tool authors itself (vfio-pci.ids / module_blacklist) are never
-    captured while our own config is active -- otherwise a repeated --disable
-    would snapshot our own output and --enable would 'restore' the disable.
-    """
-    ours = MODPROBE_FILE.exists() or UDEV_RULE.exists() or MKINITCPIO_DROPIN.exists()
-    snap = parse_managed_keys(options_text)
-    if ours:
-        snap.pop("vfio-pci.ids", None)
-        snap.pop("module_blacklist", None)
-    return snap
+    """Capture the baseline before any writes, then reuse it until enable succeeds."""
+    return parse_managed_keys(options_text)
 
 
 def patch_bootloader(entry: BootEntry, blacklist: set[str], ids: list[str], vendor: str,
@@ -752,77 +806,74 @@ def patch_bootloader(entry: BootEntry, blacklist: set[str], ids: list[str], vend
     if enable:
         desired = dict(restore) if restore else {}
     else:
-        desired = desired_params(blacklist, ids, vendor, amd_force)
+        desired = desired_params(blacklist, ids, vendor, amd_force, restore)
     if entry.kind == "type1":
         if entry.path is None or entry.path.suffix != ".conf":
             bail(f"Type #1 entry '{entry.ident}' has no writable .conf.")
         content = entry.path.read_text(encoding="utf-8")
-        m = re.search(r"^(options[ \t]+)(.*)$", content, re.MULTILINE)
-        if m:
-            merged = merge_cmdline(m.group(2), desired)
-            new = content[: m.start()] + m.group(1) + merged + content[m.end():]
-        else:
-            merged = merge_cmdline("", desired)
-            new = content.rstrip("\n") + f"\noptions {merged}\n"
+        merged = merge_cmdline(read_target_options(entry), desired)
+        lines = content.splitlines(keepends=True)
+        new_lines = []
+        replaced = False
+        for line in lines:
+            if re.prefixmatch(r"[ \t]*options[ \t]+", line):
+                if not replaced:
+                    new_lines.append(f"options {merged}\n")
+                    replaced = True
+            else:
+                new_lines.append(line)
+        new = "".join(new_lines)
+        if not replaced:
+            new = new.rstrip("\n") + f"\noptions {merged}\n"
         if atomic_write(entry.path, new):
             console.print(f"[green]  ~[/green] {entry.path.name}: options {merged}")
         else:
             console.print(f"[bold green]  ok[/bold green] {entry.path.name} already convergent.")
     else:
-        if KERNEL_CMDLINE.is_file():
-            target = KERNEL_CMDLINE
-            merged = merge_cmdline(KERNEL_CMDLINE.read_text(encoding="utf-8"), desired)
-            if atomic_write(target, merged + "\n"):
-                console.print(f"[green]  ~[/green] {target}: {merged}")
-            else:
-                console.print(f"[bold green]  ok[/bold green] {target} already convergent.")
-            return
-
-        foreign: list[Path] = []
-        if CMDLINE_D.is_dir():
-            foreign = [p for p in sorted(CMDLINE_D.glob("*.conf")) if p != CMDLINE_D_DROPIN]
-
-        if foreign or CMDLINE_D_DROPIN.exists():
-            target = CMDLINE_D_DROPIN
-            merged = " ".join(f"{k}={desired[k]}" for k in MANAGED_KEYS if k in desired)
-            if not merged:
-                # Enable path with nothing to restore: drop our file entirely.
-                if not target.exists():
-                    console.print(f"[dim]No {target.name} present.[/dim]")
-                    return
+        foreign = [p for p in CMDLINE_D.glob("*.conf") if p != CMDLINE_D_DROPIN]
+        if foreign and not KERNEL_CMDLINE.exists() and not VENDOR_CMDLINE.exists():
+            # The existing fragments supply root and other boot options. Own
+            # only the managed fragment, avoiding copies of foreign arguments.
+            if desired:
+                atomic_write(CMDLINE_D_DROPIN,
+                             " ".join(f"{k}={v}" for k, v in desired.items()) + "\n")
+            elif CMDLINE_D_DROPIN.exists():
                 if DRY_RUN:
-                    console.print(f"[magenta]  [dry-run] would remove {target}[/magenta]")
+                    console.print(f"[magenta]  (dry-run) would remove {CMDLINE_D_DROPIN}[/magenta]")
                 else:
-                    target.unlink()
-                    console.print(f"[green]  ~[/green] removed {target}")
-                return
-            if atomic_write(target, merged + "\n"):
-                console.print(f"[green]  ~[/green] {target}: {merged}")
-            else:
-                console.print(f"[bold green]  ok[/bold green] {target} already convergent.")
+                    remove_file(CMDLINE_D_DROPIN)
             return
-
-        target = KERNEL_CMDLINE
+        running_seed = not entry.options
         seed = entry.options or _read(Path("/proc/cmdline"))
-        merged = merge_cmdline(seed, desired)
-        if atomic_write(target, merged + "\n"):
-            console.print(f"[green]  ~[/green] {target}: {merged}")
-        else:
-            console.print(f"[bold green]  ok[/bold green] {target} already convergent.")
+        for path in (KERNEL_CMDLINE, VENDOR_CMDLINE):
+            if path.exists():
+                seed = path.read_text(encoding="utf-8")
+                running_seed = False
+                break
+        merged = merge_cmdline(seed, desired, running_seed=running_seed)
+        if atomic_write(KERNEL_CMDLINE, merged + "\n"):
+            console.print(f"[green]  ~[/green] {KERNEL_CMDLINE}: {merged}")
+        if CMDLINE_D_DROPIN.exists():
+            if DRY_RUN:
+                console.print(f"[magenta]  (dry-run) would remove {CMDLINE_D_DROPIN}[/magenta]")
+            else:
+                remove_file(CMDLINE_D_DROPIN)
 
 
 # --------------------------------------------------------------------------
 # modprobe + initramfs
 # --------------------------------------------------------------------------
 
-def write_modprobe(claim: Claim, softdeps: set[str], blacklist: set[str]) -> None:
+def write_modprobe(claim: Claim, softdeps: set[str], blacklist: set[str],
+                   *, ids: list[str] | None = None) -> None:
+    ids = claim.ids if ids is None else ids
     lines = [
         "# Managed by gpu-disable-toggle. Do not hand-edit — re-run the script.",
         "#",
         "# Disabled slot functions:",
     ]
     lines += [f"#   {d.addr}  {d.ids}  {d.klass4}  {d.label}" for d in claim.functions]
-    lines += ["", f"options vfio-pci ids={','.join(claim.ids)}", ""]
+    lines += ["", f"options vfio-pci ids={','.join(ids)}", ""]
     for mod in sorted(softdeps):
         lines.append(f"softdep {mod} pre: vfio-pci")
     if blacklist:
@@ -834,7 +885,7 @@ def write_modprobe(claim: Claim, softdeps: set[str], blacklist: set[str]) -> Non
         console.print(f"[green]  ~[/green] {MODPROBE_FILE}")
     else:
         console.print(f"[bold green]  ok[/bold green] {MODPROBE_FILE} already convergent.")
-    console.print(f"[dim]    ids={','.join(claim.ids)}[/dim]")
+    console.print(f"[dim]    ids={','.join(ids)}[/dim]")
     console.print(f"[dim]    blacklist: {', '.join(sorted(blacklist)) or 'none'}[/dim]")
 
 
@@ -843,19 +894,18 @@ def remove_modprobe() -> None:
         console.print(f"[dim]No {MODPROBE_FILE.name} present.[/dim]")
         return
     if DRY_RUN:
-        console.print(f"[magenta]  [dry-run] would remove {MODPROBE_FILE}[/magenta]")
+        console.print(f"[magenta]  (dry-run) would remove {MODPROBE_FILE}[/magenta]")
         return
-    MODPROBE_FILE.unlink()
+    remove_file(MODPROBE_FILE)
     console.print(f"[green]  ~[/green] removed {MODPROBE_FILE}")
 
 
 def write_udev_hide(claim: Claim) -> None:
     """Logically remove the slot's functions from the PCI bus at add-time.
 
-    This is what makes the GPU undetectable to lspci/fastfetch/apps: fully
-    unbound + blacklisted hardware can still be enumerated (and woken) via
-    PCI config space. The rule fires on every add event — boot coldplug and
-    any later rescan — so the device never survives long enough to be used.
+    The rule fires on add events, including boot coldplug and rescans.
+    Removal hides the device from normal PCI enumeration; it does not
+    guarantee physical power-off or exclude earlier kernel probing.
 
     Matched on KERNEL (the PCI address) AND vendor:device, so an identical
     second card in another slot is never removed, and a card swap stops
@@ -864,7 +914,7 @@ def write_udev_hide(claim: Claim) -> None:
     lines = [
         "# Managed by gpu-disable-toggle. Logically removes the disabled GPU",
         "# from the PCI bus at add-time (boot coldplug + any rescan), so it is",
-        "# invisible to lspci / fastfetch / apps and can never be woken.",
+        "# hidden from normal PCI enumeration after the rule runs.",
     ]
     for dev in sorted(claim.functions, key=lambda d: d.addr):
         lines.append(
@@ -876,27 +926,34 @@ def write_udev_hide(claim: Claim) -> None:
     changed = atomic_write(UDEV_RULE, payload)
     if DRY_RUN:
         return
+    verified = run(["udevadm", "verify", str(UDEV_RULE)])
+    if verified.returncode:
+        bail(f"udev hide rule failed validation: {verified.stderr.strip()}")
     if changed:
         console.print(f"[green]  ~[/green] {UDEV_RULE}")
-        reload_udev()
     else:
         console.print(f"[bold green]  ok[/bold green] {UDEV_RULE.name} already convergent.")
+    # A prior rename may have succeeded before a sync/reload failure. Reload
+    # even when the on-disk rule is already identical on retry.
+    reload_udev()
 
 
 def remove_udev_hide() -> None:
     if not UDEV_RULE.exists():
         console.print(f"[dim]No {UDEV_RULE.name} present.[/dim]")
+        if not DRY_RUN:
+            reload_udev()
         return
     if DRY_RUN:
-        console.print(f"[magenta]  [dry-run] would remove {UDEV_RULE}[/magenta]")
+        console.print(f"[magenta]  (dry-run) would remove {UDEV_RULE}[/magenta]")
         return
-    UDEV_RULE.unlink()
+    remove_file(UDEV_RULE)
     console.print(f"[green]  ~[/green] removed {UDEV_RULE}")
     reload_udev()
 
 
 def reload_udev() -> None:
-    res = run(["udevadm", "control", "--reload-rules"])
+    res = run(["udevadm", "control", "--reload"])
     if res.returncode != 0:
         console.print("[yellow]  ! udevadm reload failed; rule applies after reboot.[/yellow]")
     else:
@@ -907,105 +964,124 @@ def asus_wmi_available() -> bool:
     return ASUS_ARMOURY_DGPU_DISABLE.exists() or ASUS_DGPU_DISABLE.exists()
 
 
-def set_asus_dgpu_disable(disabled: bool) -> None:
-    val = "1" if disabled else "0"
-    if DRY_RUN:
-        console.print(f"[magenta]  [dry-run] would set ASUS WMI dgpu_disable to {val}[/magenta]")
-        return
-    for p in (ASUS_ARMOURY_DGPU_DISABLE, ASUS_DGPU_DISABLE):
-        if p.exists():
-            try:
-                p.write_text(val, encoding="utf-8")
-                console.print(f"[green]  ~[/green] ASUS WMI dgpu_disable set to {val} ({p.name})")
-            except OSError as exc:
-                console.print(f"[yellow]  ! Failed to write {val} to {p}: {exc}[/yellow]")
+def set_asus_dgpu_disable(disabled: bool, *, restore: str = "0") -> None:
+    """Stage the firmware power gate for the next boot, leaving live GPUs alone."""
     if disabled:
-        payload = (
-            "# Managed by gpu-disable-toggle. Ensure ASUS firmware dGPU power cut persists across boots.\n"
-            f"w- {ASUS_ARMOURY_DGPU_DISABLE} - - - - 1\n"
-            f"w- {ASUS_DGPU_DISABLE} - - - - 1\n"
-        )
-        if atomic_write(ASUS_TMPFILES, payload):
-            console.print(f"[green]  ~[/green] {ASUS_TMPFILES}")
-    else:
-        if ASUS_TMPFILES.exists():
-            ASUS_TMPFILES.unlink()
-            console.print(f"[green]  ~[/green] removed {ASUS_TMPFILES}")
+        paths = [p for p in (ASUS_ARMOURY_DGPU_DISABLE, ASUS_DGPU_DISABLE) if p.exists()]
+        if paths:
+            payload = "# Managed by gpu-disable-toggle. Apply firmware dGPU disable at boot.\n"
+            payload += f"w- {paths[0]} - - - - 1\n"
+            atomic_write(ASUS_TMPFILES, payload)
+    elif ASUS_TMPFILES.exists():
+        if DRY_RUN:
+            console.print(f"[magenta]  (dry-run) would remove {ASUS_TMPFILES}[/magenta]")
+        else:
+            remove_file(ASUS_TMPFILES)
+    # Some firmware retains this setting across reboot. Restoring it is required
+    # for enable, but disable must never cut power during the active session.
+    if not disabled:
+        for path in (ASUS_ARMOURY_DGPU_DISABLE, ASUS_DGPU_DISABLE):
+            if path.exists():
+                if DRY_RUN:
+                    console.print(f"[magenta]  (dry-run) would set {path} to {restore}[/magenta]")
+                else:
+                    path.write_text(restore, encoding="utf-8")
+                return
+        bail("ASUS firmware gate cannot be restored: its sysfs attribute is missing. Recovery state retained.")
 
 
 def find_upstream_bridge(slot: str) -> Path | None:
-    try:
-        domain, bus_dev = slot.split(":", 1)
-        bus_str, _ = bus_dev.split(":", 1)
-        bus_num = int(bus_str, 16)
-    except (ValueError, IndexError):
-        return None
-    if not SYS_PCI.is_dir():
-        return None
-    for b in SYS_PCI.iterdir():
-        sec_f = b / "secondary_bus_number"
-        sub_f = b / "subordinate_bus_number"
-        if sec_f.is_file() and sub_f.is_file():
-            try:
-                sec = int(sec_f.read_text().strip())
-                sub = int(sub_f.read_text().strip())
-                if sec <= bus_num <= sub:
-                    return b
-            except (ValueError, OSError):
-                pass
+    """Resolve the actual PCI parent instead of guessing bus ranges or domains."""
+    for node in SYS_PCI.glob(f"{slot}.*"):
+        parent = node.resolve().parent
+        if re.fullmatch(r"[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]", parent.name):
+            return SYS_PCI / parent.name
     return None
 
 
 def pci_bridge_power_state(bridge: Path) -> tuple[str, str]:
-    import time
-    time.sleep(0.15)
-    pst = _read(bridge / "power_state") or "unknown"
-    rst = _read(bridge / "power" / "runtime_status") or "unknown"
-    return pst, rst
+    return (_read(bridge / "power_state") or "unknown",
+            _read(bridge / "power" / "runtime_status") or "unknown")
+
+
+def sorted_dropins(directory: Path, *, extra: Path | None = None) -> list[Path]:
+    names = {p.name for p in directory.glob("*.conf") if p.is_file()}
+    if extra is not None:
+        names.add(extra.name)
+    if not names:
+        return []
+    result = run(["sort", "--zero-terminated", "--version-sort", "--unique"],
+                 input="\0".join(sorted(names)) + "\0")
+    if result.returncode:
+        bail(f"Cannot order configuration drop-ins: {result.stderr.strip()}")
+    return [directory / name for name in result.stdout.split("\0") if name]
+
+
+def effective_config(*, managed_payload: str | None = None) -> tuple[list[str], list[str], list[str]]:
+    """Evaluate Bash arrays in the same version order as mkinitcpio 42.2."""
+    sources = [f"source {shlex.quote(str(MKINITCPIO_CONF))}"]
+    for path in sorted_dropins(MKINITCPIO_DROPIN_DIR,
+                               extra=MKINITCPIO_DROPIN if managed_payload is not None else None):
+        if path == MKINITCPIO_DROPIN:
+            if managed_payload is not None:
+                sources.append(managed_payload)
+        else:
+            sources.append(f"source {shlex.quote(str(path))}")
+    script = "set -e\nMODULES=()\nFILES=()\nHOOKS=()\n" + "\n".join(sources)
+    script += '\nprintf "%s\\0" "${#MODULES[@]}" "${MODULES[@]}" "${#FILES[@]}" "${FILES[@]}" "${#HOOKS[@]}" "${HOOKS[@]}"\n'
+    proc = run(["bash", "--noprofile", "--norc", "-c", script])
+    if proc.returncode:
+        bail(f"Cannot evaluate mkinitcpio configuration: {proc.stderr.strip()}")
+    fields = proc.stdout.split("\0")[:-1]
+    arrays = []
+    try:
+        for _ in range(3):
+            count = int(fields.pop(0))
+            if count < 0 or count > len(fields):
+                raise ValueError("invalid array length")
+            arrays.append(fields[:count])
+            del fields[:count]
+        if fields:
+            raise ValueError("unexpected output")
+    except (IndexError, ValueError):
+        bail("Unexpected output evaluating mkinitcpio configuration; check for commands printing to stdout.")
+    return arrays[0], arrays[1], arrays[2]
 
 
 def effective_hooks() -> list[str]:
-    """Evaluate effective HOOKS mkinitcpio will see, excluding our own drop-in."""
-    files = [MKINITCPIO_CONF]
-    if MKINITCPIO_DROPIN_DIR.is_dir():
-        files += sorted(MKINITCPIO_DROPIN_DIR.glob("*.conf"))
-    files = [p for p in files if p.is_file() and p != MKINITCPIO_DROPIN]
-    source = "\n".join(f"source {shlex.quote(str(p))}" for p in files)
-    script = source + '\nprintf "%s\\n" "${HOOKS[@]}"\n'
-    proc = run(["bash", "--noprofile", "--norc", "-c", script])
-    if proc.returncode != 0:
-        return []
-    return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+    return effective_config()[2]
+
+
+def initramfs_payload() -> str:
+    payload = (
+        "# Managed by gpu-disable-toggle. Load vfio-pci before explicit GPU modules.\n"
+        'MODULES=(vfio_pci "${MODULES[@]}")\n'
+        f'FILES+=({shlex.quote(str(UDEV_RULE))})\n'
+    )
+    if "modconf" not in effective_hooks():
+        payload += "HOOKS+=(modconf)\n"
+    modules, files, hooks = effective_config(managed_payload=payload)
+    if (not modules or modules[0].replace("-", "_") != "vfio_pci"
+            or str(UDEV_RULE) not in files or "modconf" not in hooks
+            or not ({"udev", "systemd"} & set(hooks))):
+        bail("Effective mkinitcpio drop-ins override the required VFIO modules, hide rule, or hooks.")
+    return payload
 
 
 def configure_initramfs(*, enable: bool) -> None:
     """Own exactly one file: MKINITCPIO_DROPIN. Never rewrite user config files."""
-    if shutil.which("mkinitcpio") is None:
-        console.print("[yellow]  ! mkinitcpio absent; skipping initramfs config.[/yellow]")
-        return
     if enable:
         if not MKINITCPIO_DROPIN.exists():
             console.print(f"[dim]No {MKINITCPIO_DROPIN.name} present.[/dim]")
             return
         if DRY_RUN:
-            console.print(f"[magenta]  [dry-run] would remove {MKINITCPIO_DROPIN}[/magenta]")
+            console.print(f"[magenta]  (dry-run) would remove {MKINITCPIO_DROPIN}[/magenta]")
             return
-        MKINITCPIO_DROPIN.unlink()
+        remove_file(MKINITCPIO_DROPIN)
         console.print(f"[green]  ~[/green] removed {MKINITCPIO_DROPIN.name}")
         return
 
-    MKINITCPIO_DROPIN_DIR.mkdir(parents=True, exist_ok=True, mode=0o755)
-    payload = (
-        "# Managed by gpu-disable-toggle. Early vfio stub claims the disabled GPU\n"
-        "# before any DRM driver probes it. Drop-ins are sourced after the main\n"
-        "# config, so '+=' is the only safe operator here.\n"
-        "MODULES+=(vfio_pci vfio vfio_iommu_type1)\n"
-    )
-    hooks = effective_hooks()
-    if hooks and "modconf" not in hooks:
-        payload += "HOOKS+=(modconf)\n"
-        console.print("[yellow]  ! 'modconf' absent from HOOKS; appending it via our "
-                      "drop-in (user config left untouched).[/yellow]")
+    payload = initramfs_payload()
 
     if atomic_write(MKINITCPIO_DROPIN, payload):
         console.print(f"[green]  ~[/green] {MKINITCPIO_DROPIN}")
@@ -1013,40 +1089,93 @@ def configure_initramfs(*, enable: bool) -> None:
         console.print(f"[bold green]  ok[/bold green] {MKINITCPIO_DROPIN.name} already convergent.")
 
 
-def rebuild_initramfs(*, no_rebuild: bool, uki: bool = False) -> None:
+def preflight(entry: BootEntry, *, enable: bool) -> list[Path]:
+    """Validate the supported boot pipeline before touching persistent config."""
+    for command in ("mkinitcpio", "bash", "udevadm", "sort", "lsinitcpio"):
+        if shutil.which(command) is None:
+            bail(f"Required command missing: {command}. This tool uses mkinitcpio.")
+    presets = sorted(PRESET_DIR.glob("*.preset"))
+    if not presets:
+        bail("No mkinitcpio presets found.")
+    if not enable:
+        initramfs_payload()
+    if entry.kind == "type2":
+        for fragment in CMDLINE_D.glob("*.conf"):
+            if fragment != CMDLINE_D_DROPIN and parse_managed_keys(fragment.read_text(encoding="utf-8")):
+                bail(f"{fragment} sets managed parameters; consolidate them in {KERNEL_CMDLINE} first.")
+    outputs = []
+    for preset in presets:
+        # Presets are Bash configuration, not assignments that can safely be
+        # inferred with regex. Evaluate each in an isolated shell, as mkinitcpio does.
+        script = r'''set -e
+source "$1"
+for p in "${PRESETS[@]}"; do
+    config="${p}_config"; options="${p}_options"; cmdline="${p}_cmdline"
+    uki="${p}_uki"; image="${p}_image"; kver="${p}_kver"
+    printf '%s\0' "${!config:-$ALL_config}" "${!options}" "${!cmdline:-$ALL_cmdline}" "${!uki}" "${!image}" "${!kver:-$ALL_kver}"
+done
+'''
+        proc = run(["bash", "--noprofile", "--norc", "-c", script, "gpu-presets", str(preset)])
+        if proc.returncode:
+            bail(f"Cannot evaluate {preset}: {proc.stderr.strip()}")
+        fields = proc.stdout.split("\0")[:-1]
+        if len(fields) % 6:
+            bail(f"Unexpected output evaluating {preset}.")
+        for i in range(0, len(fields), 6):
+            config, options, cmdline, uki, image, kver = fields[i:i + 6]
+            if not kver:
+                continue
+            flags = shlex.split(options)
+            if config or any(f in {"-c", "--config"} or f.startswith("--config=") for f in flags):
+                bail(f"{preset} bypasses mkinitcpio drop-ins with an explicit config. Remove that override first.")
+            if entry.kind == "type2" and (cmdline or any(f.startswith("--cmdline") or f == "--no-cmdline" for f in flags)):
+                bail(f"{preset} overrides the UKI command line. Use the default command-line source first.")
+            outputs.extend(Path(v) for v in (uki, image) if v)
+    if entry.kind == "type2" and (entry.path is None or entry.path not in outputs):
+        bail("The selected UKI is not regenerated by a mkinitcpio preset.")
+    if entry.kind == "type1" and entry.path is not None:
+        content = entry.path.read_text(encoding="utf-8")
+        images = re.findall(r"^[ \t]*initrd[ \t]+(\S+)", content, re.MULTILINE)
+        boot_root = entry.path.parents[2]
+        if not any(boot_root / image.lstrip("/") in outputs for image in images):
+            bail("The selected boot entry's initramfs is not regenerated by a mkinitcpio preset.")
+    if not outputs:
+        bail("mkinitcpio presets define no generated images.")
+    # Validate quoted command-line syntax before saving state or any boot edits.
+    cmdline_tokens(read_target_options(entry))
+    # Rebuild -P affects all presets: verify each generated image, including UKIs.
+    return sorted(set(outputs))
+
+
+def verify_images(images: list[Path], *, enable: bool) -> None:
+    expected = {str(path).lstrip("/") for path in (UDEV_RULE, MODPROBE_FILE)}
+    for image in images:
+        result = run(["lsinitcpio", "--nocolor", "--list", str(image)], timeout=120)
+        if result.returncode:
+            bail(f"Cannot inspect rebuilt image {image}: {result.stderr.strip()}")
+        contents = {line.removeprefix("./") for line in result.stdout.splitlines()}
+        present = expected & contents
+        if (enable and present) or (not enable and present != expected):
+            bail(f"Rebuilt image {image} contains incorrect GPU hide files. Recovery state retained.")
+    console.print("[bold green]  ok[/bold green] GPU hide files verified in rebuilt images.")
+
+
+def rebuild_initramfs(*, no_rebuild: bool) -> None:
     if no_rebuild or DRY_RUN:
-        console.print("[dim]Skipping initramfs/UKI rebuild (--no-rebuild/dry-run).[/dim]")
+        console.print("[yellow]Images were not rebuilt; rebuild before rebooting.[/yellow]")
         return
-    console.print("\n[bold blue]==>[/bold blue] [bold]Rebuilding initramfs / UKI[/bold]")
-
-    presets = sorted(Path("/etc/mkinitcpio.d").glob("*.preset"))
-    uki_preset = any(re.search(r"^[^#\n]*_uki=", _read(p), re.MULTILINE) for p in presets)
-
-    if uki and not uki_preset and shutil.which("kernel-install"):
-        argv = ["kernel-install", "add-all"]
-    elif shutil.which("mkinitcpio") and presets:
-        if uki and not uki_preset:
-            console.print("[bold yellow]  ! Boot entry is a UKI but no mkinitcpio preset "
-                          "defines *_uki= and kernel-install is absent. The embedded "
-                          ".cmdline may NOT be refreshed -- verify before rebooting.[/bold yellow]")
-        argv = ["mkinitcpio", "-P"]
-    elif shutil.which("dracut"):
-        argv = ["dracut", "--regenerate-all", "--force"]
-    elif shutil.which("kernel-install"):
-        argv = ["kernel-install", "add-all"]
-    else:
-        bail("No initramfs generator found (mkinitcpio / dracut / kernel-install).")
-
-    console.print(f"  [cyan]{' '.join(argv)}[/cyan]")
-    proc = subprocess.run(argv, check=False, stdin=subprocess.DEVNULL)
-    if proc.returncode != 0:
-        bail(f"{argv[0]} failed (rc={proc.returncode}). Host is NOT safe to reboot yet.")
+    console.print("\n[bold blue]==>[/bold blue] Rebuilding initramfs / UKI: mkinitcpio -P")
+    proc = subprocess.run(["mkinitcpio", "-P"], check=False, stdin=subprocess.DEVNULL)
+    if proc.returncode:
+        bail(f"mkinitcpio failed (rc={proc.returncode}). Recovery state retained; fix before rebooting.")
     console.print("[bold green]  ok[/bold green] Images regenerated.")
 
 
 def verify_staged_entry(entry: BootEntry, expected: dict[str, str]) -> None:
     """Verify that the staged boot options match the expected values."""
-    refreshed = resolve_boot_entry()
+    refreshed = find_boot_entry(ident=entry.ident)
+    if refreshed is None or refreshed.kind != entry.kind:
+        bail(f"Cannot verify the original boot entry {entry.ident}.")
     options = (
         refreshed.options
         if refreshed.kind == "type2"
@@ -1061,8 +1190,8 @@ def verify_staged_entry(entry: BootEntry, expected: dict[str, str]) -> None:
         if exp_v != act_v:
             mismatches.append(f"{k}: expected '{exp_v or '(absent)'}', got '{act_v or '(absent)'}'")
     if mismatches:
-        for m in mismatches:
-            console.print(f"[bold yellow]  ! Staged option mismatch: {m}[/bold yellow]")
+        bail("Staged boot options failed verification:\n" + "\n".join(mismatches)
+             + "\nRecovery state retained. Fix the build before rebooting.")
     else:
         console.print("[bold green]  ok[/bold green] Staged boot entry verified.")
 
@@ -1082,17 +1211,18 @@ def do_status() -> None:
     running_ids = re.search(r"vfio[-_]pci\.ids=([0-9a-fA-F:,]+)", running_cmdline)
     state = state_load()
     action = state.get("action", "unknown" if state else "none")
+    pending = state.get("pending_action")
     staged_ids = state.get("ids", [])
 
     staged_cmdline_ids = None
-    entry = find_boot_entry(quiet=True)
+    entry = find_boot_entry(quiet=True, ident=state.get("boot_id") if action == "disabled" or pending else None)
     if entry:
         opts = read_target_options(entry)
         m = re.search(r"vfio[-_]pci\.ids=([0-9a-fA-F:,]+)", opts)
         if m:
             staged_cmdline_ids = m.group(1)
     elif os.geteuid() != 0:
-        staged_cmdline_ids = "(run with sudo to check staged boot entries)" 
+        staged_cmdline_ids = "(run with sudo to check staged boot entries)"
 
     table = Table(title="Disable state", header_style="bold magenta")
     table.add_column("Component")
@@ -1106,6 +1236,9 @@ def do_status() -> None:
                   f"[green]{staged_cmdline_ids}[/green]" if staged_cmdline_ids else "[dim]absent[/dim]")
     table.add_row("state.json action",
                   f"[cyan]{action}[/cyan]" if state else "[dim]none[/dim]")
+    table.add_row("managed boot entry", entry.ident if entry else "unknown")
+    table.add_row("pending operation", str(pending or "none"))
+    table.add_row("images rebuilt", str(state.get("rebuilt", "unknown")))
     table.add_row("state.json claimed IDs",
                   f"[green]{', '.join(staged_ids)}[/green]" if staged_ids else "[dim]none[/dim]")
 
@@ -1113,7 +1246,10 @@ def do_status() -> None:
     target_slots = state.get("slots", [])
     for s in target_slots:
         bridge = find_upstream_bridge(s)
-        if bridge:
+        bridge_addr = state.get("bridges", {}).get(s)
+        if bridge is None and isinstance(bridge_addr, str):
+            bridge = SYS_PCI / bridge_addr
+        if bridge and bridge.exists():
             pst, rst = pci_bridge_power_state(bridge)
             style = "green" if pst == "D3cold" else "yellow"
             table.add_row(f"PCIe Root Port ({bridge.name})", f"[{style}]{pst} ({rst})[/{style}]")
@@ -1125,17 +1261,24 @@ def do_status() -> None:
             if p.exists():
                 val = _read(p)
                 break
-        status_str = "[green]disabled (power cut)[/green]" if val == "1" else "[yellow]enabled (powered)[/yellow]"
+        status_str = {"1": "[green]firmware disable requested[/green]",
+                      "0": "[yellow]firmware disable cleared[/yellow]"}.get(val, "unknown")
         table.add_row("ASUS WMI dgpu_disable", status_str)
 
     console.print(table)
     if modprobe:
         console.print(Panel(MODPROBE_FILE.read_text(encoding="utf-8").strip(),
                             title=str(MODPROBE_FILE), border_style="dim"))
-    if action == "disabled" and not running_ids:
-        console.print("[bold yellow]  ! Disable is STAGED for next boot, but not active in current session (reboot required).[/bold yellow]")
+    if pending:
+        console.print(f"[yellow]Operation '{pending}' is incomplete; rerun it before rebooting.[/yellow]")
+    elif action == "disabled":
+        visible = set(state.get("addrs", [])) & {d.addr for d in devices}
+        if visible:
+            console.print("[yellow]Claimed PCI functions remain visible. Reboot to apply the staged removal.[/yellow]")
+        else:
+            console.print("[green]Claimed PCI functions are absent from the current PCI bus.[/green]")
     elif action == "enabled" and running_ids:
-        console.print("[bold yellow]  ! Enable is STAGED for next boot, but disable parameters are still active in current session (reboot required).[/bold yellow]")
+        console.print("[yellow]The running kernel still has VFIO IDs. Reboot if the released GPU remains unavailable.[/yellow]")
 
 
 def do_disable(args: argparse.Namespace) -> None:
@@ -1143,32 +1286,44 @@ def do_disable(args: argparse.Namespace) -> None:
     slots = gpu_slots(devices)
     prior = state_load()
     from_state = False
-
-    claim = select_claim(devices, slots, args) if slots else Claim()
-
-    if args.slot and not claim.functions:
-        known = prior.get("slots", [])
-        if prior.get("action") == "disabled" and (
-            args.slot in known or any(s.endswith(args.slot) for s in known)
-        ):
-            restored = claim_from_state(prior)
-            if restored is not None:
-                console.print("[yellow]  ! Slot already hidden from the PCI bus; "
-                              "rebuilding config from state.[/yellow]")
-                claim, from_state = restored, True
+    saved = claim_from_state(prior) if prior.get("action") == "disabled" else None
+    if saved is not None:
+        console.print(f"[dim]Reusing disabled claim: {', '.join(saved.slots)}[/dim]")
+        if args.slot is not None and normalize_slot(args.slot, saved.slots) is None:
+            bail("A different GPU claim is already staged. Use --enable before changing targets.")
+        if "preserved_cmdline" not in prior:
+            bail("Disabled recovery state lacks its original command-line snapshot. Use --enable first.")
+        if any(d.slot in saved.slots and d.addr not in saved.addrs for d in devices):
+            bail("PCI functions changed within the disabled slot. Use --enable before selecting it again.")
+        live = {d.addr: d for d in devices}
+        functions = []
+        for dev in saved.functions:
+            current = live.get(dev.addr)
+            if current and current.ids != dev.ids:
+                bail(f"Hardware changed at {dev.addr}. Use --enable before selecting a new GPU.")
+            if current and current.driver == "vfio-pci":
+                current = PciDevice(current.addr, current.vendor, current.device, current.klass,
+                                    dev.driver, current.boot_vga, current.label)
+            functions.append(current or dev)
+        claim = Claim(functions)
+        from_state = not any(d.addr in live for d in saved.functions)
+    else:
+        if any(p.exists() for p in (MODPROBE_FILE, UDEV_RULE, MKINITCPIO_DROPIN)):
+            bail("Disable config exists without usable recovery state. Use --enable first.")
+        claim = select_claim(devices, slots, args) if slots else Claim()
 
     if not claim.functions:
         bail(f"--slot {args.slot or '(auto)'} matches no visible GPU slot and no disabled state.\n"
              f"Visible GPU slots: {', '.join(slots) or 'none (all hidden?)'}")
 
     guard_claim(claim, devices, args.allow_boot_vga, from_state=from_state)
-    if not from_state:
-        check_id_collisions(devices, claim)
+    check_id_collisions(devices, claim)
     warn_modprobe_conflicts()
 
     softdeps, blacklist = drm_blacklist_for(devices, claim)
     vendor = cpu_vendor()
-    entry = resolve_boot_entry()
+    entry = resolve_boot_entry(prior if saved else None)
+    images = preflight(entry, enable=False)
 
     # Snapshot user's pre-existing managed keys once. If already disabled, keep
     # the original baseline so re-running --disable never poisons preserved_cmdline!
@@ -1190,24 +1345,46 @@ def do_disable(args: argparse.Namespace) -> None:
         if not Confirm.ask("Apply?", default=False):
             raise SystemExit(0)
 
-    write_modprobe(claim, softdeps, blacklist)
-    write_udev_hide(claim)
-    if asus_wmi_available():
-        set_asus_dgpu_disable(True)
-    patch_bootloader(entry, blacklist, claim.ids, vendor, args.amd_force_enable, enable=False)
-    configure_initramfs(enable=False)
+    bridges = dict(prior.get("bridges", {})) if saved else {}
+    for slot in claim.slots:
+        if bridge := find_upstream_bridge(slot):
+            bridges[slot] = bridge.name
+    asus_gate = bool(prior.get("asus_power_gate")) or args.asus_power_gate
+    asus_restore = prior.get("asus_restore", "0")
+    if asus_gate and not prior.get("asus_power_gate"):
+        path = next((p for p in (ASUS_ARMOURY_DGPU_DISABLE, ASUS_DGPU_DISABLE) if p.exists()), None)
+        if path is None:
+            bail("--asus-power-gate requested, but no supported ASUS firmware attribute exists.")
+        asus_restore = path.read_text(encoding="utf-8").strip()
+        if asus_restore not in {"0", "1"}:
+            bail(f"Unexpected ASUS firmware value: {asus_restore!r}.")
+    # Journal the original cmdline and hardware before the first config write.
     state_save(ids=claim.ids, addrs=claim.addrs, slots=claim.slots,
-               functions=[{"addr": d.addr, "ids": d.ids, "klass4": d.klass4}
+               functions=[{"addr": d.addr, "ids": d.ids, "klass4": d.klass4, "driver": d.driver}
                           for d in claim.functions],
-               blacklist=sorted(blacklist), cpu_vendor=vendor,
-               preserved_cmdline=preserved, boot_kind=entry.kind, action="disabled")
-    rebuild_initramfs(no_rebuild=args.no_rebuild, uki=entry.kind == "type2")
+               blacklist=sorted(blacklist), cpu_vendor=vendor, bridges=bridges,
+               preserved_cmdline=preserved, boot_kind=entry.kind, boot_id=entry.ident,
+               asus_power_gate=asus_gate, asus_restore=asus_restore,
+               action="disabled", pending_action="disable", rebuilt=False)
+    desired = desired_params(blacklist, claim.ids, vendor, args.amd_force_enable, preserved)
+    write_modprobe(claim, softdeps, blacklist, ids=desired["vfio-pci.ids"].split(","))
+    patch_bootloader(entry, blacklist, claim.ids, vendor, args.amd_force_enable,
+                     enable=False, restore=preserved)
+    configure_initramfs(enable=False)
+    write_udev_hide(claim)
+    if asus_gate:
+        set_asus_dgpu_disable(True)
+    rebuild_initramfs(no_rebuild=args.no_rebuild)
     if not args.no_rebuild and not DRY_RUN:
-        verify_staged_entry(
-            entry,
-            desired_params(blacklist, claim.ids, vendor, args.amd_force_enable),
-        )
-    console.print("\n[bold green]=== DISABLE STAGED — REBOOT TO APPLY ===[/bold green]")
+        verify_images(images, enable=False)
+        verify_staged_entry(entry, desired)
+        state_save(pending_action=None, rebuilt=True)
+    if DRY_RUN:
+        console.print("\n[magenta]Disable preview complete; nothing changed.[/magenta]")
+    elif args.no_rebuild:
+        console.print("\n[yellow]Disable config staged; rebuild images before rebooting.[/yellow]")
+    else:
+        console.print("\n[bold green]=== DISABLE STAGED — REBOOT TO APPLY ===[/bold green]")
     console.print("[dim]Verify after reboot: the IDs below must print NOTHING:[/dim]")
     console.print(f"[dim]  lspci -Dnn | grep -E '{'|'.join(claim.ids)}'[/dim]")
 
@@ -1221,36 +1398,53 @@ def do_enable(args: argparse.Namespace) -> None:
                         f"Releasing IDs: {', '.join(ids) or 'unknown (sweeping managed keys)'}\n"
                         f"Restoring cmdline: {restore or 'none (clean sweep)'}",
                         expand=False))
-    entry = resolve_boot_entry()
+    if state.get("action") == "enabled" and not state.get("pending_action") and not any(
+            p.exists() for p in (MODPROBE_FILE, UDEV_RULE, MKINITCPIO_DROPIN, ASUS_TMPFILES, CMDLINE_D_DROPIN)):
+        console.print("[green]GPU disable configuration is already removed.[/green]")
+        return
+    if not state and not any(p.exists() for p in (MODPROBE_FILE, UDEV_RULE, MKINITCPIO_DROPIN, ASUS_TMPFILES, CMDLINE_D_DROPIN)):
+        console.print("[green]No GPU disable configuration to remove.[/green]")
+        return
+    entry = resolve_boot_entry(state)
+    images = preflight(entry, enable=True)
+    state_save(pending_action="enable", rebuilt=False,
+               asus_power_gate=bool(state.get("asus_power_gate")) or ASUS_TMPFILES.exists(),
+               asus_restore=state.get("asus_restore", "0"))
     remove_modprobe()
     remove_udev_hide()
-    if asus_wmi_available() or ASUS_TMPFILES.exists():
-        set_asus_dgpu_disable(False)
+    if state.get("asus_power_gate") or ASUS_TMPFILES.exists():
+        set_asus_dgpu_disable(False, restore=state.get("asus_restore", "0"))
     patch_bootloader(entry, set(), [], cpu_vendor(), args.amd_force_enable,
                      enable=True, restore=restore)
     # Stale cmdline.d drop-in sweep if active target is type1 or KERNEL_CMDLINE
     if (entry.kind == "type1" or KERNEL_CMDLINE.is_file()) and CMDLINE_D_DROPIN.exists():
         if DRY_RUN:
-            console.print(f"[magenta]  [dry-run] would remove stale {CMDLINE_D_DROPIN}[/magenta]")
+            console.print(f"[magenta]  (dry-run) would remove stale {CMDLINE_D_DROPIN}[/magenta]")
         else:
-            CMDLINE_D_DROPIN.unlink()
+            remove_file(CMDLINE_D_DROPIN)
             console.print(f"[green]  ~[/green] removed stale {CMDLINE_D_DROPIN}")
 
     configure_initramfs(enable=True)
-    # Clean up all disabled-scoped keys so no stale state mis-targets a future run
-    state_save(action="enabled", ids=[], addrs=[], slots=[], functions=[],
-               blacklist=[], preserved_cmdline={})
-    rebuild_initramfs(no_rebuild=args.no_rebuild, uki=entry.kind == "type2")
+    rebuild_initramfs(no_rebuild=args.no_rebuild)
     if not args.no_rebuild and not DRY_RUN:
+        verify_images(images, enable=True)
         verify_staged_entry(entry, restore)
-    console.print("\n[bold green]=== RE-ENABLE STAGED — REBOOT TO APPLY ===[/bold green]")
+        state_save(action="enabled", pending_action=None, rebuilt=True,
+                   ids=[], addrs=[], slots=[], functions=[], bridges={}, blacklist=[],
+                   preserved_cmdline={}, asus_power_gate=False)
+    if DRY_RUN:
+        console.print("\n[magenta]Enable preview complete; nothing changed.[/magenta]")
+    elif args.no_rebuild:
+        console.print("\n[yellow]Enable config staged; rebuild images before rebooting.[/yellow]")
+    else:
+        console.print("\n[bold green]=== RE-ENABLE STAGED — REBOOT TO APPLY ===[/bold green]")
     console.print("[dim]The GPU re-enumerates on the PCI bus after reboot; "
                   "its native driver loads again.[/dim]")
 
 
 def main() -> None:
     global DRY_RUN
-    ap = argparse.ArgumentParser(description="Completely disable / re-enable dedicated GPU(s).")
+    ap = argparse.ArgumentParser(description="Stage PCI removal / re-enable dedicated GPU(s) for the next boot.")
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--disable", action="store_true", help="Disable the dedicated GPU slot(s).")
     g.add_argument("--enable", action="store_true", help="Remove the disable config (re-enable).")
@@ -1265,16 +1459,18 @@ def main() -> None:
                     help="Permit disabling the boot_vga / last GPU (console goes dark).")
     ap.add_argument("--amd-force-enable", action="store_true",
                     help="On AMD CPUs with a broken IVRS, emit amd_iommu=force_enable.")
+    ap.add_argument("--asus-power-gate", action="store_true",
+                    help="With --disable: stage the ASUS notebook firmware dGPU power gate (all internal dGPUs).")
     ap.add_argument("--yes", "-y", action="store_true", help="Skip confirmation.")
     ap.add_argument("--dry-run", action="store_true", help="Print changes, write nothing.")
     ap.add_argument("--no-rebuild", action="store_true", help="Skip initramfs regeneration.")
     args = ap.parse_args()
 
     # CLI semantic validation
-    if args.status and any((args.slot, args.all, args.auto, args.allow_boot_vga, args.amd_force_enable, args.yes, args.dry_run, args.no_rebuild)):
+    if args.status and any((args.slot is not None, args.all, args.auto, args.allow_boot_vga, args.amd_force_enable, args.asus_power_gate, args.yes, args.dry_run, args.no_rebuild)):
         ap.error("--status takes no other options.")
-    if args.enable and any((args.slot, args.all, args.auto, args.allow_boot_vga)):
-        ap.error("--slot/--all/--auto/--allow-boot-vga only apply to --disable.")
+    if args.enable and any((args.slot is not None, args.all, args.auto, args.allow_boot_vga, args.asus_power_gate)):
+        ap.error("--slot/--all/--auto/--allow-boot-vga/--asus-power-gate only apply to --disable.")
 
     DRY_RUN = args.dry_run
     check_versions()
@@ -1290,18 +1486,25 @@ def main() -> None:
     if DRY_RUN:
         console.print("[magenta]DRY RUN: no file will be modified.[/magenta]")
 
-    match args:
-        case argparse.Namespace(status=True):
-            do_status()
-        case argparse.Namespace(disable=True):
+    if args.status:
+        do_status()
+        return
+    with Path(__file__).open("rb") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            bail("Another GPU toggle operation is running.")
+        if args.disable:
             do_disable(args)
-        case argparse.Namespace(enable=True):
+        else:
             do_enable(args)
 
 
 if __name__ == "__main__":
     try:
         main()
+    except (OSError, ValueError) as exc:
+        bail(f"Operation failed: {exc}. Recovery state is retained if staging began.")
     except KeyboardInterrupt:
         console.print("\n[bold red]! Interrupted.[/bold red]")
         raise SystemExit(130) from None
