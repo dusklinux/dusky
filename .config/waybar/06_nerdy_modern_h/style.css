@@ -224,7 +224,7 @@ tooltip label,
     color: @on_surface_variant;
     background: transparent;
     min-width: 22px;
-    min-height: 22px;
+    min-height: 21px;
     font-size: 11px;
     font-weight: 700;
 }
