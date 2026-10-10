@@ -1,0 +1,10 @@
+{
+  "id": "ultraviolet",
+  "label": "Ultraviolet",
+  "hex": "#8F00FF",
+  "bg_hex": "#19002d",
+  "mode": "dark",
+  "scheme": "scheme-fidelity",
+  "order": 140,
+  "desc": "High-frequency ultraviolet punch with deep twilight backgrounds."
+}

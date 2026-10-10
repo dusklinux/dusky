@@ -1,0 +1,10 @@
+{
+  "id": "arctic_freeze",
+  "label": "Arctic Freeze",
+  "hex": "#38BDF8",
+  "bg_hex": "#0c1a22",
+  "mode": "dark",
+  "scheme": "scheme-fidelity",
+  "order": 290,
+  "desc": "Glacial sub-zero electric sky ice cyan with deep Scandinavian oceanic slate."
+}

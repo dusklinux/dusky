@@ -1,0 +1,10 @@
+{
+  "id": "blood_orange",
+  "label": "Blood Orange",
+  "hex": "#FF4500",
+  "bg_hex": "#330d00",
+  "mode": "dark",
+  "scheme": "scheme-fidelity",
+  "order": 60,
+  "desc": "Saturated red-orange fiery accents with deep ember base."
+}

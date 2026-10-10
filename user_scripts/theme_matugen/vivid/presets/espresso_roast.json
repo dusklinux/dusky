@@ -1,0 +1,10 @@
+{
+  "id": "espresso_roast",
+  "label": "Espresso Roast",
+  "hex": "#FF7F50",
+  "bg_hex": "#201411",
+  "mode": "dark",
+  "scheme": "scheme-fidelity",
+  "order": 280,
+  "desc": "Warm Italian espresso roast with dark roasted cocoa base and terracotta coral accents."
+}

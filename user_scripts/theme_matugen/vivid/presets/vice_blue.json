@@ -1,0 +1,10 @@
+{
+  "id": "vice_blue",
+  "label": "Vice Blue",
+  "hex": "#00C6FF",
+  "bg_hex": "#002833",
+  "mode": "dark",
+  "scheme": "scheme-fidelity",
+  "order": 180,
+  "desc": "Retro neon vice blue with dark cyan-blue view backgrounds."
+}

@@ -1,0 +1,10 @@
+{
+  "id": "electric_blue",
+  "label": "Electric Blue",
+  "hex": "#0000FF",
+  "bg_hex": "#000030",
+  "mode": "dark",
+  "scheme": "scheme-fidelity",
+  "order": 150,
+  "desc": "Pure electric blue with deep midnight-navy view backgrounds."
+}

@@ -1,0 +1,10 @@
+{
+  "id": "kanagawa",
+  "label": "Kanagawa Wave",
+  "hex": "#DCD7BA",
+  "bg_hex": "#1f1f28",
+  "mode": "dark",
+  "scheme": "scheme-fidelity",
+  "order": 420,
+  "desc": "Classic woodblock print aesthetic with warm sumi ink and autumn parchment."
+}

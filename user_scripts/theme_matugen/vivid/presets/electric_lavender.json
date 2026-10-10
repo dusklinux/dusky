@@ -1,0 +1,10 @@
+{
+  "id": "electric_lavender",
+  "label": "Electric Lavender",
+  "hex": "#9D8CFF",
+  "bg_hex": "#0d0b24",
+  "mode": "dark",
+  "scheme": "scheme-fidelity",
+  "order": 250,
+  "desc": "Cosmic electric periwinkle lavender with deep twilight abyss backgrounds."
+}

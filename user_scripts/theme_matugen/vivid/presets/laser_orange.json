@@ -1,0 +1,10 @@
+{
+  "id": "laser_orange",
+  "label": "Laser Orange",
+  "hex": "#FF6D00",
+  "bg_hex": "#331600",
+  "mode": "dark",
+  "scheme": "scheme-fidelity",
+  "order": 50,
+  "desc": "High-intensity neon orange with deep rust view backgrounds."
+}

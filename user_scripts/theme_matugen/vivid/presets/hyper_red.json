@@ -1,0 +1,10 @@
+{
+  "id": "hyper_red",
+  "label": "Hyper Red",
+  "hex": "#FF0000",
+  "bg_hex": "#300000",
+  "mode": "dark",
+  "scheme": "scheme-fidelity",
+  "order": 70,
+  "desc": "Pure hyper-saturated red with deep blood-wine backgrounds."
+}

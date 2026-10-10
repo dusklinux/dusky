@@ -1,0 +1,10 @@
+{
+  "id": "spring_green",
+  "label": "Spring Green",
+  "hex": "#00FF7F",
+  "bg_hex": "#002d16",
+  "mode": "dark",
+  "scheme": "scheme-fidelity",
+  "order": 210,
+  "desc": "Bright spring emerald with dark moss-tinted view backgrounds."
+}

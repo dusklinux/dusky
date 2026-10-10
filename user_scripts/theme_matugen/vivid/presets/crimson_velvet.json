@@ -1,0 +1,10 @@
+{
+  "id": "crimson_velvet",
+  "label": "Crimson Velvet",
+  "hex": "#FF1E44",
+  "bg_hex": "#1e000b",
+  "mode": "dark",
+  "scheme": "scheme-fidelity",
+  "order": 300,
+  "desc": "Intense gothic blood ruby red with deep black-cherry burgundy velvet."
+}

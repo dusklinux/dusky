@@ -1,0 +1,10 @@
+{
+  "id": "matte_black",
+  "label": "Matte Black",
+  "hex": "#FFAA00",
+  "bg_hex": "#121212",
+  "mode": "dark",
+  "scheme": "scheme-fidelity",
+  "order": 330,
+  "desc": "Matte carbon black with cyberpunk warm amber gold accents."
+}

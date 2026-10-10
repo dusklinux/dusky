@@ -1,0 +1,320 @@
+[
+  {
+    "id": "toxic_lime",
+    "label": "Toxic Lime",
+    "hex": "#00FF00",
+    "bg_hex": "#002800",
+    "desc": "Ultra-saturated electric green with deep forest view backgrounds."
+  },
+  {
+    "id": "chartreuse",
+    "label": "Chartreuse Flash",
+    "hex": "#7FFF00",
+    "bg_hex": "#182A00",
+    "desc": "Fluorescent yellow-green flash with olive-tinted dark backgrounds."
+  },
+  {
+    "id": "acid_yellow",
+    "label": "Acid Yellow",
+    "hex": "#FFFF00",
+    "bg_hex": "#282800",
+    "desc": "High-visibility vivid pure yellow with dark amber-green base."
+  },
+  {
+    "id": "solar_gold",
+    "label": "Solar Gold",
+    "hex": "#FFD700",
+    "bg_hex": "#2C2400",
+    "desc": "Warm electric gold with rich bronze backgrounds."
+  },
+  {
+    "id": "laser_orange",
+    "label": "Laser Orange",
+    "hex": "#FF6D00",
+    "bg_hex": "#331600",
+    "desc": "High-intensity neon orange with deep rust view backgrounds."
+  },
+  {
+    "id": "blood_orange",
+    "label": "Blood Orange",
+    "hex": "#FF4500",
+    "bg_hex": "#330D00",
+    "desc": "Saturated red-orange fiery accents with deep ember base."
+  },
+  {
+    "id": "hyper_red",
+    "label": "Hyper Red",
+    "hex": "#FF0000",
+    "bg_hex": "#300000",
+    "desc": "Pure hyper-saturated red with deep blood-wine backgrounds."
+  },
+  {
+    "id": "arcade_red",
+    "label": "Arcade Red",
+    "hex": "#FF0055",
+    "bg_hex": "#300010",
+    "desc": "Vivid arcade crimson with dark burgundy view backgrounds."
+  },
+  {
+    "id": "neon_pink",
+    "label": "Neon Pink",
+    "hex": "#FF1493",
+    "bg_hex": "#30001B",
+    "desc": "Hot fluorescent pink with saturated deep rose base."
+  },
+  {
+    "id": "hot_magenta",
+    "label": "Hot Magenta",
+    "hex": "#FF00FF",
+    "bg_hex": "#22002A",
+    "desc": "Cyberpunk electric magenta with dark purple-tinted backgrounds."
+  },
+  {
+    "id": "plasma_fuchsia",
+    "label": "Plasma Fuchsia",
+    "hex": "#D400FF",
+    "bg_hex": "#24002D",
+    "desc": "Intense violet-fuchsia glow with deep obsidian-purple base."
+  },
+  {
+    "id": "electric_violet",
+    "label": "Electric Violet",
+    "hex": "#A020FF",
+    "bg_hex": "#1D0030",
+    "desc": "Saturated electric violet with deep midnight-purple views."
+  },
+  {
+    "id": "electric_indigo",
+    "label": "Electric Indigo",
+    "hex": "#6F00FF",
+    "bg_hex": "#14002D",
+    "desc": "Rich vivid indigo with dark ultramarine-purple base."
+  },
+  {
+    "id": "ultraviolet",
+    "label": "Ultraviolet",
+    "hex": "#8F00FF",
+    "bg_hex": "#19002D",
+    "desc": "High-frequency ultraviolet punch with deep twilight backgrounds."
+  },
+  {
+    "id": "electric_blue",
+    "label": "Electric Blue",
+    "hex": "#0000FF",
+    "bg_hex": "#000030",
+    "desc": "Pure electric blue with deep midnight-navy view backgrounds."
+  },
+  {
+    "id": "cobalt_flash",
+    "label": "Cobalt Flash",
+    "hex": "#1F51FF",
+    "bg_hex": "#000D30",
+    "desc": "High-saturation royal cobalt with deep sapphire base."
+  },
+  {
+    "id": "electric_azure",
+    "label": "Electric Azure",
+    "hex": "#0091FF",
+    "bg_hex": "#001F33",
+    "desc": "Bright vivid azure with deep ocean-tinted backgrounds."
+  },
+  {
+    "id": "vice_blue",
+    "label": "Vice Blue",
+    "hex": "#00C6FF",
+    "bg_hex": "#002833",
+    "desc": "Retro neon vice blue with dark cyan-blue view backgrounds."
+  },
+  {
+    "id": "cyber_cyan",
+    "label": "Cyber Cyan",
+    "hex": "#00FFFF",
+    "bg_hex": "#002233",
+    "desc": "Max-saturation neon cyan with deep teal-cyan backgrounds."
+  },
+  {
+    "id": "neon_teal",
+    "label": "Neon Teal",
+    "hex": "#00FFD5",
+    "bg_hex": "#002D26",
+    "desc": "Vivid glowing aqua-teal with deep seafoam-tinted base."
+  },
+  {
+    "id": "spring_green",
+    "label": "Spring Green",
+    "hex": "#00FF7F",
+    "bg_hex": "#002D16",
+    "desc": "Bright spring emerald with dark moss-tinted view backgrounds."
+  },
+  {
+    "id": "jade_laser",
+    "label": "Jade Laser",
+    "hex": "#00FF99",
+    "bg_hex": "#002D1B",
+    "desc": "Fluorescent jade green with deep botanical base."
+  },
+  {
+    "id": "radioactive",
+    "label": "Radioactive",
+    "hex": "#CCFF00",
+    "bg_hex": "#222A00",
+    "desc": "Nuclear lime-yellow with rich biohazard-tinted dark views."
+  },
+  {
+    "id": "miami_pink",
+    "label": "Miami Pink",
+    "hex": "#FF5AC4",
+    "bg_hex": "#300024",
+    "desc": "Vibrant Miami retro pink with dark velvet-rose backgrounds."
+  },
+  {
+    "id": "electric_lavender",
+    "label": "Electric Lavender",
+    "hex": "#9D8CFF",
+    "bg_hex": "#0D0B24",
+    "desc": "Cosmic electric periwinkle lavender with deep twilight abyss backgrounds."
+  },
+  {
+    "id": "retro_sunset",
+    "label": "Retro Sunset",
+    "hex": "#FFA048",
+    "bg_hex": "#06182C",
+    "desc": "80s outrun warm sunset amber paired over midnight sapphire ocean navy."
+  },
+  {
+    "id": "osaka_jade",
+    "label": "Osaka Jade",
+    "hex": "#2EE59D",
+    "bg_hex": "#0B1E17",
+    "desc": "Japanese botanical bamboo jade green with deep cedar moss slate."
+  },
+  {
+    "id": "espresso_roast",
+    "label": "Espresso Roast",
+    "hex": "#FF7F50",
+    "bg_hex": "#201411",
+    "desc": "Warm Italian espresso roast with dark roasted cocoa base and terracotta coral accents."
+  },
+  {
+    "id": "arctic_freeze",
+    "label": "Arctic Freeze",
+    "hex": "#38BDF8",
+    "bg_hex": "#0C1A22",
+    "desc": "Glacial sub-zero electric sky ice cyan with deep Scandinavian oceanic slate."
+  },
+  {
+    "id": "crimson_velvet",
+    "label": "Crimson Velvet",
+    "hex": "#FF1E44",
+    "bg_hex": "#1E000B",
+    "desc": "Intense gothic blood ruby red with deep black-cherry burgundy velvet."
+  },
+  {
+    "id": "vantablack",
+    "label": "Vantablack OLED",
+    "hex": "#FFFFFF",
+    "bg_hex": "#000000",
+    "mode": "dark",
+    "scheme": "scheme-monochrome",
+    "desc": "True OLED pitch black with pure white high-contrast monochrome accents."
+  },
+  {
+    "id": "pure_white",
+    "label": "Pure White",
+    "hex": "#000000",
+    "bg_hex": "#FFFFFF",
+    "mode": "light",
+    "scheme": "scheme-monochrome",
+    "desc": "Minimalist pure paper white high-contrast light theme with deep ink typography."
+  },
+  {
+    "id": "matte_black",
+    "label": "Matte Black",
+    "hex": "#FFAA00",
+    "bg_hex": "#121212",
+    "mode": "dark",
+    "scheme": "scheme-fidelity",
+    "desc": "Matte carbon black with cyberpunk warm amber gold accents."
+  },
+  {
+    "id": "solitude",
+    "label": "Solitude Slate",
+    "hex": "#A0AEC0",
+    "bg_hex": "#101315",
+    "mode": "dark",
+    "scheme": "scheme-neutral",
+    "desc": "Cool industrial gunmetal slate with neutral titanium silver accents."
+  },
+  {
+    "id": "everforest",
+    "label": "Everforest Pine",
+    "hex": "#7FBBB3",
+    "bg_hex": "#192024",
+    "mode": "dark",
+    "scheme": "scheme-fidelity",
+    "desc": "Tranquil botanical pine with earthy moss and sage green accents."
+  },
+  {
+    "id": "nord_frost",
+    "label": "Nord Frost",
+    "hex": "#88C0D0",
+    "bg_hex": "#141A23",
+    "mode": "dark",
+    "scheme": "scheme-fidelity",
+    "desc": "Arctic Scandinavian polar night navy with glacial frost cyan accents."
+  },
+  {
+    "id": "gruvbox_dark",
+    "label": "Gruvbox Retro",
+    "hex": "#FABD2F",
+    "bg_hex": "#1D2021",
+    "mode": "dark",
+    "scheme": "scheme-fidelity",
+    "desc": "Warm retro 70s groove with earthy dark basalt and warm ochre accents."
+  },
+  {
+    "id": "catppuccin_mocha",
+    "label": "Mocha Lavender",
+    "hex": "#89B4FA",
+    "bg_hex": "#181825",
+    "mode": "dark",
+    "scheme": "scheme-fidelity",
+    "desc": "Cozy pastel periwinkle blue over deep midnight mocha basalt."
+  },
+  {
+    "id": "rose_pine",
+    "label": "Rosé Pine",
+    "hex": "#EBBCBA",
+    "bg_hex": "#191724",
+    "mode": "dark",
+    "scheme": "scheme-fidelity",
+    "desc": "Dreamy moody midnight pine with soft dusty rose and gold accents."
+  },
+  {
+    "id": "flexoki_light",
+    "label": "Flexoki Light",
+    "hex": "#205EA6",
+    "bg_hex": "#FFFCF0",
+    "mode": "light",
+    "scheme": "scheme-fidelity",
+    "desc": "Warm analog paper cream with deep vintage indigo ink accents."
+  },
+  {
+    "id": "tokyo_night",
+    "label": "Tokyo Night",
+    "hex": "#7AA2F7",
+    "bg_hex": "#1A1B26",
+    "mode": "dark",
+    "scheme": "scheme-fidelity",
+    "desc": "Iconic neon Tokyo night sapphire blue over deep midnight indigo."
+  },
+  {
+    "id": "kanagawa",
+    "label": "Kanagawa Wave",
+    "hex": "#DCD7BA",
+    "bg_hex": "#1F1F28",
+    "mode": "dark",
+    "scheme": "scheme-fidelity",
+    "desc": "Classic woodblock print aesthetic with warm sumi ink and autumn parchment."
+  }
+]

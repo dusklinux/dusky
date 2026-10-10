@@ -1,0 +1,10 @@
+{
+  "id": "chartreuse",
+  "label": "Chartreuse Flash",
+  "hex": "#7FFF00",
+  "bg_hex": "#182a00",
+  "mode": "dark",
+  "scheme": "scheme-fidelity",
+  "order": 20,
+  "desc": "Fluorescent yellow-green flash with olive-tinted dark backgrounds."
+}

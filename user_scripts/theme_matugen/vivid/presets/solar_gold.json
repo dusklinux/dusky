@@ -1,0 +1,10 @@
+{
+  "id": "solar_gold",
+  "label": "Solar Gold",
+  "hex": "#FFD700",
+  "bg_hex": "#2c2400",
+  "mode": "dark",
+  "scheme": "scheme-fidelity",
+  "order": 40,
+  "desc": "Warm electric gold with rich bronze backgrounds."
+}

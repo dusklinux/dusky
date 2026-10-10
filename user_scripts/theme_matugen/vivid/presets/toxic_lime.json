@@ -1,0 +1,10 @@
+{
+  "id": "toxic_lime",
+  "label": "Toxic Lime",
+  "hex": "#00FF00",
+  "bg_hex": "#002800",
+  "mode": "dark",
+  "scheme": "scheme-fidelity",
+  "order": 10,
+  "desc": "Ultra-saturated electric green with deep forest view backgrounds."
+}

@@ -1,0 +1,10 @@
+{
+  "id": "hot_magenta",
+  "label": "Hot Magenta",
+  "hex": "#FF00FF",
+  "bg_hex": "#22002a",
+  "mode": "dark",
+  "scheme": "scheme-fidelity",
+  "order": 100,
+  "desc": "Cyberpunk electric magenta with dark purple-tinted backgrounds."
+}

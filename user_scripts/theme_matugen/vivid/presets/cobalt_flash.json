@@ -1,0 +1,10 @@
+{
+  "id": "cobalt_flash",
+  "label": "Cobalt Flash",
+  "hex": "#1F51FF",
+  "bg_hex": "#000d30",
+  "mode": "dark",
+  "scheme": "scheme-fidelity",
+  "order": 160,
+  "desc": "High-saturation royal cobalt with deep sapphire base."
+}

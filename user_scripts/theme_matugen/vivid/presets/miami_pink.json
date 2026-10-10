@@ -1,0 +1,10 @@
+{
+  "id": "miami_pink",
+  "label": "Miami Pink",
+  "hex": "#FF5AC4",
+  "bg_hex": "#300024",
+  "mode": "dark",
+  "scheme": "scheme-fidelity",
+  "order": 240,
+  "desc": "Vibrant Miami retro pink with dark velvet-rose backgrounds."
+}

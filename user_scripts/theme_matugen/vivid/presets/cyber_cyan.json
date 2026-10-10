@@ -1,0 +1,10 @@
+{
+  "id": "cyber_cyan",
+  "label": "Cyber Cyan",
+  "hex": "#00FFFF",
+  "bg_hex": "#002233",
+  "mode": "dark",
+  "scheme": "scheme-fidelity",
+  "order": 190,
+  "desc": "Max-saturation neon cyan with deep teal-cyan backgrounds."
+}

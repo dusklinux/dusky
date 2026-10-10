@@ -1,0 +1,10 @@
+{
+  "id": "catppuccin_mocha",
+  "label": "Mocha Lavender",
+  "hex": "#89B4FA",
+  "bg_hex": "#181825",
+  "mode": "dark",
+  "scheme": "scheme-fidelity",
+  "order": 380,
+  "desc": "Cozy pastel periwinkle blue over deep midnight mocha basalt."
+}

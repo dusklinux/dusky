@@ -1,0 +1,10 @@
+{
+  "id": "nord_frost",
+  "label": "Nord Frost",
+  "hex": "#88C0D0",
+  "bg_hex": "#141a23",
+  "mode": "dark",
+  "scheme": "scheme-fidelity",
+  "order": 360,
+  "desc": "Arctic Scandinavian polar night navy with glacial frost cyan accents."
+}

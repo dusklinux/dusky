@@ -20,6 +20,7 @@ The `matugen_presets` engine manages the desktop theme and solid color palettes 
 - **Exact Presets**: `exact_preset_<id>` with hardcoded scheme configurations (`scheme-fidelity`, `scheme-vibrant`, etc.).
 - **Exact Strategy**: `exact_scheme_override` (`per-preset`, `scheme-fidelity`, `scheme-vibrant`, etc.).
 - **Exact Preset Management**: `new_exact_hex`, `new_exact_scheme`, `action_add_exact_preset`, `action_del_exact_<id>`.
+- **Vivid Presets**: `vivid_apply_<id>` (momentary bool triggers applying immutable pre-baked saturated theme packs), `action_resume_wallpaper` (resumes live wallpaper theming), `vivid_active_hex` (read-only), `vivid_active_id` (read-only).
 - **Custom Input**: `custom_hex`, `custom_rgb`, `custom_hsl`, `action_regen`.
 - **Theme Settings**: `mode`, `type`, `contrast`, `index`, `base16`, `action_apply_theme`.
 - **Animation Settings**: `t_type`, `t_dur`, `t_fps`, `t_bez`, `t_ang`, `t_pos`, `action_apply_anim`.
@@ -28,6 +29,9 @@ The `matugen_presets` engine manages the desktop theme and solid color palettes 
 ## Engine Methods
 
 - `apply_color(hex_code, scheme_override=None, contrast_override=None, mode_override=None)`: Synchronizes state and triggers `theme_ctl.sh`.
+- `list_vivid_presets()`: Returns list of pre-baked vivid color presets from catalog.
+- `apply_vivid(preset_id)`: Applies a pre-baked vivid pack instantly via atomic copies and toolkit hooks.
+- `resume_wallpaper()`: Restores desktop back to dynamic wallpaper theming and reconciles mode.
 - `get_palette_preview(hex_code, scheme, mode, contrast)`: Instant in-memory Material You token preview via `matugen --dry-run --json hex` (~8ms).
 - `add_favorite(hex_code, label=None)` / `remove_favorite(hex_or_label)`: Thread-safe, atomic favorites list mutations.
 - `add_exact_preset(...)` / `delete_exact_preset(preset_id)`: Curated and user-custom hardcoded preset management.
@@ -42,6 +46,9 @@ python3 tui_color_presets.py --color '#FF0000'         # Apply hex color directl
 python3 tui_color_presets.py --rgb 255 0 128           # Apply RGB color
 python3 tui_color_presets.py --hsl '340 100% 50%'      # Apply HSL color
 python3 tui_color_presets.py --exact vivid_red         # Apply exact hardcoded preset
+python3 tui_color_presets.py --vivid toxic_lime        # Apply pre-baked vivid preset
+python3 tui_color_presets.py --list-vivid              # List all pre-baked vivid presets
+python3 tui_color_presets.py --resume-wallpaper        # Return to live wallpaper theme
 python3 tui_color_presets.py --preview '#FF0000'       # In-memory Material You preview
 python3 tui_color_presets.py --list-exact              # List all hardcoded presets
 python3 tui_color_presets.py --add-exact '#00FF55' scheme-vibrant "Cyber Green"

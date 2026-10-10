@@ -1,0 +1,10 @@
+{
+  "id": "plasma_fuchsia",
+  "label": "Plasma Fuchsia",
+  "hex": "#D400FF",
+  "bg_hex": "#24002d",
+  "mode": "dark",
+  "scheme": "scheme-fidelity",
+  "order": 110,
+  "desc": "Intense violet-fuchsia glow with deep obsidian-purple base."
+}

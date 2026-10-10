@@ -11,6 +11,7 @@ frozendict immutability, zero-hardcoding paths, and atomic file mutations.
 
 import os
 import re
+import sys
 lazy import colorsys
 lazy import copy
 lazy import json
@@ -19,6 +20,11 @@ lazy import subprocess
 lazy import tempfile
 lazy from pathlib import Path
 lazy from typing import Any, override
+
+_VIVID_DIR = Path.home() / "user_scripts" / "theme_matugen" / "vivid"
+if str(_VIVID_DIR) not in sys.path:
+    sys.path.insert(0, str(_VIVID_DIR))
+lazy import vivid_theme
 
 from python.frontend.core_types import BaseEngine
 
@@ -46,6 +52,8 @@ _DEFAULT_SETTINGS = frozendict({
     "t_ang": "30",
     "t_pos": "center",
     "last_applied_hex": "#0000FF",
+    "theme_source": "wallpaper",
+    "vivid_preset": "none",
 })
 
 # State key mapping between state.conf keys and engine keys
@@ -62,6 +70,8 @@ _STATE_KEY_TO_ENGINE = frozendict({
     "AWWW_TRANS_ANGLE": "t_ang",
     "AWWW_TRANS_POS": "t_pos",
     "LAST_APPLIED_HEX": "last_applied_hex",
+    "LAST_THEME_SOURCE": "theme_source",
+    "LAST_VIVID_PRESET": "vivid_preset",
 })
 
 _ENGINE_TO_STATE_KEY = frozendict({v: k for k, v in _STATE_KEY_TO_ENGINE.items()})
@@ -294,8 +304,14 @@ class MatugenPresetsEngine(BaseEngine):
             "action_add_favorite",
             "action_remove_favorite",
             "action_add_exact_preset",
+            "action_resume_wallpaper",
         ):
             self.cache[act] = False
+
+        # 5. Vivid status
+        active_id, active_hex, is_vivid = vivid_theme.get_active_vivid_info()
+        self.cache["vivid_active_id"] = active_id
+        self.cache["vivid_active_hex"] = active_hex if is_vivid else self.cache.get("last_applied_hex", "#00FF00")
 
         # Expose DEFAULT/ scoped keys for Dusky TUI router compatibility
         scoped = {f"DEFAULT/{k}": v for k, v in self.cache.items()}
@@ -683,6 +699,9 @@ class MatugenPresetsEngine(BaseEngine):
         self.cache["custom_hsl"] = self._hex_to_hsl_str(clean_hex)
         self.cache["DEFAULT/custom_hsl"] = self.cache["custom_hsl"]
 
+        if mode_override:
+            self.cache["mode"] = mode_override
+            self.cache["DEFAULT/mode"] = mode_override
         if scheme_override:
             self.cache["type"] = scheme_override
             self.cache["DEFAULT/type"] = scheme_override
@@ -690,6 +709,12 @@ class MatugenPresetsEngine(BaseEngine):
             self.cache["contrast"] = contrast_override
             self.cache["DEFAULT/contrast"] = contrast_override
 
+        self.cache["theme_source"] = "custom"
+        self.cache["DEFAULT/theme_source"] = "custom"
+        self.cache["vivid_preset"] = "none"
+        self.cache["DEFAULT/vivid_preset"] = "none"
+
+        (self.state_dir / "vivid_resume.json").unlink(missing_ok=True)
         self._save_state_file()
 
         info_scheme = f" [{scheme}]" if scheme_override else ""
@@ -808,6 +833,28 @@ class MatugenPresetsEngine(BaseEngine):
         return False
 
     # =========================================================================
+    # VIVID PRESETS IMPLEMENTATION
+    # =========================================================================
+
+    def list_vivid_presets(self) -> list[dict[str, Any]]:
+        """Returns the list of pre-baked vivid color presets from catalog."""
+        return vivid_theme.list_vivid_presets()
+
+    def apply_vivid(self, preset_id: str) -> tuple[bool, str, str]:
+        """Applies a pre-baked vivid pack instantly via atomic copies and toolkit hooks."""
+        ok, msg, hex_code = vivid_theme.apply_vivid(preset_id)
+        if ok:
+            self.load_state()
+        return ok, msg, hex_code
+
+    def resume_wallpaper(self) -> tuple[bool, str, str]:
+        """Restores desktop back to dynamic wallpaper theming."""
+        ok, msg, hex_code = vivid_theme.resume_wallpaper()
+        if ok:
+            self.load_state()
+        return ok, msg, hex_code
+
+    # =========================================================================
     # WRITE VALUE & BATCH IMPLEMENTATION
     # =========================================================================
 
@@ -840,6 +887,23 @@ class MatugenPresetsEngine(BaseEngine):
                 if not ok:
                     return False, msg, ""
                 status_msg = msg
+
+            # Vivid Preset triggers
+            elif target_key.startswith("vivid_apply_"):
+                if val_lower in ("true", "1"):
+                    preset_id = target_key.removeprefix("vivid_apply_")
+                    ok, msg, hex_code = self.apply_vivid(preset_id)
+                    if not ok:
+                        return False, msg, ""
+                    status_msg = msg
+
+            # Return to wallpaper trigger
+            elif target_key == "action_resume_wallpaper":
+                if val_lower in ("true", "1"):
+                    ok, msg, hex_code = self.resume_wallpaper()
+                    if not ok:
+                        return False, msg, ""
+                    status_msg = msg
 
             # 2. Palette preset color triggers (e.g. color_vib_hyper_red)
             elif target_key.startswith("color_"):

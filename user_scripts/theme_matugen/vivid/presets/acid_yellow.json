@@ -1,0 +1,10 @@
+{
+  "id": "acid_yellow",
+  "label": "Acid Yellow",
+  "hex": "#FFFF00",
+  "bg_hex": "#282800",
+  "mode": "dark",
+  "scheme": "scheme-fidelity",
+  "order": 30,
+  "desc": "High-visibility vivid pure yellow with dark amber-green base."
+}

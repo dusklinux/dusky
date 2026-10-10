@@ -1,0 +1,10 @@
+{
+  "id": "pure_white",
+  "label": "Pure White",
+  "hex": "#000000",
+  "bg_hex": "#ffffff",
+  "mode": "light",
+  "scheme": "scheme-monochrome",
+  "order": 320,
+  "desc": "Minimalist pure paper white high-contrast light theme with deep ink typography."
+}

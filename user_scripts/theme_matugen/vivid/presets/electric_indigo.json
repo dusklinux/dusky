@@ -1,0 +1,10 @@
+{
+  "id": "electric_indigo",
+  "label": "Electric Indigo",
+  "hex": "#6F00FF",
+  "bg_hex": "#14002d",
+  "mode": "dark",
+  "scheme": "scheme-fidelity",
+  "order": 130,
+  "desc": "Rich vivid indigo with dark ultramarine-purple base."
+}

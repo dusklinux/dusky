@@ -1,0 +1,10 @@
+{
+  "id": "vantablack",
+  "label": "Vantablack OLED",
+  "hex": "#FFFFFF",
+  "bg_hex": "#000000",
+  "mode": "dark",
+  "scheme": "scheme-monochrome",
+  "order": 310,
+  "desc": "True OLED pitch black with pure white high-contrast monochrome accents."
+}

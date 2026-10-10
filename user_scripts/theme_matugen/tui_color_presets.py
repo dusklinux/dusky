@@ -17,13 +17,17 @@ lazy import json
 lazy import subprocess
 from pathlib import Path
 
-# --- Inject dusky_tui root into sys.path ---
+# --- Inject dusky_tui and vivid root into sys.path ---
 _DUSKY_TUI_ROOT = Path.home() / "user_scripts" / "dusky_tui"
 if str(_DUSKY_TUI_ROOT) not in sys.path:
     sys.path.insert(0, str(_DUSKY_TUI_ROOT))
+_VIVID_DIR = Path.home() / "user_scripts" / "theme_matugen" / "vivid"
+if str(_VIVID_DIR) not in sys.path:
+    sys.path.insert(0, str(_VIVID_DIR))
 
 from python.frontend.core_types import ConfigItem
 from python.engines.matugen_presets import MatugenPresetsEngine
+lazy import vivid_data
 
 # =============================================================================
 # 1. CORE APPLICATION ROUTING (REQUIRED BY DUSKY TUI)
@@ -55,6 +59,7 @@ TABS = [
     "Theme",
     "Anim",
     "Presets",
+    "Vivid",
 ]
 
 # =============================================================================
@@ -383,18 +388,95 @@ def _build_exact_items(engine: MatugenPresetsEngine | None = None) -> list[Confi
 
     return items
 
+
+def _build_vivid_items(engine: MatugenPresetsEngine | None = None) -> list[ConfigItem]:
+    if engine is None:
+        engine = MatugenPresetsEngine()
+        engine.load_state()
+
+    controls = [
+        ConfigItem(
+            label="Active Vivid Color",
+            key="vivid_active_hex",
+            scope="DEFAULT",
+            type_="color",
+            default="#00FF00",
+            read_only=True,
+            group="Vivid Status",
+            extended_help="Observed accent of the active vivid pack. Read-only.",
+        ),
+        ConfigItem(
+            label="Active Vivid Preset",
+            key="vivid_active_id",
+            scope="DEFAULT",
+            type_="string",
+            default="none",
+            read_only=True,
+            group="Vivid Status",
+            extended_help="Pack identity recorded in state.conf. Read-only.",
+        ),
+        ConfigItem(
+            label="Return to Wallpaper",
+            key="action_resume_wallpaper",
+            scope="DEFAULT",
+            type_="bool",
+            default=False,
+            options=["trigger:Wallpaper"],
+            group="Vivid Status",
+            extended_help="Restores owned asset choices and resumes wallpaper generation.",
+        ),
+    ]
+
+    presets, diagnostics = vivid_data.load_presets_and_diagnostics()
+
+    diag_rows = [
+        ConfigItem(
+            label=f"[!] {diag[:30]}...",
+            key=f"vivid_diag_{i}",
+            scope="DEFAULT",
+            type_="string",
+            default=diag,
+            read_only=True,
+            group="Definition Diagnostics",
+            extended_help=f"**Source Definition Diagnostic**\n\n`{diag}`\n\nResolve this error in `~/.config/matugen/presets/` to restore this preset.",
+        )
+        for i, diag in enumerate(diagnostics)
+    ]
+
+    rows = [
+        ConfigItem(
+            label=f"{preset['label']} {preset['hex']}",
+            key=f"vivid_apply_{preset['id']}",
+            scope="DEFAULT",
+            type_="bool",
+            default=False,
+            options=[f"trigger:{preset['hex']}"],
+            group="Vivid Packs",
+            extended_help=(
+                f"**{preset['label']}**\n\n"
+                f"Accent: `{preset['hex']}`. Background: `{preset.get('bg_hex', '')}`.\n\n"
+                f"{preset.get('desc', '')}\n\n"
+                "Applies a pre-baked vivid desktop palette instantly from cache, or auto-recovers missing packs."
+            ),
+        )
+        for preset in presets
+    ]
+    return controls + diag_rows + rows
+
+
 def DEFERRED_LOAD() -> tuple[list[int], dict[int, list[ConfigItem]]]:
     """
     Called by Dusky TUI after initial render and whenever the user presses F5.
-    Dynamically refreshes the Favorites tab (0) and Exact Schemes tab (6).
+    Dynamically refreshes the Favorites tab (0), Exact Schemes tab (6), and Vivid tab (11).
     """
     engine = MatugenPresetsEngine()
     engine.load_state()
 
     fav_items = _build_favorites_items(engine)
     exact_items = _build_exact_items(engine)
+    vivid_items = _build_vivid_items(engine)
 
-    return [0, 6], {0: fav_items, 6: exact_items}
+    return [0, 6, 11], {0: fav_items, 6: exact_items, 11: vivid_items}
 
 # =============================================================================
 # 6. MASTER SCHEMA DEFINITION
@@ -729,6 +811,9 @@ SCHEMA[10] = [
     )
 ]
 
+# --- TAB 11: VIVID (PRE-BAKED COLOR PACKS) ---
+SCHEMA[11] = _build_vivid_items()
+
 # =============================================================================
 # 7. STANDALONE EXECUTION / SCRIPTING CLI
 # =============================================================================
@@ -756,6 +841,9 @@ def main() -> int:
             print("  python3 tui_color_presets.py --add-fav <HEX> [LABEL]  # Add favorite color")
             print("  python3 tui_color_presets.py --del-fav <HEX>          # Delete favorite color")
             print("  python3 tui_color_presets.py --apply-settings          # Apply cached theme/anim settings")
+            print("  python3 tui_color_presets.py --vivid <ID>             # Apply pre-baked vivid preset")
+            print("  python3 tui_color_presets.py --list-vivid             # List pre-baked vivid presets")
+            print("  python3 tui_color_presets.py --resume-wallpaper       # Return to live wallpaper theme")
             return 0
 
         engine = MatugenPresetsEngine()
@@ -887,6 +975,27 @@ def main() -> int:
 
         elif arg == "--apply-settings":
             ok, msg = engine.apply_settings()
+            print(f"[OK] {msg}" if ok else f"[-] {msg}", file=sys.stdout if ok else sys.stderr)
+            return 0 if ok else 1
+
+        elif arg == "--vivid":
+            if len(sys.argv) < 3:
+                print("[-] Error: Missing preset ID for --vivid", file=sys.stderr)
+                return 1
+            target_id = sys.argv[2]
+            ok, msg, _ = engine.apply_vivid(target_id)
+            print(f"[OK] {msg}" if ok else f"[-] {msg}", file=sys.stdout if ok else sys.stderr)
+            return 0 if ok else 1
+
+        elif arg == "--list-vivid":
+            presets = engine.list_vivid_presets()
+            print(f"Available Pre-Baked Vivid Presets ({len(presets)}):")
+            for p in presets:
+                print(f"  {p['id']:<18} {p['hex']:<9} (bg: {p.get('bg_hex', ''):<9}) - {p['label']}")
+            return 0
+
+        elif arg == "--resume-wallpaper":
+            ok, msg, _ = engine.resume_wallpaper()
             print(f"[OK] {msg}" if ok else f"[-] {msg}", file=sys.stdout if ok else sys.stderr)
             return 0 if ok else 1
 

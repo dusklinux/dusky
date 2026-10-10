@@ -1,0 +1,10 @@
+{
+  "id": "radioactive",
+  "label": "Radioactive",
+  "hex": "#CCFF00",
+  "bg_hex": "#222a00",
+  "mode": "dark",
+  "scheme": "scheme-fidelity",
+  "order": 230,
+  "desc": "Nuclear lime-yellow with rich biohazard-tinted dark views."
+}

@@ -1,0 +1,10 @@
+{
+  "id": "jade_laser",
+  "label": "Jade Laser",
+  "hex": "#00FF99",
+  "bg_hex": "#002d1b",
+  "mode": "dark",
+  "scheme": "scheme-fidelity",
+  "order": 220,
+  "desc": "Fluorescent jade green with deep botanical base."
+}

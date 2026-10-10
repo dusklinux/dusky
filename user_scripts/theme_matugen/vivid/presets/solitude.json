@@ -1,0 +1,10 @@
+{
+  "id": "solitude",
+  "label": "Solitude Slate",
+  "hex": "#A0AEC0",
+  "bg_hex": "#101315",
+  "mode": "dark",
+  "scheme": "scheme-neutral",
+  "order": 340,
+  "desc": "Cool industrial gunmetal slate with neutral titanium silver accents."
+}

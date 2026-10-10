@@ -1,0 +1,10 @@
+{
+  "id": "electric_violet",
+  "label": "Electric Violet",
+  "hex": "#A020FF",
+  "bg_hex": "#1d0030",
+  "mode": "dark",
+  "scheme": "scheme-fidelity",
+  "order": 120,
+  "desc": "Saturated electric violet with deep midnight-purple views."
+}

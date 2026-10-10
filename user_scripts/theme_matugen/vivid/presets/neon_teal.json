@@ -1,0 +1,10 @@
+{
+  "id": "neon_teal",
+  "label": "Neon Teal",
+  "hex": "#00FFD5",
+  "bg_hex": "#002d26",
+  "mode": "dark",
+  "scheme": "scheme-fidelity",
+  "order": 200,
+  "desc": "Vivid glowing aqua-teal with deep seafoam-tinted base."
+}

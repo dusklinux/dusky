@@ -1,0 +1,10 @@
+{
+  "id": "neon_pink",
+  "label": "Neon Pink",
+  "hex": "#FF1493",
+  "bg_hex": "#30001b",
+  "mode": "dark",
+  "scheme": "scheme-fidelity",
+  "order": 90,
+  "desc": "Hot fluorescent pink with saturated deep rose base."
+}

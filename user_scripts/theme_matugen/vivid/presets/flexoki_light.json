@@ -1,0 +1,10 @@
+{
+  "id": "flexoki_light",
+  "label": "Flexoki Light",
+  "hex": "#205EA6",
+  "bg_hex": "#fffcf0",
+  "mode": "light",
+  "scheme": "scheme-fidelity",
+  "order": 400,
+  "desc": "Warm analog paper cream with deep vintage indigo ink accents."
+}

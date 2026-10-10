@@ -1,0 +1,10 @@
+{
+  "id": "tokyo_night",
+  "label": "Tokyo Night",
+  "hex": "#7AA2F7",
+  "bg_hex": "#1a1b26",
+  "mode": "dark",
+  "scheme": "scheme-fidelity",
+  "order": 410,
+  "desc": "Iconic neon Tokyo night sapphire blue over deep midnight indigo."
+}

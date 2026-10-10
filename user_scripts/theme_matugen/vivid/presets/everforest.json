@@ -1,0 +1,10 @@
+{
+  "id": "everforest",
+  "label": "Everforest Pine",
+  "hex": "#7FBBB3",
+  "bg_hex": "#192024",
+  "mode": "dark",
+  "scheme": "scheme-fidelity",
+  "order": 350,
+  "desc": "Tranquil botanical pine with earthy moss and sage green accents."
+}

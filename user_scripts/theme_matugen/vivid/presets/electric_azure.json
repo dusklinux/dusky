@@ -1,0 +1,10 @@
+{
+  "id": "electric_azure",
+  "label": "Electric Azure",
+  "hex": "#0091FF",
+  "bg_hex": "#001f33",
+  "mode": "dark",
+  "scheme": "scheme-fidelity",
+  "order": 170,
+  "desc": "Bright vivid azure with deep ocean-tinted backgrounds."
+}

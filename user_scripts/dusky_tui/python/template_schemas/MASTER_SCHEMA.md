@@ -138,6 +138,8 @@ or starts with `"trigger:"`/`"copy:"` (the suffix becomes the button label, e.g.
 (e.g. `network`'s `clipboard` scope) reads the row label and copies its value
 part to the clipboard — the copy itself is engine-side, not generic UI.
 
+Baked theme selections use momentary bool triggers. For the `matugen_presets` engine, use `scope="DEFAULT"`, `key="vivid_apply_<catalog_id>"`, `default=False`, and `options=["trigger:<#RRGGBB>"]`. The engine selects by catalog ID; the color suffix supplies a preview only. Keep a hex in the label when it must remain visible alongside the swatch. Do not use native `preset_payload` snapshots for pack application. False trigger writes during reset/profile loading are no-ops.
+
 ### Color previews and editing
 
 The shared frontend automatically replaces recognized literal color values

@@ -1,0 +1,10 @@
+{
+  "id": "gruvbox_dark",
+  "label": "Gruvbox Retro",
+  "hex": "#FABD2F",
+  "bg_hex": "#1d2021",
+  "mode": "dark",
+  "scheme": "scheme-fidelity",
+  "order": 370,
+  "desc": "Warm retro 70s groove with earthy dark basalt and warm ochre accents."
+}

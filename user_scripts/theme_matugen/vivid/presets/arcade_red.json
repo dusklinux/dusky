@@ -1,0 +1,10 @@
+{
+  "id": "arcade_red",
+  "label": "Arcade Red",
+  "hex": "#FF0055",
+  "bg_hex": "#300010",
+  "mode": "dark",
+  "scheme": "scheme-fidelity",
+  "order": 80,
+  "desc": "Vivid arcade crimson with dark burgundy view backgrounds."
+}

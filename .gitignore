@@ -25,3 +25,11 @@ __pycache__/
 # User-specific shell customizations 
 .zshrc.local
 .config/zshrc/custom/
+
+# Compiled vivid theme cache
+/.config/matugen/prebaked/
+/.config/matugen/.prebaked.lock
+
+# Legacy generated locations retained during migration
+/user_scripts/theme_matugen/vivid/packs/
+/user_scripts/theme_matugen/vivid/catalog.json

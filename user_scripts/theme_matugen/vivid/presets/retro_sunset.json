@@ -1,0 +1,10 @@
+{
+  "id": "retro_sunset",
+  "label": "Retro Sunset",
+  "hex": "#FFA048",
+  "bg_hex": "#06182c",
+  "mode": "dark",
+  "scheme": "scheme-fidelity",
+  "order": 260,
+  "desc": "80s outrun warm sunset amber paired over midnight sapphire ocean navy."
+}
