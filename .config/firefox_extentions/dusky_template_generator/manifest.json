@@ -1,12 +1,12 @@
 {
   "manifest_version": 3,
   "name": "Dusky Template Generator",
-  "version": "4.0.6",
+  "version": "4.0.7",
   "description": "Author per-site CSS theme templates for Dusky Sites: map a site's colour tokens to your Matugen palette, or pick elements visually.",
   "browser_specific_settings": {
     "gecko": {
       "id": "dusky_template_generator@dusk.com",
-      "strict_min_version": "157.0.1",
+      "strict_min_version": "157.0",
       "data_collection_permissions": { "required": ["none"] }
     }
   },

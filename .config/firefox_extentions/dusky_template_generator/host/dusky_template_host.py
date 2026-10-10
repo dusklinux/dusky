@@ -3,7 +3,7 @@
 
 Owns $XDG_CONFIG_HOME/dusky_sites/<domain>.css. Writes atomically
 (tmpfile + os.replace + dir fsync) with compare-and-swap revision checking, and
-serialises every operation on a domain behind an advisory flock so two browsers
+serialises template operations behind an advisory flock on the store directory so two browsers
 (or two host processes) cannot lose an update between the CAS check and the
 rename.
 
@@ -11,6 +11,7 @@ Protocol: stdio, one JSON object per frame, u32 length prefix, struct "=I"
 (NATIVE byte order — do NOT "fix" to "@I"; Firefox writes host-endian lengths).
 
     {"type":"ping"}                                       -> ok, version, dir, python, pid
+    {"type":"palette"}                                    -> ok, colors, path
     {"type":"read",  "domain":d}                          -> ok, domain, path, exists, css, picks, rev, warnings?
     {"type":"write", "domain":d, "css":s, "base_rev":n?}  -> ok, domain, path, exists, css, picks, rev
     {"type":"splice","domain":d,"region":r,"body":s,
@@ -26,6 +27,7 @@ deletes the file.
 """
 
 import contextlib
+lazy import colorsys
 import fcntl
 import hashlib
 lazy import io
@@ -41,7 +43,7 @@ from typing import Any, Final
 
 type Reply = dict[str, Any]
 
-VERSION: Final = "4.0.6"
+VERSION: Final = "4.0.7"
 HOST_NAME: Final = "dusky_template_generator"
 MAX_IN: Final = 8 * 1024 * 1024          # accept generously ...
 MAX_OUT: Final = 1024 * 1024 - 1024      # ... Firefox drops host replies over 1 MiB
@@ -86,6 +88,31 @@ def config_dir() -> Path:
     if not base or not os.path.isabs(base):
         base = str(Path.home() / ".config")
     return Path(base) / "dusky_sites"
+
+
+def read_palette(base: Path | None = None) -> Reply:
+    """Use the same configured Matugen source and component formats as Dusky Sites."""
+    if base is None:
+        base = config_dir().parent
+    settings = base / "dusky/settings/dusky_sites/config.json"
+    path = base / "matugen/generated/dusky_sites.css"
+    if settings.is_file():
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and isinstance(data.get("colorsPath"), str):
+            path = Path(data["colorsPath"]).expanduser()
+    text = path.read_text(encoding="utf-8")
+    colors = {}
+    for name, value in re.findall(r"(--[\w-]+)\s*:\s*(#[0-9a-fA-F]{6})\s*(?:!important)?\s*;", text):
+        name = name.replace("--dusky-palette-", "--", 1)
+        colors[name] = value
+        r, g, b = (int(value[i:i + 2], 16) for i in (1, 3, 5))
+        h, lightness, saturation = colorsys.rgb_to_hls(r / 255, g / 255, b / 255)
+        colors[f"{name}_rgb"] = f"{r} {g} {b}"
+        colors[f"{name}_rgb_comma"] = f"{r}, {g}, {b}"
+        colors[f"{name}_hsl"] = f"{h * 360:.6f} {saturation * 100:.6f}% {lightness * 100:.6f}%"
+    if not colors:
+        raise ValueError(f"No palette colors found in {path}; regenerate the Matugen palette")
+    return {"ok": True, "colors": colors, "path": str(path)}
 
 
 def sanitize_domain(raw: object) -> str:
@@ -315,16 +342,15 @@ def read_doc(path: Path) -> str:
 
 
 @contextlib.contextmanager
-def domain_lock(root: Path, domain: str) -> Iterator[None]:
-    """Advisory exclusive lock for one domain, held across read → CAS → write.
+def store_lock(root: Path) -> Iterator[None]:
+    """Lock the existing directory across read → CAS → write, without lock files.
 
-    Keep the lock inode stable: unlinking it lets queued callers hold the old
-    inode while a new caller locks a different one. These small hidden files
-    intentionally survive release and process exit.
+    All host processes lock the same directory inode; closing the descriptor
+    releases the lock, including on process exit. Cross-process operations on
+    different domains also serialize, while each host already serves sequentially.
     """
     root.mkdir(parents=True, exist_ok=True, mode=DIR_MODE)
-    lock = root / f".{domain}.lock"
-    fd = os.open(lock, os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, FILE_MODE)
+    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
         yield
@@ -407,13 +433,15 @@ def handle(msg: dict[str, Any], root: Path) -> Reply:
     if kind == "ping":
         return {"ok": True, "version": VERSION, "host": HOST_NAME, "dir": str(root),
                 "python": sys.version.split()[0], "pid": os.getpid()}
+    if kind == "palette":
+        return read_palette()
 
     domain = sanitize_domain(msg.get("domain", ""))
     if not domain:
         return {"ok": False, "error": f"Invalid domain: {msg.get('domain')!r}"}
     path = root / f"{domain}.css"
 
-    with domain_lock(root, domain):
+    with store_lock(root):
         current = read_doc(path)
 
         if kind == "read":
@@ -568,6 +596,28 @@ def selftest() -> int:
 
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
+        palette = root / "matugen/generated/dusky_sites.css"
+        palette.parent.mkdir(parents=True)
+        palette.write_text("--dusky-palette-primary: #abcdef; --surface: #112233 !important;", encoding="utf-8")
+        colors = read_palette(root)["colors"]
+        ok(colors["--primary"] == "#abcdef" and colors["--surface"] == "#112233",
+           "palette reads private and public Matugen names")
+        ok(colors["--primary_rgb"] == "171 205 239" and colors["--primary_rgb_comma"] == "171, 205, 239",
+           "palette supplies both RGB component formats")
+        ok(colors["--primary_hsl"] == "210.000000 68.000000% 80.392157%", "palette supplies HSL components")
+        settings = root / "dusky/settings/dusky_sites/config.json"
+        settings.parent.mkdir(parents=True)
+        custom = root / "custom.css"
+        custom.write_text("--dusky-palette-primary: #123456;", encoding="utf-8")
+        settings.write_text(json.dumps({"colorsPath": str(custom)}), encoding="utf-8")
+        ok(read_palette(root)["colors"]["--primary"] == "#123456", "palette honors configured colorsPath")
+        custom.write_text("/* empty */", encoding="utf-8")
+        try:
+            read_palette(root)
+        except ValueError:
+            ok(True, "empty palette reports an actionable failure")
+        else:
+            ok(False, "empty palette reports an actionable failure")
         dom = "example.com"
         path = root / f"{dom}.css"
 
@@ -658,22 +708,25 @@ def selftest() -> int:
         ok(path.stat().st_mode & 0o777 == FILE_MODE, "template is 0600")
 
         # A queued caller may already have the inode open when its owner exits.
-        with domain_lock(root, dom):
-            queued = os.open(root / f".{dom}.lock", os.O_RDWR)
+        with store_lock(root):
+            queued = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
         try:
             fcntl.flock(queued, fcntl.LOCK_EX)
-            contender = os.open(root / f".{dom}.lock", os.O_CREAT | os.O_RDWR, FILE_MODE)
+            contender = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
             try:
                 try:
                     fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except BlockingIOError:
-                    ok(True, "queued caller and newcomer use the same lock inode")
+                    ok(True, "directory lock excludes a separate caller")
                 else:
-                    ok(False, "queued caller and newcomer use the same lock inode")
+                    ok(False, "directory lock excludes a separate caller")
             finally:
                 os.close(contender)
         finally:
             os.close(queued)
+        with store_lock(root):
+            ok(True, "directory lock releases when the previous caller closes")
+        ok(not list(root.glob(".*.lock")), "template operations create no lock files")
 
         original = read_doc(path)
         try:

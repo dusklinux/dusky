@@ -18,7 +18,7 @@
 "use strict";
 
 const HOST = "dusky_template_generator";
-const HOST_OPS = new Set(["ping", "read", "write", "splice", "delete"]);
+const HOST_OPS = new Set(["ping", "palette", "read", "write", "splice", "delete"]);
 const MUTATIONS = new Set(["write", "splice", "delete"]);
 const REGIONS = new Set(["auto", "picks"]);
 const HOST_TIMEOUT_MS = 8_000;
@@ -142,7 +142,7 @@ function explain(err) {
   }
   if (/timed out/i.test(m)) return m;
   if (/disconnected|exited|unexpected error/i.test(m)) {
-    return "Native host crashed — run  python3 host/dusky_template_host.py --selftest";
+    return `Native host could not start — check that Firefox's PATH finds Python 3.15+, then run python3 setup.py to repair registration. Details: ${m}`;
   }
   if (/Missing host permission|not allowed on this page|restricted|cannot access/i.test(m)) {
     return "Firefox does not allow extensions here (about:, addons.mozilla.org, PDF viewer, view-source:).";

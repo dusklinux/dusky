@@ -767,7 +767,7 @@
   const LIMITS = { RULES: 600, DECL: 4096, SEL: 512, BODY: 512 * 1024 };
 
   const S = {
-    active: false, hydrated: false, note: "", rev: 0, warnings: [],
+    active: false, hydrated: false, note: "", paletteNote: "", rev: 0, warnings: [],
     rules: Object.freeze([]), undo: [], redo: [], stack: [], depth: 0,
     locked: false, targetMode: "selector", group: "bg",
     elementVars: [], raf: 0, editKey: null, generation: 0,
@@ -1124,6 +1124,7 @@
    * Inline important and earlier page layers retain their CSS-defined priority. */
   const SHEET = new CSSStyleSheet();
   let liveCss = "";
+  let paletteCss = "";
   let previewRules = [];
   let appliedLive = null, appliedPreview = null;
   let previewLayer = null;
@@ -1147,7 +1148,7 @@
       // Hover changes at most an outline and a mapping. Keep the live rules
       // parsed instead of rebuilding the entire picked stylesheet each time.
       while (previewLayer.cssRules.length) previewLayer.deleteRule(previewLayer.cssRules.length - 1);
-      for (const css of previewRules) previewLayer.insertRule(css, previewLayer.cssRules.length);
+      for (const css of previewRules) previewLayer.insertRule(localPalette(css), previewLayer.cssRules.length);
       appliedPreview = previewCss;
     }
     if (!document.adoptedStyleSheets.includes(SHEET)) {
@@ -1155,13 +1156,50 @@
     }
   }
   function detachSheet() {
-    liveCss = ""; previewRules = [];
+    liveCss = ""; paletteCss = ""; previewRules = [];
     appliedLive = appliedPreview = null;
     previewLayer = null;
     document.adoptedStyleSheets = document.adoptedStyleSheets.filter((s) => s !== SHEET);
   }
 
-  const renderLive = () => { liveCss = S.rules.map(ruleCss).join("\n"); flushSheet(); };
+  // Private preview names avoid repainting sites that already own --primary,
+  // --background, etc. Persisted templates retain Dusky Sites' public names.
+  function localPalette(css) {
+    let result = css;
+    for (const { name, start, end } of variableReferences(css).reverse()) {
+      if (!PALETTE_OWNED.has(name.slice(2).replace(PALETTE_SUFFIX, ""))) continue;
+      result = result.slice(0, start) + `--dusky-picker-${name.slice(2)}` + result.slice(end);
+    }
+    return result;
+  }
+
+  const renderLive = () => { liveCss = paletteCss + "\n" + S.rules.map((r) => localPalette(ruleCss(r))).join("\n"); flushSheet(); };
+
+  async function loadPalette() {
+    S.paletteNote = "";
+    const reply = await send({ type: "palette" });
+    if (!reply?.ok) {
+      if (!paletteLoaded()) S.paletteNote = `Palette unavailable: ${reply?.error ?? "no reply"}`;
+      else {
+        const palette = getComputedStyle(document.documentElement);
+        const declarations = [];
+        for (const token of PALETTE_OWNED) for (const suffix of ["", "_rgb", "_rgb_comma", "_hsl"]) {
+          const value = palette.getPropertyValue(`--${token}${suffix}`).trim();
+          if (value && !/[;{}]/.test(value)) declarations.push(`--dusky-picker-${token}${suffix}:${value} !important;`);
+        }
+        paletteCss = `:root{${declarations.join("")}}`;
+      }
+      baseState();
+      return;
+    }
+    const declarations = [];
+    for (const [name, value] of Object.entries(reply.colors ?? {})) {
+      if (!/^--[\w-]+$/.test(name) || typeof value !== "string" || /[;{}]/.test(value)) continue;
+      if (!PALETTE_OWNED.has(name.slice(2).replace(PALETTE_SUFFIX, ""))) continue;
+      declarations.push(`--dusky-picker-${name.slice(2)}:${value} !important;`);
+    }
+    paletteCss = `:root{${declarations.join("")}}`;
+  }
 
   const OUTLINE = "outline:2px dashed #e6c280 !important;outline-offset:-2px !important";
 
@@ -1415,6 +1453,7 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
     const n = q("bstate");
     if (!n) return;
     n.textContent = text;
+    n.title = text;
     n.className = `state ${kind}`;
   }
 
@@ -1423,7 +1462,8 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
     const label = t
       ? `${t.localName}${t.id ? "#" + t.id : ""}`
       : "click an element";
-    setState(S.note || (S.hydrated ? label : "host unreachable"), S.note ? "err" : "");
+    setState(S.note || S.paletteNote || (S.hydrated ? label : "host unreachable"),
+      S.note || S.paletteNote ? "err" : "");
   }
 
   function flash(text, kind = "ok") {
@@ -1585,10 +1625,10 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
           "data-token": token, "aria-label": label,
         });
         b.append(
-          el("i", { class: "chip", style: { background: `var(--${token}, #333)` } }),
+          el("i", { class: "chip", style: { background: `var(--dusky-picker-${token}, #333)` } }),
           el("span", { class: "swatch-name", text: label }),
         );
-        b.addEventListener("pointerenter", () => this.onHover?.(token));
+        b.addEventListener("pointerenter", () => { if (!b.disabled) this.onHover?.(token); });
         b.addEventListener("pointerleave", () => this.onLeave?.());
         b.addEventListener("focus", () => this.onHover?.(token));
         b.addEventListener("blur", () => this.onLeave?.());
@@ -1597,6 +1637,16 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
       }
       this.mount.append(wrap);
       this.buttons = [...wrap.children];
+      this.refreshAvailability();
+    }
+    refreshAvailability() {
+      const palette = getComputedStyle(document.documentElement);
+      for (const b of this.buttons) {
+        const token = b.dataset.token, label = b.getAttribute("aria-label");
+        b.disabled = !CSS.supports("color", palette.getPropertyValue(`--dusky-picker-${token}`).trim());
+        b.title = b.disabled ? `${label} — palette color unavailable; regenerate Matugen and Resync`
+          : `${label} — var(--${token})`;
+      }
     }
     setActive(token) {
       this.active = token || "";
@@ -1732,7 +1782,9 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
     q("pextra").textContent = extra?.label ?? "";
     q("pextra").hidden = varMode || !extra;
     q("phint").textContent = varMode
-      ? "Choose page theme or local scope. Hover previews; click saves the variable mapping."
+      ? "Choose page theme or local scope. Hover previews; click saves the variable mapping." +
+        (S.elementVars.find((v) => v.name === q("pvar")?.value)?.used ? "" :
+          " This variable was not found in this element's color rules; it may have no visible effect.")
       : "Hover previews · click saves · Shift+click hides.";
     pickGrid?.setActive("");
     positionDialog();
@@ -1879,7 +1931,7 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
     dropIndex();
     S.elementVars = getElementVars(target());
     resetVarSelection();
-    S.targetMode = S.elementVars.length ? "variable" : "selector";
+    S.targetMode = "selector";
     if (panelKind !== "pick" || !panel) {
       panel?.remove();
       editGrid = null;
@@ -2087,7 +2139,7 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
     for (const r of S.rules) {
       const tok = tokenOf(r.decl).replace(PALETTE_SUFFIX, "");
       const open = el("button", { class: "open", type: "button", title: ruleLine(r), onclick: () => openEdit(r) },
-        el("i", { class: "dot", style: { background: tok ? `var(--${tok}, transparent)` : "transparent" } }),
+        el("i", { class: "dot", style: { background: tok ? `var(--dusky-picker-${tok}, transparent)` : "transparent" } }),
         el("span", { class: "sel", text: r.raw !== undefined ? r.raw : r.sel }),
         el("span", { class: "meta", text: r.meta || "manual" }));
       /* Hover here previews the rule — and leaving restores whatever the open
@@ -2309,8 +2361,10 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
     S.note = "";
     S.rev = reply.rev ?? 0;
     mergeForeign(reply.picks);
+    if (manual) await loadPalette();
     const diskText = diskRules.map((r) => `    ${ruleLine(r)}`).join("\n");
     renderLive(); refreshBar(); refreshDrawer(); refreshPanel();
+    if (manual) { pickGrid?.refreshAvailability(); editGrid?.refreshAvailability(); }
     if (serialise() !== diskText) { S.generation++; schedulePersist(); }
     if (manual) flash("⟲ resynced with disk");
     return true;
@@ -2351,6 +2405,7 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
     if (refresh) retarget();
   }
   function retarget() {
+    Preview.clear();
     drawMask();
     refreshBar();
     if (panelKind === "pick") {
@@ -2442,6 +2497,7 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
       S.undo = []; S.redo = [];
       document.documentElement.append(hostEl);
       buildBar();
+      await loadPalette();
       renderLive();
       listenerCtl = new AbortController();
       const { signal } = listenerCtl;
@@ -2466,8 +2522,8 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
       dropIndex();
       hostEl.remove();
       dropProbe();
-      await saveInFlight?.catch(() => {});
       detachSheet();
+      await saveInFlight?.catch(() => {});
     }
   }
 
