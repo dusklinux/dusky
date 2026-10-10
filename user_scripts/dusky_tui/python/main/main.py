@@ -734,13 +734,24 @@ EXAMPLES:
             from python.engines.ufw import UfwEngine
             return UfwEngine(config_path=config_path)
 
+        elif e_type in ("gsettings", "gsetting", "dconf"):
+            from python.engines.gsettings import GSettingsEngine
+            items = [
+                item for tab in SCHEMA.values() for item in tab
+                if item.type_ not in ("action", "preset", "menu")
+                and (item.engine_type_override or ENGINE_TYPE).lower() == e_type
+                and (resolve_target(item.target_file_override) if item.target_file_override
+                     else str(TARGET_FILE)) == config_path
+            ]
+            return GSettingsEngine(config_path=config_path, items=items)
+
         else:
             print(f"[-] Fatal: Unknown ENGINE_TYPE '{e_type}' specified in schema '{schema_path.name}'.")
             print(
                 "[i] Supported engines are: 'lua', 'ini', 'tlp', 'bridged_ini', 'systemd', 'systemd_dns', 'systemd_power', 'hyprlang', "
                 "'trackpad', 'monitor', 'cmdline', 'systemd_boot', 'flatdotconfig', 'env', "
                 "'waybar', 'network', 'pkg_throttle', 'cpu_core', 'fstab', 'shell_fallback', 'json', "
-                "'dusky_sites', 'locale_gen', 'matugen', 'fontconfig', 'toml', 'kokoro', 'starship', 'hyprlock', 'ufw'"
+                "'dusky_sites', 'locale_gen', 'matugen', 'fontconfig', 'toml', 'kokoro', 'starship', 'hyprlock', 'ufw', 'gsettings'"
             )
             sys.exit(1)
 
@@ -764,6 +775,10 @@ EXAMPLES:
         args.default or args.reset_key is not None or args.set is not None
         or args.export_state or args.export_docs
     )
+
+    if ENGINE_TYPE in {"gsettings", "gsetting", "dconf"} and (args.backup or args.restore):
+        print("[-] File backups cannot restore a live GSettings backend. Use saved TUI presets or dconf dump/load.", file=sys.stderr)
+        sys.exit(1)
 
     unique_targets = {TARGET_FILE}
 
@@ -927,7 +942,8 @@ EXAMPLES:
 
             target_engine = engine_pool[(e_type, t_file)]
             target_engine.load_state()
-            val_str = item.serialize(val_str)
+            if e_type not in {"gsettings", "gsetting", "dconf"}:
+                val_str = item.serialize(val_str)
 
             logger.info(f"Headless Injection: {matched_key} -> {val_str}")
 

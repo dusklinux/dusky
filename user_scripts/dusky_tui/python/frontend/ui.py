@@ -4645,8 +4645,11 @@ Tooltip {
             engine_key = self._get_item_engine_info(item) if item is not None else self.default_engine_key
             # Tab activation can precede boot. Never construct a backend on
             # the UI thread just to display its file link.
-            path = self.engine_pool[engine_key].target_path if engine_key in self._loaded_engines else ""
-            self.query_one("#file-link", FileLink).path = path
+            engine = self.engine_pool[engine_key] if engine_key in self._loaded_engines else None
+            path = engine.target_path if engine is not None and getattr(engine, "editable_target", True) else ""
+            link = self.query_one("#file-link", FileLink)
+            link.path = path
+            link.display = bool(path)
         except Exception:
             pass
 
@@ -7555,9 +7558,19 @@ Tooltip {
                 else:
                     target_val = target_item.default
 
-                if target_item.serialize(target_item.value) != target_item.serialize(target_val):
-                    if target_val is not None:
+                try:
+                    validator = getattr(target_item, "validate_preset_value", None)
+                    if callable(validator):
+                        target_val = validator(target_val)
+                    elif target_val is not None:
                         target_val = target_item.deserialize(target_val)
+                except Exception as exc:
+                    self.notify_status(
+                        f"Cannot apply preset value for {key_path}: {exc}", level="error"
+                    )
+                    return
+
+                if target_item.serialize(target_item.value) != target_item.serialize(target_val):
                     transaction.append((t_idx, i_idx, target_item.value, target_val))
 
             if not transaction:

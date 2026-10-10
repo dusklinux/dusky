@@ -306,6 +306,7 @@ TLP currently links its implementation because it has no separate engine doc.
 | `hyprlock` | [engines/hyprlock.md](./engines/hyprlock.md) | `HyprlockEngine` | `~/.config/hypr/hyprlock.conf` | scope ignored; keys `hyprlock`/`active_theme_number` (int), `active_theme_folder` (str), `active_theme_name` (str), `toggle_forward`/`toggle_backward` (triggers) |
 | `systemd_power` / `systemd_logind` / `power_engine` | [engines/systemd_power.md](./engines/systemd_power.md) | `SystemdPowerEngine` | `/etc/systemd/logind.conf.d/99-power.conf` | scope `Login`; systemd-logind drop-in with base bridging, defaults virtualization, daemon reload |
 | `ufw` / `ufw_firewall` | [engines/ufw.md](./engines/ufw.md) | `UfwEngine` | `/etc/default/ufw` | scopes `status`, `builder`, `domains`, `framework`, `actions`, `reports`; complete rule lifecycle, DNS domain whitelisting/lockdown, NAT, Docker mitigation |
+| `gsettings` / `dconf` | [engines/gsettings.md](./engines/gsettings.md) | `GSettingsEngine` | `~/.config/dconf/user` | GSettings schema ID → scope; schema key → `key`; PyGObject in-process Gio with CLI fallback; live Hyprland cursor sync |
 
 > `engines/rich_speedtest.py` is **not** an engine — it is a Rich-based speed
 > test UI helper invoked by the `network` engine.

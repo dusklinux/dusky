@@ -223,6 +223,23 @@ def exercise(module, loops):
             elif module == "rich_speedtest":
                 for _ in range(loops):
                     assert len(m.make_sparkline([0, 1, 2])) == 28
+            elif module == "gsettings":
+                from python.frontend.core_types import ConfigItem
+                item = ConfigItem(
+                    label="Theme",
+                    key="gtk-theme",
+                    scope="org.gnome.desktop.interface",
+                    type_="string",
+                    default="Adwaita",
+                )
+                engine = m.GSettingsEngine(items=[item])
+                engine._gio_available = False  # Writes are simulated in this fixture.
+                with patch.object(engine, "get_installed_schemas", return_value={"org.gnome.desktop.interface"}), \
+                        patch.object(engine, "_write_single_setting", return_value=m.SettingWriteResult(True, "", "dusky-test")):
+                    for _ in range(loops):
+                        result = engine.write_value("gtk-theme", "org.gnome.desktop.interface", "dusky-test", "string")
+                        assert result[0], result
+                        assert engine.cache["org.gnome.desktop.interface/gtk-theme"] == "dusky-test"
             else:
                 raise AssertionError(f"Missing engine fixture: {module}")
 
