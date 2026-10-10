@@ -200,8 +200,11 @@ runtime (see the network engine's status/speed-test/hotspot tabs).
 5. **Hybrid folders** — `is_parent=True` works on any real type (the header
    holds a value, e.g. a master toggle). Pure `menu` folders are the
    value-less variant. **One level deep only.**
-6. **Presets are strict snapshots** — every key you don't list is reset to its
-   default on apply. List all keys you care about, or use `__ALL_DEFAULTS__`.
+6. **Presets are strict snapshots of the default engine target** — every key
+   there that you don't list is reset to its default on apply. List all keys you
+   care about, or use `__ALL_DEFAULTS__`. User-profile saves and preset application
+   exclude separately routed engine/file overrides. Headless `--default` resets
+   those targets separately as well.
 7. **Reserved names** — `group="User Presets"` is managed by the TUI itself
    (dynamic user profiles); never emit it. `key` prefixes like `action_`,
    `preset_`, `__user_preset_`, `__save_new_preset`, `__import_new_preset` are
@@ -274,6 +277,7 @@ TLP currently links its implementation because it has no separate engine doc.
 | `tlp` | [source](../engines/tlp.py) | `TlpConfigEngine` | `/etc/tlp.conf` | scope `DEFAULT`; explicit root `KEY=VALUE` / `KEY+=VALUE` settings; TLP 1.11+ profile keys |
 | `bridged_ini` | [engines/bridged_ini.md](./engines/bridged_ini.md) | `BridgedIniEngine` | any INI | like ini, but commented-out defaults are read too |
 | `lua` | [engines/lua.md](./engines/lua.md) | `HyprlandLuaEngine` | `~/Documents/hyprland.lua` | `hl.config` table path (`a/b`); `hl.method` → `method/<id>` |
+| `neovim` | [engines/neovim.md](./engines/neovim.md) | `NeovimEngine` | deployed `~/.config/nvim/lua/config/options.lua` | native `options`/`globals` assignments and literal plugin `opts/...` fields |
 | `autostart` | [engines/autostart.md](./engines/autostart.md) | `AutostartLuaEngine` | hyprland Lua | scope `autostart`, fixed key catalog |
 | `trackpad` | [engines/trackpad.md](./engines/trackpad.md) | `TrackpadLuaEngine` | hyprland Lua | scope `gestures`; gestures via `gesture/<f>/<dir>` |
 | `monitor` | [engines/monitor.md](./engines/monitor.md) | `MonitorLuaEngine` | `~/Documents/monitors.lua` | scope `monitor/<name>`; `workspace_rule/<1-10>`; globals `misc`/`debug`/`render` |

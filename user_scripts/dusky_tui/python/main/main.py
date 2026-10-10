@@ -587,7 +587,18 @@ EXAMPLES:
     # --- 2. MULTI-ENGINE LAZY POOL & ROUTER BLOCK ---
     # =========================================================================
     def _create_engine_instance(e_type: str, config_path: str):
-        if e_type == "lua":
+        if e_type == "neovim":
+            from python.engines.neovim import NeovimEngine
+            items = [
+                item for tab in SCHEMA.values() for item in tab
+                if item.type_ not in ("action", "preset", "menu")
+                and (item.engine_type_override or ENGINE_TYPE).lower() == e_type
+                and (resolve_target(item.target_file_override) if item.target_file_override
+                     else str(TARGET_FILE)) == config_path
+            ]
+            return NeovimEngine(config_path=config_path, items=items)
+
+        elif e_type == "lua":
             from python.engines.lua import HyprlandLuaEngine
             return HyprlandLuaEngine(config_path=config_path)
 
