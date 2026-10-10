@@ -95,7 +95,7 @@
 		"on-click-right": "nmcli radio wifi off && notify-send 'Turned OFF WiFi'",
 		"tooltip-format": "<b>Gateway</b>: {gwaddr}",
 		"tooltip-format-ethernet": "<b>Interface</b>: {ifname}",
-		"tooltip-format-wifi": "<b>Network</b>: {essid}\n<b>IP Addr</b>: {ipaddr}/{cidr}\n<b>Strength</b>: {signalStrength}%\n<b>Frequency</b>: {frequency} GHz\n<b>Up</b>: {bandwidthUpBytes}  <b>Down</b>: {bandwidthDownBytes}",
+		"tooltip-format-wifi": "<b>Network</b>: {essid}\n<b>IP Addr</b>: {ipaddr}/{cidr}\n<b>Strength</b>: {signalStrength}%\n<b>Frequency</b>: {frequency} GHz",
 		"tooltip-format-disconnected": "Wi-Fi Disconnected",
 		"tooltip-format-disabled": "Wi-Fi Disabled"
 	},

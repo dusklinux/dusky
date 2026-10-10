@@ -66,6 +66,10 @@ tooltip label {
 	font-size: 18px;
 }
 
+#custom-net-speed-trigger label {
+	font-size: 20px;
+}
+
 #custom-left_div,
 #custom-left_inv,
 #custom-right_div,

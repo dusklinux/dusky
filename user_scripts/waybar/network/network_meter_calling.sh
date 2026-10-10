@@ -134,11 +134,11 @@ if [[ "$CLASS" == "network-disconnected" ]]; then
     TT="Disconnected"
 else
     if [[ -n "$BOOT_TOTAL_FMT" ]]; then
-        TT="Upload: ${UP} ${UNIT}/s (Session: ${SESSION_UP_FMT:-0} ${S_TX_U} | Boot: ${BOOT_UP_FMT:-0} ${B_TX_U})\nDownload: ${DOWN} ${UNIT}/s (Session: ${SESSION_DOWN_FMT:-0} ${S_RX_U} | Boot: ${BOOT_DOWN_FMT:-0} ${B_RX_U})\nTotal Traffic: Session ${SESSION_TOTAL_FMT:-0} ${S_TOT_U} | Boot ${BOOT_TOTAL_FMT:-0} ${B_TOT_U}"
+        TT="Upload: Session ${SESSION_UP_FMT:-0} ${S_TX_U} | Boot ${BOOT_UP_FMT:-0} ${B_TX_U}\nDownload: Session ${SESSION_DOWN_FMT:-0} ${S_RX_U} | Boot ${BOOT_DOWN_FMT:-0} ${B_RX_U}\nTotal Traffic: Session ${SESSION_TOTAL_FMT:-0} ${S_TOT_U} | Boot ${BOOT_TOTAL_FMT:-0} ${B_TOT_U}"
     elif [[ -n "$SESSION_TOTAL_FMT" ]]; then
-        TT="Upload: ${UP} ${UNIT}/s (Session: ${SESSION_UP_FMT:-0} ${S_TX_U})\nDownload: ${DOWN} ${UNIT}/s (Session: ${SESSION_DOWN_FMT:-0} ${S_RX_U})\nTotal Session: ${SESSION_TOTAL_FMT:-0} ${S_TOT_U}"
+        TT="Upload: Session ${SESSION_UP_FMT:-0} ${S_TX_U}\nDownload: Session ${SESSION_DOWN_FMT:-0} ${S_RX_U}\nTotal Session: ${SESSION_TOTAL_FMT:-0} ${S_TOT_U}"
     else
-        TT="Upload: ${UP} ${UNIT}/s\\nDownload: ${DOWN} ${UNIT}/s"
+        TT="Traffic totals unavailable"
     fi
 fi
 case "$FLAG" in
