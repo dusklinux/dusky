@@ -32,10 +32,11 @@ ISO's installed GLib/PyGObject schemas; no older-Python compatibility paths.
   not just exit zero. Hook errors are reported separately
   from the fact that the GSettings value has already been saved.
 - Defaults in the TUI come from `get_default_value`, including installed
-  overrides. Applying defaults writes explicit values; `reset_key` removes a
+  overrides, except cursor size uses Dusky's preferred default of **16**.
+  Applying defaults writes explicit values; `reset_key` removes a
   user override and verifies that it was removed. Reset keys remain tracked in
   cache with their effective values. Saved presets are snapshots of managed settings;
-  keys missing from an imported/older snapshot use current installed defaults.
+  keys missing from an imported/older snapshot use current TUI defaults.
   Candidate values are validated against the same schema rules as writes before
   applying a preset, so malformed snapshots cannot silently coerce values or
   start a partial transaction.

@@ -135,6 +135,7 @@ def _add(tab: str, scope: str, keys: str | None, group: str, notice: str = "") -
             minimum, maximum = INTEGER_LIMITS[signature]
         if scope == "org.gnome.desktop.interface" and name == "cursor-size":
             minimum = 1
+            default = 16  # Dusky's preferred size; the live value is loaded separately.
         description = metadata.get_description() or metadata.get_summary() or name
         if signature == "as":
             description += "\n\nEnter a GVariant string array, for example `[\"one\", \"two\"]` or `[]`."
@@ -272,16 +273,18 @@ for protocol in ("http", "https", "ftp", "socks"):
 TABS.append("Presets")
 SCHEMA[len(TABS) - 1] = [
     ConfigItem(
-        label="Apply Schema Defaults",
+        label="Apply Defaults",
         key="preset_factory_reset",
         scope="DEFAULT",
         type_="preset",
         default=None,
         group="Defaults",
-        confirm_message="Apply installed schema defaults to all managed settings?",
+        confirm_message="Apply defaults to all managed settings (cursor size: 16)?",
         preset_payload={"__ALL_DEFAULTS__": True},
-        extended_help='Applies the installed defaults to managed keys. This writes explicit values; it '
-        'does not erase dconf overrides or change unmanaged keys.',
+        extended_help=(
+            "Applies installed defaults, with Dusky cursor size 16, to managed keys. "
+            "This writes explicit values; it does not erase dconf overrides or change unmanaged keys."
+        ),
     ),
 ]
 if INTERFACE in INSTALLED_SCHEMAS:

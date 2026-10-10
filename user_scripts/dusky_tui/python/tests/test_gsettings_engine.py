@@ -196,6 +196,7 @@ class GSettingsRegressionTests(unittest.TestCase):
                 default_variant = settings.get_default_value(item.key)
                 self.assertEqual(
                     item.default,
+                    16 if (item.scope, item.key) == (catalog.INTERFACE, "cursor-size") else
                     default_variant.print_(True) if default_variant.get_type_string() == "as" else default_variant.unpack(),
                 )
                 if item.type_ == "cycle":
