@@ -1439,7 +1439,7 @@ hl.window_rule({
         class = "^(waybar_tui)$",
     },
     float = true,
-    size = {720, 690},
+    size = {746, 690},
     -- size = {"monitor_w * 0.5523", "monitor_h * 0.9583"},
 })
 
