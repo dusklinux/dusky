@@ -769,7 +769,7 @@
   const S = {
     active: false, hydrated: false, note: "", paletteNote: "", rev: 0, warnings: [],
     rules: Object.freeze([]), undo: [], redo: [], stack: [], depth: 0,
-    locked: false, targetMode: "selector", group: "bg",
+    locked: false, targetMode: "variable", pickStep: "target", group: "bg",
     elementVars: [], raf: 0, editKey: null, generation: 0,
   };
 
@@ -1093,27 +1093,27 @@
     const variable = q("pvar");
     const scope = q("pvarscope");
     if (variable) variable.value = "";
-    if (scope) scope.dataset.variable = "";
+    if (q("psel")) q("psel").value = "";
+    if (scope) scope.value = ":root";
   }
 
   function refreshVarScope() {
-    const variable = S.elementVars.find((v) => v.name === q("pvar")?.value);
     const box = q("pvarscope");
-    const previous = box.dataset.variable === variable?.name ? box.value : "";
-    box.dataset.variable = variable?.name ?? "";
+    const previous = box.value;
     box.textContent = "";
-    if (!variable) return;
-    const scopes = new Map([[variable.scope, variable.global ? "Page theme (root)" : "Variable owner"]]);
-    scopes.set(":root", "Page theme (root)");
-    const sel = selected();
-    if (sel && !scopes.has(sel)) scopes.set(sel, "Selected elements");
+    const scopes = new Map([[":root", "Page theme (root)"],
+      ["@owner", "Variable owner"], ["@selected", "Selected elements"]]);
     for (const [scope, label] of scopes) {
       box.append(el("option", { value: scope, text: label }));
     }
-    box.value = scopes.has(previous) ? previous : variable.scope;
+    box.value = scopes.has(previous) ? previous : ":root";
   }
 
-  const variableScope = () => q("pvarscope")?.value || ":root";
+  const variableScope = (variable = S.elementVars.find((v) => v.name === q("pvar")?.value)) => {
+    const scope = q("pvarscope")?.value;
+    return scope === "@owner" ? variable?.scope || ":root"
+      : scope === "@selected" ? selected() : ":root";
+  };
   const variablePalette = (token) => paletteValue(token,
     S.elementVars.find((v) => v.name === q("pvar")?.value)?.col ?? { shape: "color", a: 1 });
 
@@ -1297,6 +1297,11 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
 .item .del{flex:0 0 auto}
 .bar{flex-wrap:wrap}
 .seg{flex-wrap:wrap}
+.panel [hidden]{display:none!important}
+.targets{display:flex;flex-direction:column;gap:4px;max-height:280px;overflow:auto;padding:2px}
+.panel .target-choice{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;white-space:normal;width:100%}
+.target-choice .name{font:11.5px ui-monospace,monospace;overflow-wrap:anywhere;color:#e6c280}
+.target-choice .detail{font-size:11px;color:#c4b8aa}
 `;
 
   const uiStyle = document.createElement("style");
@@ -1340,24 +1345,27 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
   <input type="range" id="pslider" min="0" max="0" value="0" aria-label="DOM depth">
   <span class="tag" id="pdepth" style="flex:0 0 40px;text-align:right"></span>
 </div>
-<div class="row" id="psel-row">
-  <span class="lbl">Matches</span>
-  <select id="psel" title="CSS selector written into the template. Prefer rows that say 'this element only'."></select>
-</div>
+<input id="psel" type="hidden">
+<input id="pvar" type="hidden">
 <div class="row">
   <span class="lbl">Mode</span>
   <div class="seg">
-    <button type="button" id="pmode-sel" aria-pressed="true" title="Paint this element's background, text, border or fill">Element</button>
-    <button type="button" id="pvarbtn" aria-pressed="false" title="Point one of this element's CSS variables at a Matugen token">CSS variable</button>
+    <button type="button" id="pvarbtn" aria-pressed="true" title="Point a CSS variable at a Matugen token">CSS variable</button>
+    <button type="button" id="pmode-sel" aria-pressed="false" title="Paint elements directly">Element</button>
   </div>
-</div>
-<div class="row" id="pvar-row" hidden>
-  <span class="lbl">Variable</span>
-  <select id="pvar" title="Custom properties found on this element"></select>
 </div>
 <div class="row" id="pvarscope-row" hidden>
   <span class="lbl">Scope</span>
   <select id="pvarscope" title="Override this token for the page theme, its owner, or the selected elements"></select>
+</div>
+<div id="pchoose">
+  <p class="hint" id="pchoose-hint">1. Choose what to affect — hover previews with Primary; click continues.</p>
+  <div class="targets" id="ptargets" role="group" aria-label="Choose what to affect"></div>
+</div>
+<div id="pcolors" hidden>
+<div class="row">
+  <button type="button" id="pback">← Back</button>
+  <span class="tag" id="pchosen"></span>
 </div>
 <div class="row" id="pseg-row">
   <span class="lbl">Part</span>
@@ -1377,6 +1385,7 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
 <div class="row" id="pcustom-row">
   <span class="lbl">Custom</span>
   <input id="pcustom" type="text" placeholder="or type CSS, then Enter — e.g. opacity: 0.8" title="Any declaration list. Saved as a picked rule.">
+</div>
 </div>`;
 
   const EDIT_HTML = `
@@ -1712,6 +1721,44 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
     if (panel && bar) panel.style.setProperty("--dusky-dialog-top", `${Math.max(64, bar.getBoundingClientRect().bottom + 8)}px`);
   }
 
+  function buildPickTargets() {
+    const list = q("ptargets");
+    list.textContent = "";
+    list.dataset.mode = S.targetMode;
+    const variable = S.targetMode === "variable";
+    const choices = variable ? S.elementVars : candidates(target());
+    for (const choice of choices) {
+      const value = variable ? choice.name : choice.sel;
+      const detail = variable ? `${choice.used ? "Referenced" : "Not found in this element's color rules"} · ${choice.value}`
+        : choice.n === 1 ? "This element only" : `Matches ${choice.n} elements`;
+      const button = el("button", { type: "button", class: "target-choice", "data-value": value },
+        el("span", { class: "name", text: value }), el("span", { class: "detail", text: detail }));
+      const preview = () => {
+        if (S.pickStep !== "target") return;
+        const primary = getComputedStyle(document.documentElement).getPropertyValue("--dusky-picker-primary").trim();
+        if (!CSS.supports("color", primary)) { flash("Primary is unavailable — regenerate the palette and Resync", "warn"); return; }
+        Preview.show(variable
+          ? { highlight: "", css: `${variableScope(choice)}{${CSS.escape(value)}:${paletteValue("primary", choice.col)} !important;}` }
+          : { highlight: value, css: `${value}{${declFor(colourGroup(S.group), "primary")}}` });
+      };
+      const leave = () => { if (S.pickStep === "target") Preview.clear(); };
+      button.addEventListener("pointerenter", preview);
+      button.addEventListener("pointerleave", leave);
+      button.addEventListener("focus", preview);
+      button.addEventListener("blur", leave);
+      button.addEventListener("click", () => {
+        Preview.clear();
+        q(variable ? "pvar" : "psel").value = value;
+        S.pickStep = "color";
+        refreshPick(false);
+        // Moving focus clears the target preview and gives keyboard users the palette.
+        q("pback").focus();
+      });
+      list.append(button);
+    }
+    if (!choices.length) list.append(el("p", { class: "hint", text: "No targets found — choose another page element." }));
+  }
+
   function refreshPick(rebuildSels = false) {
     if (panelKind !== "pick" || !panel) return;
     const t = target();
@@ -1739,41 +1786,19 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
     const dt = q("pdepth");
     if (dt) dt.textContent = S.stack.length > 1 ? `${S.depth}/${S.stack.length - 1}` : "";
 
-    if (rebuildSels) {
-      const box = q("psel");
-      const prev = box.value;
-      box.textContent = "";
-      for (const c of candidates(t)) {
-        const opt = document.createElement("option");
-        opt.value = c.sel;
-        opt.textContent = c.n === 1 ? `${c.sel}  (this element only)` : `${c.sel}  (matches ${c.n})`;
-        box.append(opt);
-      }
-      if ([...box.options].some((o) => o.value === prev)) box.value = prev;
-    }
-
     const varMode = S.targetMode === "variable";
     q("pmode-sel").setAttribute("aria-pressed", String(!varMode));
     q("pvarbtn").setAttribute("aria-pressed", String(varMode));
     q("pvarbtn").disabled = S.elementVars.length === 0;
-    q("pvar-row").hidden = !varMode;
     q("pvarscope-row").hidden = !varMode;
     q("pseg-row").hidden = varMode;
-    q("psel-row").hidden = varMode;
-
-    if (varMode) {
-      const box = q("pvar");
-      const prev = box.value;
-      box.textContent = "";
-      for (const v of S.elementVars) {
-        const opt = document.createElement("option");
-        opt.value = v.name;
-        opt.textContent = `${v.used ? "Referenced: " : ""}${v.name}  =  ${v.value}`;
-        box.append(opt);
-      }
-      if ([...box.options].some((o) => o.value === prev)) box.value = prev;
-      refreshVarScope();
-    }
+    refreshVarScope();
+    const choosing = S.pickStep === "target";
+    q("pchoose").hidden = !choosing;
+    q("pcolors").hidden = choosing;
+    q("pchosen").textContent = varMode ? q("pvar").value : selected();
+    q("pchosen").title = q("pchosen").textContent;
+    if (rebuildSels || q("ptargets").dataset.mode !== S.targetMode) buildPickTargets();
 
     for (const b of q("pseg").children) {
       b.setAttribute("aria-pressed", String(b.dataset.group === S.group));
@@ -1782,10 +1807,10 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
     q("pextra").textContent = extra?.label ?? "";
     q("pextra").hidden = varMode || !extra;
     q("phint").textContent = varMode
-      ? "Choose page theme or local scope. Hover previews; click saves the variable mapping." +
+      ? "2. Choose a color — hover previews; click saves the variable mapping." +
         (S.elementVars.find((v) => v.name === q("pvar")?.value)?.used ? "" :
           " This variable was not found in this element's color rules; it may have no visible effect.")
-      : "Hover previews · click saves · Shift+click hides.";
+      : "2. Choose a color — hover previews; click saves · Shift+click hides.";
     pickGrid?.setActive("");
     positionDialog();
   }
@@ -1856,19 +1881,23 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
       syncDepthChrome();
     });
     q("pslider").addEventListener("change", () => { retarget(); });
-    q("psel").addEventListener("change", () => Preview.show(previewOf(null)));
-    q("pvar").addEventListener("change", () => { refreshVarScope(); Preview.show(previewOf(null)); });
-    q("pvarscope").addEventListener("change", () => Preview.show(previewOf(null)));
-    q("pmode-sel").addEventListener("click", () => {
-      S.targetMode = "selector";
+    q("pback").addEventListener("click", () => {
+      Preview.clear();
+      S.pickStep = "target";
       refreshPick(false);
-      Preview.show(previewOf(null));
+      const chosen = S.targetMode === "variable" ? q("pvar").value : selected();
+      [...q("ptargets").children].find((b) => b.dataset.value === chosen)?.focus();
     });
+    q("pvarscope").addEventListener("change", () => Preview.clear());
+    const mode = (name) => {
+      Preview.clear();
+      S.targetMode = name;
+      S.pickStep = "target";
+      refreshPick(true);
+    };
+    q("pmode-sel").addEventListener("click", () => mode("selector"));
     q("pvarbtn").addEventListener("click", () => {
-      if (!S.elementVars.length) return;
-      S.targetMode = "variable";
-      refreshPick(false);
-      Preview.show(previewOf(null));
+      if (S.elementVars.length) mode("variable");
     });
     q("pseg").addEventListener("click", (e) => {
       const b = e.target.closest("[data-group]");
@@ -1931,7 +1960,8 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
     dropIndex();
     S.elementVars = getElementVars(target());
     resetVarSelection();
-    S.targetMode = "selector";
+    S.targetMode = S.elementVars.length ? "variable" : "selector";
+    S.pickStep = "target";
     if (panelKind !== "pick" || !panel) {
       panel?.remove();
       editGrid = null;
@@ -1943,6 +1973,7 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
       bindPick();
     }
     refreshPick(true);
+    drawMask();
     Preview.show(previewOf(null));
     refreshBar();
   }
@@ -2411,6 +2442,7 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
     if (panelKind === "pick") {
       dropIndex();
       resetVarSelection();
+      S.pickStep = "target";
       S.elementVars = getElementVars(target());
       q("pvarbtn").disabled = S.elementVars.length === 0;
       if (!S.elementVars.length) S.targetMode = "selector";
