@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import NoReturn
 
 # ═══════════════════════════════════ configuration ═══════════════════════════════════
-VERSION = "8.0.6-py314-2026.10"
+VERSION = "8.0.7-py314-2026.10"
 REPO_NAME = "archrepo"
 DB_NAME = f"{REPO_NAME}.db.tar.zst"
 FILES_NAME = f"{REPO_NAME}.files.tar.zst"
@@ -75,7 +75,7 @@ EXCLUDED_REPO_PREFIXES = ("cachyos",)  # x86-64-v3/v4 rebuilds: not portable to 
 VCS_SUFFIXES = ("-git", "-hg", "-svn", "-bzr")
 REQUIRED_AUR = frozenset({"paru"})
 LIVE_PKG_ALIASES = {"broadcom-wl": "broadcom-wl-dkms"}
-BOOTSTRAP_DEPS = {"git": "git", "mkarchiso": "archiso"}
+BOOTSTRAP_DEPS = {"git": "git", "mkarchiso": "archiso", "grub-mkstandalone": "grub"}
 
 # action -> (official phase, AUR phase, ISO phase); dict order is the interactive menu order
 ACTIONS: dict[str, tuple[bool, bool, bool]] = {
@@ -186,6 +186,14 @@ MKARCHISO_HOOK = r'''    # --- dusky factory: offline repository (staged + sha25
     mv -T -- @STAGING@ "${isofs_dir}/${install_dir}/repo" \
         || { printf '[dusky] ERROR: offline repository injection failed\n' >&2; exit 1; }
 '''
+
+# Run after package hooks and boot-image preparation, before compressing the live filesystem.
+# Leave locale-archive and the offline package archives intact for UTF-8 and installation.
+MKARCHISO_CLEANUP_HOOK = r'''    printf '[dusky] INFO: removing live documentation and message translations\n'
+    _unshare rm -rf -- "${pacstrap_dir}"/usr/{,local/}share/{doc,man,info,gtk-doc,locale}
+'''
+
+LIVE_BUILD_PACKAGES = frozenset({"broadcom-wl-dkms", "dkms", "gcc", "linux-headers"})
 
 ALL_GROUPS: dict[str, list[str]] = {
     "offline": [
@@ -2025,21 +2033,24 @@ def setup_clean_room(cfg: IsoConfig) -> None:
     remove_tree(cfg.workspace, strict=True)
     cfg.workspace.mkdir(parents=True, mode=0o700)
     shutil.copytree(RELENG, cfg.profile_dir, symlinks=True)
-    patch_profiledef_compression(cfg.profile_dir / "profiledef.sh")
+    configure_profiledef(cfg.profile_dir / "profiledef.sh")
     ok("clean room ready")
 
 
-def patch_profiledef_compression(profiledef: Path) -> None:
+def configure_profiledef(profiledef: Path) -> None:
     if not profiledef.is_file():
-        return
+        die("profiledef.sh missing after clean room setup")
     txt = profiledef.read_text(encoding="utf-8")
-    new_opts = "airootfs_image_tool_options=('-comp' 'zstd' '-b' '1M' '-Xcompression-level' '19')"
-    new = re.sub(r"airootfs_image_tool_options=\([^)]*\)", new_opts, txt)
-    if new != txt:
-        profiledef.write_text(new, encoding="utf-8")
-        step(f"profiledef: {new_opts}")
-    else:
-        step("profiledef: compression left upstream (no airootfs_image_tool_options found)")
+    settings = {
+        "airootfs_image_tool_options": "('-comp' 'zstd' '-b' '1M' '-Xcompression-level' '5')",
+        "bootmodes": "('bios.syslinux' 'uefi.grub')",
+    }
+    for name, value in settings.items():
+        txt, count = re.subn(rf"(?m)^{name}=\([^)]*\)", f"{name}={value}", txt)
+        if count != 1:
+            die(f"profiledef: expected one {name} array, found {count}; archiso profile changed")
+        step(f"profiledef: {name}={value}")
+    profiledef.write_text(txt, encoding="utf-8")
 
 
 def stage_payloads(cfg: IsoConfig) -> None:
@@ -2061,7 +2072,8 @@ def stage_payloads(cfg: IsoConfig) -> None:
     asset_pkg = cfg.source_dir / "assets" / "iso_temp_packages" / "packages.x86_64"
     source = asset_pkg if asset_pkg.is_file() else releng_pkg
     out = list(dict.fromkeys(s for ln in source.read_text(encoding="utf-8").splitlines()
-                             if (s := ln.strip()) and not s.startswith("#")))
+                             if (s := ln.strip()) and not s.startswith("#")
+                             and LIVE_PKG_ALIASES.get(s, s) not in LIVE_BUILD_PACKAGES))
     if not out:
         die("packages.x86_64 empty")
     releng_pkg.write_text("\n".join(out) + "\n", encoding="utf-8")
@@ -2633,12 +2645,20 @@ def build_iso_image(cfg: IsoConfig, user: RealUser) -> tuple[Path, str]:
     info("Building ISO")
     require_tool("mkarchiso", "archiso")
     mk_text = Path(shutil.which("mkarchiso")).read_text(encoding="utf-8")
-    marker = "_build_iso_image() {"
-    if (count := mk_text.count(marker)) != 1:
-        die(f"mkarchiso: expected exactly one {marker!r}, found {count}; archiso layout changed")
     mk = cfg.workspace / "mkarchiso"
     hook = MKARCHISO_HOOK.replace("@STAGING@", shlex.quote(os.fspath(cfg.staging)))
-    mk.write_text(mk_text.replace(marker, f"{marker}\n{hook}", 1), encoding="utf-8")
+    for marker, body in (("_build_iso_image() {", hook),
+                         ("_cleanup_pacstrap_dir() {", MKARCHISO_CLEANUP_HOOK)):
+        if (count := mk_text.count(marker)) != 1:
+            die(f"mkarchiso: expected exactly one {marker!r}, found {count}; archiso layout changed")
+        mk_text = mk_text.replace(marker, f"{marker}\n{body}", 1)
+    # Compress GRUB's embedded files without omitting any boot-loader modules or fonts.
+    # The live filesystem keeps its independent Zstd level 5 setting.
+    grub_call = "grub-mkstandalone -O"
+    if mk_text.count(grub_call) != 2:
+        die("mkarchiso: expected x64 and IA32 GRUB build commands; archiso layout changed")
+    mk_text = mk_text.replace(grub_call, "grub-mkstandalone --compress=xz -O")
+    mk.write_text(mk_text, encoding="utf-8")
     mk.chmod(0o755)
 
     cmd = [mk, "-v", "-r", "-m", "iso", "-w", cfg.work_dir, "-o", cfg.out_dir, cfg.profile_dir]
@@ -2672,7 +2692,7 @@ def build_iso_image(cfg: IsoConfig, user: RealUser) -> tuple[Path, str]:
 
 def iso_phase(cfg: IsoConfig, user: RealUser) -> tuple[Path, str]:
     info("=== ISO BUILD ===")
-    for tool in ("mkarchiso", "git"):
+    for tool in ("mkarchiso", "git", "grub-mkstandalone"):
         require_tool(tool)
     workspace = cfg.workspace.resolve()
     for path in (cfg.source_dir, cfg.checkout, cfg.official_repo, cfg.aur_repo, cfg.final_dest):
