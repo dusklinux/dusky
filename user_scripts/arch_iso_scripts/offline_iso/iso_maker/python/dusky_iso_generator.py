@@ -530,6 +530,7 @@ def run(
     env: dict[str, str] | None = None,
     cwd: Path | None = None,
     capture: bool = False,
+    capture_stderr: bool = False,
     merge: bool = False,
     log: Path | None = None,
     timeout: float | None = None,
@@ -547,7 +548,7 @@ def run(
             stdout, stderr = log_fh, subprocess.STDOUT
         else:
             stdout = subprocess.PIPE if capture else None
-            stderr = subprocess.STDOUT if merge else (subprocess.PIPE if capture else None)
+            stderr = subprocess.STDOUT if merge else (subprocess.PIPE if capture or capture_stderr else None)
         with subprocess.Popen(
             argv, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr, cwd=cwd, env=env,
             encoding="utf-8", errors="replace", process_group=0, **creds,
@@ -1287,11 +1288,15 @@ class IsolatedDB:
             shutil.copyfile(HOST_MIRRORLIST, mirrorlist)
         if shutil.which("reflector"):
             tmp = self.root / "mirrorlist.reflector"
-            r = run(["reflector", "--latest", "20", "--protocol", "https", "--download-timeout", "3",
-                     "--save", tmp], capture=True, merge=True)
+            try:
+                r = run(["reflector", "--latest", "20", "--protocol", "https", "--sort", "rate",
+                         "--connection-timeout", "3", "--download-timeout", "3", "--save", tmp],
+                        capture=True, merge=True, timeout=120)
+            except subprocess.TimeoutExpired:
+                r = subprocess.CompletedProcess(["reflector"], 124)
             if r.returncode == 0 and tmp.is_file() and tmp.stat().st_size > 100:
                 os.replace(tmp, mirrorlist)
-                step("isolated mirrorlist: reflector (20 freshest HTTPS mirrors)")
+                step("isolated mirrorlist: 20 fresh HTTPS mirrors ranked by measured download rate")
             else:
                 step("reflector failed; using the host mirrorlist")
         lines = [
@@ -1320,10 +1325,30 @@ class IsolatedDB:
         self.conf.write_text("\n".join(lines) + "\n", encoding="utf-8")
         step(f"isolated pacman.conf: {self.conf} (repos: {' '.join(self.repos)})")
 
-    def pacman(self, *args: str, capture: bool = True) -> subprocess.CompletedProcess[str]:
+    def pacman(self, *args: str, capture: bool = True,
+               capture_stderr: bool = False) -> subprocess.CompletedProcess[str]:
         color = "never" if capture else "auto"
         return run(["pacman", "--config", self.conf, "--noconfirm", "--color", color, *args],
-                   env=os.environ | {"LC_ALL": "C"}, capture=capture)
+                   env=os.environ | {"LC_ALL": "C"}, capture=capture, capture_stderr=capture_stderr)
+
+    def _retry_mirrors(self, errors: str) -> None:
+        """Demote failed servers for the next transaction; retain fallback mirrors."""
+        mirrorlist = self.root / "mirrorlist"
+        if not mirrorlist.is_file():
+            return
+        servers = [line for line in mirrorlist.read_text(encoding="utf-8").splitlines()
+                   if line.strip().startswith("Server") and "=" in line]
+        if len(servers) < 2:
+            return
+        failed = set(re.findall(r"from (\S+) :", errors))
+        good, bad = [], []
+        for line in servers:
+            host = urllib.parse.urlsplit(line.split("=", 1)[1].strip()).netloc
+            (bad if host in failed else good).append(line)
+        # Unknown errors or failures across every mirror: change the first choice.
+        ordered = good + bad if good and bad else servers[1:] + servers[:1]
+        mirrorlist.write_text("\n".join(ordered) + "\n", encoding="utf-8")
+        step(f"retry mirror priority: {ordered[0].split('=', 1)[1].strip()}")
 
     def _sync(self) -> None:
         for attempt in range(1, SYNC_ATTEMPTS + 1):
@@ -1334,6 +1359,7 @@ class IsolatedDB:
                 return
             warn(f"sync failed: {pacman_errors(r, 500)}")
             if attempt < SYNC_ATTEMPTS:
+                self._retry_mirrors(r.stderr or "")
                 backoff(attempt)
         die("isolated DB sync failed — check network/keyring")
 
@@ -1386,10 +1412,14 @@ class IsolatedDB:
         the transaction (cached ones included) before returning 0 — no second verification pass."""
         for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
             info(f"pacman -Sw attempt {attempt}/{DOWNLOAD_ATTEMPTS} ({len(targets)} targets)")
-            r = self.pacman("-Sw", *self._cache_args(cachedirs), "--", *targets, capture=False)
+            r = self.pacman("-Sw", *self._cache_args(cachedirs), "--", *targets,
+                            capture=False, capture_stderr=True)
+            if r.stderr:
+                print(r.stderr, file=sys.stderr, end="", flush=True)
             if r.returncode == 0:
                 return
             if attempt < DOWNLOAD_ATTEMPTS:
+                self._retry_mirrors(r.stderr or "")
                 backoff(attempt)
         die("package download failed after retries")
 
