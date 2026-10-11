@@ -5,7 +5,7 @@ Conservative legend:
 - `yes` = generally safe to disable for most personal devices
 - `if-unused` = usually safe only if you do not use that feature
 - `no` = maybe disableable in some setups, but I would not broadly recommend it
-- `NO` = core/critical; do not disable
+- `NO` = existing core/critical do-not-disable category. The specific description explains the risk; not every entry has a proven bootloop risk
 - `KEEP` = keep enabled by default because tests found dependency errors or functionality loss; not a bootloop claim. Manual disabling remains available in the app.
 
 | #   | daemon                        | description                                                                                  | safe_to_disable_for_most_users |
@@ -201,10 +201,10 @@ Conservative legend:
 | 189 | iconservices.iconservicesagent | App icon rendering and cache service                                                         | no                             |
 | 190 | idamd                          | Private Apple identity/auth daemon                                                           | no                             |
 | 191 | idcredd                        | Identity credential service for digital IDs                                                  | if-unused                      |
-| 192 | identityservicesd              | Identity Services daemon for iMessage/FaceTime                                               | no                             |
+| 192 | identityservicesd              | Identity Services daemon for iMessage/FaceTime                                               | KEEP                          |
 | 193 | idscredentialsagent            | Identity Services credential agent                                                           | no                             |
 | 194 | idsremoteurlconnectionagent    | Identity Services network agent                                                              | no                             |
-| 195 | imagent                        | iMessage account and messaging agent                                                         | no                             |
+| 195 | imagent                        | iMessage account and messaging agent                                                         | KEEP                          |
 | 196 | imautomatichistorydeletionagent | Automatic message-history deletion support                                                   | yes                            |
 | 197 | imtransferagent                | Transfers iMessage attachments/media                                                         | no                             |
 | 198 | inboxupdaterd                  | Inbox update helper; public role not well documented                                         | no                             |
@@ -299,7 +299,7 @@ Conservative legend:
 | 287 | ndoagent                       | Private Apple daemon, unclear public role                                                    | no                             |
 | 288 | neagent-ios                    | Network Extension agent for VPNs/filters                                                     | if-unused                      |
 | 289 | nearbyd                        | Nearby interaction and proximity service                                                     | if-unused                      |
-| 290 | nehelper-embedded              | Network Extension helper service                                                             | if-unused                      |
+| 290 | nehelper-embedded              | Network Extension helper service                                                             | KEEP                          |
 | 291 | nesessionmanager               | DISABLING CAUSES MASSIVE POWER DRAW                                                          | NO                             |
 | 292 | NetworkLinkConditioner         | Developer network-throttling tool                                                            | yes                            |
 | 293 | networkserviceproxy            | Network proxy service used by Private Relay and related features                             | if-unused                      |
@@ -524,4 +524,20 @@ Baseline median physical free RAM was **215.4 MiB** (six samples); the five-minu
 
 Verified related Contacts stores on this phone: `/var/mobile/Library/AddressBook/AddressBook.sqlitedb` and `AddressBookImages.sqlitedb`. The app shows metadata and paths for contactsd, absd, and ABDatabaseDoctor; it does not read contact records or guess private database locations for unrelated services.
 
-The revised 504-entry config has **324 default-off entries** and is mirrored at the app repository root as `daemon.cfg`. Historical raw test files and obsolete script/app copies were removed from this notes directory after these findings were incorporated. Original device-side test/backup files remain under `/var/mobile/Documents/daemon-test-2026-10-11`; they are not distributed with the app.
+The revised 505-entry config has **320 default-off entries** and is mirrored at the app repository root as `daemon.cfg`. Historical raw test files and obsolete script/app copies were removed from this notes directory after these findings were incorporated. Original device-side test/backup files remain under `/var/mobile/Documents/daemon-test-2026-10-11`; they are not distributed with the app.
+
+## Messages recovery and category revision (2026-10-11)
+
+After the broad off profile, Messages appeared empty. Re-enabling imagent and identityservicesd alone exposed repeated identityservicesd aborts and a black Messages launch screen. Live logging showed `IDSGroupAgent registerAgent` asserting `self.interfaceName`, with nehelper/networkd_privileged unavailable. Enabling the actual `com.apple.nehelper` job restored Identity Services; the user confirmed conversations returned. The database passed SQLite quick_check and retained 247 messages and 79 conversations; a snapshot remains on the phone under `/var/mobile/Documents/messages-recovery-2026-10-11`.
+
+Keep imagent, identityservicesd, and nehelper enabled by default as **KEEP**, not capital **NO**. The `nehelper-embedded` plist filename maps to job label `com.apple.nehelper`; both config entries now target On. These are feature/dependency recommendations, manually switchable without critical confirmation. Nehelper also serves other Network Extension clients: disabling it while Identity Services remains enabled caused repeated background crashes. No additional bootloop classification was established by this recovery.
+
+The app's Critical tab retains all installed capital-NO classified services regardless of their toggle state, with disabled entries first. Existing critical classifications remain intact; no service is promoted solely from a guessed risk. Defaults lists all 505 compiled targets, including entries not installed on the current device. Fresh installations need no config import. The RAM label is only a number and MiB; its existing free-plus-speculative measurement is unchanged.
+
+## Wallpaper host and storage (v1.0.4)
+
+The verified PosterBoard job is `/System/Library/LaunchAngels/com.apple.PosterBoard.plist`, label `com.apple.PosterBoard`, domain `user/501` on this phone (the app discovers the mobile UID). Killing its PID does not save an override. Native disable plus bootout stopped it and most associated poster extensions in the observed window. A userspace reboot preserved the off override and left no PosterBoard/poster-extension processes running. The user confirmed unlock, Home, Notes and Messages work after this reboot. Battery impact and long-term stability remain unmeasured. The app exposes this specific job under Tools → Wallpaper process and in Services; it does not expose other untested LaunchAngels such as input/UI hosts. The compiled default keeps it enabled for other users; manual disabling remains available, and userspace restart fully applies it. No auto-kill daemon, polling loop, file renaming, or arbitrary app blacklist is installed.
+
+Speculative pages are reclaimable kernel filesystem cache, not a separately disableable SysMain service. Disabling predictive daemons does not eliminate all speculative pages. No useful verified force-compress control was found; no induced memory pressure or forced app eviction is implemented. Core account daemons and siriactionsd retain their existing critical warnings; feature names alone do not establish safe disabling.
+
+The storage driver advertises NVMe SMART capability, but read-only IOCreatePlugInInterfaceForService returned `0xe00002c7` on this device; lifetime writes/endurance/wear could not be obtained. The Memory & Storage sheet displays data-filesystem capacity, available and used space; unavailable health counters are not guessed. No terabyte-write lifetime or rated endurance is invented.
