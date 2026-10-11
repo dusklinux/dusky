@@ -29,7 +29,7 @@ declare -ar pkgs_appearance=(
 
 # Group 4: Desktop Experience
 declare -ar pkgs_desktop=(
-  "waybar" "awww" "hyprlock" "hypridle" "hyprsunset" "hyprpicker" "rofi" "libdbusmenu-qt5" "libdbusmenu-glib" "brightnessctl" "hyprshutdown"
+  "awww" "hyprlock" "hypridle" "hyprsunset" "hyprpicker" "rofi" "libdbusmenu-qt5" "libdbusmenu-glib" "brightnessctl" "hyprshutdown"
 )
 
 # Group 5: Audio & Bluetooth

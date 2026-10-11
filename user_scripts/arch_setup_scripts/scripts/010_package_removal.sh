@@ -17,7 +17,6 @@ readonly -a REPO_TARGETS=(
   power-profiles-daemon
   network-manager-applet
   firewalld
-  waybar
   hyprpolkitagent
 )
 
