@@ -2,7 +2,7 @@
 
 The maintained SwiftUI app is at [dusklinux/daemon_manager](https://github.com/dusklinux/daemon_manager), checked out locally at `/mnt/zram1/daemon_manager-main`. App source, build instructions, and the CI workflow belong there. The old standalone daemonmanager and processkiller instructions are retired.
 
-This directory contains `daemon.cfg` and device-use notes. The config mirrors the repository's root `daemon.cfg` and its 505 builtin targets: **320 off, 185 on**. `yes` means disable; `no` means keep enabled. A recommendation is not a guarantee that every optional feature or device is safe with a service off.
+This directory contains `daemon.cfg` and device-use notes. The config mirrors the repository's root `daemon.cfg` and its 506 builtin targets: **320 off, 186 on**. `yes` means disable; `no` means keep enabled. A recommendation is not a guarantee that every optional feature or device is safe with a service off.
 
 The 2026-10-11 revision keeps these services enabled and shows orange recommendations in the app:
 
@@ -20,11 +20,11 @@ Critical bootloop/CPU/access warnings remain separate. Every entry remains manua
 
 The app saves launchctl overrides and reports command/verification failures. It does not hot-unload services: restart userspace to apply loaded-process changes fully. This addresses both demand restarts seen in testing and disruptive intermediate dependency states. The plist must retain root:wheel ownership and mode `0644` for the tested persistence workflow.
 
-RAM displays only the number and MiB unit; the underlying measurement remains **free + speculative**. This is not the same as physical free RAM. No >600 MiB idle gain or broad battery-life improvement was verified.
+RAM displays only the number and MiB unit using kernel free_count, which already includes speculative pages. Physical free excludes speculative pages. No >600 MiB idle gain or broad battery-life improvement was verified.
 
 Read [instructions.md](instructions.md) for usage/install notes and `../../daemons based on ios 16.md` for the full reference, test results, and limitations. No scripts, IPA builds, raw test logs, or mirrored app source are kept here.
 
-The Critical tab always retains installed capital-NO services, even when disabled, and puts disabled entries first. Orange recommendations toggle directly; red critical disables retain confirmation. All 505 builtin targets are compiled into the IPA and shown in Defaults, including absent entries; config import is optional.
+The Critical tab always retains installed capital-NO services, even when disabled, and puts disabled entries first. Orange recommendations toggle directly; red critical disables retain confirmation. All 506 builtin targets are compiled into the IPA and shown in Defaults, including absent entries; config import is optional.
 
 ## Memory-panel correction (v1.0.3)
 
@@ -34,8 +34,18 @@ System pressure is Normal/Warning/Critical, seeded from the privileged current-p
 
 ## Wallpaper host and storage (v1.0.4)
 
-The verified PosterBoard job is `/System/Library/LaunchAngels/com.apple.PosterBoard.plist`, label `com.apple.PosterBoard`, domain `user/501` on this phone (the app discovers the mobile UID). Killing its PID does not save an override. Native disable plus bootout stopped it and most associated poster extensions in the observed window. A userspace reboot preserved the off override and left no PosterBoard/poster-extension processes running. The user confirmed unlock, Home, Notes and Messages work after this reboot. Battery impact and long-term stability remain unmeasured. The app exposes this specific job under Tools → Wallpaper process and in Services; it does not expose other untested LaunchAngels such as input/UI hosts. The compiled default keeps it enabled for other users; manual disabling remains available, and userspace restart fully applies it. No auto-kill daemon, polling loop, file renaming, or arbitrary app blacklist is installed.
+The verified PosterBoard job is `/System/Library/LaunchAngels/com.apple.PosterBoard.plist`, label `com.apple.PosterBoard`, domain `user/501` on this phone (the app discovers the mobile UID). Killing its PID does not save an override. Native disable plus bootout stopped it and most associated poster extensions in the observed window. A userspace reboot preserved the off override and left no PosterBoard/poster-extension processes running. The user confirmed unlock, Home, Notes and Messages work after this reboot. Battery impact and long-term stability remain unmeasured. The app exposes this job under Tools → Background UI and in Services, together with the tested AccessibilityUIServer host. Other untested LaunchAngels remain excluded. The compiled default keeps it enabled for other users; manual disabling remains available, and userspace restart fully applies it. No auto-kill daemon, polling loop, file renaming, or arbitrary app blacklist is installed.
 
 Speculative pages are reclaimable kernel filesystem cache, not a separately disableable SysMain service. Disabling predictive daemons does not eliminate all speculative pages. No useful verified force-compress control was found; no induced memory pressure or forced app eviction is implemented. Core account daemons and siriactionsd retain their existing critical warnings; feature names alone do not establish safe disabling.
 
-The storage driver advertises NVMe SMART capability, but read-only IOCreatePlugInInterfaceForService returned `0xe00002c7` on this device; lifetime writes/endurance/wear could not be obtained. The Memory & Storage sheet displays data-filesystem capacity, available and used space; unavailable health counters are not guessed. No terabyte-write lifetime or rated endurance is invented.
+The storage driver advertises NVMe SMART capability, but read-only IOCreatePlugInInterfaceForService returned `0xe00002c7` on this device; lifetime writes/endurance/wear could not be obtained. The old capacity section was removed in v1.0.5; current disk health uses on-demand ASP diagnostic reports. No terabyte-write lifetime or rated endurance is invented.
+
+## Audit follow-up and app revision (v1.0.6)
+
+Tools → Background UI now exposes PosterBoard and AccessibilityUIServer only. AccessibilityUIServer is **KEEP / Recommended On**, not capital NO; its builtin target is enabled. It remains freely switchable, including in Services. The tested phone retains its manual off override. Re-enable and restart userspace before using accessibility features. Installation never applies defaults. The config and IPA contain **506 targets: 320 off, 186 on**; biomed, syncdefaultsd and Messages dependencies remain enabled by default.
+
+Basic usage passed on the tested phone after host disabling and reboot. Remaining CoreDuet, graphics, preferences and account errors were not eliminated; no battery-life or net RAM improvement was established. See the iOS reference for the measured audit and its limits.
+
+Animation controls and their helper were removed from the app. The independently installed animation tweak is left active and managed outside this app. RAM remains memory-only. Disk write counters use grouped raw numbers and can be tapped for their meaning and conversion status. GB conversion remains unavailable: the ASP snapshot and installed diagnostic parser did not establish bytes per count; page size or generic NVMe units cannot substitute for that evidence. No guessed conversion is shipped.
+
+The unsupported absd Contacts description and related database links were removed. Its actual plist exports com.apple.absinthed and com.apple.absd; the broader private role remains undocumented here. Verified Contacts database links remain for contactsd and ABDatabaseDoctor.
