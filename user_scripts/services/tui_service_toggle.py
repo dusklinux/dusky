@@ -106,6 +106,10 @@ CORE_USER_DEFS = {
         "Hyprland Idle Daemon",
         "Hyprland's idle management daemon. Handles screen dimming, locking, and DPMS sleep states when you are away from the computer.",
     ),
+    "dusky_proximity.service": (
+        "Dusky Proximity Service",
+        "Ultra-efficient zero-fork Bluetooth proximity presence and automation daemon. Monitors RSSI of configured Bluetooth devices (smartband, watch, phone) to run custom actions on approach (wake displays, zero-fork hyprlock unlock) and departure (lock screen, pause media).",
+    ),
     "osd_lock.service": (
         "Lock Key OSD",
         "On-Screen Display service for hardware lock keys. Shows a visual pop-up when Caps Lock, Num Lock, or Scroll Lock is toggled.",
@@ -344,10 +348,9 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=2) as _fast_exec:
 # systemd engine, and their children keep their real unit keys and scopes.
 CORE_USER_SECTIONS = (
     ("Desktop & Session", (
-        "hyprsunset.service", "hypridle.service", "osd_lock.service",
-        "dusky_polkit.service", "dusky_clipboard.service", "dusky_vdagent.service",
-        "dusky_oom_shield.service",
-        "wireplumber.service",
+        "hyprsunset.service", "hypridle.service", "dusky_proximity.service",
+        "osd_lock.service", "dusky_polkit.service", "dusky_clipboard.service",
+        "dusky_vdagent.service", "dusky_oom_shield.service", "wireplumber.service",
     )),
     ("Remote Displays & Streaming", (
         "dusky_vnc_desktop.service", "dusky_vnc_display.service",

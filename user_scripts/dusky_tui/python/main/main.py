@@ -710,6 +710,10 @@ EXAMPLES:
             from python.engines.toml import TomlEngine
             return TomlEngine(config_path=config_path)
 
+        elif e_type == "bluetooth_proximity":
+            from python.engines.bluetooth_proximity import BluetoothProximityEngine
+            return BluetoothProximityEngine(config_path=config_path)
+
         elif e_type in ("kokoro", "dusky_kokoro"):
             from python.engines.kokoro import KokoroEngine
             return KokoroEngine(config_path=config_path)
@@ -751,7 +755,7 @@ EXAMPLES:
                 "[i] Supported engines are: 'lua', 'ini', 'tlp', 'bridged_ini', 'systemd', 'systemd_dns', 'systemd_power', 'hyprlang', "
                 "'trackpad', 'monitor', 'cmdline', 'systemd_boot', 'flatdotconfig', 'env', "
                 "'waybar', 'network', 'pkg_throttle', 'cpu_core', 'fstab', 'shell_fallback', 'json', "
-                "'dusky_sites', 'locale_gen', 'matugen', 'fontconfig', 'toml', 'kokoro', 'starship', 'hyprlock', 'ufw', 'gsettings'"
+                "'dusky_sites', 'locale_gen', 'matugen', 'fontconfig', 'toml', 'bluetooth_proximity', 'kokoro', 'starship', 'hyprlock', 'ufw', 'gsettings'"
             )
             sys.exit(1)
 

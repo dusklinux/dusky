@@ -1,0 +1,16 @@
+[Unit]
+Description=Dusky Bluetooth proximity automation
+After=graphical-session-pre.target
+PartOf=graphical-session.target
+
+[Service]
+Type=exec
+ExecStart="%h/.local/bin/dusky_proximity"
+Restart=on-failure
+RestartPreventExitStatus=2
+RestartSec=5
+# Leave an active screen locker running when the observer is restarted.
+KillMode=process
+
+[Install]
+WantedBy=graphical-session.target

@@ -1,0 +1,60 @@
+# Dusky Bluetooth automation. Restart the service after editing.
+# GLOBAL settings belong BEFORE [[devices]]. Each device block has its own settings.
+
+# false = connection hooks only, without scanning, proximity actions or auto-unlock.
+proximity_enabled = true
+transport = "le"                # le / bredr / auto; only used for proximity scans
+adapter_path = ""               # empty: select adapter automatically
+
+# Signal presets, not metres: 1 closest -> 10 weakest. Level 8 = -80/-70 dBm.
+# Remove proximity_level to use the explicit thresholds below instead.
+proximity_level = 8
+far_rssi = -80
+near_rssi = -70
+rssi_window = 5                  # odd 1..31; 1 disables median filtering
+consecutive_drops = 3
+far_hold_secs = 6               # weak-signal hold; also added to silence timeout
+near_hold_secs = 2
+sample_max_gap_secs = 10         # longer RSSI gaps reset strength hold evidence
+
+# far = run on_far after silence timeout + lock hold; hold = keep last proximity.
+# A silent nearby device can still trigger far. Connected wearables may go silent.
+signal_loss_action = "far"       # far / hold
+signal_timeout_secs = 120
+startup_grace_secs = 10
+return_cooldown_secs = 3
+
+# Connection hooks track an actual Bluetooth link TO THIS COMPUTER.
+# They do not infer a phone's presence from its connection to a watch or another host.
+connect_hold_secs = 0            # delay before reporting a stable connection
+disconnect_hold_secs = 2        # reconnect within this delay cancels departure hook
+run_initial_connection_hooks = false # true: also run hook for startup link state
+
+# Shell command or array; empty [] disables a hook. Commands within an event run
+# in order, so put long-running commands last or background them explicitly.
+# Locking is the default departure action; replace this list for other automation.
+on_far = ['if [ -x "$HOME/user_scripts/hyprlock/lock.sh" ]; then exec "$HOME/user_scripts/hyprlock/lock.sh"; else exec hyprlock; fi']
+on_near = []
+on_connect = []
+on_disconnect = []
+# Optional scripts are created alongside this file in hooks/on_EVENT.sh.
+# Example: on_connect = ['"${XDG_CONFIG_HOME:-$HOME/.config}/dusky/settings/bluetooth_proximity/hooks/on_connect.sh"']
+direct_hyprlock_signal = true     # proximity approach only; false disables auto-unlock
+wake_display = true              # proximity approach only
+dpms_settle_ms = 200
+notifications = true
+
+# No machine/device identity is shipped. Fill in a MAC and enable it to activate.
+[[devices]]
+mac = ""
+name = "Bluetooth Device"
+enabled = false
+proximity = true                 # false: this device only contributes connection hooks
+# Optional per-device overrides (otherwise inherit globals):
+# proximity_level = 6
+# far_rssi = -75                # explicit per-device thresholds override its preset
+# near_rssi = -65
+# signal_timeout_secs = 180
+# on_connect = ['printf "Connected: %s\n" "$PROXIMITY_DEVICE_NAME"']
+# on_disconnect = ['"$HOME/user_scripts/my_phone_disconnected.sh"']
+# Explicit [] overrides/disables a global hook for this device.

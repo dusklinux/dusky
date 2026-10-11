@@ -302,6 +302,7 @@ TLP currently links its implementation because it has no separate engine doc.
 | `matugen_presets` / `matugen_color` / `color_presets` / `theme_presets` | [engines/matugen_presets.md](./engines/matugen_presets.md) | `MatugenPresetsEngine` | `~/.config/dusky/settings/dusky_theme/state.conf` | scope `DEFAULT`; theme state, color presets, favorites, and theme-controller actions |
 | `fontconfig` | [engines/fontconfig.md](./engines/fontconfig.md) | `FontconfigEngine` | `~/.config/fontconfig/conf.d/99-dusky-fonts.conf` | family aliases + render props |
 | `toml` / `toml_engine` | [engines/toml.md](./engines/toml.md) | `TomlEngine` | any TOML | dotted table path, deep nesting |
+| `bluetooth_proximity` | [engines/bluetooth_proximity.md](./engines/bluetooth_proximity.md) | `BluetoothProximityEngine` | deployed Bluetooth automation TOML | globals, indexed `devices/N`, and `controls` triggers |
 | `kokoro` / `dusky_kokoro` | [engines/kokoro.md](./engines/kokoro.md) | `KokoroEngine` | `~/.config/dusky-kokoro/config.toml` | TOML scopes plus virtual voice-blend controls and daemon telemetry; inherits `TomlEngine` |
 | `systemd_dns` | [engines/systemd_dns.md](./engines/systemd_dns.md) | `SystemdDnsEngine` | `/etc/systemd/resolved.conf.d/99-dns-tui.conf` | fixed `[Resolve]` keys |
 | `starship` | [engines/starship.md](./engines/starship.md) | `StarshipEngine` | `~/.config/starship.toml` | scope ignored; keys `active_prompt` (preset selector), `custom_prompt_name` (string), `action_save_custom` (trigger) — atomic whole-file TOML swap, hash-matched state file |
