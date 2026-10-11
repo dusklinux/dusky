@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import NoReturn
 
 # ═══════════════════════════════════ configuration ═══════════════════════════════════
-VERSION = "8.0.5-py314-2026.10"
+VERSION = "8.0.6-py314-2026.10"
 REPO_NAME = "archrepo"
 DB_NAME = f"{REPO_NAME}.db.tar.zst"
 FILES_NAME = f"{REPO_NAME}.files.tar.zst"
@@ -358,8 +358,8 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         "releng ISO (x86_64 only). Re-executes itself as root through sudo.",
         epilog=f"actions:\n{actions}\n\n"
         "environment:\n"
-        "  DUSKY_DOTFILES_PIN   commit/ref of github.com/dusklinux/dusky to inject into /etc/skel (default: main)\n"
-        "  DUSKY_DOTFILES_SHA   expected dotfiles HEAD (full sha or prefix); mismatch aborts\n\n"
+        "  DUSKY_DOTFILES_PIN   build branch/tag/commit of github.com/dusklinux/dusky (default: main; --ref takes precedence)\n"
+        "  DUSKY_DOTFILES_SHA   expected build HEAD (full sha or prefix); mismatch aborts\n\n"
         f"version {VERSION}",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         suggest_on_error=True,
@@ -371,8 +371,11 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
                         help=f"ISO workspace base (default: {ZRAM_CANDIDATE} if mounted, else /tmp)")
     parser.add_argument("--output-dir", type=Path, metavar="DIR",
                         help=f"ISO output directory (default: {ZRAM_CANDIDATE} if mounted, else ~/dusky_isos)")
+    parser.add_argument("--ref", metavar="REF",
+                        help="build branch, tag, or full commit SHA (default: DUSKY_DOTFILES_PIN or main)")
     parser.add_argument("--source-dir", type=Path, metavar="DIR",
-                        help="installer payload (default: ~/user_scripts/arch_iso_scripts/offline_iso)")
+                        help="explicit installer payload override (default: selected Git checkout; "
+                             "dotfiles and recipes still come from --ref)")
     parser.add_argument("--rebuild-local", action="store_true",
                         help="rebuild all local ISO recipes even when cached inputs match")
     parser.add_argument("--auto", action="store_true", help="non-interactive; default action official_iso")
@@ -1962,6 +1965,7 @@ def aur_phase(db: IsolatedDB, master: Sequence[str], repo: Path, official: Path,
 class IsoConfig:
     workspace: Path
     source_dir: Path
+    checkout: Path
     official_repo: Path
     aur_repo: Path | None
     final_dest: Path
@@ -2062,6 +2066,48 @@ def configure_live_hooks(cfg: IsoConfig) -> None:
     ok("live hooks")
 
 
+def checkout_build_source(ref: str | None) -> Path:
+    """Resolve one remote revision for all phases; never use or alter the host checkout."""
+    info("Resolving build source")
+    tmp = make_tempdir("dusky-dots-")
+    repo = tmp / "dusky"
+    git_env = os.environ | {"GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never", "GIT_ASKPASS": "/bin/true"}
+    pin = (ref if ref is not None else os.environ.get("DUSKY_DOTFILES_PIN", "")).strip()
+    expect_sha = os.environ.get("DUSKY_DOTFILES_SHA", "").strip().lower()
+    is_sha = bool(re.fullmatch(r"(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})", pin))
+    clone_branch = pin if (pin and not is_sha) else "main"
+    detail = ""
+    for attempt in range(1, CLONE_ATTEMPTS + 1):
+        remove_tree(repo)
+        try:
+            r = run(["git", "clone", "--quiet", "--depth", "1", "--branch", clone_branch,
+                     "https://github.com/dusklinux/dusky", repo],
+                    env=git_env, capture=True, merge=True, timeout=CLONE_TIMEOUT_S)
+            if r.returncode == 0:
+                break
+            detail = (r.stdout or "").strip()[-500:]
+        except subprocess.TimeoutExpired:
+            detail = f"timed out after {CLONE_TIMEOUT_S}s"
+        if attempt < CLONE_ATTEMPTS:
+            backoff(attempt)
+    else:
+        die(f"git clone dusky failed: {detail}")
+    if pin and is_sha:
+        run(["git", "-C", repo, "fetch", "--quiet", "--depth", "1", "origin", pin],
+            env=git_env, capture=True, check=True, timeout=CLONE_TIMEOUT_S)
+        run(["git", "-C", repo, "checkout", "--quiet", "--detach", "FETCH_HEAD"],
+            env=git_env, capture=True, check=True)
+    head_sha = run(["git", "-C", repo, "rev-parse", "HEAD"], env=git_env,
+                   capture=True, check=True).stdout.strip().lower()
+    if expect_sha and not head_sha.startswith(expect_sha):
+        die(f"build SHA mismatch: got {head_sha}, expected {expect_sha}")
+    if head_sha:
+        ref_label = f"pin '{pin}'" if is_sha else f"ref '{clone_branch}'"
+        step(f"build source {ref_label} (HEAD {head_sha[:12]})")
+
+    return repo
+
+
 def inject_dotfiles(cfg: IsoConfig) -> None:
     info("Injecting dotfiles")
     skel = cfg.profile_dir / "airootfs" / "etc" / "skel"
@@ -2077,72 +2123,35 @@ def inject_dotfiles(cfg: IsoConfig) -> None:
         ptxt = re.sub(r"^\s*grml-zsh-config\s*$", "", pkg_file.read_text(encoding="utf-8"), flags=re.MULTILINE)
         pkg_file.write_text(ptxt, encoding="utf-8")
 
-    tmp = make_tempdir("dusky-dots-")
-    repo = tmp / "dusky"
+    repo = cfg.checkout
     git_env = os.environ | {"GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never", "GIT_ASKPASS": "/bin/true"}
-    pin = os.environ.get("DUSKY_DOTFILES_PIN", "").strip()
-    expect_sha = os.environ.get("DUSKY_DOTFILES_SHA", "").strip().lower()
-    is_sha = bool(re.fullmatch(r"[0-9a-fA-F]{7,64}", pin))
-    clone_branch = pin if (pin and not is_sha) else "main"
-    try:
-        detail = ""
-        for attempt in range(1, CLONE_ATTEMPTS + 1):
-            remove_tree(repo)
+    repo_real = repo.resolve()
+    for item in repo.iterdir():
+        if item.name == ".git":
+            continue
+        if item.is_symlink():  # a top-level link may point outside the checkout (host files!)
             try:
-                r = run(["git", "clone", "--quiet", "--depth", "1", "--branch", clone_branch,
-                         "https://github.com/dusklinux/dusky", repo],
-                        env=git_env, capture=True, merge=True, timeout=CLONE_TIMEOUT_S)
-                if r.returncode == 0:
-                    break
-                detail = (r.stdout or "").strip()[-500:]
-            except subprocess.TimeoutExpired:
-                detail = f"timed out after {CLONE_TIMEOUT_S}s"
-            if attempt < CLONE_ATTEMPTS:
-                backoff(attempt)
-        else:
-            die(f"git clone dusky failed: {detail}")
-        if pin and is_sha:
-            run(["git", "-C", repo, "fetch", "--quiet", "--depth", "1", "origin", pin],
-                env=git_env, capture=True, check=True, timeout=CLONE_TIMEOUT_S)
-            run(["git", "-C", repo, "checkout", "--quiet", "--detach", "FETCH_HEAD"],
-                env=git_env, capture=True, check=True)
-        head_sha = run(["git", "-C", repo, "rev-parse", "HEAD"], env=git_env,
-                       capture=True, check=True).stdout.strip().lower()
-        if expect_sha and not head_sha.startswith(expect_sha):
-            die(f"dotfiles SHA mismatch: got {head_sha}, expected {expect_sha}")
-        if head_sha:
-            ref_label = f"pin '{pin}'" if (pin and is_sha) else f"branch '{clone_branch}'"
-            step(f"dotfiles {ref_label} (HEAD {head_sha[:12]})")
-
-        repo_real = repo.resolve()
-        for item in repo.iterdir():
-            if item.name == ".git":
-                continue
-            if item.is_symlink():  # a top-level link may point outside the checkout (host files!)
-                try:
-                    if not item.resolve(strict=True).is_relative_to(repo_real):
-                        warn(f"skipping symlink escaping the checkout: {item.name}")
-                        continue
-                except OSError:
-                    warn(f"skipping dangling symlink: {item.name}")
+                if not item.resolve(strict=True).is_relative_to(repo_real):
+                    warn(f"skipping symlink escaping the checkout: {item.name}")
                     continue
-            if item.is_dir():
-                shutil.copytree(item, skel / item.name, symlinks=False, dirs_exist_ok=True,
-                                ignore_dangling_symlinks=True)
-            else:
-                shutil.copy2(item, skel / item.name)
+            except OSError:
+                warn(f"skipping dangling symlink: {item.name}")
+                continue
+        if item.is_dir():
+            shutil.copytree(item, skel / item.name, symlinks=False, dirs_exist_ok=True,
+                            ignore_dangling_symlinks=True)
+        else:
+            shutil.copy2(item, skel / item.name)
 
-        # Keep Git metadata alongside the flattened work tree. useradd copies
-        # this into ~/dusky, so offline installations have a usable bare repo.
-        bare = skel / "dusky"
-        run(["git", "clone", "--quiet", "--bare", "--no-hardlinks", repo, bare],
-            env=git_env, capture=True, check=True)
-        run(["git", "--git-dir", bare, "remote", "set-url", "origin", "https://github.com/dusklinux/dusky"],
-            env=git_env, capture=True, check=True)
-        run(["git", "--git-dir", bare, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"],
-            env=git_env, capture=True, check=True)
-    finally:
-        remove_tree(tmp)
+    # Keep Git metadata alongside the flattened work tree. useradd copies
+    # this into ~/dusky, so offline installations have a usable bare repo.
+    bare = skel / "dusky"
+    run(["git", "clone", "--quiet", "--bare", "--no-hardlinks", repo, bare],
+        env=git_env, capture=True, check=True)
+    run(["git", "--git-dir", bare, "remote", "set-url", "origin", "https://github.com/dusklinux/dusky"],
+        env=git_env, capture=True, check=True)
+    run(["git", "--git-dir", bare, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"],
+        env=git_env, capture=True, check=True)
 
     marker = "# --- AUTOMATED ISO INJECTION: EDITOR & YAZI WRAPPER ---"
     yazi_fn = (
@@ -2186,7 +2195,7 @@ def inject_dotfiles(cfg: IsoConfig) -> None:
     ok(f"dotfiles injected ({len(perms)} executable(s) registered)")
 
 
-def tree_digest(root: Path, *, permissions: bool = True) -> str:
+def tree_digest(root: Path) -> str:
     """Hash the tree as copytree(symlinks=False) sees it; ignore timestamps and ownership."""
     digest = hashlib.sha256()
 
@@ -2194,8 +2203,7 @@ def tree_digest(root: Path, *, permissions: bool = True) -> str:
         resolved = path.resolve(strict=True)
         st = path.stat()
         digest.update(os.fsencode(relative) + b"\0")
-        if permissions:
-            digest.update(f"{st.st_mode & 0o7777:o}\0".encode())
+        digest.update(f"{st.st_mode & 0o7777:o}\0".encode())
         if path.is_dir():
             if resolved in ancestors:
                 die(f"cyclic source directory link: {path}")
@@ -2236,17 +2244,10 @@ def build_local_packages(cfg: IsoConfig, user: RealUser) -> None:
     """Reuse verified builds with matching inputs; build only missing or changed recipes."""
     skel = cfg.profile_dir / "airootfs" / "etc" / "skel"
     recipes_dir = skel / "user_scripts" / "arch_iso_scripts" / "offline_iso" / "iso_maker" / "python" / "dusky_packages_compile"
-    local_dir = cfg.source_dir / "iso_maker" / "python" / "dusky_packages_compile"
-    local_recipes = sorted(p for p in local_dir.iterdir() if p.is_dir() and (p / "recipe.toml").is_file()) \
-        if local_dir.is_dir() else []
+    # Recipes and their source trees belong to the selected revision, regardless
+    # of the host branch or an explicit installer payload override.
     recipes = sorted(p for p in recipes_dir.iterdir() if p.is_dir() and (p / "recipe.toml").is_file()) \
         if recipes_dir.is_dir() else []
-    if [p.name for p in local_recipes] != [p.name for p in recipes]:
-        die("local package recipes differ from the injected Git checkout; commit and push the recipes")
-    for local, staged in zip(local_recipes, recipes, strict=True):
-        # Git does not preserve arbitrary local permissions or directory modes.
-        if tree_digest(local, permissions=False) != tree_digest(staged, permissions=False):
-            die(f"{local.name}: recipe files differ from the injected Git checkout; commit and push them")
     names: list[str] = []
     artifacts: list[tuple[str, str]] = []
     cache = load_custom_builds(cfg.aur_repo)
@@ -2644,7 +2645,7 @@ def iso_phase(cfg: IsoConfig, user: RealUser) -> tuple[Path, str]:
     for tool in ("mkarchiso", "git"):
         require_tool(tool)
     workspace = cfg.workspace.resolve()
-    for path in (cfg.source_dir, cfg.official_repo, cfg.aur_repo, cfg.final_dest):
+    for path in (cfg.source_dir, cfg.checkout, cfg.official_repo, cfg.aur_repo, cfg.final_dest):
         if path is not None and path.resolve().is_relative_to(workspace):
             die(f"ISO workspace would delete an input or output directory: {path}")
     if workspace.is_relative_to(cfg.source_dir.resolve()):
@@ -2712,12 +2713,11 @@ def main(args: argparse.Namespace) -> None:
 
     official_repo = (args.official_repo or DEFAULT_OFFICIAL).expanduser()
     aur_repo = (args.aur_repo or DEFAULT_AUR).expanduser()
-    source_dir = (args.source_dir or user.home / "user_scripts" / "arch_iso_scripts" / "offline_iso").expanduser()
     if interactive and do_official:
         official_repo = prompt_path("Official repo path", official_repo)
     if interactive and do_aur:
         aur_repo = prompt_path("AUR repo path", aur_repo)
-    official_repo, aur_repo, source_dir = (p.resolve() for p in (official_repo, aur_repo, source_dir))
+    official_repo, aur_repo = (p.resolve() for p in (official_repo, aur_repo))
 
     if official_repo == aur_repo:
         die("official and AUR repositories must use different directories (their pruning rules differ)")
@@ -2730,6 +2730,12 @@ def main(args: argparse.Namespace) -> None:
         workspace_base = ZRAM_CANDIDATE if use_zram else Path("/tmp")
 
     start = time.monotonic()
+    checkout = checkout_build_source(args.ref)
+    source_dir = (args.source_dir.expanduser().resolve() if args.source_dir is not None
+                  else checkout / "user_scripts" / "arch_iso_scripts" / "offline_iso")
+    if not source_dir.is_dir():
+        die(f"installer payload directory missing: {source_dir}")
+    step(f"installer payload: {source_dir}")
     iso: tuple[Path, str] | None = None
     db: IsolatedDB | None = None
     try:
@@ -2750,6 +2756,7 @@ def main(args: argparse.Namespace) -> None:
         cfg = IsoConfig(
             workspace=workspace_base.expanduser().resolve() / "dusky_iso",
             source_dir=source_dir,
+            checkout=checkout,
             official_repo=official_repo,
             aur_repo=aur_repo,
             rebuild_local=args.rebuild_local,
