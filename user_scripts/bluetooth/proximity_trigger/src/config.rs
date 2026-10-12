@@ -23,9 +23,8 @@ impl CommandList {
         };
         commands
             .iter()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(str::to_owned)
+            .filter(|s| !s.trim().is_empty())
+            .cloned()
             .collect()
     }
 }
@@ -406,12 +405,68 @@ pub fn mac_to_dbus_suffix(mac: &str) -> String {
 mod tests {
     use super::*;
     #[test]
+    fn shell_command_whitespace_is_preserved_exactly() {
+        let command = "printf '%s' continued\\\n";
+        let commands = CommandList::Multiple(vec![" \n\t".into(), command.into()]).to_vec();
+        assert_eq!(commands, [command]);
+        let output = std::process::Command::new("/bin/sh")
+            .args(["-c", &commands[0]])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"continued");
+    }
+    #[test]
+    fn concurrent_initialization_publishes_complete_files_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("settings/config.toml");
+        let barrier = std::sync::Barrier::new(16);
+        std::thread::scope(|scope| {
+            let barrier = &barrier;
+            for _ in 0..16 {
+                let path = &path;
+                scope.spawn(move || {
+                    barrier.wait();
+                    for _ in 0..20 {
+                        Config::initialize(path).unwrap();
+                    }
+                });
+            }
+        });
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            include_str!("../config.toml")
+        );
+        Config::load(Some(&path)).unwrap().validate().unwrap();
+        for event in ["far", "near", "connect", "disconnect"] {
+            assert_eq!(
+                std::fs::read_to_string(
+                    path.parent().unwrap().join(format!("hooks/on_{event}.sh"))
+                )
+                .unwrap(),
+                include_str!("../hook-example.sh")
+            );
+        }
+        assert_eq!(
+            std::fs::read_dir(path.parent().unwrap()).unwrap().count(),
+            2
+        );
+    }
+    #[test]
     fn reject_misplaced_and_unknown_settings() {
         assert!(
             toml::from_str::<Config>("[[devices]]\nmac='AA:BB:CC:DD:EE:FF'\ntransport='le'")
                 .is_err()
         );
         assert!(toml::from_str::<Config>("signal_timout_secs=8").is_err());
+    }
+    #[test]
+    fn toml_1_1_inline_tables_match_the_python_editor_parser() {
+        let c: Config =
+            toml::from_str("devices = [{\nmac = 'AA:BB:CC:DD:EE:FF',\nenabled = true,\n}]\n")
+                .unwrap();
+        c.validate().unwrap();
+        assert_eq!(c.active_devices().len(), 1);
     }
     #[test]
     fn presets_are_monotonic() {

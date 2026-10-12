@@ -206,6 +206,9 @@ impl StateTracker {
     pub fn connection_actions(&mut self, config: &Config) -> Vec<(String, bool)> {
         self.connections_at(config, Instant::now())
     }
+    pub fn has_pending_connections(&self) -> bool {
+        self.devices.values().any(|d| d.connection_since.is_some())
+    }
     fn connections_at(&mut self, config: &Config, now: Instant) -> Vec<(String, bool)> {
         let mut actions = Vec::new();
         for (key, d) in &mut self.devices {
@@ -360,6 +363,110 @@ mod tests {
         };
         let now = Instant::now();
         (StateTracker::new_at(&c.active_devices(), now), c, now)
+    }
+    #[test]
+    fn stress_mixed_devices_noise_gaps_heartbeats_and_resets() {
+        let mut departures = 0;
+        let mut returns = 0;
+        for window in [1, 5, 31] {
+            for policy in [SignalLossAction::Far, SignalLossAction::Hold] {
+                let (_, mut c, start) = fixture();
+                c.rssi_window = window;
+                c.signal_loss_action = policy;
+                c.signal_timeout_secs = 3;
+                c.sample_max_gap_secs = 2;
+                c.lock_hold_secs = 1;
+                c.unlock_hold_secs = 1;
+                c.lock_cooldown_secs = 1;
+                c.devices = vec![
+                    DeviceEntry {
+                        mac: "AA:BB:CC:DD:EE:FF".into(),
+                        ..DeviceEntry::default()
+                    },
+                    DeviceEntry {
+                        mac: "11:22:33:44:55:66".into(),
+                        ..DeviceEntry::default()
+                    },
+                    DeviceEntry {
+                        mac: "00:11:22:33:44:55".into(),
+                        proximity: false,
+                        ..DeviceEntry::default()
+                    },
+                ];
+                let keys = [KEY, "dev_11_22_33_44_55_66", "dev_00_11_22_33_44_55"];
+                let mut tracker = StateTracker::new_at(&c.active_devices(), start);
+                let mut random = 7u64;
+                let mut elapsed = Duration::ZERO;
+                for index in 0..100_000 {
+                    random = random.wrapping_mul(6364136223846793005).wrapping_add(1);
+                    elapsed += Duration::from_millis(if index % 997 == 0 { 4000 } else { 20 });
+                    let now = start + elapsed;
+                    if index % 1531 == 0 {
+                        tracker.reset_at(now);
+                    }
+                    let key = keys[(random % 3) as usize];
+                    let rssi = if index % 113 == 0 {
+                        127
+                    } else {
+                        (if index / 500 % 2 == 0 { -50 } else { -100 })
+                            + ((random >> 8) % 11) as i16
+                    };
+                    if index % 17 == 0 {
+                        tracker.heartbeat_at(KEY, now);
+                    }
+                    for timeout in [false, true] {
+                        let previous = tracker.current_state;
+                        let action = if timeout {
+                            tracker.timeouts_at(&c, now)
+                        } else {
+                            tracker.sample_at(key, rssi, &c, now)
+                        };
+                        match action {
+                            ActionRequired::Far { .. } => {
+                                departures += 1;
+                                assert_ne!(previous, ProximityState::Far);
+                                assert!(
+                                    tracker
+                                        .devices
+                                        .values()
+                                        .filter(|d| d.config.proximity)
+                                        .all(|d| d.state == ProximityState::Far)
+                                );
+                            }
+                            ActionRequired::Near { mac, rssi, .. } => {
+                                returns += 1;
+                                assert_eq!(previous, ProximityState::Far);
+                                let d = &tracker.devices[&mac_to_dbus_suffix(&mac)];
+                                assert!(d.config.proximity);
+                                assert!(rssi >= c.thresholds(&d.config).near);
+                                assert!(
+                                    now.duration_since(d.last_sample.unwrap())
+                                        <= Duration::from_secs(c.sample_max_gap_secs)
+                                );
+                                assert!(
+                                    now.duration_since(d.near_since.unwrap())
+                                        >= Duration::from_secs(c.unlock_hold_secs)
+                                );
+                            }
+                            ActionRequired::None => {}
+                        }
+                    }
+                    for d in tracker.devices.values() {
+                        assert!(d.samples.len() <= window);
+                        if let Some(filtered) = d.filtered_rssi {
+                            let mut sorted: Vec<_> = d.samples.iter().copied().collect();
+                            sorted.sort_unstable();
+                            assert_eq!(filtered, sorted[sorted.len() / 2]);
+                        }
+                        if !d.config.proximity {
+                            assert!(d.samples.is_empty());
+                            assert_eq!(d.state, ProximityState::Unknown);
+                        }
+                    }
+                }
+            }
+        }
+        assert!(departures > 100 && returns > 100);
     }
     fn sample(
         t: &mut StateTracker,
@@ -590,6 +697,7 @@ mod tests {
             vec![(KEY.into(), false)]
         );
         assert!(t.connections_at(&c, n + Duration::from_secs(4)).is_empty());
+        assert!(!t.has_pending_connections());
     }
     #[test]
     fn brief_disconnect_and_connect_are_debounced_without_reset_by_duplicates() {

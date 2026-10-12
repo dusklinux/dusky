@@ -1,5 +1,6 @@
 """Dusky Bluetooth TOML editor: indexed devices, hooks and native validation."""
 import tomllib
+lazy import os
 from pathlib import Path
 lazy import subprocess
 lazy import tempfile
@@ -7,7 +8,7 @@ lazy import tempfile
 from python.engines.toml import TomlEngine
 from python.shared.config_io import atomic_write, boolean, read_text
 
-_SOURCE = Path(__file__).resolve().parents[3] / 'bluetooth/proximity_lock'
+_SOURCE = Path(__file__).resolve().parents[3] / 'bluetooth/proximity_trigger'
 HOOKS = frozenset({'on_far', 'on_near', 'on_connect', 'on_disconnect'})
 OPTIONAL = frozenset({'proximity_level', 'far_rssi', 'near_rssi', 'signal_timeout_secs'})
 ALIASES = frozendict({
@@ -53,15 +54,26 @@ def canonical(data: dict) -> dict:
 def initialize(path: Path) -> None:
     """Provision only missing files from the same templates as the daemon."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    if not path.exists():
-        atomic_write(path, (_SOURCE / 'config.toml').read_text(encoding='utf-8'), None)
+    _write_new(path, _SOURCE / 'config.toml', 0o644)
     hooks = path.parent / 'hooks'
     hooks.mkdir(exist_ok=True)
     for event in ['far', 'near', 'connect', 'disconnect']:
         hook = hooks / f'on_{event}.sh'
-        if not hook.exists():
-            atomic_write(hook, (_SOURCE / 'hook-example.sh').read_text(encoding='utf-8'), None)
-            hook.chmod(0o755)
+        _write_new(hook, _SOURCE / 'hook-example.sh', 0o755)
+
+
+def _write_new(path: Path, source: Path, mode: int) -> None:
+    """Publish a complete inode without overwriting a concurrent creator."""
+    if path.exists():
+        return
+    with tempfile.NamedTemporaryFile(dir=path.parent) as stream:
+        stream.write(source.read_bytes())
+        stream.flush()
+        os.fchmod(stream.fileno(), mode)
+        try:
+            os.link(stream.name, path)
+        except FileExistsError:
+            pass
 
 
 class BluetoothProximityEngine(TomlEngine):
@@ -116,7 +128,7 @@ class BluetoothProximityEngine(TomlEngine):
     def validate_text(text: str) -> None:
         binary = Path.home() / '.local/bin/dusky_proximity'
         if not binary.is_file():
-            raise ValueError('Run proximity_lock/setup.sh first to install the native configuration validator.')
+            raise ValueError('Run proximity_trigger/setup.sh first to install the native configuration validator.')
         with tempfile.TemporaryDirectory(prefix='dusky-proximity-check-') as directory:
             path = Path(directory) / 'config.toml'
             path.write_text(text, encoding='utf-8')

@@ -15,8 +15,8 @@ lazy from python.engines.bluetooth_proximity import canonical, initialize
 
 ENGINE_TYPE = 'bluetooth_proximity'
 TARGET_FILE = str(Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config') / 'dusky/settings/bluetooth_proximity/config.toml')
-APP_TITLE = 'Dusky Bluetooth Automation'
-DEFAULT_MODE = 'auto'
+APP_TITLE = 'Bluetooth Proximity Trigger'
+DEFAULT_MODE = 'batch'
 THEME_FILE = '~/.config/matugen/generated/dusky_tui.json'
 ENABLE_USER_PRESETS = False
 _BINARY = Path.home() / '.local/bin/dusky_proximity'
@@ -84,7 +84,7 @@ SCHEMA = {
         control('Validate saved configuration', 'validate', 'Queue a native --check-config check; Ctrl+S runs it. Does not scan, replace the file or execute configured hooks.', group='Service'),
         control('Restart service', 'restart', 'Save pending edits first. Queue validation and restart, then Ctrl+S runs it. Does not change service enablement.', group='Service'),
         item('Live RSSI dry run', 'action_test', shlex.join([str(_BINARY), '--config', TARGET_FILE, '--test']), 'Observe live measurements without actions from this test process. An independently running service remains active. Ctrl+C ends the test.', group='Diagnostics', type_='action', force_interactive=True),
-        item('Scan known/live devices', 'action_scan', shlex.join([str(_BINARY), '--scan']), 'Five-second discovery scan with live RSSI and known names. Use the displayed MAC in a device entry.', group='Diagnostics', type_='action', force_interactive=True),
+        item('Scan known/live devices', 'action_scan', shlex.join([str(_BINARY), '--config', TARGET_FILE, '--scan']), 'Five-second discovery scan using the saved adapter and transport, with live RSSI and known names. Use the displayed MAC in a device entry.', group='Diagnostics', type_='action', force_interactive=True),
     ],
 }
 

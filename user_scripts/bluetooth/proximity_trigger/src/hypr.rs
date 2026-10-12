@@ -146,7 +146,8 @@ pub fn execute_script_series(
         };
         for script in scripts {
             if event == "far"
-                && (script == "hyprlock" || script == crate::config::DEFAULT_LOCK_COMMAND)
+                && (script.trim() == "hyprlock"
+                    || script.trim() == crate::config::DEFAULT_LOCK_COMMAND)
                 && is_hyprlock_running()
             {
                 eprintln!("[hyprlock] Already running; skipping default lock command");
@@ -177,6 +178,56 @@ pub fn execute_script_series(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn hook_failures_preserve_order_and_other_events_can_overlap() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("events");
+        let ready = tmp.path().join("ready");
+        let release = tmp.path().join("release");
+        execute_script_series(
+            vec![
+                format!(
+                    "printf first >> '{}'; touch '{}'; i=0; while [ ! -e '{}' ] && [ \"$i\" -lt 200 ]; do sleep 0.01; i=$((i+1)); done; exit 7",
+                    path.display(),
+                    ready.display(),
+                    release.display()
+                ),
+                format!("printf last >> '{}'", path.display()),
+            ],
+            "connect",
+            "AA:BB:CC:DD:EE:FF".into(),
+            "Phone with spaces".into(),
+            None,
+        );
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while !ready.exists() {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .unwrap();
+        execute_script_series(
+            vec![format!(
+                "printf middle >> '{}'; touch '{}'",
+                path.display(),
+                release.display()
+            )],
+            "disconnect",
+            "AA:BB:CC:DD:EE:FF".into(),
+            "Phone with spaces".into(),
+            None,
+        );
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                if fs::read_to_string(&path).is_ok_and(|s| s == "firstmiddlelast") {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .unwrap();
+    }
     #[test]
     fn stable_pidfd_signals_only_its_child_and_detects_exit() {
         use std::os::unix::process::ExitStatusExt;

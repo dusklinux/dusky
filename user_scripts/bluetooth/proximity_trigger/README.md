@@ -7,7 +7,7 @@ in TOML; phones, beacons, headsets and wearables can have different connection h
 ## Install on a fresh system
 
 ```bash
-~/user_scripts/bluetooth/proximity_lock/setup.sh
+~/user_scripts/bluetooth/proximity_trigger/setup.sh
 ```
 
 This downloads missing dependencies from crates.io, builds the versions in
@@ -55,10 +55,29 @@ Hyprland socket exists, display waking can discover it without the instance sign
 Configuration errors exit with status 2 and stop automatic retries; Bluetooth/bus
 failures are retried by systemd. Restart after correcting the configuration.
 
+With an adapter present but powered off, the daemon sleeps on D-Bus events:
+proximity timers and periodic health polling are paused, and startup does not
+retry discovery. Pending connection hooks finish their debounce before timers
+sleep. A power-on event reacquires discovery and starts fresh signal evidence.
+Radio-off silence never triggers departure. Adapter removal or BlueZ owner loss
+restarts observation through systemd. `--scan` requires a powered radio.
+Changes to another client's scan filter can briefly interrupt controller discovery.
+An owned discovery session gets five seconds to settle before forced recovery;
+stale proximity evidence is cleared during that interruption. Persistent bus or
+controller failures still use the service's normal restart policy.
+Bluetooth methods allow up to ten seconds for a reply, including slow controller
+discovery transitions. A stalled backend therefore takes longer to report an
+error; failures identify the operation that failed.
+Discovery changes from the daemon, scan and test commands are serialized using
+a shared file lock. This avoids overlapping pending BlueZ discovery replies.
+The lock is released automatically on process exit; it is never held while
+observing devices or sleeping with the radio off. Competing discovery changes
+wait up to 30 seconds. Other applications do not participate in this lock.
+
 ## Configure with the Dusky TUI
 
 ```bash
-~/user_scripts/bluetooth/proximity_lock/tui_dusky_proximity.py
+~/user_scripts/bluetooth/proximity_trigger/tui_dusky_proximity.py
 ```
 
 The editor targets the deployed TOML under `${XDG_CONFIG_HOME:-$HOME/.config}`.
@@ -68,6 +87,8 @@ daemon with `setup.sh` first: saves use its native `--check-config` validator.
 Ctrl+S commits a validated batch; the Service tab validates/restarts the saved
 configuration. Restart is explicit. Invalid batches and stale file writes are rejected.
 Device-management and Validate/Restart buttons queue operations; Ctrl+S executes them.
+The editor starts in batch mode so MAC, thresholds and enablement can be validated
+together. Its scan action uses the saved adapter and transport.
 
 In Commands, enter a shell command or TOML array of strings. Empty global hooks
 and `[]` disable commands. Empty device overrides inherit global hooks; device
@@ -185,6 +206,7 @@ Use live measurements to select thresholds and timers for the actual device:
 or display commands. An independently running service remains active. `--scan`
 shows cached names/pairing status but labels only readings received during its
 five-second scan as live RSSI. Scan can use `--adapter` and `--transport` overrides.
+Scan, test and validation modes are mutually exclusive.
 
 Any confirmed near proximity target maintains aggregate presence. All participating
 targets must be confirmed far/absent before departure. Connection-only targets do
@@ -209,7 +231,9 @@ Empty arrays disable hooks. The default `on_far` locks through the existing Dusk
 lock script if present, otherwise through `hyprlock`. For custom proximity automation,
 replace the hooks and disable `direct_hyprlock_signal`/`wake_display` if unwanted.
 
-Commands are passed unchanged to `/bin/sh -c`. Quote paths and use literal `$HOME`:
+Commands are passed unchanged to `/bin/sh -c`. Whitespace-only commands are skipped;
+meaningful leading/trailing whitespace, including continued newlines, is preserved.
+Quote paths and use literal `$HOME`:
 
 ```toml
 on_far = ['playerctl pause', '"$HOME/user_scripts/hyprlock/lock.sh"']
@@ -240,20 +264,26 @@ specify a canonical key and its alias together.
 
 Keep `Cargo.lock` in the source distribution. Builds use `--locked`, so a build cannot
 silently change dependency versions, and reuse Cargo's normal download cache.
+Rust and Python both parse TOML 1.1. Startup discards queued changes already covered
+by its initial BlueZ snapshot, preventing old connection events from being replayed.
 Builds use a unique temporary directory and atomic executable replacement. `/tmp`
 may be RAM or disk; there is no requirement for a particular mount/filesystem.
 Include `hook-example.sh` in the source distribution for configuration initialization.
 
 ```bash
-cargo test --locked --manifest-path ~/user_scripts/bluetooth/proximity_lock/Cargo.toml
-cargo clippy --locked --all-targets --manifest-path ~/user_scripts/bluetooth/proximity_lock/Cargo.toml -- -D warnings
-shellcheck ~/user_scripts/bluetooth/proximity_lock/{build,setup,hook-example}.sh
+cargo test --locked --manifest-path ~/user_scripts/bluetooth/proximity_trigger/Cargo.toml
+cargo clippy --locked --all-targets --manifest-path ~/user_scripts/bluetooth/proximity_trigger/Cargo.toml -- -D warnings
+shellcheck ~/user_scripts/bluetooth/proximity_trigger/{build,setup,hook-example}.sh
 ```
 
 Build and development commands download missing dependencies as needed. Integration
 tests require `dbus-daemon` and use an isolated bus; they do not change live Bluetooth connections.
 Tests cover configuration creation/preservation, event baselines/debounce, phone
 hook execution, RSSI/timeout policies, discovery recovery, BlueZ owner changes,
+radio-off sleep without polling, power-on recovery, adapter removal, TOML 1.1,
+600,000 mixed signal inputs, a 4,096-message burst, 128 controller recovery cycles,
+slow discovery replies exceeding three seconds,
+concurrent initialization and shell command preservation/ordering,
 pidfd signalling and socket reply handling. Hardware distance and real suspend/resume
 still need target-system validation. Check final ISO versions/features at assembly;
 development-machine checks do not establish the final ISO baseline.

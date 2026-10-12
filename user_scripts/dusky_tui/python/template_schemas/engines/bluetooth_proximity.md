@@ -2,7 +2,7 @@
 
 - Class: `BluetoothProximityEngine` in `engines/bluetooth_proximity.py`.
 - Target: `${XDG_CONFIG_HOME:-$HOME/.config}/dusky/settings/bluetooth_proximity/config.toml`.
-- Schema: `~/user_scripts/bluetooth/proximity_lock/tui_dusky_proximity.py`.
+- Schema: `~/user_scripts/bluetooth/proximity_trigger/tui_dusky_proximity.py`.
 
 ## Bindings
 
@@ -39,7 +39,7 @@ In the default batch mode these buttons queue operations for Ctrl+S.
 
 Default mode is batch (Ctrl+S). Every candidate is checked by the installed
 `~/.local/bin/dusky_proximity --config PATH --check-config`; install via
-`proximity_lock/setup.sh` before saving. Candidate validation never executes hooks
+`proximity_trigger/setup.sh` before saving. Candidate validation never executes hooks
 or scans Bluetooth. Invalid batches leave the target untouched. Service restarts
 are explicit and report failures; the engine never changes enablement.
 

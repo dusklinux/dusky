@@ -23,10 +23,10 @@ struct Args {
     #[arg(short, long)]
     config: Option<PathBuf>,
     /// Scan for five seconds; show live RSSI and known devices
-    #[arg(short, long)]
+    #[arg(short, long, conflicts_with_all = ["test", "check_config"])]
     scan: bool,
     /// Log live measurements and transitions without executing actions
-    #[arg(short, long)]
+    #[arg(short, long, conflicts_with = "check_config")]
     test: bool,
     /// Validate configuration and exit without Bluetooth or session actions
     #[arg(long)]
@@ -181,6 +181,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         c.devices.clear();
         c.device_mac.clear();
         c.proximity_enabled = true;
+        if let Err(e) = c.validate() {
+            eprintln!("[config] {e}");
+            std::process::exit(2);
+        }
         let devices = scan_available_devices(&c, Duration::from_secs(5)).await?;
         println!("#   MAC Address         Device Name                    Status      Live RSSI");
         for (idx, d) in devices.iter().enumerate() {
@@ -229,7 +233,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         return Ok(());
     }
-    let mut watcher = BluetoothWatcher::new(&c).await?;
+    let watcher = BluetoothWatcher::new(&c).await?;
+    observe(watcher, &c, args.test).await
+}
+async fn observe(
+    mut watcher: BluetoothWatcher,
+    c: &Config,
+    dry_run: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "[daemon] Adapter {}; far < {} dBm held {}s, near >= {} dBm held {}s; loss {}s + hold {}s; median {}",
         watcher.adapter_path,
@@ -241,10 +252,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         c.lock_hold_secs,
         c.rssi_window
     );
-    let notifier = NotificationClient::new(c.notifications && !args.test).await;
+    let notifier = NotificationClient::new(c.notifications && !dry_run).await;
     let mut tracker = StateTracker::new(&c.active_devices());
-    tracker.seed_connections(&watcher.initial_connections, &c);
+    tracker.seed_connections(&watcher.initial_connections, c);
+    if !watcher.powered {
+        println!("[bluetooth] Radio off; sleeping until a Bluetooth event");
+    }
     let adapter_prefix = format!("{}/", watcher.adapter_path);
+    let proximity_active = c.has_proximity_devices();
     let mut tick = tokio::time::interval(Duration::from_millis(500));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut health = tokio::time::interval(Duration::from_secs(5));
@@ -259,8 +274,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     refresh_observation_clock(&mut tracker, &mut previous_tick);
                     let Some((path, iface, props)) = device_update(&msg) else { continue; };
                     if path == watcher.adapter_path && iface == "org.bluez.Adapter1" {
-                        if (props.contains_key("Powered") || props.contains_key("Discovering")) && watcher.ensure_discovery().await? {
-                            tracker.reset_observations();
+                        if props.contains_key("Powered") || props.contains_key("Discovering") {
+                            let was_powered = watcher.powered;
+                            if watcher.ensure_discovery().await? { tracker.reset_observations(); }
+                            if was_powered != watcher.powered {
+                                println!("[bluetooth] Radio {}; {}", if watcher.powered { "on" } else { "off" },
+                                    if watcher.powered { "observation resumed" } else { "sleeping until a Bluetooth event" });
+                            }
                         }
                         continue;
                     }
@@ -270,17 +290,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     // Connection state is independent of RSSI reception or proximity policy.
                     if let Some(connected) = props.get("Connected").and_then(|v| bool::try_from(v).ok()) {
                         tracker.observe_connection(key, connected);
-                        connection_actions(&mut tracker, &c, args.test, &notifier);
+                        connection_actions(&mut tracker, c, dry_run, &notifier);
                     }
-                    if !c.proximity_enabled || !tracker.devices[key].config.proximity { continue; }
+                    if !watcher.powered || !c.proximity_enabled || !tracker.devices[key].config.proximity { continue; }
                     if props.contains_key("ManufacturerData") || props.contains_key("ServiceData") {
                         tracker.heartbeat(key);
-                        if args.test { println!("[TEST] {} advertisement heartbeat", tracker.devices[key].config.name); }
+                        if dry_run { println!("[TEST] {} advertisement heartbeat", tracker.devices[key].config.name); }
                     }
                     if let Some(rssi) = props.get("RSSI").and_then(|v| i16::try_from(v).ok()) {
                         let previous_state = tracker.current_state;
-                        let a = tracker.handle_rssi_sample(key, rssi, &c);
-                        if args.test {
+                        let a = tracker.handle_rssi_sample(key, rssi, c);
+                        if dry_run {
                             let d = &tracker.devices[key];
                             println!("[TEST] {} raw={rssi} filtered={:?} state={:?}", d.config.name, d.filtered_rssi, tracker.current_state);
                         }
@@ -289,22 +309,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             tracker.reset_observations();
                             continue;
                         }
-                        action(a, &c, args.test, &notifier);
+                        action(a, c, dry_run, &notifier);
                     }
                 }
-                _ = tick.tick() => {
+                _ = tick.tick(), if (watcher.powered && proximity_active) || tracker.has_pending_connections() => {
                     refresh_observation_clock(&mut tracker, &mut previous_tick);
-                    connection_actions(&mut tracker, &c, args.test, &notifier);
+                    connection_actions(&mut tracker, c, dry_run, &notifier);
+                    if !watcher.powered { continue; }
                     let previous_state = tracker.current_state;
-                    let a = tracker.check_timeouts(&c);
+                    let a = tracker.check_timeouts(c);
                     if matches!(a, ActionRequired::Far { .. }) && watcher.ensure_discovery().await? {
                         tracker.current_state = previous_state;
                         tracker.reset_observations();
                         continue;
                     }
-                    action(a, &c, args.test, &notifier);
+                    action(a, c, dry_run, &notifier);
                 }
-                _ = health.tick() => {
+                _ = health.tick(), if watcher.powered => {
                     if watcher.ensure_discovery().await? { tracker.reset_observations(); }
                 }
                 _ = tokio::signal::ctrl_c() => { break; }
@@ -350,6 +371,16 @@ fn connection_actions(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn operating_modes_are_mutually_exclusive() {
+        for flags in [
+            ["--scan", "--test"],
+            ["--scan", "--check-config"],
+            ["--test", "--check-config"],
+        ] {
+            assert!(Args::try_parse_from(["dusky_proximity", flags[0], flags[1]]).is_err());
+        }
+    }
     async fn wait_content(path: &std::path::Path, expected: &str) {
         tokio::time::timeout(Duration::from_secs(3), async {
             loop {

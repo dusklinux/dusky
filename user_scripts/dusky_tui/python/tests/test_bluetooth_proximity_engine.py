@@ -36,6 +36,20 @@ class BluetoothProximityTests(unittest.TestCase):
         self.assertIn('custom', hook.read_text(encoding='utf-8'))
         self.assertEqual(hook.stat().st_mode & 0o777, 0o755)
 
+    def test_initialize_never_overwrites_a_concurrent_creator(self):
+        from python.engines.bluetooth_proximity import _write_new
+        path = self.path.parent / 'raced-hook.sh'
+        link = os.link
+
+        def concurrent_link(source, destination):
+            Path(destination).write_text('concurrent creator\n', encoding='utf-8')
+            return link(source, destination)
+
+        with patch('os.link', side_effect=concurrent_link):
+            _write_new(path, self.path, 0o755)
+        self.assertEqual(path.read_text(encoding='utf-8'), 'concurrent creator\n')
+        self.assertEqual({p.name for p in self.path.parent.iterdir()}, {'config.toml', 'hooks', 'raced-hook.sh'})
+
     def test_batch_can_enable_valid_device_and_set_phone_hooks(self):
         self.save(('mac', 'devices/0', 'AA:BB:CC:DD:EE:FF', 'string'),
                   ('enabled', 'devices/0', 'true', 'bool'),
@@ -140,7 +154,7 @@ class BluetoothProximityTests(unittest.TestCase):
         self.assertNotIn('near_rssi', self.data()['devices'][0])
 
     def test_schema_covers_all_shipped_keys_and_valid_folder_uids(self):
-        source = Path(__file__).resolve().parents[3] / 'bluetooth/proximity_lock'
+        source = Path(__file__).resolve().parents[3] / 'bluetooth/proximity_trigger'
         spec = importlib.util.spec_from_file_location('proximity_schema_fixture', source / 'tui_dusky_proximity.py')
         schema = importlib.util.module_from_spec(spec)
         with patch.dict(os.environ, {'XDG_CONFIG_HOME': self.directory.name}):
