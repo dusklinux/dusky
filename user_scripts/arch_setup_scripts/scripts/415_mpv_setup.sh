@@ -61,10 +61,10 @@ install_file() {
 log_info 'Starting Dusky Player setup.'
 
 # Detect an incomplete ISO bundle before changing the installed configuration.
-for relative in scripts/dusky_player/main.lua scripts/dusky_player/lib/icons.lua scripts/dusky_thumbnails.lua; do
+for relative in scripts/dusky_player/main.lua scripts/dusky_player/lib/icons.lua scripts/dusky_thumbnails.lua scripts/dusky_silence.lua; do
     [[ -s "$ASSETS_DIR/$relative" ]] || die "Missing bundled asset: $relative"
 done
-for relative in mpv.conf input.conf script-opts/dusky_player.conf; do
+for relative in mpv.conf input.conf script-opts/dusky_player.conf script-opts/dusky_silence.conf; do
     [[ -s "$SETUP_DIR/config/$relative" ]] || die "Missing configuration: $relative"
 done
 
@@ -111,11 +111,13 @@ done
 
 install_file "$SETUP_DIR/config/mpv.conf" mpv.conf
 install_file "$SETUP_DIR/config/input.conf" input.conf
-# Preserve existing Dusky Player customization.
-if [[ ! -e "$MPV_CONFIG_DIR/script-opts/dusky_player.conf" && ! -L "$MPV_CONFIG_DIR/script-opts/dusky_player.conf" ]]; then
-    install_file "$SETUP_DIR/config/script-opts/dusky_player.conf" script-opts/dusky_player.conf
-else
-    log_info 'Preserved existing script-opts/dusky_player.conf.'
-fi
+# Preserve existing player and silence-trimming customization.
+for relative in script-opts/dusky_player.conf script-opts/dusky_silence.conf; do
+    if [[ ! -e "$MPV_CONFIG_DIR/$relative" && ! -L "$MPV_CONFIG_DIR/$relative" ]]; then
+        install_file "$SETUP_DIR/config/$relative" "$relative"
+    else
+        log_info "Preserved existing $relative."
+    fi
+done
 
 log_info "Dusky Player setup complete: $MPV_CONFIG_DIR"
