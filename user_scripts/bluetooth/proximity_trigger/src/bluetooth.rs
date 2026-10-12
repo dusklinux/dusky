@@ -198,18 +198,10 @@ impl BluetoothWatcher {
                     Value::from(config.transport.as_str()).try_to_owned()?,
                 ),
             ]);
-            let targets: Vec<_> = config
-                .active_devices()
-                .into_iter()
-                .filter(|d| d.proximity)
-                .collect();
-            // BlueZ may merge other clients' filters; still filter exact paths in our event loop.
-            if targets.len() == 1 {
-                filter.insert(
-                    "Pattern",
-                    Value::from(targets[0].mac.to_ascii_uppercase()).try_to_owned()?,
-                );
-            }
+            // Discovery is shared with desktop Bluetooth clients. A target-only
+            // Pattern suppresses advertisements from unrelated paired devices
+            // in BlueZ, including keyboards waiting to reconnect. Match target
+            // paths locally in the observation loop instead.
         }
         let mut watcher = Self {
             conn,
@@ -258,6 +250,17 @@ impl BluetoothWatcher {
             }
             return Ok(msg);
         }
+    }
+    /// Continuous discovery can prevent BlueZ's passive HID reconnection scan.
+    pub async fn input_needs_reconnection(&self) -> Result<bool, Box<dyn std::error::Error>> {
+        let managed = objects(&self.conn).await?;
+        Ok(managed.iter().any(|(path, interfaces)| {
+            path.as_str()
+                .starts_with(&format!("{}/", self.adapter_path))
+                && interfaces
+                    .get("org.bluez.Device1")
+                    .is_some_and(input_disconnected)
+        }))
     }
     /// Detect daemon/controller loss as an observation failure, not device departure.
     /// True means discovery was interrupted/pending: discard stale measurement evidence.
@@ -364,6 +367,27 @@ impl BluetoothWatcher {
         }
     }
 }
+fn input_disconnected(props: &Properties) -> bool {
+    let flag = |key| {
+        props
+            .get(key)
+            .and_then(|v| bool::try_from(v).ok())
+            .unwrap_or(false)
+    };
+    flag("Paired")
+        && flag("Trusted")
+        && !flag("Connected")
+        && !flag("Blocked")
+        && props
+            .get("Icon")
+            .and_then(|v| <&str>::try_from(v).ok())
+            .is_some_and(|icon| {
+                matches!(
+                    icon,
+                    "input-keyboard" | "input-mouse" | "input-gaming" | "input-tablet"
+                )
+            })
+}
 /// Decode only the documented signal shapes. New device objects contain initial live RSSI.
 pub fn device_update(msg: &zbus::Message) -> Option<(String, String, Properties)> {
     let header = msg.header();
@@ -465,6 +489,32 @@ pub async fn scan_available_devices(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn only_disconnected_trusted_input_devices_need_scan_yield() {
+        let mut props = HashMap::from([
+            ("Paired".into(), OwnedValue::from(true)),
+            ("Trusted".into(), OwnedValue::from(true)),
+            ("Connected".into(), OwnedValue::from(false)),
+            (
+                "Icon".into(),
+                Value::from("input-keyboard").try_to_owned().unwrap(),
+            ),
+        ]);
+        assert!(input_disconnected(&props));
+        for key in ["Connected", "Blocked"] {
+            props.insert(key.into(), OwnedValue::from(true));
+            assert!(!input_disconnected(&props));
+            props.insert(key.into(), OwnedValue::from(false));
+        }
+        props.insert("Trusted".into(), OwnedValue::from(false));
+        assert!(!input_disconnected(&props));
+        props.insert("Trusted".into(), OwnedValue::from(true));
+        props.insert(
+            "Icon".into(),
+            Value::from("audio-headphones").try_to_owned().unwrap(),
+        );
+        assert!(!input_disconnected(&props));
+    }
     #[tokio::test]
     async fn discovery_transactions_wait_and_release_on_drop() {
         let directory = tempfile::tempdir().unwrap();
@@ -547,7 +597,11 @@ mod integration_tests {
     }
     #[zbus::interface(name = "org.bluez.Adapter1")]
     impl Adapter {
-        fn set_discovery_filter(&self, _filter: Properties) {
+        fn set_discovery_filter(&self, filter: Properties) {
+            assert!(
+                !filter.contains_key("Pattern"),
+                "must not hide other Bluetooth devices"
+            );
             self.0.filters.fetch_add(1, Ordering::SeqCst);
         }
         async fn start_discovery(&self) -> Result<(), ScanError> {
@@ -578,6 +632,26 @@ mod integration_tests {
         }
     }
     struct Device(AtomicUsize);
+    struct DisconnectedInput;
+    #[zbus::interface(name = "org.bluez.Device1")]
+    impl DisconnectedInput {
+        #[zbus(property)]
+        fn paired(&self) -> bool {
+            true
+        }
+        #[zbus(property)]
+        fn trusted(&self) -> bool {
+            true
+        }
+        #[zbus(property)]
+        fn connected(&self) -> bool {
+            false
+        }
+        #[zbus(property)]
+        fn icon(&self) -> &str {
+            "input-keyboard"
+        }
+    }
     #[zbus::interface(name = "org.bluez.Device1")]
     impl Device {
         #[zbus(property)]
@@ -737,6 +811,24 @@ mod integration_tests {
                         .await
                         .unwrap();
                 }
+                // Removing the shared Pattern filter admits unrelated devices'
+                // signals. Weak RSSI from them must not cause target departure.
+                for _ in 0..128 {
+                    server
+                        .emit_signal(
+                            None::<&str>,
+                            "/org/bluez/hci0/dev_11_22_33_44_55_66",
+                            "org.freedesktop.DBus.Properties",
+                            "PropertiesChanged",
+                            &(
+                                "org.bluez.Device1",
+                                HashMap::from([("RSSI", OwnedValue::from(-100i16))]),
+                                Vec::<String>::new(),
+                            ),
+                        )
+                        .await
+                        .unwrap();
+                }
                 state.powered.store(false, Ordering::SeqCst);
                 server
                     .emit_signal(
@@ -890,6 +982,94 @@ mod integration_tests {
         .unwrap();
     }
     // ObjectManager is provided automatically by zbus when registered.
+    #[tokio::test]
+    async fn input_reconnection_yields_scan_and_resumes_without_false_departure() {
+        let mut child = Command::new("dbus-daemon")
+            .args(["--session", "--nofork", "--print-address=1", "--nosyslog"])
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut address = String::new();
+        std::io::BufReader::new(child.stdout.take().unwrap())
+            .read_line(&mut address)
+            .unwrap();
+        let _bus = PrivateBus(child);
+        tokio::time::timeout(Duration::from_secs(35), async {
+            let state = Arc::new(ScanState::default());
+            state.powered.store(true, Ordering::SeqCst);
+            let server = Builder::address(address.trim())
+                .unwrap()
+                .name("org.bluez")
+                .unwrap()
+                .serve_at("/", zbus::fdo::ObjectManager)
+                .unwrap()
+                .serve_at("/org/bluez/hci0", Adapter(state.clone()))
+                .unwrap()
+                .serve_at("/org/bluez/hci0/dev_11_22_33_44_55_66", DisconnectedInput)
+                .unwrap()
+                .build()
+                .await
+                .unwrap();
+            let client = Builder::address(address.trim())
+                .unwrap()
+                .method_timeout(BLUEZ_METHOD_TIMEOUT)
+                .build()
+                .await
+                .unwrap();
+            let temp = tempfile::tempdir().unwrap();
+            let marker = temp.path().join("unexpected-departure");
+            let c = Config {
+                device_mac: "AA:BB:CC:DD:EE:FF".into(),
+                notifications: false,
+                signal_timeout_secs: 1,
+                lock_hold_secs: 0,
+                startup_grace_secs: 0,
+                on_lock: crate::config::CommandList::Single(format!(
+                    "touch '{}'",
+                    marker.display()
+                )),
+                ..Config::default()
+            };
+            let watcher = BluetoothWatcher::with_connection(client, &c).await.unwrap();
+            let control = async {
+                while state.stops.load(Ordering::SeqCst) == 0 {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+                let starts = state.starts.load(Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_secs(6)).await;
+                assert_eq!(
+                    state.starts.load(Ordering::SeqCst),
+                    starts,
+                    "health checks must not cancel the pause"
+                );
+                assert!(!marker.exists());
+                while state.starts.load(Ordering::SeqCst) == starts {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+                assert!(
+                    !marker.exists(),
+                    "intentional pause must not exhaust silence timeout"
+                );
+                server
+                    .emit_signal(
+                        None::<&str>,
+                        "/",
+                        "org.freedesktop.DBus.ObjectManager",
+                        "InterfacesRemoved",
+                        &(
+                            OwnedObjectPath::try_from("/org/bluez/hci0").unwrap(),
+                            vec!["org.bluez.Adapter1".to_string()],
+                        ),
+                    )
+                    .await
+                    .unwrap();
+            };
+            let (result, _) = tokio::join!(crate::observe(watcher, &c, false), control);
+            assert!(result.unwrap_err().to_string().contains("adapter removed"));
+        })
+        .await
+        .expect("reconnection scan integration timed out");
+    }
     #[tokio::test]
     async fn real_dbus_discovery_recovery_updates_and_owner_loss() {
         let mut child = Command::new("dbus-daemon")

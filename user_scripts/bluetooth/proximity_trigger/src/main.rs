@@ -266,6 +266,9 @@ async fn observe(
     health.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut term = signal(SignalKind::terminate())?;
     let mut previous_tick = boot_time();
+    let mut reconnect = tokio::time::interval(Duration::from_secs(60));
+    reconnect.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut scan_pause: Option<(std::time::Instant, tokio::time::Instant)> = None;
     let result: Result<(),Box<dyn std::error::Error>> = async {
         loop {
             tokio::select! {
@@ -275,8 +278,13 @@ async fn observe(
                     let Some((path, iface, props)) = device_update(&msg) else { continue; };
                     if path == watcher.adapter_path && iface == "org.bluez.Adapter1" {
                         if props.contains_key("Powered") || props.contains_key("Discovering") {
+                            if scan_pause.is_some() && !props.contains_key("Powered") { continue; }
                             let was_powered = watcher.powered;
                             if watcher.ensure_discovery().await? { tracker.reset_observations(); }
+                            if was_powered != watcher.powered {
+                                scan_pause = None;
+                                if watcher.powered { reconnect.reset_immediately(); }
+                            }
                             if was_powered != watcher.powered {
                                 println!("[bluetooth] Radio {}; {}", if watcher.powered { "on" } else { "off" },
                                     if watcher.powered { "observation resumed" } else { "sleeping until a Bluetooth event" });
@@ -286,13 +294,16 @@ async fn observe(
                     }
                     if iface != "org.bluez.Device1" { continue; }
                     let Some(key) = path.strip_prefix(&adapter_prefix) else { continue; };
+                    if props.get("Connected").and_then(|v| bool::try_from(v).ok()) == Some(false) {
+                        reconnect.reset_immediately();
+                    }
                     if !tracker.devices.contains_key(key) { continue; }
                     // Connection state is independent of RSSI reception or proximity policy.
                     if let Some(connected) = props.get("Connected").and_then(|v| bool::try_from(v).ok()) {
                         tracker.observe_connection(key, connected);
                         connection_actions(&mut tracker, c, dry_run, &notifier);
                     }
-                    if !watcher.powered || !c.proximity_enabled || !tracker.devices[key].config.proximity { continue; }
+                    if scan_pause.is_some() || !watcher.powered || !c.proximity_enabled || !tracker.devices[key].config.proximity { continue; }
                     if props.contains_key("ManufacturerData") || props.contains_key("ServiceData") {
                         tracker.heartbeat(key);
                         if dry_run { println!("[TEST] {} advertisement heartbeat", tracker.devices[key].config.name); }
@@ -315,7 +326,7 @@ async fn observe(
                 _ = tick.tick(), if (watcher.powered && proximity_active) || tracker.has_pending_connections() => {
                     refresh_observation_clock(&mut tracker, &mut previous_tick);
                     connection_actions(&mut tracker, c, dry_run, &notifier);
-                    if !watcher.powered { continue; }
+                    if !watcher.powered || scan_pause.is_some() { continue; }
                     let previous_state = tracker.current_state;
                     let a = tracker.check_timeouts(c);
                     if matches!(a, ActionRequired::Far { .. }) && watcher.ensure_discovery().await? {
@@ -325,8 +336,28 @@ async fn observe(
                     }
                     action(a, c, dry_run, &notifier);
                 }
-                _ = health.tick(), if watcher.powered => {
+                _ = health.tick(), if watcher.powered && scan_pause.is_none() => {
                     if watcher.ensure_discovery().await? { tracker.reset_observations(); }
+                }
+                _ = reconnect.tick(), if watcher.powered && proximity_active && scan_pause.is_none() => {
+                    if watcher.input_needs_reconnection().await? {
+                        let started = std::time::Instant::now();
+                        watcher.stop_discovery().await;
+                        scan_pause = Some((started, tokio::time::Instant::now() + Duration::from_secs(20)));
+                        eprintln!("[bluetooth] Yielding discovery for 20s to reconnect paired input devices");
+                    }
+                }
+                _ = async {
+                    if let Some((_, deadline)) = scan_pause {
+                        tokio::time::sleep_until(deadline).await;
+                    } else {
+                        std::future::pending::<()>().await;
+                    }
+                } => {
+                    let (started, _) = scan_pause.take().expect("scan pause deadline");
+                    watcher.ensure_discovery().await?;
+                    tracker.exclude_scan_pause(started.elapsed());
+                    previous_tick = boot_time();
                 }
                 _ = tokio::signal::ctrl_c() => { break; }
                 _ = term.recv() => { break; }

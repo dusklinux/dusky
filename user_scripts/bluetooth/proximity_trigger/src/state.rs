@@ -91,6 +91,17 @@ impl StateTracker {
     pub fn reset_observations(&mut self) {
         self.reset_at(Instant::now());
     }
+    /// Intentional scan gaps do not prove absence or continuous signal strength.
+    pub fn exclude_scan_pause(&mut self, duration: Duration) {
+        let now = Instant::now();
+        self.startup_time = (self.startup_time + duration).min(now);
+        for d in self.devices.values_mut() {
+            if let Some(last_seen) = &mut d.last_seen {
+                *last_seen = (*last_seen + duration).min(now);
+            }
+            d.clear_evidence();
+        }
+    }
     fn reset_at(&mut self, now: Instant) {
         self.startup_time = now;
         for d in self.devices.values_mut() {
@@ -363,6 +374,29 @@ mod tests {
         };
         let now = Instant::now();
         (StateTracker::new_at(&c.active_devices(), now), c, now)
+    }
+    #[test]
+    fn intentional_scan_pause_preserves_silence_budget_and_clears_strength() {
+        let (mut tracker, c, _) = fixture();
+        let now = Instant::now();
+        let before = now - Duration::from_secs(30);
+        tracker.startup_time = before;
+        let d = tracker.devices.get_mut(KEY).unwrap();
+        d.last_seen = Some(before);
+        d.state = ProximityState::Near;
+        d.near_since = Some(before);
+        d.consecutive_weak = 2;
+        tracker.current_state = ProximityState::Near;
+        tracker.exclude_scan_pause(Duration::from_secs(20));
+        let d = &tracker.devices[KEY];
+        assert_eq!(d.last_seen, Some(before + Duration::from_secs(20)));
+        assert!(d.near_since.is_none());
+        assert_eq!(d.consecutive_weak, 0);
+        assert_eq!(d.state, ProximityState::Near);
+        assert!(matches!(tracker.timeouts_at(&c, now), ActionRequired::None));
+        tracker.reset_observations();
+        tracker.exclude_scan_pause(Duration::from_secs(20));
+        assert!(matches!(tracker.check_timeouts(&c), ActionRequired::None));
     }
     #[test]
     fn stress_mixed_devices_noise_gaps_heartbeats_and_resets() {

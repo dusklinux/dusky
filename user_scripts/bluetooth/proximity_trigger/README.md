@@ -75,6 +75,21 @@ a shared file lock. This avoids overlapping pending BlueZ discovery replies.
 The lock is released automatically on process exit; it is never held while
 observing devices or sleeping with the radio off. Competing discovery changes
 wait up to 30 seconds. Other applications do not participate in this lock.
+Discovery does not use a target-only address/name filter: BlueZ discovery is
+shared, and that filter can suppress other devices' advertisement updates.
+The observer checks configured device paths locally so unrelated advertisements
+do not trigger proximity actions. This leaves other paired devices visible to
+desktop Bluetooth clients while proximity scanning is active.
+For paired, trusted input devices that are disconnected, the daemon releases its
+discovery session for 20 seconds so BlueZ can run its passive reconnection scan.
+It checks at startup, after power-on/disconnection events, and once per minute
+while powered on. It does not connect, pair, trust or change other devices itself.
+Connection hooks continue during the pause; RSSI processing and proximity timeouts
+pause, and intentional blind time is excluded from the silence budget. Strength
+holds require fresh samples afterward. This can delay proximity actions by the
+pause duration, and repeated gaps extend wall-clock silence detection if an input
+device stays off. Bluetooth-off mode still sleeps without polling. Other programs
+holding an active discovery session can prevent passive scanning from resuming.
 
 ## Configure with the Dusky TUI
 
