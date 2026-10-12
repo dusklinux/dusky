@@ -16,7 +16,7 @@ lazy from python.engines.bluetooth_proximity import canonical, initialize
 ENGINE_TYPE = 'bluetooth_proximity'
 TARGET_FILE = str(Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config') / 'dusky/settings/bluetooth_proximity/config.toml')
 APP_TITLE = 'Dusky Bluetooth Automation'
-DEFAULT_MODE = 'batch'
+DEFAULT_MODE = 'auto'
 THEME_FILE = '~/.config/matugen/generated/dusky_tui.json'
 ENABLE_USER_PRESETS = False
 _BINARY = Path.home() / '.local/bin/dusky_proximity'
