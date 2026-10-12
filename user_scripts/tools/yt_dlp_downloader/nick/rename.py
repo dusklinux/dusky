@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import argparse
-import errno
+import ctypes
+import fcntl
+import stat
 import json
 import os
 import random
@@ -10,12 +12,14 @@ import re
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
 from rich import box
 from rich.console import Console
+from rich.markup import escape as escape_markup
 from rich.panel import Panel
 from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn, TimeElapsedColumn
 from rich.prompt import Confirm
@@ -30,7 +34,7 @@ DEFAULT_ALLOWED_EXTENSIONS: frozenset[str] = frozenset(
 )
 
 EP_RE: re.Pattern[str] = re.compile(
-    r"america\s+first\s+ep\.\s*(\d{1,6})(?!\d)", re.IGNORECASE
+    r"\bamerica\s+(?:first|frist)(?:\s+with\s+nicholas\s+j\.?\s+fuentes)?\s+ep\.?\s*(\d{1,6})(?!\w)", re.IGNORECASE
 )
 NUMERIC_STEM_RE: re.Pattern[str] = re.compile(r"^(\d{1,6})$")
 
@@ -42,11 +46,17 @@ EXIT_INTERRUPT = 130
 console = Console()
 
 
+def escape(text: str) -> str:
+    """Display filename bytes that aren't UTF-8 without emitting invalid text."""
+    return escape_markup(text.encode("utf-8", "backslashreplace").decode("utf-8"))
+
+
 @dataclass(frozen=True, slots=True)
 class PlanEntry:
     source: Path
     episode_id: int
     target_name: str
+    identity: tuple[int, int] | None = None
 
     @property
     def target(self) -> Path:
@@ -56,6 +66,7 @@ class PlanEntry:
 @dataclass
 class ScanResult:
     plans: list[PlanEntry] = field(default_factory=list)
+    media_identities: set[tuple[int, int]] = field(default_factory=set)
     already: list[str] = field(default_factory=list)
     skipped_no_pattern: list[tuple[str, str]] = field(default_factory=list)
     skipped_bad_ext: list[tuple[str, str]] = field(default_factory=list)
@@ -115,7 +126,7 @@ def canonical_name_for_numeric(filename: str, allowed: frozenset[str]) -> str | 
     if lowered not in allowed:
         return None
     stem = filename[: -len(suffix)] if suffix else filename
-    match = NUMERIC_STEM_RE.match(stem)
+    match = NUMERIC_STEM_RE.fullmatch(stem)
     if not match:
         return None
     try:
@@ -133,7 +144,7 @@ def is_canonical(filename: str, allowed: frozenset[str]) -> bool:
     if not suffix or suffix != suffix.lower() or suffix.lower() not in allowed:
         return False
     stem = filename[: -len(suffix)]
-    match = NUMERIC_STEM_RE.match(stem)
+    match = NUMERIC_STEM_RE.fullmatch(stem)
     if not match:
         return False
     try:
@@ -146,12 +157,16 @@ def is_canonical(filename: str, allowed: frozenset[str]) -> bool:
 def iter_candidate_files(directory: Path, recursive: bool) -> list[Path]:
     try:
         if recursive:
-            entries = [p for p in directory.rglob("*")]
+            def raise_walk_error(exc: OSError) -> None:
+                raise exc
+
+            entries = [root / name for root, _, names in directory.walk(on_error=raise_walk_error)
+                       for name in names]
         else:
             entries = list(directory.iterdir())
     except OSError as exc:
         raise OSError(f"cannot list directory '{directory}': {exc.strerror or exc}") from exc
-    entries.sort(key=lambda p: p.name.lower())
+    entries.sort(key=lambda p: (p.name.casefold(), str(p)))
     return entries
 
 
@@ -159,29 +174,37 @@ def plan_renames(
     directory: Path, allowed: frozenset[str], recursive: bool = False
 ) -> ScanResult:
     result = ScanResult()
-    seen_targets: dict[str, str] = {}
+    seen_targets: dict[Path, str] = {}
 
     for item in iter_candidate_files(directory, recursive):
         name = item.name
 
-        if item.is_symlink():
+        try:
+            info = item.lstat()
+        except FileNotFoundError:
+            result.skipped_other.append((name, "vanished during scan"))
+            continue
+        identity = (info.st_dev, info.st_ino)
+        if stat.S_ISLNK(info.st_mode):
             result.skipped_other.append((name, "symlink; skipped for safety"))
             continue
-        if not item.is_file():
+        if not stat.S_ISREG(info.st_mode):
             continue
 
         if is_canonical(name, allowed):
+            result.media_identities.add(identity)
             result.already.append(name)
             continue
 
         fixup = canonical_name_for_numeric(name, allowed)
         if fixup is not None:
-            if fixup in seen_targets:
+            result.media_identities.add(identity)
+            target_path = item.parent / fixup
+            if target_path in seen_targets:
                 result.skipped_duplicate.append(
-                    (name, f"target '{fixup}' already queued from '{seen_targets[fixup]}'")
+                    (name, f"target '{fixup}' already queued from '{seen_targets[target_path]}'")
                 )
                 continue
-            target_path = item.parent / fixup
             if target_path.exists() or target_path.is_symlink():
                 result.skipped_exists.append(
                     (name, f"target '{fixup}' already exists; refusing to overwrite")
@@ -192,14 +215,14 @@ def plan_renames(
             except ValueError:
                 result.skipped_other.append((name, "unparseable numeric name"))
                 continue
-            seen_targets[fixup] = name
-            result.plans.append(PlanEntry(source=item, episode_id=episode_id, target_name=fixup))
+            seen_targets[target_path] = name
+            result.plans.append(PlanEntry(source=item, episode_id=episode_id, target_name=fixup, identity=identity))
             continue
 
         episode_id = extract_episode_id(name)
         if episode_id is None:
             result.skipped_no_pattern.append(
-                (name, "requires 'America First Ep. <number>'")
+                (name, "no recognised America First episode number")
             )
             continue
 
@@ -210,59 +233,57 @@ def plan_renames(
             )
             continue
 
+        result.media_identities.add(identity)
         target_name = f"{episode_id}{ext}"
         if target_name == name:
             result.already.append(name)
             continue
-        if target_name in seen_targets:
+        target_path = item.parent / target_name
+        if target_path in seen_targets:
             result.skipped_duplicate.append(
-                (name, f"target '{target_name}' already queued from '{seen_targets[target_name]}'")
+                (name, f"target '{target_name}' already queued from '{seen_targets[target_path]}'")
             )
             continue
-        target_path = item.parent / target_name
         if target_path.exists() or target_path.is_symlink():
             result.skipped_exists.append(
                 (name, f"target '{target_name}' already exists; refusing to overwrite")
             )
             continue
 
-        seen_targets[target_name] = name
-        result.plans.append(PlanEntry(source=item, episode_id=episode_id, target_name=target_name))
+        seen_targets[target_path] = name
+        result.plans.append(PlanEntry(source=item, episode_id=episode_id, target_name=target_name, identity=identity))
 
     return result
 
 
-def safe_rename(src: Path, dst: Path) -> None:
-    if dst.exists() or dst.is_symlink():
-        raise FileExistsError(f"target '{dst.name}' already exists")
-    if src.is_symlink():
-        raise OSError(f"source '{src.name}' is a symlink; refusing to rename")
-    try:
-        os.link(src, dst)
-    except FileExistsError:
-        raise
-    except OSError as link_exc:
-        if link_exc.errno == errno.EXDEV:
-            if dst.exists() or dst.is_symlink():
-                raise FileExistsError(f"target '{dst.name}' already exists") from link_exc
-            import shutil
+# Linux/glibc interface: renameat2(..., RENAME_NOREPLACE) is one atomic
+# directory-entry change, including on filesystems without hard links.
+_libc = ctypes.CDLL(None, use_errno=True)
+_renameat2 = _libc.renameat2
+_renameat2.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+_renameat2.restype = ctypes.c_int
 
-            shutil.copy2(src, dst)
-            os.unlink(src)
-            return
-        if link_exc.errno in (errno.EPERM, errno.EACCES, errno.EROFS, errno.EXDEV):
-            if dst.exists() or dst.is_symlink():
-                raise FileExistsError(f"target '{dst.name}' already exists") from link_exc
-            os.rename(src, dst)
-            return
-        raise
-    else:
-        os.unlink(src)
+
+def file_identity(path: Path) -> tuple[int, int]:
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode):
+        raise OSError(f"source '{path.name}' is not a regular file")
+    return info.st_dev, info.st_ino
+
+
+def safe_rename(src: Path, dst: Path, identity: tuple[int, int] | None = None) -> None:
+    actual = file_identity(src)
+    if identity is not None and actual != identity:
+        raise OSError(f"source '{src.name}' changed since it was scanned")
+    if _renameat2(-100, os.fsencode(src), -100, os.fsencode(dst), 1) != 0:
+        code = ctypes.get_errno()
+        raise OSError(code, os.strerror(code), str(src), None, str(dst))
 
 
 def execute_plans(
     plans: list[PlanEntry],
     show_progress: bool = True,
+    before_rename: Callable[[PlanEntry], None] | None = None,
 ) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
     succeeded: list[tuple[str, str]] = []
     failed: list[tuple[str, str]] = []
@@ -271,8 +292,10 @@ def execute_plans(
         return succeeded, failed
 
     def _run_one(plan: PlanEntry) -> None:
+        if before_rename is not None:
+            before_rename(plan)
         try:
-            safe_rename(plan.source, plan.target)
+            safe_rename(plan.source, plan.target, plan.identity)
         except FileExistsError as exc:
             failed.append((plan.source.name, f"target exists at execution time: {exc}"))
         except FileNotFoundError as exc:
@@ -301,54 +324,95 @@ def execute_plans(
     with progress:
         task = progress.add_task("Renaming…", total=len(plans))
         for plan in plans:
-            progress.update(task, description=f"Renaming {plan.source.name[:50]}")
+            progress.update(task, description=f"Renaming {escape(plan.source.name[:50])}")
             _run_one(plan)
             progress.advance(task)
 
     return succeeded, failed
 
 
-def write_undo_log(log_path: Path, entries: list[tuple[str, str]], directory: Path) -> Path:
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now(timezone.utc).isoformat()
-    with log_path.open("a", encoding="utf-8") as fh:
-        for src_name, dst_name in entries:
-            fh.write(
-                json.dumps(
-                    {"ts": timestamp, "dir": str(directory), "src": src_name, "dst": dst_name},
-                    ensure_ascii=False,
-                )
-                + "\n"
-            )
-    return log_path
-
-
-def undo_from_log(log_path: Path) -> tuple[int, int, list[str]]:
+def undo_from_log(log_path: Path, *, dry_run: bool = False) -> tuple[int, int, list[str]]:
     ok, failed = 0, 0
     errors: list[str] = []
     try:
-        lines = log_path.read_text(encoding="utf-8").splitlines()
-    except OSError as exc:
-        return 0, 1, [f"cannot read log '{log_path}': {exc}"]
-    for lineno, line in enumerate(lines, 1):
-        if not line.strip():
-            continue
-        try:
-            record = json.loads(line)
-            directory = Path(record["dir"])
-            current = directory / record["dst"]
-            original = directory / record["src"]
-        except (json.JSONDecodeError, KeyError, TypeError) as exc:
-            failed += 1
-            errors.append(f"line {lineno}: corrupt entry ({exc})")
-            continue
-        try:
-            safe_rename(current, original)
-        except Exception as exc:
-            failed += 1
-            errors.append(f"line {lineno}: {record.get('dst')} -> {record.get('src')}: {exc}")
-        else:
-            ok += 1
+        with open(log_path, "r", encoding="utf-8", errors="surrogateescape",
+                  opener=lambda path, flags: os.open(path, flags | os.O_NONBLOCK)) as fh:
+            if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+                raise OSError("undo log must be a regular file")
+            fcntl.flock(fh, fcntl.LOCK_SH if dry_run else fcntl.LOCK_EX)
+            lines = fh.read().splitlines()
+            # Simulate filename changes for dry-runs, so chained records have
+            # the same outcome as a real undo without touching the filesystem.
+            virtual: dict[Path, tuple[int, int] | None] = {}
+
+            def identity_at(path: Path) -> tuple[int, int] | None:
+                if path in virtual:
+                    return virtual[path]
+                try:
+                    return file_identity(path)
+                except FileNotFoundError:
+                    return None
+
+            for index in range(len(lines) - 1, -1, -1):
+                line = lines[index]
+                if not line.strip():
+                    continue
+                try:
+                    line.encode("utf-8")  # Reject invalid raw bytes, preserving other records.
+                    record = json.loads(line)
+                    if not isinstance(record, dict) or not all(
+                        isinstance(record.get(key), str) and record[key]
+                        for key in ("dir", "src", "dst")
+                    ):
+                        raise ValueError("expected nonempty dir/src/dst strings")
+                    directory = Path(record["dir"])
+                    for key in ("src", "dst"):
+                        name = record[key]
+                        if Path(name).name != name or name in {".", ".."} or "\x00" in name:
+                            raise ValueError("src/dst must be filenames")
+                    if "\x00" in record["dir"]:
+                        raise ValueError("directory contains NUL")
+                    current = directory / record["dst"]
+                    original = directory / record["src"]
+                    if current == original:
+                        raise ValueError("source and destination are identical")
+                    identity = record.get("identity")
+                    if identity is not None and (
+                        not isinstance(identity, list) or len(identity) != 2
+                        or any(type(value) is not int or value < 0 for value in identity)
+                    ):
+                        raise ValueError("invalid file identity")
+                    expected = tuple(identity) if identity is not None else None
+                except (ValueError, KeyError, TypeError, RecursionError) as exc:
+                    failed += 1
+                    errors.append(f"line {index + 1}: corrupt entry ({exc})")
+                    continue
+                try:
+                    # A record is also written for an attempted rename that
+                    # never happened. Already-restored records are no-ops.
+                    restored = identity_at(original)
+                    if expected is not None and restored == expected:
+                        continue
+                    actual = identity_at(current)
+                    if expected is None and actual is None and restored is not None:
+                        continue  # Logs written before identity tracking.
+                    if actual is None:
+                        raise FileNotFoundError(current)
+                    if expected is not None and actual != expected:
+                        raise OSError(f"'{current.name}' is a different file; leaving it untouched")
+                    if restored is not None:
+                        raise FileExistsError(original)
+                    if dry_run:
+                        virtual[current], virtual[original] = None, actual
+                    else:
+                        safe_rename(current, original, expected)
+                except (OSError, ValueError) as exc:
+                    failed += 1
+                    errors.append(f"line {index + 1}: {record['dst']} -> {record['src']}: {exc}")
+                else:
+                    ok += 1
+    except (OSError, UnicodeError) as exc:
+        return ok, failed + 1, [*errors, f"cannot read log '{log_path}': {exc}"]
     return ok, failed, errors
 
 
@@ -443,7 +507,10 @@ def run_self_test() -> int:
         ("America First Ep. 0005.m4a", 5),
         ("America First Ep. 1.m4a America First Ep. 2.m4a", 1),
         ("", None),
-        ("America First Ep. 12a34.m4a", 12),
+        ("America First Ep. 12a34.m4a", None),
+        ("America First with Nicholas J. Fuentes Ep. 836 [x].m4a", 836),
+        ("America First Ep 871 [x].m4a", 871),
+        ("America Frist Ep. 911 [x].m4a", 911),
     ]:
         check(extract_episode_id(name) == want, "units extract " + repr(name))
 
@@ -601,6 +668,29 @@ def run_self_test() -> int:
         r2 = run(str(d), "--yes", "--no-color", "-q")
         check(r2.returncode == 0 and sorted(p.name for p in d.iterdir()) == snap, "fuzz idempotent")
 
+    with tempfile.TemporaryDirectory() as tmp:
+        d = Path(tmp)
+        original_name = "America First with Nicholas J. Fuentes Ep 123 [x].m4a"
+        for folder in ("a", "b"):
+            (d / folder).mkdir()
+            (d / folder / original_name).write_text(folder, encoding="utf-8")
+        check(len(plan_renames(d, DEFAULT_ALLOWED_EXTENSIONS, True).plans) == 2,
+              "recursive independent targets")
+        check(run(str(d), "--recursive", "--yes", "-q").returncode == 0,
+              "recursive execution")
+        logf = d / ".rename_undo.jsonl"
+        records = [json.loads(line) for line in logf.read_text(encoding="utf-8").splitlines()]
+        check({record["dir"] for record in records} == {str(d / "a"), str(d / "b")},
+              "recursive undo folders")
+        check(run("--undo", str(logf), "--dry-run", "-q").returncode == 0
+              and all((d / folder / "123.m4a").exists() for folder in ("a", "b")),
+              "undo dry-run no mutation")
+        check(run("--undo", str(logf), "-q").returncode == 0
+              and all((d / folder / original_name).read_text(encoding="utf-8") == folder
+                      for folder in ("a", "b")), "recursive undo restores contents")
+        logf.write_text('null\n[]\n{"dir": 1, "src": "a", "dst": "b"}\n', encoding="utf-8")
+        check(undo_from_log(logf)[1] == 3, "malformed undo records reported")
+
     r = run("/nonexistent-dir-xyz-123", "--no-color")
     check(r.returncode == 2, "cli missing dir exit 2")
     with tempfile.TemporaryDirectory() as tmp:
@@ -658,7 +748,7 @@ def render_plan(result: ScanResult, allowed: frozenset[str], verbose: bool, quie
         for idx, plan in enumerate(result.plans, 1):
             src = plan.source.name
             src_short = src if len(src) <= 70 else src[:67] + "…"
-            table.add_row(str(idx), str(plan.episode_id), src_short, plan.target_name)
+            table.add_row(str(idx), str(plan.episode_id), escape(src_short), escape(plan.target_name))
         console.print(table)
     else:
         console.print("[dim]No files queued for renaming.[/]")
@@ -667,7 +757,7 @@ def render_plan(result: ScanResult, allowed: frozenset[str], verbose: bool, quie
         console.print(f"[green]✓ {len(result.already)} already organised (idempotent no-op).[/]")
         if verbose:
             for name in sorted(result.already)[:20]:
-                console.print(f"  [dim]• {name}[/]")
+                console.print(f"  [dim]• {escape(name)}[/]")
             if len(result.already) > 20:
                 console.print(f"  [dim]… and {len(result.already) - 20} more[/]")
 
@@ -688,13 +778,13 @@ def render_plan(result: ScanResult, allowed: frozenset[str], verbose: bool, quie
         table.add_column("File", overflow="fold")
         table.add_column("Reason", overflow="fold")
         for name, reason in sorted(entries)[:50]:
-            table.add_row(name if len(name) <= 70 else name[:67] + "…", reason)
+            table.add_row(escape(name if len(name) <= 70 else name[:67] + "…"), escape(reason))
         if len(entries) > 50:
             table.add_row(f"… +{len(entries) - 50} more", "")
         console.print(table)
 
     ext_list = ", ".join(sorted(allowed))
-    console.print(f"[dim]Allowed extensions: {ext_list}[/]")
+    console.print(f"[dim]Allowed extensions: {escape(ext_list)}[/]")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -709,30 +799,34 @@ def main(argv: list[str] | None = None) -> int:
         return run_self_test()
 
     if args.undo:
-        ok, failed, errors = undo_from_log(Path(args.undo).expanduser())
+        ok, failed, errors = undo_from_log(Path(args.undo).expanduser(), dry_run=args.dry_run)
         if not args.quiet:
             console.print(
                 Panel(
-                    f"[green]Restored: {ok}[/]   [red]Failed: {failed}[/]",
-                    title="Undo complete",
+                    f"[green]{'Would restore' if args.dry_run else 'Restored'}: {ok}[/]   [red]Failed: {failed}[/]",
+                    title="Undo preview" if args.dry_run else "Undo complete",
                     box=box.ROUNDED,
                 )
             )
-            for err in errors[:20]:
-                console.print(f"[red]• {err}[/]")
+        for err in errors[:20]:
+            console.print(f"[red]• {escape(err)}[/]")
         return EXIT_OK if failed == 0 else EXIT_RUNTIME_FAILURE
 
     allowed = parse_allowed_extensions(args.extensions)
     explicit = args.dir_opt or args.dir
     raw_dir, origin = resolve_directory(explicit)
-    directory = raw_dir.resolve() if raw_dir.is_absolute() else (Path.cwd() / raw_dir).resolve()
+    try:
+        directory = raw_dir.resolve()
+    except OSError as exc:
+        console.print(f"[red]Cannot resolve directory: {escape(str(exc))}[/]")
+        return EXIT_USAGE
 
     if not args.quiet:
         console.print(
             Panel.fit(
                 "[bold cyan]Smart File Renamer[/]\n"
-                f"[dim]Target:[/] {directory}\n"
-                f"[dim]Source:[/] {origin}"
+                f"[dim]Target:[/] {escape(str(directory))}\n"
+                f"[dim]Source:[/] {escape(origin)}"
                 + ("   [bold yellow]DRY RUN[/]" if args.dry_run else "")
                 + ("   [dim](recursive)[/]" if args.recursive else ""),
                 title="🎬 ytdlp organiser",
@@ -741,13 +835,13 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     if not directory.is_dir():
-        console.print(f"[bold red]Error:[/] not a directory: {directory}")
+        console.print(f"[bold red]Error:[/] not a directory: {escape(str(directory))}")
         return EXIT_USAGE
     if not os.access(directory, os.R_OK | os.X_OK):
-        console.print(f"[bold red]Error:[/] directory not readable: {directory}")
+        console.print(f"[bold red]Error:[/] directory not readable: {escape(str(directory))}")
         return EXIT_USAGE
     if not args.dry_run and not os.access(directory, os.W_OK | os.X_OK):
-        console.print(f"[bold red]Error:[/] directory not writable (use --dry-run): {directory}")
+        console.print(f"[bold red]Error:[/] directory not writable (use --dry-run): {escape(str(directory))}")
         return EXIT_USAGE
 
     try:
@@ -762,7 +856,7 @@ def main(argv: list[str] | None = None) -> int:
             console.print(f"[dim]Scanned {scanned} file(s).[/]")
         render_plan(result, allowed, verbose=args.verbose, quiet=args.quiet)
     except OSError as exc:
-        console.print(f"[bold red]Scan failed:[/] {exc}")
+        console.print(f"[bold red]Scan failed:[/] {escape(str(exc))}")
         return EXIT_RUNTIME_FAILURE
     except KeyboardInterrupt:
         console.print("\n[yellow]Interrupted during scan. Nothing was changed.[/]")
@@ -798,23 +892,52 @@ def main(argv: list[str] | None = None) -> int:
             console.print("[yellow]Cancelled. Nothing was changed.[/]")
             return EXIT_OK
 
+    log_path = Path(args.log).expanduser() if args.log else directory / ".rename_undo.jsonl"
     try:
-        succeeded, failed = execute_plans(result.plans, show_progress=not args.quiet)
-    except KeyboardInterrupt:
-        console.print("\n[bold yellow]Interrupted mid-run.[/] Some files may already be renamed; "
-                      "re-run to finish (idempotent). Check the undo log to revert.")
-        return EXIT_INTERRUPT
+        log_path = log_path.resolve()
+        if normalize_extension(log_path.name, allowed) is not None and (
+            is_canonical(log_path.name, allowed)
+            or canonical_name_for_numeric(log_path.name, allowed) is not None
+            or extract_episode_id(log_path.name) is not None
+        ):
+            raise OSError("undo log cannot use a media episode filename")
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a+", encoding="utf-8") as undo_log:
+            fcntl.flock(undo_log, fcntl.LOCK_EX)
+            log_info = os.fstat(undo_log.fileno())
+            if not stat.S_ISREG(log_info.st_mode):
+                raise OSError("undo log must be a regular file")
+            log_identity = (log_info.st_dev, log_info.st_ino)
+            if log_identity in result.media_identities:
+                raise OSError("undo log overlaps a planned media source or target")
+            # Keep a previous partial record separate from this run's records.
+            if log_info.st_size and os.pread(undo_log.fileno(), 1, log_info.st_size - 1) != b"\n":
+                undo_log.write("\n")
+                undo_log.flush()
 
-    log_path = (
-        Path(args.log).expanduser()
-        if args.log
-        else directory / ".rename_undo.jsonl"
-    )
-    if succeeded:
-        try:
-            write_undo_log(log_path, succeeded, directory)
-        except OSError as exc:
-            console.print(f"[yellow]Warning:[/] could not write undo log '{log_path}': {exc}")
+            def record_attempt(plan: PlanEntry) -> None:
+                identity = file_identity(plan.source)
+                if plan.identity is not None and identity != plan.identity:
+                    raise OSError(f"source '{plan.source.name}' changed since it was scanned")
+                undo_log.write(json.dumps({
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "dir": str(plan.source.parent.absolute()),
+                    "src": plan.source.name, "dst": plan.target_name,
+                    "identity": identity,
+                }, ensure_ascii=True) + "\n")
+                # Write-ahead: failures and process interruption happen before
+                # the name change, or leave a record identifying the moved file.
+                undo_log.flush()
+
+            succeeded, failed = execute_plans(
+                result.plans, show_progress=not args.quiet, before_rename=record_attempt,
+            )
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Interrupted mid-run. Undo records identify attempted renames.[/]")
+        return EXIT_INTERRUPT
+    except OSError as exc:
+        console.print(f"[red]Rename/log failure: {escape(str(exc))}. Check {escape(str(log_path))} for undo records.[/]")
+        return EXIT_RUNTIME_FAILURE
 
     if not args.quiet:
         status = "green" if not failed else "red"
@@ -823,13 +946,13 @@ def main(argv: list[str] | None = None) -> int:
                 f"[green]Renamed: {len(succeeded)}[/]   "
                 f"[red]Failed: {len(failed)}[/]   "
                 f"[dim]Skipped: {result.skipped_total}   Already: {len(result.already)}[/]"
-                + (f"\n[dim]Undo log: {log_path}[/]" if succeeded else ""),
+                + (f"\n[dim]Undo log: {escape(str(log_path))}[/]" if succeeded else ""),
                 title=f"[{status}]Processing complete[/]",
                 box=box.ROUNDED,
             )
         )
         for name, err in failed[:20]:
-            console.print(f"[red]✗ {name}: {err}[/]")
+            console.print(f"[red]✗ {escape(name)}: {escape(err)}[/]")
 
     return EXIT_OK if not failed else EXIT_RUNTIME_FAILURE
 
