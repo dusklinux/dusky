@@ -5,9 +5,9 @@ libavfilter bridge. No helper process, preprocessing, compiler, extra package,
 or custom mpv build is needed at runtime or during offline setup.
 
 - `Ctrl+s`: toggle trimming, keeping the selected level.
-- `Alt+s`: cycle Off → Mild → Medium → Max → Off.
+- `Alt+s`: cycle Off → Mild → Medium → Max → Max Plus → Off.
 - Persistent defaults: `script-opts/dusky_silence.conf` in the mpv configuration
-  directory. Set `enabled=no` or `level=mild`, `medium`, or `max` as desired.
+  directory. Set `enabled=no` or `level=mild`, `medium`, `max`, or `max-plus` as desired.
   The default is enabled, Max. Keyboard changes last for the current mpv session.
 
 Run `user_scripts/arch_setup_scripts/scripts/415_mpv_setup.sh` to deploy the
@@ -36,6 +36,7 @@ No channel remixing, forced resampling, volume change, or pitch change is added.
 | Mild | 0.0055 | 672 ms | 672 ms |
 | Medium | 0.00511 | 576 ms | 576 ms |
 | Max | 0.005 | 96 ms | 24 ms |
+| Max Plus (optional) | 0.005 | 24 ms | No equivalent mode |
 
 The Max difference is intentional: this filter cannot wait for a complete gap
 and then shorten it retrospectively. Retaining approximately four blocks avoids
@@ -44,6 +45,16 @@ on the waveform and moving window; these values are not output guarantees.
 Pocket Casts' fades are not reproduced by this filter. Matching perceived sound
 quality requires listening to the same recordings in both players.
 
+Max Plus keeps the same threshold and RMS window as Max, but shortens briefer
+pauses and retains less silence. In the 48 kHz synthetic gap test it removes
+72 ms more per gap. It is more aggressive than our existing Max; it is not a
+claim of improved sound quality or an exact Pocket Casts mode. Max stays the
+default. The first three levels' audio parameters are unchanged.
+
+Leading silence and entirely silent recordings are retained: only the repeating
+stop stage is enabled. This avoids introducing a separate onset-trimming stage
+into the modes whose sound has already been accepted.
+
 Video files are excluded even with `vid=no`; attached pictures and cover art
 are allowed. Files up to six seconds are left alone. When the duration is known
 from metadata at loading, trimming stops six seconds before the end,
@@ -51,6 +62,9 @@ conservatively matching Pocket Casts' integer-second ending protection.
 Unknown-duration streams can be trimmed but cannot receive ending protection.
 Their later growing duration estimates are ignored to avoid repeated filter
 reinitialization. Compressed audio passthrough is bypassed.
+The end guard follows source timestamp offsets when `rebase-start-time=no`.
+It still depends on accurate duration metadata; format-specific duration guesses
+are not applied. The audit records a reproduced metadata limitation.
 
 Source timestamps are retained (`timestamp=copy`, `fix-pts=no`) so seeking,
 chapters, the timeline and saved positions refer to the original media. Playback
@@ -81,3 +95,5 @@ The supplied mpv source contains an `on_loaded` hook absent from the installed
 mpv 0.41.0 package. The script uses the installed package's `on_preloaded` hook
 for unambiguous single-track audio and actual decoder properties after track
 selection. Verify mpv/libavfilter features again against the final ISO packages.
+
+See [AUDIT.md](AUDIT.md) for the second-pass findings and regression evidence.

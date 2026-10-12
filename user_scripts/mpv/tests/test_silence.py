@@ -63,7 +63,7 @@ class SilenceTests(unittest.TestCase):
     def test_rates_channels_levels_and_end_preservation(self):
         for rate in (16000, 44100, 48000, 96000):
             for channels in (1, 2):
-                for level, blocks in [('mild', 28), ('medium', 24), ('max', 4)]:
+                for level, blocks in [('mild', 28), ('medium', 24), ('max', 4), ('max-plus', 1)]:
                     with self.subTest(rate=rate, channels=channels, level=level):
                         path = self.fixture(rate, channels, tail=3)
                         seconds, pcm = self.render(path, level)
@@ -215,7 +215,7 @@ class SilenceTests(unittest.TestCase):
             command('set_property', 'speed', speed)
             self.assertEqual(command('get_property', 'speed'), speed)
         # Cycling settings must not duplicate filters or replace a user's EQ.
-        for _ in range(8):
+        for _ in range(10):
             command('script-binding', 'dusky_silence/cycle')
             time.sleep(0.03)
         filters = command('get_property', 'af')
@@ -226,6 +226,86 @@ class SilenceTests(unittest.TestCase):
             filters = trimming()
             return len(filters) == 1 and 'window=0.026122449' in filters[0]['params']['graph']
         self.wait_for(new_rate)
+
+    def test_max_plus_shortens_pauses_without_raising_threshold(self):
+        path = self.fixture()
+        standard, standard_pcm = self.render(path)
+        plus, plus_pcm = self.render(path, 'max-plus')
+        self.assertAlmostEqual(standard - plus, 0.072, delta=0.001)
+        # Both modes retain the same above-threshold content, including the
+        # beginning and ending. Only silence is additionally removed here.
+        self.assertEqual(standard_pcm[:48000 * 2], plus_pcm[:48000 * 2])
+        self.assertEqual(standard_pcm[-48000 * 2:], plus_pcm[-48000 * 2:])
+        quiet = self.fixture(quiet=0.012)
+        seconds, _ = self.render(quiet, 'max-plus')
+        self.assertAlmostEqual(seconds, 12, delta=0.015)
+        short = self.fixture(gap=0.06)
+        standard, _ = self.render(short)
+        plus, _ = self.render(short, 'max-plus')
+        self.assertAlmostEqual(standard, 10.06, delta=0.001)
+        self.assertLess(plus, standard - 0.02)
+
+    def test_runtime_options_validation_and_cycle_order(self):
+        command = self.start_ipc(self.fixture())
+
+        def graph():
+            filters = command('get_property', 'af')
+            return next((f['params']['graph'] for f in filters
+                         if f.get('label') == 'dusky_silence'), None)
+
+        self.wait_for(lambda: graph() is not None)
+        original = graph()
+        command('set_property', 'script-opts', 'dusky_silence-level=invalid')
+        self.wait_for(lambda: 'Unknown silence level' in
+                      (self.folder / 'mpv.log').read_text(encoding='utf-8'))
+        self.assertEqual(graph(), original)
+        filters = command('get_property', 'af')
+        for entry in filters:
+            if entry.get('label') == 'dusky_silence':
+                entry['params']['fix-pts'] = 'yes'
+        command('set_property', 'af', filters)
+        command('set_property', 'script-opts', 'dusky_silence-level=max')
+        self.wait_for(lambda: any(f.get('label') == 'dusky_silence' and
+                                 f['params'].get('fix-pts') == 'no'
+                                 for f in command('get_property', 'af')))
+        for expected in [0, None, 0.648, 0.552, 0.072]:
+            command('script-binding', 'dusky_silence/cycle')
+            target = None if expected is None else f'stop_duration={expected:.9f}'
+            def matches():
+                current = graph()
+                return current is None if target is None else current is not None and target in current
+            self.wait_for(matches)
+
+    def test_timestamps_silent_media_and_asymmetric_stereo(self):
+        source = self.fixture(tail=3)
+        shifted = self.folder / 'offset.ts'
+        subprocess.run(['ffmpeg', '-v', 'error', '-i', str(source), '-c:a', 'aac',
+                        '-output_ts_offset', '100', str(shifted)], check=True)
+        for rebase in ['yes', 'no']:
+            seconds, pcm = self.render(shifted, extra=[f'--rebase-start-time={rebase}'])
+            self.assertAlmostEqual(seconds, 13.096, delta=0.075)
+            tail_bytes = round(48000 * 2 * 2.8)
+            self.assertEqual(pcm[-tail_bytes:], bytes(tail_bytes))
+        # One active channel must prevent stereo trimming; compare byte for
+        # byte with bypass, including quiet material and the channel layout.
+        asymmetric = self.folder / 'one-channel.wav'
+        subprocess.run(['ffmpeg', '-v', 'error', '-i', str(self.fixture(quiet=0.012)),
+                        '-af', 'pan=stereo|c0=c0|c1=0*c0', str(asymmetric)], check=True)
+        for level in ['max', 'max-plus']:
+            seconds, pcm = self.render(asymmetric, level)
+            _, reference = self.render(asymmetric, extra=[
+                '--script-opts-append=dusky_silence-enabled=no'])
+            self.assertAlmostEqual(seconds, 12, delta=0.001)
+            self.assertEqual(pcm, reference)
+        silent = self.folder / 'silent.wav'
+        subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i',
+                        'anullsrc=r=48000:cl=mono', '-t', '12', str(silent)], check=True)
+        for level in ['max', 'max-plus']:
+            seconds, pcm = self.render(silent, level)
+            # stop_periods alone preserves all-silent input; do not add start
+            # trimming that would alter the accepted modes or remove onsets.
+            self.assertAlmostEqual(seconds, 12, delta=0.001)
+            self.assertEqual(pcm, bytes(len(pcm)))
 
     def test_track_selection_and_passthrough(self):
         first = self.fixture(rate=48000)

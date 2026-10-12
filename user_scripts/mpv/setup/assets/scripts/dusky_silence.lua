@@ -6,6 +6,7 @@ local options = {enabled = true, level = 'max'}
 local label = 'dusky_silence'
 local loaded = false
 local file_duration
+local file_start = 0
 local pending
 local failed = false
 
@@ -13,11 +14,20 @@ local failed = false
 -- 28/24/1 blocks in long gaps. silenceremove keeps stop_duration plus roughly
 -- one RMS window. Max conservatively keeps four blocks to preserve short
 -- pauses: unlike the original, this filter cannot retrospectively cut a gap.
+-- Optional Max Plus retains roughly one window, shortening brief pauses too.
 local levels = {
     mild = {rms = 0.0055, blocks = 28},
     medium = {rms = 0.00511, blocks = 24},
     max = {rms = 0.005, blocks = 4},
+    ['max-plus'] = {rms = 0.005, blocks = 1},
 }
+
+local function validate_level()
+    if not levels[options.level] then
+        msg.warn('Unknown silence level; using max')
+        options.level = 'max'
+    end
+end
 
 local function apply(preload)
     local filters = mp.get_property_native('af', {})
@@ -70,7 +80,7 @@ local function apply(preload)
         -- Source uses integer seconds and protects roughly the last 5–6s.
         -- No final-duration assumption is possible for a live/unknown stream.
         if duration then
-            graph = graph .. string.format(":enable='lt(t,%.6f)'", duration - 6)
+            graph = graph .. string.format(":enable='lt(t,%.6f)'", file_start + duration - 6)
         end
         -- Preserve source timestamps for seeking, chapters and resume positions.
         desired = {name = 'lavfi', label = label,
@@ -88,7 +98,9 @@ local function apply(preload)
     end
     if not desired and not existing then return end
     if desired and existing and existing.enabled ~= false and
-        (existing.params or {}).graph == desired.params.graph then return end
+        existing.name == desired.name and
+        (existing.params or {}).graph == desired.params.graph and
+        (existing.params or {})['fix-pts'] == desired.params['fix-pts'] then return end
     if desired then table.insert(next_filters, 1, desired) end
     local ok, err = mp.set_property_native('af', next_filters)
     if not ok then
@@ -108,13 +120,11 @@ local function schedule()
 end
 
 require('mp.options').read_options(options, 'dusky_silence', function()
+    validate_level()
     failed = false
     schedule()
 end)
-if not levels[options.level] then
-    msg.warn('Unknown silence level; using max')
-    options.level = 'max'
-end
+validate_level()
 
 local function announce()
     local text = options.enabled and ('Trim silence: ' .. options.level) or
@@ -136,6 +146,8 @@ mp.add_key_binding(nil, 'cycle', function()
         options.level = 'medium'
     elseif options.level == 'medium' then
         options.level = 'max'
+    elseif options.level == 'max' then
+        options.level = 'max-plus'
     else
         options.enabled = false
     end
@@ -146,6 +158,7 @@ end)
 mp.register_event('start-file', function()
     loaded = false
     file_duration = nil
+    file_start = 0
     failed = false
     schedule()
 end)
@@ -158,6 +171,9 @@ mp.add_hook('on_preloaded', 50, function()
     -- those updates would repeatedly rebuild the filter and lose trimming.
     file_duration = mp.get_property_number('duration')
     if file_duration and file_duration <= 0 then file_duration = nil end
+    if not mp.get_property_native('options/rebase-start-time', true) then
+        file_start = mp.get_property_number('demuxer-start-time', 0)
+    end
     apply(true)
 end)
 mp.register_event('file-loaded', function() apply() end)
