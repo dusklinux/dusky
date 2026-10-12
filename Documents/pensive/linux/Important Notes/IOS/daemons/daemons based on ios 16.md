@@ -1,3 +1,28 @@
+## Current state — v1.0.20, 2026-10-12
+
+The matching app/config preset contains **512 targets: 318 Off / 194 On** (105 `no`, 89 Critical `NO`). The config is a builtin target list, not a snapshot of every manually customized phone setting. Installing an update does not apply defaults. Versioned test sections below retain their historical counts, classifications and pending checks; this summary and the latest feature results supersede older statements of current behavior.
+
+The user identifies the current A11 jailbreak as **palera1n**, with no device passcode enabled. Earlier notes recorded Dopamine; that attribution is not the current setup. Preserve the existing passcode/jailbreak configuration. The tested runtime is iOS 16.7.16 with rootless `/var/jb` and Python 3.9.9. The bootstrap account home `/var/jb/var/mobile` differs from native iOS `/var/mobile`; SpringBoard preferences and its runtime report use the native path.
+
+Keep repaired Critical dependencies enabled: pkd, nehelper (and its filename alias), searchd, biomed, syncdefaultsd, mobile.lockdown, appleaccountd/akd/adid, absd, imagent, identityservicesd, cdpd, followupd, both Photos conversion services, passd, ProtectedCloudKeySyncing, SecureBackupDaemon, contextstored and dasd, alongside the existing core Critical services. Uppercase `NO` records that classification. Pkd's Off → CPU loop → On recovery was reproduced; searchd's individual CPU causality was not isolated. Some account dependencies were restored as a set, not individually isolated.
+
+Overrides has feature subpages and menu On/Off buttons. On enables listed jobs and known prerequisites; Off preserves Critical and dependency-only shared jobs. Individual Critical switches retain warnings. Shared labels in different groups refer to the same native override. Catalog switches load/unload their jobs; broader batches require userspace restart. Tools contains Import / Export Config. Descriptions remain visible without expanding rows; Search, available MiB and theme share one row without pinned category banners.
+
+| Feature | Verified behavior / normal phone state |
+| --- | --- |
+| Screen recording | ReplayKitAngel + replayd; enable both and respring. Both group directions passed; normally Off. Camera videos use a separate path. |
+| AirDrop / Wallet / accessibility | AirDrop policy and UI host Off; sharingd stays On. Wallet UI Off but Critical passd On for tested App Store confirmation. AccessibilityUIServer is optional with no Recommended On badge; builtin On, manually Off on this phone. |
+| Accounts / sharing / store | Sign-in and SMS, Photos image/video WhatsApp export and two free-app downloads passed after the recorded repairs. FaceTime calls and paid purchases/Apple Pay remain untested; WhatsApp Meta AI shortcut remains unresolved, while Set Flashlight works. |
+| iCloud Drive / Photos | Fresh-restart Drive export and Photos upload were confirmed on the web. Sync jobs bird/cloudd/cloudphotod/assetsd.nebulad returned Off by request; repaired Critical account/key/context/scheduler jobs stay On. |
+| Lock Screen media controls | PosterBoard + liveactivitiesd On and userspace restart restored clear playback controls; PaperBoard was not required. Both group directions passed. All three hosts default Off and are normally Off; PosterBoard is shared with Wallpaper. |
+| Widgets | chronod updates can be stopped; keep pkd On. Today View remains accessible because the attempted page-removal hooks failed and were removed. |
+| SpringBoard interfaces | Control Center and App Library access switches passed On/Off after resprings in v1.0.20 and are saved Off. Settings are separate from daemon.cfg. Dock/status-bar hiding switches and hooks were removed because they only hid views; both interfaces are restored. RAM savings remain unverified. |
+| Memory stress | Memory provides +100 MiB, −100 MiB and Clear, with fresh varied random data, allocation/footprint/headroom readings and cleanup on panel close. User checks passed allocation, minus, Clear and close/reopen cleanup. It consumes real memory for stress testing; it does not increase physical RAM, guarantee cache eviction or disable jetsam. |
+
+The installed v1.0.20/build 21 source is `ca663064295eb14b72a669ececcfcf37eeda7277`; the later app documentation commit does not change that build. CI passed 23 Python tests, Swift checks and iOS packaging. Both saved launchd domains matched the pre-interface profile after testing. Short settled CPU samples and feature checks do not prove net RAM/battery gains, every service combination or full-system stress reliability.
+
+## Reference classifications and historical test record
+
 Most conservative revision I can stand behind. Undocumented/private daemons are intentionally described generically rather than guessed at.
 
 Conservative legend:
@@ -12,7 +37,7 @@ Conservative legend:
 | --- | ----------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------ |
 | 1   | ABDatabaseDoctor               | Contacts database repair helper                                                              | yes                            |
 | 2   | abm-helper                     | Apple Business Manager                                                                       | yes                            |
-| 3   | absd                           | Private daemon exporting com.apple.absinthed and com.apple.absd; broader role unverified                                    | no                             |
+| 3   | absd                           | Absinthe/NAC authentication dependency; restoring it removed -44303 initialization errors | NO |
 | 4   | accessibility.axassetsd        | Accessibility asset downloads, such as voices                                                | if-unused                      |
 | 5   | accessibility.axremoted        | Remote accessibility services                                                                | if-unused                      |
 | 6   | accessibility.heard            | Disables Background white noise and hearing aids                                             | NO                             |
@@ -27,7 +52,7 @@ Conservative legend:
 | 15  | aggregated.addaily             | Advertising-related daily aggregation task                                                   | yes                            |
 | 16  | akd                            | apple id account login                                                                       | NO                             |
 | 17  | amsaccountsd                   | Apple Media Services account handling                                                        | no                             |
-| 18  | amsengagementd                 | Apple Media Services engagement telemetry                                                    | yes                            |
+| 18 | amsengagementd | Apple Media Services UI engagement/cache/link endpoints; second new free-app download passed with this job off | if-unused |
 | 19  | analyticsd                     | System analytics and diagnostics collection                                                  | yes                            |
 | 20  | and                            | Private Apple daemon, unclear public role                                                    | no                             |
 | 21  | announced                      | Announce Notifications / Announce Messages support                                           | if-unused                      |
@@ -79,7 +104,7 @@ Conservative legend:
 | 67  | captiveagent                   | Captive portal detection for public Wi‑Fi                                                    | if-unused                      |
 | 68  | carkitd                        | CarPlay core daemon                                                                          | if-unused                      |
 | 69  | CarPlayApp                     | CarPlay UI process                                                                           | if-unused                      |
-| 70  | cdpd                           | Private data-protection/escrow security service                                              | no                             |
+| 70  | cdpd                           | Core Data Protection; member of tested account sign-in repair set, individual causality unisolated | NO |
 | 71  | certui.relay                   | Certificate trust prompt relay                                                               | no                             |
 | 72  | cfnetwork.AuthBrokerAgent      | Network authentication broker                                                                | NO                             |
 | 73  | cfnetwork.cfnetworkagent       | Core networking agent                                                                        | NO                             |
@@ -107,7 +132,7 @@ Conservative legend:
 | 95  | contactsd                      | Contacts database daemon                                                                     | no                             |
 | 96  | containermanagerd              | App sandbox and container manager                                                            | NO                             |
 | 97  | containermanagerd.system       | System-level container manager                                                               | NO                             |
-| 98  | contextstored                  | Stores context for Siri/proactive features                                                   | yes                            |
+| 98  | contextstored                  | CoreDuet context store for scheduling; Off reproduced Photos upload rejection from failed context reads, zero Wi-Fi quality and inadequate data budget | NO |
 | 99  | coordinated                    | File/document coordination service                                                           | no                             |
 | 100 | CoreAuthentication.daemon      | Local authentication service for biometric/passcode prompts                                  | NO                             |
 | 101 | corecaptured                   | Low-level diagnostic capture service                                                         | yes                            |
@@ -176,7 +201,7 @@ Conservative legend:
 | 164 | fitcore                        | Fitness framework core service                                                               | if-unused                      |
 | 165 | fitcore.session                | Fitness active-session support service                                                       | if-unused                      |
 | 166 | fitnesscoachingd               | Fitness coaching notifications                                                               | if-unused                      |
-| 167 | followupd                      | Settings follow-up suggestions/account reminders                                             | yes                            |
+| 167 | followupd                      | CoreFollowUp account requests; member of tested repair set, individual causality unisolated | NO |
 | 168 | fontservicesd                  | System font management and font downloads                                                    | no                             |
 | 169 | fs_task_scheduler              | Filesystem maintenance scheduler                                                             | no                             |
 | 170 | fseventsd                      | Filesystem events daemon                                                                     | NO                             |
@@ -201,10 +226,10 @@ Conservative legend:
 | 189 | iconservices.iconservicesagent | App icon rendering and cache service                                                         | no                             |
 | 190 | idamd                          | Private Apple identity/auth daemon                                                           | no                             |
 | 191 | idcredd                        | Identity credential service for digital IDs                                                  | if-unused                      |
-| 192 | identityservicesd              | Identity Services daemon for iMessage/FaceTime                                               | KEEP                          |
+| 192 | identityservicesd              | Identity Services; member of tested account repair set and earlier nehelper dependency recovery | NO |
 | 193 | idscredentialsagent            | Identity Services credential agent                                                           | no                             |
 | 194 | idsremoteurlconnectionagent    | Identity Services network agent                                                              | no                             |
-| 195 | imagent                        | iMessage account and messaging agent                                                         | KEEP                          |
+| 195 | imagent                        | Messages backend including carrier SMS; restore plus respring recovered verification SMS | NO |
 | 196 | imautomatichistorydeletionagent | Automatic message-history deletion support                                                   | yes                            |
 | 197 | imtransferagent                | Transfers iMessage attachments/media                                                         | no                             |
 | 198 | inboxupdaterd                  | Inbox update helper; public role not well documented                                         | no                             |
@@ -224,7 +249,7 @@ Conservative legend:
 | 212 | knowledgeconstructiond         | Builds knowledge data for Siri/search                                                        | yes                            |
 | 213 | languageassetd                 | Downloads language assets such as dictionaries/voices                                        | if-unused                      |
 | 214 | linkd                          | Linking service for intents/deep links/app routing                                           | no                             |
-| 215 | liveactivitiesd                | Live Activities support                                                                      | if-unused                      |
+| 215 | liveactivitiesd | Live Activities and tested Lock Screen/Notification Center playback panel; requires PosterBoard for clear rendering in this profile | if-unused |
 | 216 | localizationswitcherd          | Localization/language-switch helper                                                          | if-unused                      |
 | 217 | locationd                      | Core Location daemon                                                                         | no                             |
 | 218 | locationpushd                  | Location-triggered push-notification support                                                 | if-unused                      |
@@ -322,8 +347,8 @@ Conservative legend:
 | 310 | PerfPowerServicesExtended      | Extended power/performance telemetry                                                         | yes                            |
 | 311 | pfd                            | Packet Filter / firewall support daemon                                                      | no                             |
 | 312 | photoanalysisd                 | Photos analysis daemon for faces/objects/scenes                                              | yes                            |
-| 313 | photos.ImageConversionService  | Image conversion service used by Photos/system frameworks                                    | no                             |
-| 314 | photos.VideoConversionService  | Video conversion service used by Photos/system frameworks                                    | no                             |
+| 313 | photos.ImageConversionService | Photos sharing/export image conversion; disabling caused Unable to Share, restoring plus respring repaired WhatsApp photo sharing | NO |
+| 314 | photos.VideoConversionService | Photos sharing/export video conversion; separate disable/restore plus respring comparison repaired WhatsApp Camera video sharing | NO |
 | 315 | pipelined                      | Image/camera processing pipeline daemon                                                      | no                             |
 | 316 | pluginkit.pkd | App-extension broker; disabled pkd reproduced SpringBoard widget-discovery CPU loop at about one core | NO |
 | 317 | pluginkit.pkreporter           | PlugInKit diagnostics reporter                                                               | yes                            |
@@ -337,7 +362,7 @@ Conservative legend:
 | 325 | privacyaccountingd             | App Privacy Report accounting service                                                        | yes                            |
 | 326 | proactiveeventtrackerd         | Tracks events for proactive Siri suggestions                                                 | yes                            |
 | 327 | progressd                      | System progress-reporting daemon                                                             | no                             |
-| 328 | protectedcloudstorage.protectedcloudkeysyncing | Protected cloud key-syncing service                                                          | no                             |
+| 328 | protectedcloudstorage.protectedcloudkeysyncing | Protected iCloud encryption-key sync; disabled endpoint caused CloudDocs user-key/zone preparation failures | NO |
 | 329 | ProxiedCrashCopier.ProxyingDevice | Copies crash logs from proxied/paired devices                                                | yes                            |
 | 330 | proximitycontrold              | Proximity-based handoff/device-interaction service                                           | if-unused                      |
 | 331 | ptpcamerad                     | PTP camera access daemon for importing photos                                                | if-unused                      |
@@ -371,7 +396,7 @@ Conservative legend:
 | 359 | screensharingserver            | Screen-sharing / remote-screen service                                                       | if-unused                      |
 | 360 | ScreenTimeAgent                | Screen Time tracking agent                                                                   | if-unused                      |
 | 361 | scrod                          | Accessibility screen-recognition / OCR daemon                                                | if-unused                      |
-| 362 | SecureBackupDaemon             | Secure backup support daemon                                                                 | no                             |
+| 362 | SecureBackupDaemon             | CloudServices secure-backup/key-recovery broker; missing endpoint blocked PCS metadata step, restore/retry completed key sync | NO |
 | 363 | security.CircleJoinRequested   | iCloud Keychain trust-circle approval service                                                | if-unused                      |
 | 364 | security.cloudkeychainproxy3   | iCloud Keychain proxy daemon                                                                 | if-unused                      |
 | 365 | security.cryptexd              | Cryptex and Rapid Security Response management                                               | NO                             |
@@ -496,7 +521,7 @@ Conservative legend:
 | 484 | MobileInternetSharing          | Personal Hotspot tethering network sharing daemon                                            | if-unused                      |
 | 485 | OTACrashCopier                 | Copies over-the-air crash reports for telemetry                                              | yes                            |
 | 486 | OTATaskingAgent                | Executes remote Apple diagnostic tasks                                                       | yes                            |
-| 487 | passd                          | Apple Wallet, passes, and transit card update daemon                                         | if-unused                      |
+| 487 | passd | Wallet/PassKit backend also required by tested App Store free-app confirmation; restore plus respring repaired download/install/launch | NO |
 | 488 | printd                         | AirPrint printing spooler daemon                                                             | if-unused                      |
 | 489 | racoon                         | IPsec IKE key exchange daemon for enterprise VPNs                                            | if-unused                      |
 | 490 | ReportCrash                    | Core system crash reporter daemon                                                            | yes                            |
@@ -506,6 +531,13 @@ Conservative legend:
 | 494 | tipsd                          | Tips app content sync and notification service                                               | yes                            |
 | 495 | voiced                         | VoiceOver speech synthesis audio daemon                                                      | if-unused                      |
 | 496 | AccessibilityUIServer | Optional accessibility UI host; basic usage tested with it off; no Recommended On classification | if-unused |
+| 497 | PosterBoard | Wallpaper/Lock Screen host and tested media-panel rendering dependency; default Off, enable with liveactivitiesd for that feature | if-unused |
+| 498 | PaperBoard | Wallpaper-related UI host; not required for tested Lock Screen playback controls | if-unused |
+| 499 | ShortcutsUI | Interactive Shortcuts UI host; kept On on the tested phone, freely switchable | if-unused |
+| 500 | sharing.airdropui | AirDrop UI host; native Allow AirDrop policy is separately controlled | if-unused |
+| 501 | PassbookUISceneService | Wallet interface host; separate from Critical passd needed by tested App Store confirmation | if-unused |
+| 502 | livetranscriptionui | Live Captions UI host on supported devices | if-unused |
+| 503 | replaykitangel | ReplayKit screen recording/broadcast UI host; tested with replayd and respring | if-unused |
 
 ## Device test findings — 2026-10-11
 
@@ -582,3 +614,72 @@ Deployment: v1.0.9 / build 10, source `b40f9cbccb871b0e07b6922b8275275d143236d3`
 Correction: although v1.0.9 installed and uiopen returned success, the user reported launch crashes. A duplicate com.apple.FileProvider description key caused Swift dictionary initialization to trap. v1.0.10 removes that duplicate and adds Python uniqueness plus Swift dictionary-initialization checks. Services/Critical now consolidate Search, numeric available MiB and theme control into one row, with the filter below; the separate top bar and pinned category headings are removed. Device launch verification is required after installation.
 
 Deployment v1.0.10 / build 11: source ac933c355c2864225afc0975c56ad9f0051f7893, successful Actions run 38215041614 (20 Python tests, Swift memory/group/dictionary checks and iOS build). Release/download SHA256 7eaf0738b024cfb8d364da29dcfdd59add524e13475fb77f892406f2f25ddd19 matched. TrollStore installation returned 0 and installed Info.plist matched. Unlike v1.0.9, the launched process remained present across repeated checks. The user reported the compact layout and recording group work. Recording after group On/respring passed, but the final phone check still found both jobs enabled. A follow-up Off-button check was requested; root restored both jobs Off with verified native unloads to leave the requested normal state. The last UI Off-button outcome remains pending. Account/sync functionality remains untested. Diagnosticd, ReportCrash and profiled were restored disabled/unloaded after launch investigation.
+
+## Apple Account / SMS repair and subpages — v1.0.13
+
+Overrides now has one subpage per feature. The user confirmed navigation and Back on Screen Recording, AirDrop and Apple Account in installed v1.0.12.
+
+Settings was stuck at Apple ID Next: com.apple.ak.auth.xpc lookup failed, akd/adid were enabled but unloaded, and appleaccountd was off. Enabling these brokers and restarting userspace restored the password/two-factor stage. CommCenter received carrier SMS while imagent was off; enabling/loading imagent and respringing restored user-confirmed verification SMS delivery.
+
+Absd exports com.apple.absinthed. With absd off, AppleAccount NAC/Absinthe initialization failed with -44303/-4403 and iCloud login returned HTTP 400. Enabling/loading only absd plus respring changed NAC initialization to success. This is a verified authentication-stage role; the old Contacts attribution remains unsupported.
+
+Later verification still failed. Restoring cdpd, followupd and identityservicesd together, then restarting userspace, was followed by user-confirmed full Apple Account sign-in. Logs show LoginAndUpdateAccount Authenticated=1/error=0 and successful Messages/FaceTime service sign-ins. The final three were tested as a set; individual responsibility for the preceding reset/timeout error was not isolated. FaceTime sign-in is not a tested FaceTime call.
+
+Current Critical classification includes absd, imagent, identityservicesd, cdpd and followupd alongside earlier critical dependencies. Account On includes the complete repaired set and SMS prerequisite; account/Messages group Off preserves those Critical jobs. Individual switches remain editable with warnings. New builtin targets keep absd/cdpd/followupd On. Config: 512 targets, 322 Off / 190 On; all Critical enabled entries use capital NO. This supersedes older KEEP/recommendation and 325/187 counts in historical sections. Explicit custom Off choices remain explicit; installing an update does not automatically apply presets.
+
+Further tests must be recorded by feature and state, with respring/userspace restart after changes. Full iCloud sync, App Store downloads, actual FaceTime/phone calls and every service combination are not established by sign-in or the memory allocation stress test. No net RAM or battery-life gain is claimed. Larger suspended apps in a pre-repair sample were Sudoku (~295 MB), Sileo (~108 MB) and WhatsApp (~101 MB); mostly small remaining helpers did not establish another worthwhile safe daemon disable.
+
+## Photos sharing/export repair — v1.0.14
+
+Photos reported Unable to Share with explicit XPC lookup error 3 / NSCocoaErrorDomain 4099 for disabled com.apple.photos.ImageConversionService. Restoring only that job and respringing repaired the user-tested Camera photo/screenshot sharing path. With the image repair retained, Camera video sharing independently failed and logs named disabled com.apple.photos.VideoConversionService. Restoring only the video job and respringing repaired the same video test. Both are now Critical/default On, with uppercase NO in the matching configs. This identifies these export failures; it does not prove the cause of the earlier disappearing WhatsApp chat picker or all media-format combinations.
+
+Overrides adds a Photos sharing and export subpage. Group Off preserves both Critical jobs, so its group Off button is unavailable; individual warned switches remain editable. On restores both and shared assetsd/pkd/sharingd. Current config: 512 targets, 320 Off / 192 On, superseding older counts.
+
+## App Store free-download repair — v1.0.15
+
+Get spun briefly and returned. Logs showed a successful HTTP response followed by Payment Sheet Failed. Restoring amsengagementd alone plus respring did not repair it; PassKit then explicitly reported missing com.apple.passd.in-app-payment. Restoring only passd plus respring restored the password/confirmation sheet, free-app download, installation and user-confirmed launch. The PassbookUISceneService override stayed off; the separate PassbookUIService launched for confirmation. Turning amsengagementd back off and respringing still allowed a second new free app to download and open. It remains optional; its previous telemetry-only description was incomplete.
+
+Passd is Critical/default On and an App Store shared prerequisite. Wallet group Off preserves it while leaving the interface switchable; individual warned switches remain available. Paid purchases, Apple Pay and Wallet passes remain untested. Current matching config: 512 targets, 319 Off / 193 On. FaceTime calls were unavailable to test because the user had no test contact; avconferenced was restored Off. Cloud sync testing is pending.
+
+Deployment v1.0.14 / build 15: source bb70111567f69f3fdbcd31cf29332267ecd11d67; Actions run 38223458480 passed Python/Swift checks and iOS packaging. Release IPA SHA256 2503408a28f6cb4bc1e2b084b1a625d4cd17bfe56c354e9f6f04146cbbd52d24 matched GitHub digest and embedded version. TrollStore installation returned 0, installed Info.plist matched, and process 12682 was present after opening following userspace restart. New sharing subpage user check remains pending.
+
+### Protected iCloud key repair and menu controls — v1.0.15
+
+Drive/Photos initially stalled after their optional jobs were enabled. CloudKit explicitly failed user-key sync at missing ProtectedCloudKeySyncing. Enabling that job and restarting userspace made it reachable, but a two-hour retry deadline deferred recovery. Removing only nextRegistrySync via mobile CFPreferences and restarting that job exposed the next missing endpoint, com.apple.SecureBackupDaemon, at FetchMetaData. After restoring it and requesting another retry, logs showed SynchronizeKeys complete: success. The user completed the account notice and confirmed it cleared, then restarted userspace. Existing Drive files appeared; a photo saved to Drive was confirmed on the web and downloaded intact. The first Save to Files attempt unexpectedly returned Home, while the second passed; that transient failure has not been isolated. Photos upload remained stalled. Contextstored is temporarily restored for a separate comparison of Photos CoreDuet context failures; it is not yet established as the cause of the upload stall.
+
+Both key-recovery jobs are now Critical shared account/Drive/Photos prerequisites. SecureBackupDaemon now defaults On; ProtectedCloudKeySyncing already defaulted On but had been manually disabled. Current matching config: 512 targets, 318 Off / 194 On. The retry-deadline diagnostic is not part of automatic group actions. No account/key reset was performed by the diagnostic code. Preserve the phone’s existing passcode/jailbreak setup; the user identifies this as palera1n on A11.
+
+Overrides menu rows now provide On/Off beside the link, retaining the subpage controls and Critical preservation policy. Deployment v1.0.15 / build 16: source 5647956a28d966b527f0e9de544af6887890f67d; Actions 38227081398 passed Python/Swift checks and packaging; IPA SHA256 2e920d6f1b0a81036f9584673788c1e21fc362859f01c55063872ac1db3832f5 matched release digest/version. TrollStore installation returned 0 and installed version matched. Menu-button user verification remains pending.
+
+### Photos scheduling comparison — v1.0.16
+
+Contextstored exports com.apple.coreduetd.context. After restoring it and restarting userspace, the scheduled Photos retry generated/uploaded derivatives and the user confirmed two fresh photos synced and appeared on the web. Turning only contextstored back off and restarting reproduced a third-photo stall. At the retry, Photos/DAS context reads/writes failed and DAS rejected com.apple.cloudphotod.sync.discretionary for DataBudgetPolicy (remaining ~546 KB vs predicted 10 MiB) and NetworkQualityPolicy (required 100, observed Wi-Fi/cellular 0). The restart ThunderingHerdPolicy was no longer a listed blocker. It was restored for a final same-photo recovery comparison.
+
+Contextstored is Critical/default On and included with dasd in the Photos group. Current matching config: 512 targets, 317 Off / 195 On. The user selected returning iCloud Drive/Photos sync services to their original Off states after testing; Critical account/key/context dependencies stay enabled. Other Siri learning/prediction jobs were not restored for this comparison. Final recovery/menu-button checks remain pending. No net RAM saving or exhaustive combination test is claimed.
+
+### Final verification / normal profile — v1.0.16
+
+Restoring contextstored again completed the same third-photo upload after the scheduled retry. Save to Files into Drive passed again and was visible on the web. The user enabled Drive/Photos from the new menu On buttons, used Tools userspace restart, and reported fresh-restart cloud checks passed. Both menu Off buttons followed by userspace restart then left bird/cloudd/cloudphotod/assetsd.nebulad disabled/unloaded; repaired Critical account/key/context/scheduling dependencies stayed enabled/loaded. The initial unexpected return Home did not recur in later tests, but its precise cause was not isolated.
+
+Final AirDrop policy read returned 0; profiled was restored disabled/unloaded afterward. Diagnosticd/ReportCrash were restored disabled/unloaded. Recording, widgets/Live Activities, wallpaper/captions/Wallet interface hosts, amsengagementd and avconferenced stayed Off. Baseline comparison in both saved domains found only 12 retained enable changes: appleaccountd, absd, cdpd, followupd, identityservicesd, imagent, image/video conversion, passd, ProtectedCloudKeySyncing, SecureBackupDaemon, contextstored. Akd/adid were already saved On and were reloaded earlier.
+
+Settled spindump: SpringBoard 0.015 CPU seconds / 15.00 seconds = 0.10% of one core; thermal pressure 0. Contextstored footprint 6,880 KB, CPU 0.008 seconds. This is a short settled sample, not net RAM/battery proof. No additional worthwhile safe daemon disable was established. FaceTime calls, paid purchases/Apple Pay, exhaustive combinations, memory background-cleanup behavior and the WhatsApp Meta AI action remain unverified/unresolved.
+
+Deployment v1.0.16/build 17: source 0f730f88a1e417af877dc53e23084103b2656b74; Actions 38229538314 passed 20 Python and Swift checks plus iOS build/package. IPA SHA256 67024e577f83ce2e62c08d24d405619edd40f1234b771ee44d2c50f7aeb1a284 matched release digest/version. TrollStore returned 0, installed version matched, launch was verified and menu On/Off actions were exercised. Final config: 512 targets, 317 Off / 195 On, matching app/notes. Bare-repository staging was left to the user.
+
+
+### Lock Screen playback hosts — 2026-10-12, v1.0.17
+
+The tested Lock Screen/Notification Center media group needs PosterBoard + liveactivitiesd, with PaperBoard still Off. Keep all three optional/default Off as explicitly requested; complete group Off must remain available. PosterBoard is shared with Wallpaper, while widget updates now controls chronod separately. Restart userspace after media-group changes. Config now matches 512 targets, 318 Off / 194 On; existing Critical NO entries are unchanged. See the [daemon test notes](scripts/daemons/README.md) for the On/Off comparison and recorded MediaRemoteUI rendering failure.
+
+
+### SpringBoard interface controls — v1.0.20
+
+Control Center and App Library have no separate launchd jobs in this phone's inspected configuration. The app deploys a minimal SpringBoard-only rootless companion to block their presentation/capability methods, with individual and menu On/Off switches, saved-versus-current-PID reporting and removal. Respring applies changes. This does not establish a reduction in allocated RAM. All 512 daemon targets remain unchanged (318 Off / 194 On).
+
+The prototype passed Off/On checks, but packaged v1.0.18 wrote settings to the bootstrap mobile home (/var/jb/var/mobile) instead of SpringBoard's native /var/mobile. It therefore saved Off without applying it. The corrected script uses the native path and account UID/GID for ownership; after a respring the runtime report showed all requested hooks active, and the user confirmed the interfaces were gone. A regression test covers distinct bootstrap/native homes.
+
+The user requested removing dock/status-bar controls because they only hide views; those switches and layout hooks were removed and both restored. The remaining switches block access to Control Center/App Library; RAM savings remain unverified. Attempts to remove Today View did not work and their hooks were removed, with the user's agreement. Keep pkd and repaired Critical services enabled. No jetsam-limit change or persistent memory stress allocation was introduced.
+
+
+The installed v1.0.20/build 21 app passed All On → respring → both interfaces available, followed by Off → respring → both inaccessible, confirmed by the user. Dock/status bar were restored and their switches removed. Final saved settings and current-PID runtime report both have Control Center/App Library disabled. CI run 38244546744 passed 23 Python tests, Swift memory/stress/group checks and iOS build/package. Source ca663064295eb14b72a669ececcfcf37eeda7277; IPA SHA256 35e71d9caee42bc50b7e251d69633b10420ebf44ca925c2fbb101d33c6d4bdca matched the release digest and embedded source/version; TrollStore returned 0 and the app process was observed running. Both saved launchd domains matched the pre-interface profile exactly. A settled 10-second sample measured SpringBoard at 0.010 CPU seconds (0.10% of one core), footprint 64.13 MB. That is not a comparative RAM/battery benchmark or exhaustive stress proof.

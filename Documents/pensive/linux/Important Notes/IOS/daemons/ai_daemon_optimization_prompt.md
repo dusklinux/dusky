@@ -1,5 +1,17 @@
 # Agent context: iOS 16 daemon testing and Daemon Manager
 
+## Current handoff — v1.0.20, 2026-10-12
+
+Read the [current-state summary](daemons%20based%20on%20ios%2016.md#current-state--v1020-2026-10-12) first. Versioned sections below are historical; their older counts, KEEP badges and pending checks must not override later verified results. Current config: **512 targets, 318 Off / 194 On**, with all 89 Critical enabled targets uppercase `NO`; the config matches app builtins, not every custom phone setting.
+
+The user identifies the current jailbreak as palera1n on A11, without a device passcode. Earlier Dopamine wording is superseded. Preserve this setup. Native SpringBoard preferences/report paths are under `/var/mobile`; the bootstrap passwd home `/var/jb/var/mobile` is different. This mismatch caused packaged v1.0.18 Off actions to save without applying; v1.0.20 fixes it and adds a regression test.
+
+Lock Screen playback requires tested PosterBoard + liveactivitiesd, with PaperBoard Off, and userspace restart. Those three hosts default Off and the user wants the media group normally Off. Keep pkd and repaired Critical account/key/scheduling/conversion/PassKit dependencies enabled; group Off preserves them. Fresh-restart iCloud Drive/Photos tests passed and their sync jobs returned Off by request. Menu On/Off and subpages were tested.
+
+V1.0.20 Control Center/App Library switches passed both directions after resprings; final choices are Off. They block UI access, with RAM savings unverified. Cosmetic dock/status-bar hooks were removed and both restored; failed Today View hooks were removed too. Memory stress allocates real random-filled memory in 100 MiB increments and releases it on minus/Clear/panel close; it does not create RAM or remove jetsam limits. Allocation/release controls passed user checks, not exhaustive system stress.
+
+Installed build: v1.0.20/build 21, source `ca663064295eb14b72a669ececcfcf37eeda7277`; CI passed 23 Python checks, Swift checks and iOS packaging. See the parent reference for release hashes, measured limits and feature-specific evidence. FaceTime calls, paid purchases/Apple Pay, all combinations and net RAM/battery gains remain unverified; the WhatsApp Meta AI action remains unresolved.
+
 ## Scope and maintained files
 
 App repository: `/mnt/zram1/daemon_manager`, remote `git@github.com:dusklinux/daemon_manager.git`, main branch. The repository is the sole app source/build location; its root `daemon.cfg` mirrors `scripts/daemons/daemon.cfg` in these notes. Do not recreate duplicate app sources or old daemonmanager/processkiller scripts here.
@@ -105,3 +117,34 @@ Deployment: v1.0.9 / build 10, source `b40f9cbccb871b0e07b6922b8275275d143236d3`
 Correction: although v1.0.9 installed and uiopen returned success, the user reported launch crashes. A duplicate com.apple.FileProvider description key caused Swift dictionary initialization to trap. v1.0.10 removes that duplicate and adds Python uniqueness plus Swift dictionary-initialization checks. Services/Critical now consolidate Search, numeric available MiB and theme control into one row, with the filter below; the separate top bar and pinned category headings are removed. Device launch verification is required after installation.
 
 Deployment v1.0.10 / build 11: source ac933c355c2864225afc0975c56ad9f0051f7893, successful Actions run 38215041614 (20 Python tests, Swift memory/group/dictionary checks and iOS build). Release/download SHA256 7eaf0738b024cfb8d364da29dcfdd59add524e13475fb77f892406f2f25ddd19 matched. TrollStore installation returned 0 and installed Info.plist matched. Unlike v1.0.9, the launched process remained present across repeated checks. The user reported the compact layout and recording group work. Recording after group On/respring passed, but the final phone check still found both jobs enabled. A follow-up Off-button check was requested; root restored both jobs Off with verified native unloads to leave the requested normal state. The last UI Off-button outcome remains pending. Account/sync functionality remains untested. Diagnosticd, ReportCrash and profiled were restored disabled/unloaded after launch investigation.
+
+## Current account/SMS repair — v1.0.13
+
+Overrides uses feature subpages; navigation was user-tested. The successful account profile restores appleaccountd/akd/adid, absd for NAC initialization, imagent for SMS, and cdpd/followupd/identityservicesd with a userspace restart. The final three were restored together; individual causality was not isolated. These authentication/SMS jobs are protected Critical dependencies in account/Messages group Off actions. Individual switches remain editable.
+
+Config now has 512 targets, 322 Off / 190 On. Absd/cdpd/followupd default On and Critical entries use capital NO. This supersedes older counts and Messages recommendations. See the parent iOS 16 reference’s v1.0.13 section for logs, staged repair evidence and remaining functional-test limits. App/notes configs match; reference edits remain local.
+
+### Photos sharing repair — v1.0.14
+
+ImageConversionService and VideoConversionService each caused a separately logged Photos export failure while disabled. Restoring each in turn and respringing repaired user-confirmed WhatsApp image/video sharing. Both are Critical/default On; individual switches remain editable and group Off preserves them. Current config: 512 targets, 320 Off / 192 On. See the parent iOS 16 reference for the comparisons and limits.
+
+### App Store repair — v1.0.15
+
+Restoring passd plus respring repaired free App Store confirmation, download, install and launch; PassbookUISceneService stayed off. A second new free app passed with amsengagementd off again. Passd is Critical/default On and a shared Store prerequisite; Wallet group Off preserves it. Paid purchases/Apple Pay remain untested. FaceTime calls were unavailable to test. Current config: 512 targets, 319 Off / 193 On. See the parent reference for staged comparisons and deployment results.
+
+### Cloud key dependencies and menu buttons — v1.0.15
+
+ProtectedCloudKeySyncing and SecureBackupDaemon are Critical shared account/Drive/Photos prerequisites after logged key-recovery failures; restoring both and retrying completed key synchronization and cleared the user’s account notice. Drive listing/upload/web download passed after restart; a first Save to Files attempt returned Home and Photos upload remains under investigation. Contextstored is only a temporary comparison so far. Overrides adds menu On/Off beside each subpage link. Current config: 512 targets, 318 Off / 194 On. See the parent reference for evidence, deployment and remaining checks.
+
+### Photos scheduler comparison — v1.0.16
+
+Photos synced two web-verified photos with contextstored restored. Turning only it off and restarting reproduced a new upload stall with failed context reads and explicit DAS network-quality/data-budget rejection. Contextstored is now Critical/default On and a Photos prerequisite with dasd. Current config: 512 targets, 317 Off / 195 On. The user chose Drive/Photos sync Off again after tests, preserving Critical dependencies. See the parent reference for the final recovery and deployment checks.
+
+### Final v1.0.16 verification
+
+The same waiting third photo synced after restoring contextstored again. Repeated Drive export and fresh-restart cloud checks passed after app menu On actions; menu Off actions plus restart returned the four sync jobs disabled/unloaded and preserved Critical dependencies. AirDrop remained Off, temporary diagnostics/profiled were restored Off, and only 12 repaired Critical enable changes remained versus baseline. Settled SpringBoard CPU: 0.015 s / 15.00 s = 0.10%, thermal pressure 0. Current config remains 512 targets, 317 Off / 195 On. See the parent reference for deployment hashes, precise tests and unverified cases. Existing user staging is preserved.
+
+
+### Lock Screen playback hosts — 2026-10-12, v1.0.17
+
+The tested Lock Screen/Notification Center media group needs PosterBoard + liveactivitiesd, with PaperBoard still Off. Keep all three optional/default Off as explicitly requested; complete group Off must remain available. PosterBoard is shared with Wallpaper, while widget updates now controls chronod separately. Restart userspace after media-group changes. Config now matches 512 targets, 318 Off / 194 On; existing Critical NO entries are unchanged. See the [daemon test notes](scripts/daemons/README.md) for the On/Off comparison and recorded MediaRemoteUI rendering failure.
