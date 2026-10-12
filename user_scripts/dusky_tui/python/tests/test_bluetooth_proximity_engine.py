@@ -61,6 +61,51 @@ class BluetoothProximityTests(unittest.TestCase):
         self.assertEqual(device['on_connect'], ['"$HOME/a path/script.sh"', 'printf café'])
         self.assertIn('[[devices]]', self.path.read_text(encoding='utf-8'))
 
+    def test_first_setup_defaults_and_later_edits_preserve_locking(self):
+        defaults = self.data()
+        self.assertTrue(defaults['proximity_enabled'])
+        self.assertTrue(defaults['direct_hyprlock_signal'])
+        self.assertTrue(defaults['wake_display'])
+        self.assertFalse(defaults['devices'][0]['enabled'])
+        self.assertTrue(defaults['devices'][0]['proximity'])
+        self.assertIn('hyprlock', defaults['on_far'][0])
+        self.save(('mac', 'devices/0', 'AA:BB:CC:DD:EE:FF', 'string'),
+                  ('name', 'devices/0', 'My wearable', 'string'),
+                  ('enabled', 'devices/0', 'true', 'bool'))
+        self.engine.load_state()
+        self.assertTrue(self.engine.cache['devices/0/enabled'])
+        self.save(('proximity_level', 'DEFAULT', '6', 'string'),
+                  ('far_hold_secs', 'DEFAULT', '9', 'int'),
+                  ('signal_timeout_secs', 'devices/0', '180', 'string'))
+        saved = self.data()
+        self.assertEqual(saved['on_far'], defaults['on_far'])
+        self.assertTrue(saved['devices'][0]['proximity'])
+        self.assertEqual(saved['proximity_level'], 6)
+        self.assertEqual(saved['far_hold_secs'], 9)
+        self.assertEqual(saved['devices'][0]['signal_timeout_secs'], 180)
+
+    def test_default_lock_command_uses_wrapper_and_plain_hyprlock(self):
+        import subprocess
+        base = Path(self.directory.name)
+        home = base / 'home'
+        wrapper = home / 'user_scripts/hyprlock/lock.sh'
+        wrapper.parent.mkdir(parents=True)
+        wrapper.write_text('#!/bin/sh\nprintf wrapper\n', encoding='utf-8')
+        wrapper.chmod(0o755)
+        binaries = base / 'bin'
+        binaries.mkdir()
+        hyprlock = binaries / 'hyprlock'
+        hyprlock.write_text('#!/bin/sh\nprintf hyprlock\n', encoding='utf-8')
+        hyprlock.chmod(0o755)
+        env = os.environ | {'HOME': str(home), 'PATH': str(binaries)}
+        command = self.data()['on_far'][0]
+        for expected in ['wrapper', 'hyprlock']:
+            result = subprocess.run(['/bin/sh', '-c', command], env=env, capture_output=True,
+                                    text=True, timeout=5, check=True)
+            self.assertEqual(result.stdout, expected)
+            if wrapper.exists():
+                wrapper.unlink()
+
     def test_hooks_distinguish_inherit_disabled_and_single_command(self):
         self.save(('on_connect', 'DEFAULT', 'printf "$PROXIMITY_DEVICE_NAME"', 'string'),
                   ('on_connect', 'devices/0', '[]', 'string'))
@@ -160,6 +205,9 @@ class BluetoothProximityTests(unittest.TestCase):
         with patch.dict(os.environ, {'XDG_CONFIG_HOME': self.directory.name}):
             spec.loader.exec_module(schema)
             _, dynamic = schema.discover_devices()
+            self.assertIn('First setup:', schema.TAB_NOTICES[0]['message'])
+            self.assertTrue(any(i.key == 'action_scan' for i in dynamic[4]))
+            self.assertFalse(any(i.key == 'action_scan' for i in schema.SCHEMA[5]))
         schema.SCHEMA.update(dynamic)
         items = [*tab for tab in schema.SCHEMA.values()]
         uids = {i.uid for i in items}
@@ -171,3 +219,12 @@ class BluetoothProximityTests(unittest.TestCase):
             if i.parent_ref:
                 self.assertIn(i.parent_ref, uids)
         self.assertEqual(schema.DEFAULT_MODE, 'batch')
+        engine = BluetoothProximityEngine(schema.TARGET_FILE)
+        engine.load_state()
+        result = engine.write_batch([
+            ('mac', 'devices/0', 'AA:BB:CC:DD:EE:FF', 'string'),
+            ('enabled', 'devices/0', 'true', 'bool'),
+        ])
+        self.assertTrue(result[0], result)
+        schema.discover_devices()
+        self.assertNotIn('First setup:', schema.TAB_NOTICES[0]['message'])

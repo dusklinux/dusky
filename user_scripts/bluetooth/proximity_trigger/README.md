@@ -29,8 +29,10 @@ ${XDG_CONFIG_HOME:-$HOME/.config}/dusky/settings/bluetooth_proximity/
   hooks/on_disconnect.sh
 ```
 
-Fresh defaults have no enabled device. Fill in a MAC, set `enabled = true`, then
-restart the service. With no enabled devices the program exits successfully without
+Fresh defaults select proximity locking: hyprlock on departure, automatic unlock
+and display waking on confirmed return. No enabled device is shipped. Configure
+your target through the TUI steps below, then restart the service.
+With no enabled devices the program exits successfully without
 Bluetooth/session actions; the service remains enabled for future sessions. Do not
 expect an address supplied by the installer: hardware identity belongs in your TOML.
 
@@ -89,6 +91,24 @@ configuration. Restart is explicit. Invalid batches and stale file writes are re
 Device-management and Validate/Restart buttons queue operations; Ctrl+S executes them.
 The editor starts in batch mode so MAC, thresholds and enablement can be validated
 together. Its scan action uses the saved adapter and transport.
+
+### First setup: proximity locking
+
+1. Turn Bluetooth on and make your target discoverable or advertising.
+2. In **Devices**, run **Scan known/live devices** and copy the target's MAC.
+3. Open **1: Bluetooth Device**, fill its MAC and name, and enable it. Leave
+   **Use for proximity** enabled. Press **Ctrl+S** to save the complete batch.
+4. In **Service**, select **Restart service**, then press **Ctrl+S** to activate.
+5. Use **Live RSSI dry run** in Service to observe signal readings, and tune
+   **Signal** and **Timing** for your device/environment. This diagnostic process
+   does not execute hooks; the separately running service still does.
+
+The default departure command uses `~/user_scripts/hyprlock/lock.sh` when executable,
+otherwise `hyprlock` from PATH. Hyprlock and its configuration must be installed.
+Scan is an observation tool: pairing and Bluetooth power are managed with your
+normal Bluetooth controls. Devices with rotating addresses should be paired and
+configured using their resolved BlueZ identity. Later changes to actions, device
+overrides, signal policy and timings follow the same validated save/restart flow.
 
 In Commands, enter a shell command or TOML array of strings. Empty global hooks
 and `[]` disable commands. Empty device overrides inherit global hooks; device

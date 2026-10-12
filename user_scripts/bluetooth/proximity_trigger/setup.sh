@@ -23,4 +23,7 @@ systemctl --user daemon-reload
 systemctl --user enable dusky_proximity.service
 systemctl --user restart dusky_proximity.service
 printf 'Configuration: %s\nExecutable: %s\n' "$TARGET_CONFIG" "$BIN_PATH"
-printf 'Fresh defaults are inactive until a device MAC is filled in and enabled in TOML.\n'
+printf 'Configure Bluetooth Proximity Trigger: %s\n' "$SCRIPT_DIR/tui_dusky_proximity.py"
+printf 'Fresh defaults: hyprlock on departure; unlock and wake on return.\n'
+printf 'First setup: Devices > Scan; enter the target MAC/name and enable it; Ctrl+S saves.\n'
+printf 'Then Service > Restart service, followed by Ctrl+S, activates the saved settings.\n'

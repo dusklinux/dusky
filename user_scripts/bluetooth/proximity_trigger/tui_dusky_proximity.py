@@ -22,12 +22,13 @@ ENABLE_USER_PRESETS = False
 _BINARY = Path.home() / '.local/bin/dusky_proximity'
 TABS = ['General', 'Signal', 'Timing', 'Commands', 'Devices', 'Service']
 TAB_NOTICES = {
-    0: {'level': 'info', 'message': 'Ctrl+S saves a validated batch; TOML comments are removed. Restart to apply. ? opens help.'},
+    0: {'level': 'info', 'message': 'Default: hyprlock on departure, unlock and wake on return. Ctrl+S saves; Service > Restart service, then Ctrl+S applies. ? opens help.'},
     1: {'level': 'info', 'message': 'Levels are signal presets, not metres. Clear the preset to use explicit thresholds.'},
     3: {'level': 'info', 'message': 'Enter a command or TOML string array. Wrap commands starting [ in an array. [] disables commands.'},
-    4: {'level': 'info', 'message': 'Save edits first. Device buttons queue operations: Ctrl+S, then F5. Empty overrides inherit globals.'},
+    4: {'level': 'info', 'message': 'Setup: turn Bluetooth on, scan, enter the target MAC/name in its device menu and enable it. Ctrl+S saves; Service > Restart service, then Ctrl+S applies.'},
     5: {'level': 'info', 'message': 'Save edits first. Validate/Restart buttons queue actions for Ctrl+S. Diagnostics use saved settings.'},
 }
+_GENERAL_NOTICE = TAB_NOTICES[0]['message']
 
 
 def item(label, key, default, help_text, *, group, scope='DEFAULT', type_=None, **kwargs):
@@ -84,7 +85,6 @@ SCHEMA = {
         control('Validate saved configuration', 'validate', 'Queue a native --check-config check; Ctrl+S runs it. Does not scan, replace the file or execute configured hooks.', group='Service'),
         control('Restart service', 'restart', 'Save pending edits first. Queue validation and restart, then Ctrl+S runs it. Does not change service enablement.', group='Service'),
         item('Live RSSI dry run', 'action_test', shlex.join([str(_BINARY), '--config', TARGET_FILE, '--test']), 'Observe live measurements without actions from this test process. An independently running service remains active. Ctrl+C ends the test.', group='Diagnostics', type_='action', force_interactive=True),
-        item('Scan known/live devices', 'action_scan', shlex.join([str(_BINARY), '--config', TARGET_FILE, '--scan']), 'Five-second discovery scan using the saved adapter and transport, with live RSSI and known names. Use the displayed MAC in a device entry.', group='Diagnostics', type_='action', force_interactive=True),
     ],
 }
 
@@ -92,7 +92,12 @@ def discover_devices():
     path = Path(TARGET_FILE)
     initialize(path)
     data = canonical(tomllib.loads(path.read_text(encoding='utf-8')))
+    if not any(device.get('enabled', True) for device in data['devices']):
+        TAB_NOTICES[0]['message'] = 'First setup: Devices > Scan, enter the target MAC/name and enable it; Ctrl+S saves. Service > Restart service, then Ctrl+S activates. Fresh defaults use hyprlock.'
+    else:
+        TAB_NOTICES[0]['message'] = _GENERAL_NOTICE
     rows = [
+        item('Scan known/live devices', 'action_scan', shlex.join([str(_BINARY), '--config', TARGET_FILE, '--scan']), 'Turn Bluetooth on and make the target discoverable or advertising. Scan for five seconds using saved adapter/transport settings. Copy its MAC into the device menu, enter its name and enable it; Ctrl+S saves. Restart the service to activate. For rotating addresses, pair the device and use its resolved BlueZ identity.', group='Setup', type_='action', force_interactive=True),
         control('Add disabled device', 'add_device', 'Save pending edits first. Queue a blank disabled target, Ctrl+S commits it, then F5 displays it. Fill its MAC before enabling.', group='Management'),
         control('Remove last device', 'remove_last_device', 'Save edits first. Queue removal of the final entry; Ctrl+S commits it, then F5 refreshes rows. Other indices remain stable. Disable other targets to stop using them.', group='Management', confirm_message='Remove the last configured device?'),
     ]
