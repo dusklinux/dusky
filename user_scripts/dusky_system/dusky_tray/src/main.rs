@@ -17,13 +17,14 @@ use config::AppConfig;
 use std::env;
 use ui::TrayApp;
 
-// Bounded background threads (GTK used 4 refresh workers; wallpaper uses 2).
+// Iced streams stay responsive while the separate four-worker query pool waits.
 struct BackgroundExecutor(iced_futures::futures::executor::ThreadPool);
 
 impl iced_futures::Executor for BackgroundExecutor {
     fn new() -> Result<Self, iced_futures::futures::io::Error> {
+        backend::worker::initialize()?;
         iced_futures::futures::executor::ThreadPool::builder()
-            .pool_size(4)
+            .pool_size(2)
             .name_prefix("tray-worker")
             .create()
             .map(Self)

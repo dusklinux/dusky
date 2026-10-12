@@ -14,29 +14,62 @@ use std::time::Duration;
 
 /// Tmpfs-only runtime directory.
 ///
-/// Priority: `$XDG_RUNTIME_DIR/dusky-tray` (tmpfs) → `/dev/shm/...` →
-/// `/tmp/...`. Never falls back to `$HOME` so cache files cannot wear the SSD.
+/// Priority: `$XDG_RUNTIME_DIR/dusky-tray` → `/run/user/$UID/dusky-tray`
+/// → `/dev/shm/...` → the temporary directory, verifying tmpfs in each case.
 pub fn runtime_dir() -> PathBuf {
-    let candidates = [
-        std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from),
-        Some(PathBuf::from(format!("/run/user/{}", unsafe {
-            libc::getuid()
-        }))),
-        Some(PathBuf::from("/dev/shm")),
-        Some(std::env::temp_dir()),
-    ];
-    for base in candidates.into_iter().flatten() {
-        // /dev/shm and /tmp need a per-user subdir.
-        let dir = if base == *"/dev/shm" || base == std::env::temp_dir() {
-            base.join(format!("dusky-tray-{}", unsafe { libc::getuid() }))
-        } else {
-            base.join("dusky-tray")
+    static DIRECTORY: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    DIRECTORY
+        .get_or_init(|| {
+            let temp = std::env::temp_dir();
+            let uid = unsafe { libc::getuid() };
+            let candidates = [
+                std::env::var_os("XDG_RUNTIME_DIR")
+                    .filter(|p| !p.is_empty())
+                    .map(PathBuf::from),
+                Some(PathBuf::from(format!("/run/user/{uid}"))),
+                Some(PathBuf::from("/dev/shm")),
+                Some(temp.clone()),
+            ];
+            for base in candidates.into_iter().flatten() {
+                let dir = if base == *"/dev/shm" || base == temp {
+                    base.join(format!("dusky-tray-{uid}"))
+                } else {
+                    base.join("dusky-tray")
+                };
+                // Check the existing ancestor before mkdir: never create cache
+                // directories on disk just to discover that /tmp is not tmpfs.
+                if is_tmpfs(&dir) && std::fs::create_dir_all(&dir).is_ok() && dir.is_dir() {
+                    return dir;
+                }
+            }
+            eprintln!("Could not find a writable tmpfs directory for Dusky Tray");
+            std::process::exit(1);
+        })
+        .clone()
+}
+
+fn is_tmpfs(path: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let mut ancestor = path;
+    loop {
+        let Ok(name) = std::ffi::CString::new(ancestor.as_os_str().as_bytes()) else {
+            return false;
         };
-        if std::fs::create_dir_all(&dir).is_ok() && dir.is_dir() {
-            return dir;
+        let mut stat = std::mem::MaybeUninit::<libc::statfs>::uninit();
+        if unsafe { libc::statfs(name.as_ptr(), stat.as_mut_ptr()) } == 0 {
+            return unsafe { stat.assume_init() }.f_type == libc::TMPFS_MAGIC;
         }
+        if std::io::Error::last_os_error().kind() != std::io::ErrorKind::NotFound {
+            return false;
+        }
+        let Some(parent) = ancestor.parent() else {
+            return false;
+        };
+        if parent == ancestor {
+            return false;
+        }
+        ancestor = parent;
     }
-    std::env::temp_dir().join("dusky-tray-fallback")
 }
 
 pub fn sunset_state_file() -> PathBuf {
@@ -201,10 +234,6 @@ pub fn current_time_date() -> (String, String) {
 // volume (wpctl)
 // ---------------------------------------------------------------------------
 
-pub fn has_volume() -> bool {
-    which("wpctl").is_some()
-}
-
 pub fn get_volume() -> Option<f32> {
     let wpctl = which("wpctl")?;
     let out = run_command(
@@ -329,14 +358,6 @@ pub fn has_local_brightness() -> bool {
             || sysfs_backlights()
                 .iter()
                 .any(|d| access_ok(&d.path.join("brightness"), libc::W_OK)))
-}
-
-pub fn has_ddc_brightness() -> bool {
-    which("ddcutil").is_some()
-}
-
-pub fn has_brightness() -> bool {
-    has_local_brightness() || has_ddc_brightness()
 }
 
 fn read_sysfs_brightness() -> Option<f32> {
@@ -1425,12 +1446,18 @@ mod tests {
     #[test]
     fn runtime_dir_is_tmpfs_path() {
         let d = runtime_dir();
-        let s = d.to_string_lossy();
+        assert!(d.is_dir());
+        assert!(is_tmpfs(&d), "runtime directory must use tmpfs: {d:?}");
+        assert_eq!(d, runtime_dir(), "directory selection stays stable");
+        let missing = d
+            .join(format!("missing-{}", std::process::id()))
+            .join("nested");
+        assert!(!missing.exists());
         assert!(
-            s.starts_with("/run/user/") || s.starts_with("/dev/shm") || s.starts_with("/tmp"),
-            "runtime dir must be tmpfs, got {s}"
+            is_tmpfs(&missing),
+            "missing paths probe their existing ancestor"
         );
-        assert!(!s.starts_with("/home/"), "must not be on SSD home");
+        assert!(!is_tmpfs(Path::new("/proc")), "procfs is not tmpfs");
     }
 
     #[test]

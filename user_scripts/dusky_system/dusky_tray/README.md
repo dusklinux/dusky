@@ -130,6 +130,14 @@ The notification timestamp daemon runs independently.
   Network metrics use the whole module width without an up/down icon.
 - The panel appears on the first rendered frame with its current clock and
   available controls; hardware and notification queries never gate visibility.
+  Read-only boot queries start before graphics initialization and run on four
+  bounded blocking workers, separately from Iced's two stream workers. Volume,
+  brightness, and night light deliver independent results. Each refresh category
+  allows one outstanding query, so slow DDC cannot block later notification,
+  radio, or volume refreshes. Hidden sections do not schedule queries. Controls
+  reject polling results from before their latest action, even if that action
+  has already finished. Every opening still reads live state; no startup snapshot
+  or additional resident process is used.
   The clock updates on each two-second tick independently of hardware refreshes.
   Loading and empty notification labels share a fixed 56 px slot, so an empty
   result only changes the label. Sliders still appear only when available.
@@ -207,10 +215,13 @@ layout keys are reused. An absent file receives embedded defaults. Empty
 `toggles=[]` is respected. `show_media` remains a reserved, unimplemented key.
 
 Runtime data normally lives in `$XDG_RUNTIME_DIR/dusky-tray`, with
-per-user runtime fallbacks. Mako's blacklist and timestamp files are read from
+per-user runtime fallbacks. The tray verifies the filesystem is tmpfs before
+creating its runtime directory and remembers that directory for its lifetime.
+Mako's blacklist and timestamp files are read from
 the shared runtime root so GTK, Rofi, and Rust agree on dismissed notifications.
 Queries and slider commands use nonblocking captured pipes, timeouts, and
-Linux parent-death cleanup. Application launchers use separate systemd scopes.
+Linux parent-death cleanup. A pollable process descriptor reports command exit,
+avoiding periodic wakeups while waiting. Application launchers use separate systemd scopes.
 
 Backlight devices and Bluetooth adapters are discovered at runtime. Local
 brightness uses writable sysfs, then logind SetBrightness, then brightnessctl.
@@ -257,8 +268,10 @@ For a first-frame submission timestamp without verbose Wayland logging:
 DUSKY_TRAY_TRACE=1 ~/.local/bin/dusky-tray
 ```
 
-The first submitted frame now contains the visible panel. Query completion
+The first submitted frame contains the visible panel. Query completion
 phases identify slow background work separately from `first-present`.
+Slider phases are `volume-ready`, `brightness-ready`, and `sunset-ready`;
+`snapshot-ready` means all enabled categories have delivered their first result.
 This measures GPU frame submission, not the time at which the display scans
 out a frame. No result here promises identical latency on different hardware
 or after a disk-cold boot.

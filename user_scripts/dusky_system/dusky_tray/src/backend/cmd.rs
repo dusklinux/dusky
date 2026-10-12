@@ -5,6 +5,7 @@
 //! `start_new_session=True` + `killpg` path).
 
 use std::io::Read;
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -52,7 +53,15 @@ pub fn run_command(argv: &[String], timeout: Duration, capture: bool) -> Option<
     }
     let mut child = cmd.spawn().ok()?;
     let pid = child.id();
-    use std::os::fd::AsRawFd;
+    // Linux >= 7.3 provides pollable process handles. Open before reaping the
+    // child, so even an immediate exit cannot race PID reuse. The fd is CLOEXEC.
+    let process_fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid as libc::pid_t, 0u32) };
+    if process_fd < 0 {
+        unsafe { libc_killpg(pid) };
+        let _ = child.wait();
+        return None;
+    }
+    let process_fd = unsafe { OwnedFd::from_raw_fd(process_fd as i32) };
     let mut stdout = child.stdout.take();
     let mut stderr = child.stderr.take();
     for fd in stdout
@@ -118,6 +127,17 @@ pub fn run_command(argv: &[String], timeout: Duration, capture: bool) -> Option<
         // deadlock once mako history exceeds the kernel's pipe capacity.
         let mut fds = [
             libc::pollfd {
+                // Once reaped, only descendants holding pipes open can remain.
+                // A readable exit fd must not cause a busy loop in that case.
+                fd: if status.is_none() {
+                    process_fd.as_raw_fd()
+                } else {
+                    -1
+                },
+                events: libc::POLLIN,
+                revents: 0,
+            },
+            libc::pollfd {
                 fd: if out_done {
                     -1
                 } else {
@@ -136,8 +156,15 @@ pub fn run_command(argv: &[String], timeout: Duration, capture: bool) -> Option<
                 revents: 0,
             },
         ];
-        unsafe {
-            libc::poll(fds.as_mut_ptr(), 2, 10);
+        let wait_ms = deadline
+            .saturating_duration_since(std::time::Instant::now())
+            .as_millis()
+            .clamp(1, i32::MAX as u128) as i32;
+        let ready = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, wait_ms) };
+        if ready < 0 && std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted {
+            unsafe { libc_killpg(pid) };
+            let _ = child.wait();
+            return None;
         }
     }
 }
@@ -311,5 +338,72 @@ mod tests {
             true,
         );
         assert!(out.is_none());
+    }
+
+    #[test]
+    fn closed_pipes_do_not_finish_a_still_running_command() {
+        let start = std::time::Instant::now();
+        let out = run_command(
+            &[
+                "/usr/bin/bash".into(),
+                "-c".into(),
+                "exec 1>&- 2>&-; sleep 0.2; exit 7".into(),
+            ],
+            Duration::from_secs(2),
+            true,
+        )
+        .unwrap();
+        assert_eq!(out.code, 7);
+        assert!(!out.status);
+        assert!(start.elapsed() >= Duration::from_millis(150));
+    }
+
+    #[test]
+    fn reaped_leader_still_drains_descendant_pipes() {
+        let out = run_command(
+            &[
+                "/usr/bin/bash".into(),
+                "-c".into(),
+                "(sleep 0.05; printf tail) & printf head; exit 7".into(),
+            ],
+            Duration::from_secs(2),
+            true,
+        )
+        .unwrap();
+        assert_eq!(out.code, 7);
+        assert_eq!(out.stdout, "headtail");
+    }
+
+    #[test]
+    fn repeated_commands_do_not_leak_file_descriptors() {
+        const CHILD: &str = "DUSKY_TRAY_TEST_FDS";
+        if std::env::var_os(CHILD).is_none() {
+            let result = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "backend::cmd::tests::repeated_commands_do_not_leak_file_descriptors",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stdout)
+            );
+            return;
+        }
+        let count = || std::fs::read_dir("/proc/self/fd").unwrap().count();
+        let before = count();
+        for i in 0..200 {
+            let out = run_command(
+                &["/usr/bin/true".into()],
+                Duration::from_secs(2),
+                i % 2 == 0,
+            )
+            .unwrap();
+            assert!(out.status);
+        }
+        assert_eq!(count(), before);
     }
 }
