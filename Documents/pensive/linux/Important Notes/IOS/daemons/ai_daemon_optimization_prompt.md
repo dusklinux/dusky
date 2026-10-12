@@ -2,7 +2,7 @@
 
 ## Scope and maintained files
 
-App repository: `/mnt/zram1/daemon_manager-main`, remote `git@github.com:dusklinux/daemon_manager.git`, main branch. The repository is the sole app source/build location; its root `daemon.cfg` mirrors `scripts/daemons/daemon.cfg` in these notes. Do not recreate duplicate app sources or old daemonmanager/processkiller scripts here.
+App repository: `/mnt/zram1/daemon_manager`, remote `git@github.com:dusklinux/daemon_manager.git`, main branch. The repository is the sole app source/build location; its root `daemon.cfg` mirrors `scripts/daemons/daemon.cfg` in these notes. Do not recreate duplicate app sources or old daemonmanager/processkiller scripts here.
 
 Keep these five references: this prompt, `daemons based on ios 16.md`, and `scripts/daemons/{daemon.cfg,instructions.md,README.md}`. The raw 2026-10-11 workstation test artifacts were deleted after the results were incorporated into the reference. Device-side originals/backups were left under `/var/mobile/Documents/daemon-test-2026-10-11`.
 
@@ -85,3 +85,23 @@ The unsupported absd Contacts description and related database links were remove
 
 Deployment verification: v1.0.6 / build 7 from commit `2539b452c68af93be6259d63c0132cd27bab7194`, Actions run `38126774901` passed 11 Python tests, Swift memory checks and iOS build. Release asset SHA256 `ba360f3a5208712453c0a092120b82f530a0ffdfe362879121b4bf16546879f4` matched the download and embedded source revision. TrollStore Lite install returned 0, installed Info.plist matches this revision, uiopen succeeded, and all 333 launchd overrides plus active NoAnimationsX filter remain identical. Reference notes are updated locally; only the app repository was committed/pushed.
 The user confirmed all v1.0.6 checks: animation switch absent, both UI hosts off, grouped write counters and explanation working. A final post-launch comparison again preserved every override and the active animation filter.
+
+## Current v1.0.8 behavior (2026-10-12)
+
+The matching config contains 512 targets: 325 off, 187 on. `yes` disables, `no` enables, and uppercase `NO` marks critical enabled targets. Pkd, nehelper and its filename alias, searchd, biomed, syncdefaultsd and mobile.lockdown are Critical under the user's performance/dependency policy; older KEEP/orange classifications in the historical sections are superseded. Searchd's single-service CPU causality remains unproven. AccessibilityUIServer is optional and has no Recommended On badge; its existing On builtin and manually switchable Off choice are retained.
+
+Overrides replaces the Config tab and contains the tested optional UI hosts, screen-recording dependencies and widget-update controls. Tools → Import / Export Config contains configuration actions. Descriptions are visible without expansion; detailed warnings and metadata remain expandable. Single catalog switches load/unload their job immediately and verify the saved/loaded states. Other batches still require userspace restart.
+
+Allow AirDrop controls the native allowAirDrop feature setting for sending and receiving while sharingd stays on for the normal Share Sheet. The on-demand entitled helper temporarily uses profiled and restores its previous override/job state; it does not install a profile or directly edit a policy database. Screen Recording requires both ReplayKitAngel and replayd On, and is separate from Camera video capture. The user wants recording services normally Off and ShortcutsUI On.
+
+See the parent iOS 16 reference's 2026-10-12 section for the isolated pkd CPU loop, optional-host tests, recovered Share Sheet and remaining WhatsApp Meta AI Auto Shortcut failure. No idle RAM saving is claimed for hosts that had no running process. Reference changes remain local in the bare dotfiles work tree.
+
+### v1.0.9 feature groups
+
+Overrides adds 13 group On/Off controls over 40 checked installed job labels. Off preserves Critical and shared prerequisites; individual switches remain available. Broader account/sync groups require userspace restart and are not fully feature-tested. Screen Recording passed with unrelated hosts off after enabling ReplayKitAngel/replayd and respringing; both are normally off by request. See the parent reference’s final verification section for the packaged AirDrop restoration test, user UI checks, 0.08% SpringBoard sample and remaining widget/WhatsApp limitations.
+
+Deployment: v1.0.9 / build 10, source `b40f9cbccb871b0e07b6922b8275275d143236d3`, Actions run `38213950882` succeeded (19 Python tests, Swift memory/group policy checks, iOS build and packaging). IPA SHA256 `fa092542663a7dcfe516af1c481947f29a8728d3f4a725fcb912fcb79213e088` matched the release digest. TrollStore Lite install returned 0 and installed Info.plist matches this version/revision; uiopen succeeded. Phone state preserves pkd/Shortcuts On, recording Off, and diagnosticd/profiled Off. Original 336 override values were unchanged by optional-host testing; six explicit host entries were added. App repository changes were pushed; reference notes remain local.
+
+Correction: although v1.0.9 installed and uiopen returned success, the user reported launch crashes. A duplicate com.apple.FileProvider description key caused Swift dictionary initialization to trap. v1.0.10 removes that duplicate and adds Python uniqueness plus Swift dictionary-initialization checks. Services/Critical now consolidate Search, numeric available MiB and theme control into one row, with the filter below; the separate top bar and pinned category headings are removed. Device launch verification is required after installation.
+
+Deployment v1.0.10 / build 11: source ac933c355c2864225afc0975c56ad9f0051f7893, successful Actions run 38215041614 (20 Python tests, Swift memory/group/dictionary checks and iOS build). Release/download SHA256 7eaf0738b024cfb8d364da29dcfdd59add524e13475fb77f892406f2f25ddd19 matched. TrollStore installation returned 0 and installed Info.plist matched. Unlike v1.0.9, the launched process remained present across repeated checks. The user reported the compact layout and recording group work. Recording after group On/respring passed, but the final phone check still found both jobs enabled. A follow-up Off-button check was requested; root restored both jobs Off with verified native unloads to leave the requested normal state. The last UI Off-button outcome remains pending. Account/sync functionality remains untested. Diagnosticd, ReportCrash and profiled were restored disabled/unloaded after launch investigation.

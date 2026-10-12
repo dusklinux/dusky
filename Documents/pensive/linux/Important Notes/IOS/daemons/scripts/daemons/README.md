@@ -1,8 +1,8 @@
 # Daemon Manager reference config
 
-The maintained SwiftUI app is at [dusklinux/daemon_manager](https://github.com/dusklinux/daemon_manager), checked out locally at `/mnt/zram1/daemon_manager-main`. App source, build instructions, and the CI workflow belong there. The old standalone daemonmanager and processkiller instructions are retired.
+The maintained SwiftUI app is at [dusklinux/daemon_manager](https://github.com/dusklinux/daemon_manager), checked out locally at `/mnt/zram1/daemon_manager`. App source, build instructions, and the CI workflow belong there. The old standalone daemonmanager and processkiller instructions are retired.
 
-This directory contains `daemon.cfg` and device-use notes. The config mirrors the repository's root `daemon.cfg` and its 506 builtin targets: **320 off, 186 on**. `yes` means disable; `no` means keep enabled. A recommendation is not a guarantee that every optional feature or device is safe with a service off.
+This directory contains `daemon.cfg` and device-use notes. The config mirrors the repository's root `daemon.cfg` and its 512 builtin targets: **325 off, 187 on**. `yes` means disable; `no` means keep enabled; `NO` marks critical enabled targets. A recommendation is not a guarantee that every optional feature or device is safe with a service off.
 
 The 2026-10-11 revision keeps these services enabled and shows orange recommendations in the app:
 
@@ -49,3 +49,17 @@ Basic usage passed on the tested phone after host disabling and reboot. Remainin
 Animation controls and their helper were removed from the app. The independently installed animation tweak is left active and managed outside this app. RAM remains memory-only. Disk write counters use grouped raw numbers and can be tapped for their meaning and conversion status. GB conversion remains unavailable: the ASP snapshot and installed diagnostic parser did not establish bytes per count; page size or generic NVMe units cannot substitute for that evidence. No guessed conversion is shipped.
 
 The unsupported absd Contacts description and related database links were removed. Its actual plist exports com.apple.absinthed and com.apple.absd; the broader private role remains undocumented here. Verified Contacts database links remain for contactsd and ABDatabaseDoctor.
+
+## Current v1.0.8 behavior (2026-10-12)
+
+The matching config contains 512 targets: 325 off, 187 on. `yes` disables, `no` enables, and uppercase `NO` marks critical enabled targets. Pkd, nehelper and its filename alias, searchd, biomed, syncdefaultsd and mobile.lockdown are Critical under the user's performance/dependency policy; older KEEP/orange classifications in the historical sections are superseded. Searchd's single-service CPU causality remains unproven. AccessibilityUIServer is optional and has no Recommended On badge; its existing On builtin and manually switchable Off choice are retained.
+
+Overrides replaces the Config tab and contains the tested optional UI hosts, screen-recording dependencies and widget-update controls. Tools → Import / Export Config contains configuration actions. Descriptions are visible without expansion; detailed warnings and metadata remain expandable. Single catalog switches load/unload their job immediately and verify the saved/loaded states. Other batches still require userspace restart.
+
+Allow AirDrop controls the native allowAirDrop feature setting for sending and receiving while sharingd stays on for the normal Share Sheet. The on-demand entitled helper temporarily uses profiled and restores its previous override/job state; it does not install a profile or directly edit a policy database. Screen Recording requires both ReplayKitAngel and replayd On, and is separate from Camera video capture. The user wants recording services normally Off and ShortcutsUI On.
+
+See the parent iOS 16 reference's 2026-10-12 section for the isolated pkd CPU loop, optional-host tests, recovered Share Sheet and remaining WhatsApp Meta AI Auto Shortcut failure. No idle RAM saving is claimed for hosts that had no running process. Reference changes remain local in the bare dotfiles work tree.
+
+### v1.0.9 feature groups
+
+Overrides adds 13 group On/Off controls over 40 checked installed job labels. Off preserves Critical and shared prerequisites; individual switches remain available. Broader account/sync groups require userspace restart and are not fully feature-tested. Screen Recording passed with unrelated hosts off after enabling ReplayKitAngel/replayd and respringing; both are normally off by request. See the parent reference’s final verification section for the packaged AirDrop restoration test, user UI checks, 0.08% SpringBoard sample and remaining widget/WhatsApp limitations.

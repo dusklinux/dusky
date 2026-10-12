@@ -5,7 +5,7 @@ Conservative legend:
 - `yes` = generally safe to disable for most personal devices
 - `if-unused` = usually safe only if you do not use that feature
 - `no` = maybe disableable in some setups, but I would not broadly recommend it
-- `NO` = existing core/critical do-not-disable category. The specific description explains the risk; not every entry has a proven bootloop risk
+- `NO` = critical: core usage, measured CPU loops, repeated crashes, or dependency failures. The specific description explains the evidence; it is not synonymous with bootloop risk
 - `KEEP` = keep enabled by default because tests found dependency errors or functionality loss; not a bootloop claim. Manual disabling remains available in the app.
 
 | #   | daemon                        | description                                                                                  | safe_to_disable_for_most_users |
@@ -57,7 +57,7 @@ Conservative legend:
 | 45  | BarcodeSupport                 | Barcode support service                                                                      | if-unused                      |
 | 46  | batteryintelligenced           | Battery intelligence and optimized charging support                                          | yes                            |
 | 47  | betaenrollmentd                | Beta enrollment management                                                                   | yes                            |
-| 48 | biomed | Biome stream access; disabled state produced SpringBoard/keyboard metadata and lockfile failures | KEEP |
+| 48 | biomed | Biome stream access; disabled state produced SpringBoard/keyboard metadata and lockfile failures | NO |
 | 49  | biomesyncd                     | Biome sync service                                                                           | no                             |
 | 50  | biometrickitd.mesa             | Biometric hardware interface for Touch ID / Face ID                                          | no                             |
 | 51  | bird                           | iCloud Drive / CloudDocs sync daemon                                                         | if-unused                      |
@@ -267,7 +267,7 @@ Conservative legend:
 | 255 | mobile.insecure_notification_proxy | USB communication with a computer                                                            | if-unused                      |
 | 256 | mobile.installd                | Core app installation daemon                                                                 | no                             |
 | 257 | mobile.keybagd                 | Keybag and data-protection key management                                                    | NO                             |
-| 258 | mobile.lockdown | USB pairing/trust and host communication; paired USB tools failed when off and worked after restoration | KEEP |
+| 258 | mobile.lockdown | USB pairing/trust and host communication; paired USB tools failed when off and worked after restoration | NO |
 | 259 | mobile.MCInstall               | Mobile configuration install helper                                                          | if-unused                      |
 | 260 | mobile.notification_proxy      | Lockdown notification proxy for host communication                                           | if-unused                      |
 | 261 | mobile.storage_mounter         | Mount service for developer/external storage images                                          | if-unused                      |
@@ -299,7 +299,7 @@ Conservative legend:
 | 287 | ndoagent                       | Private Apple daemon, unclear public role                                                    | no                             |
 | 288 | neagent-ios                    | Network Extension agent for VPNs/filters                                                     | if-unused                      |
 | 289 | nearbyd                        | Nearby interaction and proximity service                                                     | if-unused                      |
-| 290 | nehelper-embedded              | Network Extension helper service                                                             | KEEP                          |
+| 290 | nehelper-embedded | Network Extension helper service | NO |
 | 291 | nesessionmanager               | DISABLING CAUSES MASSIVE POWER DRAW                                                          | NO                             |
 | 292 | NetworkLinkConditioner         | Developer network-throttling tool                                                            | yes                            |
 | 293 | networkserviceproxy            | Network proxy service used by Private Relay and related features                             | if-unused                      |
@@ -325,7 +325,7 @@ Conservative legend:
 | 313 | photos.ImageConversionService  | Image conversion service used by Photos/system frameworks                                    | no                             |
 | 314 | photos.VideoConversionService  | Video conversion service used by Photos/system frameworks                                    | no                             |
 | 315 | pipelined                      | Image/camera processing pipeline daemon                                                      | no                             |
-| 316 | pluginkit.pkd                  | PlugInKit daemon for app extensions/widgets                                                  | no                             |
+| 316 | pluginkit.pkd | App-extension broker; disabled pkd reproduced SpringBoard widget-discovery CPU loop at about one core | NO |
 | 317 | pluginkit.pkreporter           | PlugInKit diagnostics reporter                                                               | yes                            |
 | 318 | pointerUI.pointeruid           | Pointer UI daemon for mouse/trackpad support                                                 | if-unused                      |
 | 319 | powerd                         | Core power-management daemon                                                                 | NO                             |
@@ -417,7 +417,7 @@ Conservative legend:
 | 405 | symptomsd.helper               | Helper for network diagnostics and symptom reporting                                         | yes                            |
 | 406 | synapse.contentlinkingd        | Cross-app content-linking helper; public role unclear                                        | no                             |
 | 407 | SyncAgent                      | Legacy sync agent for media/content sync                                                     | if-unused                      |
-| 408 | syncdefaultsd | Synchronized key-value preferences; provides com.apple.kvsd, whose clients logged lookup failures when off | KEEP |
+| 408 | syncdefaultsd | Synchronized key-value preferences; provides com.apple.kvsd, whose clients logged lookup failures when off | NO |
 | 409 | sysdiagnose                    | System diagnostics collection task                                                           | yes                            |
 | 410 | sysdiagnose.darwinos           | Low-level Darwin OS diagnostics task                                                         | yes                            |
 | 411 | sysdiagnose_helper             | Helper for system diagnostics collection                                                     | yes                            |
@@ -500,12 +500,12 @@ Conservative legend:
 | 488 | printd                         | AirPrint printing spooler daemon                                                             | if-unused                      |
 | 489 | racoon                         | IPsec IKE key exchange daemon for enterprise VPNs                                            | if-unused                      |
 | 490 | ReportCrash                    | Core system crash reporter daemon                                                            | yes                            |
-| 491 | searchd | Spotlight query coordinator; broad live unloading produced Photos retries and sustained CPU load; single-service causality unproven | KEEP |
+| 491 | searchd | Spotlight query coordinator; broad live unloading produced Photos retries and sustained CPU load; single-service causality unproven | NO |
 | 492 | softwareupdateservicesd        | iOS software update check and background download daemon                                     | if-unused                      |
 | 493 | syslogd                        | Core BSD system log socket daemon                                                            | no                             |
 | 494 | tipsd                          | Tips app content sync and notification service                                               | yes                            |
 | 495 | voiced                         | VoiceOver speech synthesis audio daemon                                                      | if-unused                      |
-| 496 | AccessibilityUIServer | Accessibility UI host; default On, manually switchable when accessibility is unused; tested basic use with it off | KEEP |
+| 496 | AccessibilityUIServer | Optional accessibility UI host; basic usage tested with it off; no Recommended On classification | if-unused |
 
 ## Device test findings — 2026-10-11
 
@@ -554,3 +554,31 @@ biomed and syncdefaultsd were restored on the phone. Final reviewed errors no lo
 Animation controls and their helper were removed from the app. The independently installed animation tweak is left active and managed outside this app. RAM remains memory-only. Disk write counters use grouped raw numbers and can be tapped for their meaning and conversion status. GB conversion remains unavailable: the ASP snapshot and installed diagnostic parser did not establish bytes per count; page size or generic NVMe units cannot substitute for that evidence. No guessed conversion is shipped.
 
 The unsupported absd Contacts description and related database links were removed. Its actual plist exports com.apple.absinthed and com.apple.absd; the broader private role remains undocumented here. Verified Contacts database links remain for contactsd and ABDatabaseDoctor.
+
+## Current revision — 2026-10-12 / v1.0.8
+
+Current config: 512 targets, 325 off and 187 on. Capital `NO` is also used in the config for critical enabled targets. Pkd, nehelper (plus nehelper-embedded alias), searchd, biomed, syncdefaultsd and mobile.lockdown are Critical; this supersedes their earlier KEEP/recommendation classification above. Searchd's isolated CPU causality remains unproven. Imagent and identityservicesd remain optional Messages recommendations. AccessibilityUIServer is optional, not Recommended On or Critical; its builtin target stays On and the user's manual Off choice remains available.
+
+Pkd's disabled state was isolated on this iPhone 8 Plus/iOS 16.7.16: SpringBoard used 5.153 CPU seconds in 5 seconds with repeated widget-extension discovery. Enable/load plus respring reduced settled usage to 0.209 seconds over 15 seconds. Disabling/unloading pkd and starting SpringBoard again reproduced the same stacks (11.434 CPU seconds over 10 seconds). Restoring it and respringing yielded 0.024 seconds over 15.01 seconds and thermal pressure 0. This was an additional manual disable, not an off builtin. Other app clients can retain stale extension connections until userspace restart: the missing WhatsApp/Save to Files Share Sheet entries returned after such a restart with the optional UI hosts still off.
+
+Overrides is now a separate tab, replacing Config. Import/apply/export is under Tools. Descriptions are visible in collapsed rows; warnings, paths and file metadata stay expandable. The tested optional catalog includes PosterBoard, PaperBoard, AccessibilityUIServer, LiveTranscriptionUI, AirDropUI, PassbookUISceneService, ShortcutsUI, ReplayKitAngel/replayd, chronod and liveactivitiesd. Individual switches immediately save and verify overrides and load/unload those jobs; general daemon batches still require userspace restart. InputUI, OverlayUI, ClockAngel and MediaRemoteUI remain excluded.
+
+PaperBoard exports com.apple.paperboard.services and is wallpaper-related; no broader private role is claimed. Disabling AirDropUI, PassbookUISceneService, LiveTranscriptionUI and PaperBoard followed by respring/userspace restart preserved user-tested Camera photo/video capture and the restored normal Share Sheet. A 10-second Camera-active sample used 0.348 SpringBoard CPU seconds with thermal pressure 0. All new hosts were initially idle with no process to reclaim; no net RAM/battery gain is established.
+
+AirDrop's DiscoverableMode was already Off, which only blocked receiving. A feature-entitled client set native MCFeatureAirDropAllowed/allowAirDrop to false; isAirDropAllowed returned false. Ordinary unentitled Python was rejected by profiled with the exact required feature-setting entitlement and made no policy change. The app's on-demand signed helper changes/verifies only that feature. Its wrapper restores profiled's prior override and loaded state. Sharingd stays on for sharing; no profile or direct policy-database edit is used.
+
+ReplayKit is screen recording/broadcasting, separate from Camera recording. The user rarely uses it and wants both ReplayKitAngel and replayd switchable and normally Off; enable both when needed. ShortcutsUI remains On and independently switchable. The WhatsApp Open Meta AI Auto Shortcut still produced 4097 through linkd after userspace restart and restoring the four new optional hosts. Its core brokers remained enabled. The user verified Apple’s Set Flashlight action works; the remaining WhatsApp failure has not been traced to a disabled service.
+
+## Feature groups and final verification — v1.0.9
+
+Overrides has 13 groups covering 40 installed job labels. On enables listed feature jobs and disabled prerequisites; Off preserves Critical and shared prerequisite-only services. Shared services appear in several groups but have one underlying override. Broader account/sync/store groups save overrides and need userspace restart; sign-in, cloud sync, purchases and FaceTime calls were not tested. These are checked roles/known prerequisites, not a complete OS dependency map.
+
+ReplayKitAngel/replayd restoration initially left SpringBoard’s ReplayKit client uninitialized (isAvailable=1, isInitialized=0, 4099). Starting replayd alone did not repair it. Respring made initialization succeed and screen recording save to Photos. With the eight unrelated optional jobs off again and another respring, the user confirmed recording, Save to Files and WhatsApp sharing all work. Both recording jobs were then disabled as requested. Re-enable both and respring before recording. Apple’s Set Flashlight shortcut works; the unused WhatsApp Meta AI action still fails and is not established as a missing-daemon issue.
+
+Installed v1.0.8 preserved the helper entitlement; native AirDrop read/on/off verified policy 0/1/0 and restored profiled disabled/unloaded each time. The user confirmed Overrides, visible descriptions and the Tools import file picker. A final SpringBoard sample with optional/recording hosts off used 0.004 CPU seconds over 5 seconds (0.08%), thermal pressure 0. This is CPU evidence, not proof of a RAM/battery gain. Widget-update jobs are off, but a universal widget disable is not provided: legacy widget paths can remain and pkd must stay enabled.
+
+Deployment: v1.0.9 / build 10, source `b40f9cbccb871b0e07b6922b8275275d143236d3`, Actions run `38213950882` succeeded (19 Python tests, Swift memory/group policy checks, iOS build and packaging). IPA SHA256 `fa092542663a7dcfe516af1c481947f29a8728d3f4a725fcb912fcb79213e088` matched the release digest. TrollStore Lite install returned 0 and installed Info.plist matches this version/revision; uiopen succeeded. Phone state preserves pkd/Shortcuts On, recording Off, and diagnosticd/profiled Off. Original 336 override values were unchanged by optional-host testing; six explicit host entries were added. App repository changes were pushed; reference notes remain local.
+
+Correction: although v1.0.9 installed and uiopen returned success, the user reported launch crashes. A duplicate com.apple.FileProvider description key caused Swift dictionary initialization to trap. v1.0.10 removes that duplicate and adds Python uniqueness plus Swift dictionary-initialization checks. Services/Critical now consolidate Search, numeric available MiB and theme control into one row, with the filter below; the separate top bar and pinned category headings are removed. Device launch verification is required after installation.
+
+Deployment v1.0.10 / build 11: source ac933c355c2864225afc0975c56ad9f0051f7893, successful Actions run 38215041614 (20 Python tests, Swift memory/group/dictionary checks and iOS build). Release/download SHA256 7eaf0738b024cfb8d364da29dcfdd59add524e13475fb77f892406f2f25ddd19 matched. TrollStore installation returned 0 and installed Info.plist matched. Unlike v1.0.9, the launched process remained present across repeated checks. The user reported the compact layout and recording group work. Recording after group On/respring passed, but the final phone check still found both jobs enabled. A follow-up Off-button check was requested; root restored both jobs Off with verified native unloads to leave the requested normal state. The last UI Off-button outcome remains pending. Account/sync functionality remains untested. Diagnosticd, ReportCrash and profiled were restored disabled/unloaded after launch investigation.
