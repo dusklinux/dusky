@@ -92,7 +92,7 @@ Conservative legend:
 | 55  | bluetoothuserd                 | User-level Bluetooth support                                                                 | if-unused                      |
 | 56  | bookassetd                     | Apple Books asset management                                                                 | if-unused                      |
 | 57  | bookdatastored                 | Apple Books data storage and sync                                                            | if-unused                      |
-| 58  | bootps                         | BOOTP/DHCP service used for tethering or USB networking                                      | no                             |
+| 58  | bootpd                         | BOOTP/DHCP service used for tethering or USB networking                                      | no                             |
 | 59  | BTServer.avrcp                 | Bluetooth media control profile support, Prevents pause/play on the headphones if disabled   | NO                             |
 | 60  | BTServer.le                    | Bluetooth Low Energy support, saves power                                                    | NO                             |
 | 61  | BTServer.map                   | Bluetooth Message Access Profile support                                                     | if-unused                      |
