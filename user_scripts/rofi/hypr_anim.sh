@@ -45,6 +45,7 @@ notify_user() {
 }
 
 reload_hyprland() {
+    [[ "$reload_enabled" == true ]] || return 0
     hyprctl reload config-only >/dev/null || return 1
     local errors
     errors=$(hyprctl configerrors) || return 1
@@ -83,7 +84,7 @@ apply_animation() (
 
     # Persist an absolute path so --toggle/--current work from any directory.
     src_file=$(realpath -e -- "$src_file")
-    mkdir -p -- "$LINK_DIR" "${STATE_FILE%/*}"
+    mkdir -p -- "$LINK_DIR"
     local tmp_dir installed=false committed=false index
     tmp_dir=$(mktemp -d "$LINK_DIR/.apply.XXXXXX")
     local -a destinations=("$DEST_FILE" "$STATE_FILE" "$LAST_ENABLED_FILE")
@@ -91,6 +92,7 @@ apply_animation() (
     cleanup_apply() {
         local result=$? restore_failed=false
         trap - EXIT
+        trap '' INT TERM # Finish rollback even if shutdown sends another signal.
         if [[ "$installed" == true && "$committed" == false ]]; then
             for index in "${!destinations[@]}"; do
                 if [[ -e "$tmp_dir/old.$index" || -L "$tmp_dir/old.$index" ]]; then
@@ -114,7 +116,7 @@ apply_animation() (
 
     for index in "${!destinations[@]}"; do
         if [[ -e "${destinations[index]}" || -L "${destinations[index]}" ]]; then
-            cp -P -- "${destinations[index]}" "$tmp_dir/old.$index"
+            cp -P --preserve=mode,timestamps -- "${destinations[index]}" "$tmp_dir/old.$index"
         fi
     done
     # Each preset has one orientation assignment; no comment-block parsing.
@@ -138,6 +140,7 @@ apply_animation() (
     installed=true
     mv -fT -- "$tmp_dir/active.lua" "$DEST_FILE"
     if ! reload_hyprland; then
+        printf 'Failed to reload or validate animation; restoring the previous configuration.\n' >&2
         notify_user "Animation Failed" "Hyprland rejected the configuration; restoring the previous preset." critical
         exit 1
     fi
@@ -179,8 +182,21 @@ get_current_state() {
 # -----------------------------------------------------------------------------
 # ROUTING & CLI FLAGS
 # -----------------------------------------------------------------------------
+reload_enabled=true
+if [[ "${1:-}" == --no-reload ]]; then
+    # Explicit offline apply; toggling still requires a live compositor.
+    if [[ $# -ne 3 || ! "$2" =~ ^(horizontal|vertical|disabled)$ ]]; then
+        printf 'Usage: %s --no-reload horizontal|vertical|disabled FILE\n' "${0##*/}" >&2
+        exit 1
+    fi
+    reload_enabled=false
+    shift
+fi
+
 # Serialize applies, including state reads, across tray and Rofi invocations.
-exec {animation_lock}>"${XDG_RUNTIME_DIR:-/run/user/$UID}/dusky-animation.lock"
+# Keep the lock beside saved state so offline setup needs no runtime directory.
+mkdir -p -- "${STATE_FILE%/*}"
+exec {animation_lock}>"${STATE_FILE}.lock"
 flock "$animation_lock"
 
 if [[ "${1:-}" == "--toggle" ]]; then
@@ -226,12 +242,13 @@ fi
 
 selection="${ROFI_INFO:-}"
 
-if [[ -z "$selection" && $# -eq 2 && ("$1" == "horizontal" || "$1" == "vertical" || "$1" == "disabled") ]]; then
+# Explicit CLI applies take precedence over inherited Rofi selection metadata.
+if [[ $# -eq 2 && ("$1" == "horizontal" || "$1" == "vertical" || "$1" == "disabled") ]]; then
     selection="FILE:$1:$2"
 fi
 
 if [[ -z "$selection" && $# -gt 0 && -z "${ROFI_RETV:-}" ]]; then
-    printf 'Usage: %s [--toggle | --current | horizontal|vertical|disabled FILE]\n' "${0##*/}" >&2
+    printf 'Usage: %s [--toggle | --current | [--no-reload] horizontal|vertical|disabled FILE]\n' "${0##*/}" >&2
     exit 1
 fi
 
