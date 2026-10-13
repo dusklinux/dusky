@@ -1,28 +1,14 @@
 #!/usr/bin/env python3
 #d: Apply recommended Mousepad text editor settings
+"""Apply Mousepad defaults for the current user through GSettings."""
 
+import logging
 import subprocess
 import sys
-import logging
-from typing import NamedTuple, Iterator
 
-# Initialization of a rigorous diagnostic telemetry apparatus.
-logging.basicConfig(
-    level=logging.INFO,
-    format="[%(levelname)s] %(asctime)s - %(message)s",
-    datefmt="%Y-%m-%dT%H:%M:%S%z"
-)
-
-class ConfigurationImperative(NamedTuple):
-    """
-    An immutable data structure enforcing strict ontological categorization 
-    upon the configuration matrix prior to executable materialization.
-    """
-    schema: str
-    key: str
-    value_matrix: str
-
-# The declarative manifest of mandated systemic configurations.
+# Values use the canonical GVariant format printed by gsettings, so they can
+# be compared directly with readback. Leave session/recovery data and search
+# histories untouched; they are user data rather than installation defaults.
 GSETTINGS_MANIFEST = """
 org.xfce.mousepad.preferences.file add-last-end-of-line false
 org.xfce.mousepad.preferences.file auto-reload false
@@ -76,7 +62,6 @@ org.xfce.mousepad.preferences.window toolbar-style 'icons'
 org.xfce.mousepad.preferences.window toolbar-visible true
 org.xfce.mousepad.preferences.window toolbar-visible-in-fullscreen 'auto'
 org.xfce.mousepad.state.application enabled-plugins @as []
-org.xfce.mousepad.state.application session ['1;;', '1;;+']
 org.xfce.mousepad.state.search direction uint32 1
 org.xfce.mousepad.state.search enable-regex false
 org.xfce.mousepad.state.search highlight-all false
@@ -86,8 +71,6 @@ org.xfce.mousepad.state.search match-case false
 org.xfce.mousepad.state.search match-whole-word false
 org.xfce.mousepad.state.search replace-all false
 org.xfce.mousepad.state.search replace-all-location uint32 1
-org.xfce.mousepad.state.search replace-history @as []
-org.xfce.mousepad.state.search search-history @as []
 org.xfce.mousepad.state.search wrap-around true
 org.xfce.mousepad.state.window fullscreen false
 org.xfce.mousepad.state.window height uint32 480
@@ -97,70 +80,83 @@ org.xfce.mousepad.state.window top uint32 0
 org.xfce.mousepad.state.window width uint32 640
 """
 
-def _parse_manifest(manifest: str) -> Iterator[ConfigurationImperative]:
-    """
-    Subjects the raw declarative block to rigorous lexical stratification, 
-    yielding structurally guaranteed ConfigurationImperative instances.
-    """
-    for line_index, line in enumerate(manifest.strip().splitlines(), start=1):
-        normalized_line = line.strip()
-        if not normalized_line:
+
+def parse_settings(text: str) -> dict[tuple[str, str], str]:
+    """Parse schema/key/value lines, preserving spaces and GVariant quotes."""
+    settings: dict[tuple[str, str], str] = {}
+    # GLib prints Unicode line/paragraph separators literally inside strings.
+    # Only LF separates records; splitlines() would split valid user values.
+    for line_number, line in enumerate(text.split("\n"), start=1):
+        if not line.strip():
             continue
-        
-        lexical_tokens = normalized_line.split(maxsplit=2)
-        if len(lexical_tokens) != 3:
-            logging.error(f"Epistemological rupture detected at line {line_index}: '{normalized_line}'. Insufficient token density.")
-            raise ValueError(f"Malformed programmatic directive at line {line_index}")
-            
-        yield ConfigurationImperative(*lexical_tokens)
+        fields = line.split(maxsplit=2)
+        if len(fields) != 3:
+            raise ValueError(f"Invalid settings line {line_number}: {line!r}")
+        schema, key, value = fields
+        identity = (schema, key)
+        if identity in settings:
+            raise ValueError(f"Duplicate setting: {schema} {key}")
+        settings[identity] = value.strip()
+    return settings
 
-def instantiate_configuration_hegemony() -> None:
-    """
-    Executes the deterministic subjugation of the operational environment, 
-    aggregating systemic recalcitrance into a unified ExceptionGroup for post-mortem synthesis.
-    """
+
+def run_gsettings(*arguments: str) -> str:
+    """Run a bounded command and reject backend warnings as well as errors."""
+    result = subprocess.run(
+        ["gsettings", *arguments],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+        check=False,
+    )
+    # dconf can report a failed commit on stderr while gsettings exits zero.
+    if result.returncode or result.stderr.strip():
+        detail = result.stderr.strip() or f"exit status {result.returncode}"
+        raise RuntimeError(f"gsettings {' '.join(arguments)}: {detail}")
+    return result.stdout
+
+
+def apply_defaults() -> None:
+    """Check available keys, apply defaults, and verify them in a new process."""
+    settings = parse_settings(GSETTINGS_MANIFEST)
+    if not settings:
+        raise ValueError("Mousepad settings manifest is empty.")
+    installed = parse_settings(run_gsettings("list-recursively", "org.xfce.mousepad"))
+    missing = settings.keys() - installed.keys()
+    if missing:
+        names = ", ".join(f"{schema} {key}" for schema, key in sorted(missing))
+        raise RuntimeError(f"Mousepad settings are unavailable: {names}")
+
+    # Write even values matching today's schema defaults: explicit user values
+    # keep the requested behavior if upstream defaults change in a later update.
+    for (schema, key), value in settings.items():
+        run_gsettings("set", schema, key, value)
+
+    saved = parse_settings(run_gsettings("list-recursively", "org.xfce.mousepad"))
+    mismatches = [
+        f"{schema} {key}: expected {value}, got {saved.get((schema, key), '<missing>')}"
+        for (schema, key), value in settings.items()
+        if saved.get((schema, key)) != value
+    ]
+    if mismatches:
+        raise RuntimeError("Settings verification failed:\n" + "\n".join(mismatches))
+    logging.info("Applied and verified %d Mousepad settings.", len(settings))
+
+
+def main() -> int:
+    logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
     try:
-        imperatives = list(_parse_manifest(GSETTINGS_MANIFEST))
-    except ValueError as parse_err:
-        logging.critical(f"Manifest evaluation unilaterally aborted: {parse_err}")
-        sys.exit(1)
+        apply_defaults()
+    except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
+        logging.error("Mousepad configuration failed: %s", error)
+        return 1
+    except KeyboardInterrupt:
+        logging.error("Mousepad configuration interrupted.")
+        return 130
+    return 0
 
-    systemic_failures: list[subprocess.CalledProcessError] = []
-
-    for imperative in imperatives:
-        try:
-            # We enforce capture_output=True to hermetically seal the subprocess's standard streams,
-            # precluding vernacular pollution of the primary execution terminal.
-            subprocess.run(
-                ["gsettings", "set", imperative.schema, imperative.key, imperative.value_matrix],
-                check=True,
-                capture_output=True,
-                text=True
-            )
-        except subprocess.CalledProcessError as execution_err:
-            logging.error(
-                f"Insubordination localized at {imperative.schema} {imperative.key}. "
-                f"Diagnostic residue: {execution_err.stderr.strip()}"
-            )
-            systemic_failures.append(execution_err)
-
-    if systemic_failures:
-        # Utilizing Python 3.14's ExceptionGroup dialectic to encapsulate aggregate resistance.
-        raise ExceptionGroup(
-            "Systemic recalcitrance encountered; absolute hegemony remains unconsummated.", 
-            systemic_failures
-        )
-
-    logging.info("Total systemic hegemony achieved. The configuration paradigm is irrevocably calcified.")
 
 if __name__ == "__main__":
-    try:
-        instantiate_configuration_hegemony()
-    except ExceptionGroup as eg:
-        logging.critical(f"Operational mandate failed. The following localized insubordinations were cataloged:")
-        for exc in eg.exceptions:
-            logging.critical(f" -> {exc}")
-        sys.exit(1)
-    except Exception as e:
-        logging.critical(f"Unanticipated ontological collapse: {e}")
-        sys.exit(1)
+    sys.exit(main())
