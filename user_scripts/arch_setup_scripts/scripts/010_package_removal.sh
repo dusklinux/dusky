@@ -1,340 +1,125 @@
 #!/usr/bin/env bash
-#d: Remove packages via pacman and AUR
+#d: Remove installed targets and unused dependencies without creating .pacsave files
 
 set -euo pipefail
 IFS=$' \t\n'
 
-# ==============================================================================
-# CONFIGURATION
-# ==============================================================================
+# This optional setup step must never stop the installer with a nonzero status.
+# Keep diagnostics visible even when an unexpected error ends execution.
+trap 'exit 0' EXIT PIPE
+trap 'printf "\n[WARN] Package removal interrupted.\n" >&2; exit 0' HUP INT TERM
 
-# Official Repository Packages
+# Pacman manages both repository and AUR packages in its local database.
 readonly -a REPO_TARGETS=(
-  dunst
-  dolphin
-  wofi
-  polkit-kde-agent
-  power-profiles-daemon
-  network-manager-applet
-  firewalld
-  hyprpolkitagent
+    dunst
+    dolphin
+    wofi
+    polkit-kde-agent
+    power-profiles-daemon
+    network-manager-applet
+    firewalld
+    hyprpolkitagent
 )
+readonly -a AUR_TARGETS=()
 
-# AUR Packages
-# (Processed seamlessly with Repo packages as they share the local pacman DB)
-readonly -a AUR_TARGETS=(
-)
+readonly SCRIPT_NAME=${0##*/}
+readonly SCRIPT_VERSION=4.0.1
 
-# ==============================================================================
-# CONSTANTS & STYLING
-# ==============================================================================
-
-readonly SCRIPT_NAME="${0##*/}"
-readonly SCRIPT_VERSION="3.0.1"
-
-if [[ -t 1 && -t 2 ]]; then
-    readonly BOLD=$'\e[1m'    DIM=$'\e[2m'
-    readonly RED=$'\e[31m'    GREEN=$'\e[32m'
-    readonly YELLOW=$'\e[33m' BLUE=$'\e[34m'
-    readonly CYAN=$'\e[36m'   RESET=$'\e[0m'
-else
-    readonly BOLD='' DIM='' RED='' GREEN='' YELLOW='' BLUE='' CYAN='' RESET=''
-fi
-
-# ==============================================================================
-# LOGGING & STATE
-# ==============================================================================
-
-log_info() { printf '%s[INFO]%s  %s\n' "${BLUE}${BOLD}" "${RESET}" "${1:-}"; }
-log_ok()   { printf '%s[OK]%s    %s\n' "${GREEN}${BOLD}" "${RESET}" "${1:-}"; }
-log_warn() { printf '%s[WARN]%s  %s\n' "${YELLOW}${BOLD}" "${RESET}" "${1:-}" >&2; }
-log_err()  { printf '%s[ERROR]%s %s\n' "${RED}${BOLD}" "${RESET}" "${1:-}" >&2; }
-
-die() {
-    log_err "${1:-Unknown error}"
-    exit "${2:-1}"
-}
-
-declare -gi AUTO_CONFIRM=1
-declare -gi EXIT_CODE=0
-declare -gi INTERRUPTED=0
-
-# ==============================================================================
-# SIGNAL HANDLING
-# ==============================================================================
-
-cleanup() {
-    local -ri code=$?
-    
-    if (( INTERRUPTED )); then
-        return 0
-    fi
-    
-    if (( code != 0 )); then
-        printf '\n%s[!] Script exited with code: %d%s\n' \
-            "${RED}" "$code" "${RESET}" >&2
-    fi
-    return 0
-}
-trap cleanup EXIT
-
-handle_interrupt() {
-    INTERRUPTED=1
-    printf '\n%s[!] Interrupted by signal.%s\n' "${RED}" "${RESET}" >&2
-    exit "$1"
-}
-trap 'handle_interrupt 130' INT
-trap 'handle_interrupt 143' TERM
-
-# ==============================================================================
-# ARGUMENT PARSING & ENVIRONMENT VALIDATION
-# ==============================================================================
+log_info() { printf '[INFO] %s\n' "$1"; }
+log_warn() { printf '[WARN] %s\n' "$1" >&2; }
 
 show_help() {
-    cat <<EOF
-${BOLD}${SCRIPT_NAME}${RESET} v${SCRIPT_VERSION} — Arch Package Removal Tool
-
-${BOLD}USAGE:${RESET}
-    ${SCRIPT_NAME} [OPTIONS]
-
-${BOLD}OPTIONS:${RESET}
-    -y, --auto      Skip confirmation prompts (Default behavior)
-    -h, --help      Show this help message
-    -V, --version   Show version information
-EOF
-}
-
-show_version() {
-    printf '%s v%s\n' "$SCRIPT_NAME" "$SCRIPT_VERSION"
-}
-
-parse_args() {
-    while (( $# )); do
-        case $1 in
-            -y|--auto) AUTO_CONFIRM=1; shift ;;
-            -h|--help) show_help; exit 0 ;;
-            -V|--version) show_version; exit 0 ;;
-            --) shift; break ;;
-            -?*) die "Unknown option: $1" ;;
-            *) die "Unexpected argument: $1" ;;
-        esac
-    done
-}
-
-check_environment() {
-    local -ri major=${BASH_VERSINFO[0]}
-    
-    if (( major < 5 )); then
-        die "Bash 5.0+ required (current: ${BASH_VERSION})"
-    fi
-    
-    if (( EUID == 0 )); then
-        die "Do NOT run this script as root."
-    fi
-
-    local cmd
-    local -a missing=()
-    
-    for cmd in pacman sudo; do
-        command -v "$cmd" &>/dev/null || missing+=("$cmd")
-    done
-    
-    if (( ${#missing[@]} > 0 )); then
-        die "Missing required commands: ${missing[*]}"
-    fi
-    
-    # Explicit return 0 guarantees a clean exit code for set -e
-    return 0
-}
-
-# ==============================================================================
-# PACKAGE FILTERING & RESOLUTION
-# ==============================================================================
-
-# Filters input array strictly to installed literal packages
-filter_installed() {
-    local -n _filter_in=$1
-    local -n _filter_out=$2
-    _filter_out=()
-
-    if (( ${#_filter_in[@]} == 0 )); then
-        return 0
-    fi
-
-    local pkg actual_pkg found_exact
-    local -a resolved_pkgs
-
-    for pkg in "${_filter_in[@]}"; do
-        [[ -z $pkg ]] && continue
-
-        # Query local DB. Allows exact match isolation against virtual providers.
-        mapfile -t resolved_pkgs < <(pacman -Qq -- "$pkg" 2>/dev/null || true)
-
-        found_exact=0
-        for actual_pkg in "${resolved_pkgs[@]}"; do
-            if [[ "$actual_pkg" == "$pkg" ]]; then
-                _filter_out+=("$pkg")
-                found_exact=1
-                break
-            fi
-        done
-
-        if (( ! found_exact )); then
-            log_warn "Skipping '${CYAN}${pkg}${RESET}': exact package not installed."
-        fi
-    done
-    return 0
-}
-
-# Iterative cascade algorithm to resolve co-dependencies safely.
-# Eliminates packages required by software NOT in the removal array.
-resolve_safe_removals() {
-    local -n _input_pkgs=$1
-    local -n _safe_pkgs=$2
-    _safe_pkgs=("${_input_pkgs[@]}")
-
-    if (( ${#_safe_pkgs[@]} == 0 )); then
-        return 0
-    fi
-
-    local changed=1
-    while (( changed )); do
-        changed=0
-        local pkg
-        local -a current_check=("${_safe_pkgs[@]}")
-
-        for pkg in "${current_check[@]}"; do
-            local req_str
-            # Force C locale to guarantee standard English output for reliable parsing
-            req_str=$(LC_ALL=C pacman -Qi -- "$pkg" 2>/dev/null | awk '
-/^Required By/ {
-    sub(/^[^:]*: */, "")
-    if ($0 == "None") {
-        in_req = 0
-        next
-    }
-    print $0
-    in_req = 1
-    next
-}
-in_req && /^ +/ {
-    print $0
-    next
-}
-/^[A-Za-z]/ {
-    in_req = 0
-}
-' || true)
-
-            local -a req_pkgs=($req_str)
-
-            # If required by something (i.e. array is not empty)
-            if (( ${#req_pkgs[@]} > 0 )); then
-                local req_pkg is_safe=1
-
-                for req_pkg in "${req_pkgs[@]}"; do
-                    local check_pkg found=0
-                    # Check if the demanding package is also scheduled for removal
-                    for check_pkg in "${_safe_pkgs[@]}"; do
-                        if [[ "$check_pkg" == "$req_pkg" ]]; then
-                            found=1
-                            break
-                        fi
-                    done
-
-                    # If required by an installed package NOT in our removal list, it's unsafe
-                    if (( ! found )); then
-                        log_warn "Skipping '${CYAN}${pkg}${RESET}': required by retained package: ${BOLD}${req_pkg}${RESET}"
-                        is_safe=0
-                        break
-                    fi
-                done
-
-                # Remove unsafe package from array and restart the validation loop to handle cascades
-                if (( ! is_safe )); then
-                    local -a new_safe=()
-                    local keep_pkg
-                    for keep_pkg in "${_safe_pkgs[@]}"; do
-                        [[ "$keep_pkg" != "$pkg" ]] && new_safe+=("$keep_pkg")
-                    done
-                    _safe_pkgs=("${new_safe[@]}")
-                    changed=1
-                    break
-                fi
-            fi
-        done
-    done
-    return 0
-}
-
-# ==============================================================================
-# MAIN EXECUTION
-# ==============================================================================
-
-process_removals() {
-    # Combine targets: Pacman handles repo and AUR packages identically for removal
-    local -a ALL_TARGETS=("${REPO_TARGETS[@]}" "${AUR_TARGETS[@]}")
-
-    if (( ${#ALL_TARGETS[@]} == 0 )); then
-        log_warn "No packages configured for removal."
-        return 0
-    fi
-
-    local -a active_targets=()
-    filter_installed ALL_TARGETS active_targets
-
-    if (( ${#active_targets[@]} == 0 )); then
-        log_info "No targeted packages are currently installed."
-        return 0
-    fi
-
-    local -a removable_targets=()
-    resolve_safe_removals active_targets removable_targets
-
-    if (( ${#removable_targets[@]} == 0 )); then
-        log_info "No packages require removal (all active targets are dependencies of retained packages)."
-        return 0
-    fi
-
-    local -a cmd=(sudo pacman -Rns)
-    
-    if (( AUTO_CONFIRM )); then
-        cmd+=(--noconfirm)
-    fi
-    
-    cmd+=(-- "${removable_targets[@]}")
-
-    log_info "Removing ${BOLD}${#removable_targets[@]}${RESET} package(s):"
-    printf '         %s%s%s\n' "${CYAN}" "${removable_targets[*]}" "${RESET}"
-
-    if "${cmd[@]}"; then
-        log_ok "Package removal completed successfully."
-    else
-        local -ri cmd_exit=$?
-        log_err "Failed to remove some packages (exit code: ${cmd_exit})."
-        EXIT_CODE=1
-    fi
+    printf '%s v%s — Arch package removal\n\n' "$SCRIPT_NAME" "$SCRIPT_VERSION"
+    printf 'Usage: %s [OPTIONS]\n\n' "$SCRIPT_NAME"
+    printf '%s\n' \
+        '  -y, --auto     Skip pacman confirmation (default)' \
+        '  -h, --help     Show this help' \
+        '  -V, --version  Show version' \
+        '' \
+        'Required targets are skipped; unused dependencies are also removed.' \
+        'No .pacsave files are created. Normal exits and handled signals return 0.'
 }
 
 main() {
-    parse_args "$@"
-    check_environment
-
-    if (( AUTO_CONFIRM )); then
-        log_info "Mode: ${YELLOW}Autonomous (--noconfirm)${RESET}"
+    while (( $# )); do
+        case $1 in
+            -y|--auto) shift ;;
+            -h|--help) show_help; return 0 ;;
+            -V|--version)
+                printf '%s v%s\n' "$SCRIPT_NAME" "$SCRIPT_VERSION"
+                return 0
+                ;;
+            --) shift; break ;;
+            *) log_warn "Unexpected argument: $1"; return 0 ;;
+        esac
+    done
+    if (( $# )); then
+        log_warn "Unexpected argument: $1"
+        return 0
     fi
 
-    printf '%s\n' "${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-    process_removals
-    printf '%s\n' "${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    local -a targets=("${REPO_TARGETS[@]}" "${AUR_TARGETS[@]}")
+    if (( ${#targets[@]} == 0 )); then
+        log_info 'No packages configured for removal.'
+        return 0
+    fi
 
-    if (( EXIT_CODE == 0 )); then
-        log_ok "Cleanup completed successfully."
+    if ! command -v pacman >/dev/null 2>&1; then
+        log_warn 'Pacman is unavailable; skipping package removal.'
+        return 0
+    fi
+
+    # Capture query status directly: process substitution hides query failures.
+    # A single database query also avoids treating package groups as targets.
+    local installed_names pkg
+    if ! installed_names=$(pacman -Qq); then
+        log_warn 'Could not query installed packages; skipping package removal.'
+        return 0
+    fi
+
+    local -A installed=()
+    while IFS= read -r pkg; do
+        if [[ -n $pkg ]]; then
+            installed["$pkg"]=1
+        fi
+    done <<< "$installed_names"
+
+    local -a active_targets=()
+    for pkg in "${targets[@]}"; do
+        [[ -n $pkg ]] || continue
+        if [[ -v installed[$pkg] ]]; then
+            active_targets+=("$pkg")
+            unset 'installed[$pkg]' # Remove duplicate configured targets.
+        else
+            log_info "Skipping '$pkg': absent or already selected."
+        fi
+    done
+
+    if (( ${#active_targets[@]} == 0 )); then
+        log_info 'No targeted packages are installed.'
+        return 0
+    fi
+
+    local -a cmd=(pacman)
+    if (( EUID != 0 )); then
+        if ! command -v sudo >/dev/null 2>&1; then
+            log_warn 'Sudo is unavailable; skipping package removal.'
+            return 0
+        fi
+        cmd=(sudo pacman)
+    fi
+
+    # Resolve dependencies inside pacman's transaction, including mutual
+    # dependencies and virtual providers. Retain targets needed by other packages.
+    cmd+=(-Rns --unneeded --noconfirm -- "${active_targets[@]}")
+    log_info "Requesting removal of: ${active_targets[*]}"
+    if "${cmd[@]}"; then
+        log_info 'Package removal finished; required targets were retained.'
     else
-        log_warn "Cleanup completed with errors."
+        local status=$?
+        log_warn "Package removal did not complete (status $status); continuing setup."
     fi
-
-    return "$EXIT_CODE"
+    return 0
 }
 
 main "$@"
