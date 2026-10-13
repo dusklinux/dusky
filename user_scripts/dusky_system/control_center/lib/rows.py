@@ -264,6 +264,7 @@ class PollSlot:
     source_id: int = 0
     cancellable: Any = None
     is_running: bool = False
+    refresh_pending: tuple[str, Callable[[str], None], int] | None = None
     generation: int = 0
     current_command: str = ""
     on_output: Any = None
@@ -312,6 +313,7 @@ class WidgetState:
 
                 slot.cancellable = None
                 slot.is_running = False
+                slot.refresh_pending = None
                 slot.on_output = None
 
                 if slot.source_id > 0:
@@ -855,6 +857,7 @@ class AsyncPollingMixin:
             for slot in self._state._slots:
                 slot.generation += 1
                 slot.is_running = False
+                slot.refresh_pending = None
                 if slot.source_id > 0:
                     _safe_source_remove(slot.source_id)
                     slot.source_id = 0
@@ -930,23 +933,32 @@ class AsyncPollingMixin:
         on_output: Callable[[str], None],
         timeout: int,
     ) -> None:
-        old_handle: Any = None
+        if isinstance(self, Gtk.Widget) and not self.get_mapped():
+            return
+        # Observations during an apply cannot confirm the final state. Leave
+        # unrelated icon channels running and read back after the last action.
+        if slot is self._state.monitor and getattr(self, "_operation_busy", False):
+            return
+        if slot is self._state.value and (
+            getattr(self, "_numeric_busy", False)
+            or getattr(self, "_pending_value", None) is not None
+        ):
+            return
 
         with self._state.lock:
             if self._state.is_destroyed:
-                slot.is_running = False
+                return
+            if slot.is_running:
+                # Event bursts request one followup without starving a slow
+                # query by repeatedly cancelling and restarting its process.
+                slot.refresh_pending = (command, on_output, timeout)
                 return
 
             slot.generation += 1
             generation = slot.generation
             slot.is_running = True
-
-            old_handle = slot.cancellable
+            slot.refresh_pending = None
             slot.cancellable = None
-
-        if old_handle is not None:
-            with suppress(Exception):
-                old_handle.cancel()
 
         handle: _AsyncCommandHandle | None = None
 
@@ -959,11 +971,18 @@ class AsyncPollingMixin:
 
                 slot.cancellable = None
                 slot.is_running = False
+                followup = slot.refresh_pending
+                slot.refresh_pending = None
 
-            if output is not None:
-                on_output(output)
-            elif slot.on_failure is not None:
-                slot.on_failure()
+            try:
+                if output is not None:
+                    on_output(output)
+                elif slot.on_failure is not None:
+                    slot.on_failure()
+            finally:
+                # Output handlers may have invalidated this channel themselves.
+                if followup and slot.generation == generation:
+                    self._poll_command(slot, *followup)
 
         try:
             handle = _run_shell_async(command, timeout, on_result)
@@ -981,12 +1000,24 @@ class AsyncPollingMixin:
                 cancel_new_handle = handle is not None
                 if slot.generation == generation:
                     slot.is_running = False
-            elif handle is None:
-                slot.is_running = False
             else:
+                # Spawn failures return None but still queue on_result. Retain
+                # ownership until that delivery, just as for a live process.
                 slot.cancellable = handle
 
         if cancel_new_handle and handle is not None:
+            with suppress(Exception):
+                handle.cancel()
+
+    def _invalidate_poll(self, slot: PollSlot) -> None:
+        """Reject a pre-action observation even if its cancellation arrives late."""
+        with self._state.lock:
+            slot.generation += 1
+            slot.is_running = False
+            slot.refresh_pending = None
+            handle = slot.cancellable
+            slot.cancellable = None
+        if handle is not None:
             with suppress(Exception):
                 handle.cancel()
 
@@ -1084,6 +1115,8 @@ class StateMonitorMixin(AsyncPollingMixin):
         self._apply_state_update(new_state)
 
     def _handle_state_failure(self) -> None:
+        if getattr(self, "_operation_busy", False):
+            return
         if hasattr(self, "_set_unknown_state"):
             self._set_unknown_state()
 
@@ -1149,6 +1182,7 @@ class SliderMonitorMixin(AsyncPollingMixin):
                 return
             slot.generation += 1
             slot.is_running = False
+            slot.refresh_pending = None
             old_poll = slot.cancellable
             slot.cancellable = None
             old_timer = self._state.debounce_source_id
@@ -1933,6 +1967,8 @@ class ToggleRow(StateMonitorMixin, BaseActionRow):
         previous = self.toggle_switch.get_active()
         action = self.on_action.get("enabled" if state else "disabled") if isinstance(self.on_action, dict) else None
         if isinstance(action, dict):
+            if self._state.monitor.current_command:
+                self._invalidate_poll(self._state.monitor)
             self._operation_busy = True
             self.toggle_switch.set_sensitive(False)
             _run_widget_action(self, action, str(self.properties.get("title", "Toggle")), "_finish_toggle", state, previous)
@@ -2050,23 +2086,32 @@ class LabelRow(BaseActionRow):
             if self._state.value.is_running or self._state.is_destroyed:
                 return
             self._state.value.is_running = True
+            self._state.value.generation += 1
+            generation = self._state.value.generation
 
-        if not _submit_task_safe(self._load_value_async, self._state):
+        if not _submit_task_safe(lambda: self._load_value_async(generation), self._state):
             with self._state.lock:
-                self._state.value.is_running = False
+                if self._state.value.generation == generation:
+                    self._state.value.is_running = False
 
-    def _load_value_async(self) -> None:
+    def _load_value_async(self, generation: int) -> None:
         result = LABEL_NA
         try:
             with self._state.lock:
-                if self._state.is_destroyed:
+                if self._state.is_destroyed or self._state.value.generation != generation:
                     return
             result = self._get_value_text(self.value_config)
-        finally:
-            with self._state.lock:
-                self._state.value.is_running = False
+        except Exception as error:
+            log.debug("Label value read failed: %s", error)
 
-        GLib.idle_add(self._update_label, result)
+        GLib.idle_add(self._finish_value_read, generation, result)
+
+    def _finish_value_read(self, generation: int, result: str) -> bool:
+        with self._state.lock:
+            if self._state.is_destroyed or self._state.value.generation != generation:
+                return GLib.SOURCE_REMOVE
+            self._state.value.is_running = False
+        return self._update_label(result)
 
     def _update_label(self, text: str) -> bool:
         with self._state.lock:
@@ -2833,6 +2878,7 @@ class EntryRow(DynamicIconMixin, HyprlandIPCMixin, Adw.EntryRow):
                 self._entry_dirty = self.get_text() != text
                 if self.get_mapped() and (val_cmd := self.properties.get("value_command")) and not self._entry_dirty:
                     revision = self._entry_revision
+                    self._invalidate_poll(self._state.value)
                     self._poll_command(self._state.value, str(val_cmd), lambda value: self._on_initial_value_loaded(value, revision), SUBPROCESS_TIMEOUT_LONG)
             if toast_msg := self.properties.get("toast"):
                 utility.toast(self.toast_overlay, str(toast_msg).replace("{value}", text))
@@ -3948,6 +3994,8 @@ class GridToggleCard(DynamicIconMixin, StateMonitorMixin, HyprlandIPCMixin, Grid
         self._set_visual(new_state)
         action = self.on_action.get("enabled" if new_state else "disabled") if isinstance(self.on_action, dict) else None
         if isinstance(action, dict):
+            if self._state.monitor.current_command:
+                self._invalidate_poll(self._state.monitor)
             self._operation_busy = True
             self.set_sensitive(False)
             _run_widget_action(self, action, str(self.properties.get("title", "Toggle")), "_finish_toggle", new_state, previous)

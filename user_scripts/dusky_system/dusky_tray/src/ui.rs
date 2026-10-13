@@ -22,6 +22,7 @@ use std::time::{Duration, Instant};
 use crate::backend::cmd::execute_detached;
 use crate::backend::notify::{self, Notification};
 use crate::backend::system as sys;
+use crate::backend::worker;
 use crate::config::{AppConfig, Appearance, icon_glyph};
 use crate::theme::{AppTheme, saturate, slider_icon_color, slider_label_color};
 
@@ -41,12 +42,12 @@ pub enum Message {
     BlurConfigured,
     WeatherLoaded(Option<String>),
     MetricsLoaded((String, String, sys::NetState)),
-    TogglesLoaded(ToggleSnapshot),
-    RadioLoaded((Option<bool>, Option<bool>)),
-    PowerLoaded(Option<String>),
-    SlidersLoaded(u64, SliderSnapshot),
-    NotifsLoaded((Vec<Notification>, Option<bool>)),
-    NotifsRefreshed((Vec<Notification>, Option<bool>)),
+    TogglesLoaded(u64, ToggleSnapshot),
+    RadioLoaded(u64, u64, (Option<bool>, Option<bool>)),
+    PowerLoaded(u64, Option<String>),
+    SliderLoaded(SliderKind, u64, Option<f32>),
+    NotifsLoaded(u64, (Vec<Notification>, Option<bool>)),
+    NotifsRefreshed(u64, (Vec<Notification>, Option<bool>)),
     SliderChanged(SliderKind, f32),
     WifiToggled(bool),
     WifiSettled(Option<bool>),
@@ -100,12 +101,44 @@ pub struct ToggleSnapshot {
     pub updates_tooltip: String,
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct SliderSnapshot {
-    pub volume: Option<f32>,
-    pub brightness: Option<f32>,
-    pub sunset: Option<f32>,
-    pub sunset_available: bool,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum RefreshKind {
+    Weather,
+    Metrics,
+    Toggles,
+    Radios,
+    Power,
+    Slider(SliderKind),
+    Notifications,
+}
+
+impl RefreshKind {
+    const ALL: [Self; 9] = [
+        Self::Weather,
+        Self::Metrics,
+        Self::Toggles,
+        Self::Radios,
+        Self::Power,
+        Self::Slider(SliderKind::Volume),
+        Self::Slider(SliderKind::Sunset),
+        Self::Notifications,
+        // DDC discovery can take seconds. Submit it after the quick controls.
+        Self::Slider(SliderKind::Brightness),
+    ];
+
+    fn phase(self) -> &'static str {
+        match self {
+            Self::Weather => "weather-ready",
+            Self::Metrics => "metrics-ready",
+            Self::Toggles => "toggles-ready",
+            Self::Radios => "radios-ready",
+            Self::Power => "power-ready",
+            Self::Slider(SliderKind::Volume) => "volume-ready",
+            Self::Slider(SliderKind::Brightness) => "brightness-ready",
+            Self::Slider(SliderKind::Sunset) => "sunset-ready",
+            Self::Notifications => "notifications-ready",
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -123,12 +156,16 @@ pub struct TrayApp {
     ram_text: String,
     net: sys::NetState,
     toggles: ToggleSnapshot,
+    toggle_revision: u64,
     wifi_on: Option<bool>,
     bt_on: Option<bool>,
     wifi_pending: bool,
     bt_pending: bool,
+    wifi_revision: u64,
+    bt_revision: u64,
     power_profile: Option<String>,
     power_pending: Option<String>,
+    power_revision: u64,
     powertop_running: bool,
     volume: Option<f32>,
     brightness: Option<f32>,
@@ -138,15 +175,17 @@ pub struct TrayApp {
     dismissed: HashSet<i32>,
     dnd: Option<bool>,
     dnd_pending: bool,
+    dnd_revision: u64,
     expanded: HashSet<String>,
     hovered_notification: Option<String>,
-    refresh_pending: usize,
+    refresh_pending: HashSet<RefreshKind>,
+    initial_pending: HashSet<RefreshKind>,
     initial_refresh: bool,
     notifications_loaded: bool,
     slider_busy: HashSet<SliderKind>,
     slider_pending: HashMap<SliderKind, f32>,
     slider_changed_at: HashMap<SliderKind, Instant>,
-    slider_revision: u64,
+    slider_revision: HashMap<SliderKind, u64>,
     error: Option<String>,
     pub(crate) panel_monitor: Option<sys::PanelMonitor>,
     window_id: Option<iced_core::window::Id>,
@@ -157,8 +196,22 @@ pub struct TrayApp {
 
 impl TrayApp {
     pub fn new(config: AppConfig) -> (Self, Task<Message>) {
+        let mut app = Self::state(config);
+        // Iced runs boot task streams after opening the window. Start read-only
+        // queries eagerly so hardware waits overlap compositor/font startup.
+        let refresh = app.refresh_all();
+        app.initial_pending = app.refresh_pending.clone();
+        if app.initial_pending.is_empty() {
+            app.initial_refresh = false;
+            crate::renderer::trace_phase("snapshot-ready");
+        }
+        let boot = Task::batch([refresh, Self::configure_blur(app.appearance.blur)]);
+        (app, boot)
+    }
+
+    fn state(config: AppConfig) -> Self {
         let (time_text, date_text) = sys::current_time_date();
-        let app = Self {
+        Self {
             config,
             appearance: Appearance::load().unwrap_or_default(),
             theme: AppTheme::load(),
@@ -169,12 +222,16 @@ impl TrayApp {
             ram_text: "--".into(),
             net: Default::default(),
             toggles: Default::default(),
+            toggle_revision: 0,
             wifi_on: None,
             bt_on: None,
             wifi_pending: false,
             bt_pending: false,
+            wifi_revision: 0,
+            bt_revision: 0,
             power_profile: None,
             power_pending: None,
+            power_revision: 0,
             powertop_running: false,
             volume: None,
             brightness: None,
@@ -184,109 +241,129 @@ impl TrayApp {
             dismissed: HashSet::new(),
             dnd: None,
             dnd_pending: false,
+            dnd_revision: 0,
             expanded: HashSet::new(),
             hovered_notification: None,
-            refresh_pending: 0,
+            refresh_pending: HashSet::new(),
+            initial_pending: HashSet::new(),
             initial_refresh: true,
             notifications_loaded: false,
             slider_busy: HashSet::new(),
             slider_pending: HashMap::new(),
             slider_changed_at: HashMap::new(),
-            slider_revision: 0,
+            slider_revision: HashMap::new(),
             error: None,
             panel_monitor: None,
             window_id: None,
             panel_size: None,
             panel_applied_size: None,
             panel_fit_busy: false,
-        };
-        let boot = Task::batch([
-            Task::done(Message::Tick),
-            Self::configure_blur(app.appearance.blur),
-        ]);
-        (app, boot)
+        }
     }
 
-    fn refresh_all(&self) -> Task<Message> {
-        let revision = self.slider_revision;
-        let has_wifi_button = self.config.toggles.iter().any(|t| t.id == "wifi");
-        Task::batch(vec![
-            Task::perform(async move { sys::weather_text() }, Message::WeatherLoaded),
-            Task::perform(
-                async move {
-                    let (cpu, ram) = sys::cpu_ram();
-                    let net = sys::net_state();
-                    (cpu, ram, net)
-                },
-                Message::MetricsLoaded,
-            ),
-            Task::perform(
-                async move {
-                    let idle = sys::is_idle_active();
-                    let updates = sys::updates_state();
+    fn reserve_refresh(&mut self) -> Vec<RefreshKind> {
+        let layout = &self.config.layout;
+        RefreshKind::ALL
+            .into_iter()
+            .filter(|kind| {
+                let enabled = match kind {
+                    RefreshKind::Weather => layout.show_weather,
+                    RefreshKind::Metrics => layout.show_metrics,
+                    RefreshKind::Toggles => {
+                        layout.show_quick_toggles && !self.config.toggles.is_empty()
+                    }
+                    RefreshKind::Radios | RefreshKind::Power => layout.show_power_profiles,
+                    RefreshKind::Slider(_) => layout.show_sliders,
+                    RefreshKind::Notifications => layout.show_notifications,
+                };
+                enabled && self.refresh_pending.insert(*kind)
+            })
+            .collect()
+    }
+
+    fn refresh_all(&mut self) -> Task<Message> {
+        let kinds = self.reserve_refresh();
+        Task::batch(kinds.into_iter().map(|kind| self.refresh_task(kind)))
+    }
+
+    fn refresh_task(&self, kind: RefreshKind) -> Task<Message> {
+        match kind {
+            RefreshKind::Weather => worker::start(sys::weather_text).map(Message::WeatherLoaded),
+            RefreshKind::Metrics => worker::start(|| {
+                let (cpu, ram) = sys::cpu_ram();
+                let net = sys::net_state();
+                (cpu, ram, net)
+            })
+            .map(Message::MetricsLoaded),
+            RefreshKind::Toggles => {
+                let revision = self.toggle_revision;
+                let has = |id: &str| self.config.toggles.iter().any(|t| t.id == id);
+                let (animations, wifi, idle, blur, audio, updates) = (
+                    has("animations"),
+                    has("wifi"),
+                    has("idle"),
+                    has("blur"),
+                    has("audio"),
+                    has("updates"),
+                );
+                worker::start(move || {
+                    let updates = if updates {
+                        sys::updates_state()
+                    } else {
+                        Default::default()
+                    };
                     ToggleSnapshot {
-                        animations_on: sys::animations_enabled(),
-                        wifi_connected: if has_wifi_button {
-                            sys::wifi_connected()
-                        } else {
-                            None
-                        },
-                        idle_inhibited: idle.map(|active| !active),
-                        blur_on: sys::is_blur_on(),
-                        audio_active: sys::is_audio_active(),
+                        animations_on: animations.then(sys::animations_enabled).flatten(),
+                        wifi_connected: wifi.then(sys::wifi_connected).flatten(),
+                        idle_inhibited: idle
+                            .then(sys::is_idle_active)
+                            .flatten()
+                            .map(|active| !active),
+                        blur_on: blur.then(sys::is_blur_on).flatten(),
+                        audio_active: audio && sys::is_audio_active(),
                         updates_badge: updates.badge,
                         updates_tooltip: updates.tooltip,
                     }
-                },
-                Message::TogglesLoaded,
-            ),
-            Task::perform(
-                async move { (sys::get_wifi(), sys::get_bt()) },
-                Message::RadioLoaded,
-            ),
-            Task::perform(
-                async move { sys::get_power_profile() },
-                Message::PowerLoaded,
-            ),
-            Task::perform(
-                async move {
-                    let sunset_available = sys::has_sunset() && sys::is_sunset_service_enabled();
-                    SliderSnapshot {
-                        volume: if sys::has_volume() {
-                            sys::get_volume()
-                        } else {
-                            None
-                        },
-                        brightness: if sys::has_brightness() {
-                            sys::get_brightness()
-                        } else {
-                            None
-                        },
-                        sunset: if sunset_available {
-                            sys::get_sunset()
-                        } else {
-                            None
-                        },
-                        sunset_available,
-                    }
-                },
-                move |s| Message::SlidersLoaded(revision, s),
-            ),
-            Task::perform(
-                async move { (notify::fetch_notifications(), sys::mako_dnd()) },
-                Message::NotifsRefreshed,
-            ),
-        ])
+                })
+                .map(move |state| Message::TogglesLoaded(revision, state))
+            }
+            RefreshKind::Radios => {
+                let (wifi, bt) = (self.wifi_revision, self.bt_revision);
+                worker::start(|| (sys::get_wifi(), sys::get_bt()))
+                    .map(move |state| Message::RadioLoaded(wifi, bt, state))
+            }
+            RefreshKind::Power => {
+                let revision = self.power_revision;
+                worker::start(sys::get_power_profile)
+                    .map(move |state| Message::PowerLoaded(revision, state))
+            }
+            RefreshKind::Slider(kind) => {
+                let revision = self.slider_revision.get(&kind).copied().unwrap_or(0);
+                worker::start(move || match kind {
+                    SliderKind::Volume => sys::get_volume(),
+                    SliderKind::Brightness => sys::get_brightness(),
+                    SliderKind::Sunset => (sys::has_sunset() && sys::is_sunset_service_enabled())
+                        .then(sys::get_sunset)
+                        .flatten(),
+                })
+                .map(move |value| Message::SliderLoaded(kind, revision, value))
+            }
+            RefreshKind::Notifications => {
+                let revision = self.dnd_revision;
+                worker::start(|| (notify::fetch_notifications(), sys::mako_dnd()))
+                    .map(move |state| Message::NotifsRefreshed(revision, state))
+            }
+        }
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         let phase = match &message {
-            Message::WeatherLoaded(_) => Some("weather-ready"),
-            Message::MetricsLoaded(_) => Some("metrics-ready"),
-            Message::TogglesLoaded(_) => Some("toggles-ready"),
-            Message::RadioLoaded(_) => Some("radios-ready"),
-            Message::PowerLoaded(_) => Some("power-ready"),
-            Message::SlidersLoaded(_, _) => Some("sliders-ready"),
+            Message::WeatherLoaded(_) => Some(RefreshKind::Weather),
+            Message::MetricsLoaded(_) => Some(RefreshKind::Metrics),
+            Message::TogglesLoaded(_, _) => Some(RefreshKind::Toggles),
+            Message::RadioLoaded(_, _, _) => Some(RefreshKind::Radios),
+            Message::PowerLoaded(_, _) => Some(RefreshKind::Power),
+            Message::SliderLoaded(kind, _, _) => Some(RefreshKind::Slider(*kind)),
             _ => None,
         };
         if let Some(phase) = phase {
@@ -334,10 +411,8 @@ impl TrayApp {
                     }
                     self.theme = theme;
                 }
-                if self.refresh_pending != 0 {
-                    return Task::batch([blur_change, panel_fit]);
-                }
-                self.refresh_pending = 7;
+                // Only skip the still-running categories. Slow DDC must not
+                // prevent the next radio, notification, or volume refresh.
                 return Task::batch([blur_change, panel_fit, self.refresh_all()]);
             }
             Message::WeatherLoaded(w) => {
@@ -348,55 +423,53 @@ impl TrayApp {
                 self.ram_text = ram;
                 self.net = net;
             }
-            Message::TogglesLoaded(s) => {
-                self.toggles = s;
+            Message::TogglesLoaded(revision, s) => {
+                if revision == self.toggle_revision {
+                    self.toggles = s;
+                }
             }
-            Message::RadioLoaded((wifi, bt)) => {
-                if !self.wifi_pending {
+            Message::RadioLoaded(wifi_revision, bt_revision, (wifi, bt)) => {
+                if !self.wifi_pending && wifi_revision == self.wifi_revision {
                     self.wifi_on = wifi;
                 }
-                if !self.bt_pending {
+                if !self.bt_pending && bt_revision == self.bt_revision {
                     self.bt_on = bt;
                 }
             }
-            Message::PowerLoaded(p) => {
-                if self.power_pending.is_none() {
+            Message::PowerLoaded(revision, p) => {
+                if self.power_pending.is_none() && revision == self.power_revision {
                     self.power_profile = p;
                 }
             }
-            Message::SlidersLoaded(revision, s) => {
-                if revision == self.slider_revision {
-                    for (kind, value) in [
-                        (SliderKind::Volume, s.volume),
-                        (SliderKind::Brightness, s.brightness),
-                        (SliderKind::Sunset, s.sunset),
-                    ] {
-                        let recent = self
-                            .slider_changed_at
-                            .get(&kind)
-                            .is_some_and(|t| t.elapsed() < Duration::from_secs(3));
-                        if !recent && !self.slider_busy.contains(&kind) {
-                            match kind {
-                                SliderKind::Volume => self.volume = value,
-                                SliderKind::Brightness => self.brightness = value,
-                                SliderKind::Sunset => self.sunset = value,
+            Message::SliderLoaded(kind, revision, value) => {
+                if revision == self.slider_revision.get(&kind).copied().unwrap_or(0) {
+                    let recent = self
+                        .slider_changed_at
+                        .get(&kind)
+                        .is_some_and(|t| t.elapsed() < Duration::from_secs(3));
+                    if !recent && !self.slider_busy.contains(&kind) {
+                        match kind {
+                            SliderKind::Volume => self.volume = value,
+                            SliderKind::Brightness => self.brightness = value,
+                            SliderKind::Sunset => {
+                                self.sunset = value;
+                                self.sunset_available = value.is_some();
                             }
                         }
                     }
                 }
-                self.sunset_available = s.sunset_available;
             }
-            Message::NotifsRefreshed(result) => {
-                self.finish_refresh("notifications-ready");
-                return self.update(Message::NotifsLoaded(result));
+            Message::NotifsRefreshed(revision, result) => {
+                self.finish_refresh(RefreshKind::Notifications);
+                return self.update(Message::NotifsLoaded(revision, result));
             }
-            Message::NotifsLoaded((notifs, dnd)) => {
+            Message::NotifsLoaded(revision, (notifs, dnd)) => {
                 self.notifications_loaded = true;
                 self.notifications = notifs
                     .into_iter()
                     .filter(|n| !self.dismissed.contains(&n.id))
                     .collect();
-                if dnd.is_some() && !self.dnd_pending {
+                if dnd.is_some() && !self.dnd_pending && revision == self.dnd_revision {
                     self.dnd = dnd;
                 }
                 // Drop expansions for apps that vanished.
@@ -428,7 +501,7 @@ impl TrayApp {
                         self.sunset.unwrap()
                     }
                 };
-                self.slider_revision += 1;
+                *self.slider_revision.entry(kind).or_default() += 1;
                 self.slider_changed_at.insert(kind, Instant::now());
                 if self.slider_busy.contains(&kind) {
                     self.slider_pending.insert(kind, value);
@@ -449,8 +522,9 @@ impl TrayApp {
                     return Task::none();
                 }
                 self.wifi_pending = true;
+                self.wifi_revision += 1;
                 self.wifi_on = Some(on);
-                return Task::perform(async move { sys::set_wifi(on) }, Message::WifiSettled);
+                return worker::perform(move || sys::set_wifi(on)).map(Message::WifiSettled);
             }
             Message::WifiSettled(observed) => {
                 self.wifi_pending = false;
@@ -461,8 +535,9 @@ impl TrayApp {
                     return Task::none();
                 }
                 self.bt_pending = true;
+                self.bt_revision += 1;
                 self.bt_on = Some(on);
-                return Task::perform(async move { sys::set_bt(on) }, Message::BtSettled);
+                return worker::perform(move || sys::set_bt(on)).map(Message::BtSettled);
             }
             Message::BtSettled(observed) => {
                 self.bt_pending = false;
@@ -473,13 +548,12 @@ impl TrayApp {
                     return Task::none();
                 }
                 self.power_pending = Some(profile.clone());
-                return Task::perform(
-                    async move {
-                        let ok = sys::apply_power_profile(&profile);
-                        (profile, ok)
-                    },
-                    Message::PowerSettled,
-                );
+                self.power_revision += 1;
+                return worker::perform(move || {
+                    let ok = sys::apply_power_profile(&profile);
+                    (profile, ok)
+                })
+                .map(Message::PowerSettled);
             }
             Message::PowerSettled((profile, ok)) => {
                 self.power_pending = None;
@@ -495,9 +569,7 @@ impl TrayApp {
                     return Task::none();
                 }
                 self.powertop_running = true;
-                return Task::perform(async move { sys::powertop_autotune() }, |_| {
-                    Message::PowertopDone
-                });
+                return worker::perform(sys::powertop_autotune).map(|_| Message::PowertopDone);
             }
             Message::PowertopDone => {
                 self.powertop_running = false;
@@ -506,6 +578,7 @@ impl TrayApp {
                 if let Some(t) = self.config.toggles.iter().find(|t| t.id == id) {
                     let cmd = t.on_left.clone();
                     if !cmd.is_empty() {
+                        self.toggle_revision += 1;
                         execute_detached(&cmd);
                         if matches!(id.as_str(), "wifi" | "updates" | "audio") {
                             return iced_runtime::exit();
@@ -524,6 +597,9 @@ impl TrayApp {
             }
             Message::ToggleMiddle(id) => {
                 if let Some(t) = self.config.toggles.iter().find(|t| t.id == id) {
+                    if !t.on_middle.is_empty() {
+                        self.toggle_revision += 1;
+                    }
                     execute_detached(&t.on_middle);
                 }
             }
@@ -535,11 +611,13 @@ impl TrayApp {
                         t.on_right.clone()
                     };
                     if id == "audio" && cmd.is_empty() {
+                        self.toggle_revision += 1;
                         // Fallback parity with Python --toggle when config lacks on_right.
                         execute_detached(
                             "python3 ~/user_scripts/audio/dusky_audio_studio/dusky_audio_studio.py --toggle",
                         );
                     } else if !cmd.is_empty() {
+                        self.toggle_revision += 1;
                         execute_detached(&cmd);
                         if matches!(id.as_str(), "idle" | "blur") {
                             return iced_runtime::exit();
@@ -595,14 +673,13 @@ impl TrayApp {
                     return Task::none();
                 }
                 self.dnd_pending = true;
+                self.dnd_revision += 1;
                 self.dnd = self.dnd.map(|on| !on);
-                return Task::perform(
-                    async {
-                        sys::toggle_dnd();
-                        sys::mako_dnd()
-                    },
-                    Message::DndSettled,
-                );
+                return worker::perform(|| {
+                    sys::toggle_dnd();
+                    sys::mako_dnd()
+                })
+                .map(Message::DndSettled);
             }
             Message::DndSettled(observed) => {
                 self.dnd_pending = false;
@@ -612,18 +689,12 @@ impl TrayApp {
                 self.dismissed
                     .extend(self.notifications.iter().map(|n| n.id));
                 self.notifications.clear();
-                return Task::perform(
-                    async move {
-                        notify::clear_all();
-                    },
-                    |_| Message::NotifsCleared,
-                );
+                return worker::perform(notify::clear_all).map(|_| Message::NotifsCleared);
             }
             Message::NotifsCleared => {
-                return Task::perform(
-                    async move { (notify::fetch_notifications(), sys::mako_dnd()) },
-                    Message::NotifsLoaded,
-                );
+                let revision = self.dnd_revision;
+                return worker::perform(|| (notify::fetch_notifications(), sys::mako_dnd()))
+                    .map(move |state| Message::NotifsLoaded(revision, state));
             }
             Message::NotifDismiss(id) => {
                 self.dismissed.insert(id);
@@ -705,17 +776,15 @@ impl TrayApp {
             return Task::none();
         };
         self.panel_fit_busy = true;
-        Task::perform(
-            async move { sys::fit_panel(monitor, size) },
-            move |success| Message::PanelFitted(size, success),
-        )
+        worker::perform(move || sys::fit_panel(monitor, size))
+            .map(move |success| Message::PanelFitted(size, success))
     }
 
-    fn finish_refresh(&mut self, phase: &str) {
-        self.refresh_pending = self.refresh_pending.saturating_sub(1);
-        if self.initial_refresh {
-            crate::renderer::trace_phase(phase);
-            if self.refresh_pending == 0 {
+    fn finish_refresh(&mut self, kind: RefreshKind) {
+        self.refresh_pending.remove(&kind);
+        if self.initial_refresh && self.initial_pending.remove(&kind) {
+            crate::renderer::trace_phase(kind.phase());
+            if self.initial_pending.is_empty() {
                 self.initial_refresh = false;
                 crate::renderer::trace_phase("snapshot-ready");
             }
@@ -723,12 +792,10 @@ impl TrayApp {
     }
 
     fn configure_blur(enabled: bool) -> Task<Message> {
-        Task::perform(
-            async move {
-                sys::configure_panel_blur(enabled);
-            },
-            |_| Message::BlurConfigured,
-        )
+        worker::perform(move || {
+            sys::configure_panel_blur(enabled);
+        })
+        .map(|_| Message::BlurConfigured)
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
@@ -766,16 +833,12 @@ impl TrayApp {
     }
 
     fn apply_slider(kind: SliderKind, value: f32) -> Task<Message> {
-        Task::perform(
-            async move {
-                match kind {
-                    SliderKind::Volume => sys::apply_volume(value),
-                    SliderKind::Brightness => sys::apply_brightness(value),
-                    SliderKind::Sunset => sys::apply_sunset(value),
-                }
-            },
-            move |_| Message::SliderApplied(kind),
-        )
+        worker::perform(move || match kind {
+            SliderKind::Volume => sys::apply_volume(value),
+            SliderKind::Brightness => sys::apply_brightness(value),
+            SliderKind::Sunset => sys::apply_sunset(value),
+        })
+        .map(move |_| Message::SliderApplied(kind))
     }
 
     fn icon_label(
@@ -1741,7 +1804,7 @@ impl TrayApp {
 mod tests {
     use super::*;
     fn app() -> TrayApp {
-        TrayApp::new(AppConfig::parse(AppConfig::default_toml())).0
+        TrayApp::state(AppConfig::parse(AppConfig::default_toml()))
     }
     fn window_app() -> TrayApp {
         let mut app = app();
@@ -1891,10 +1954,10 @@ mod tests {
         );
         assert!(!app.panel_fit_busy);
         assert_eq!(app.panel_applied_size, None);
-        app.refresh_pending = 7;
+        app.refresh_pending = RefreshKind::ALL.into_iter().collect();
         assert!(iced_runtime::task::into_stream(app.update(Message::Tick)).is_some());
         assert!(app.panel_fit_busy);
-        assert_eq!(app.refresh_pending, 7);
+        assert_eq!(app.refresh_pending.len(), 9);
         let _ = app.update(Message::PanelFitted(size, true));
         let _ = app.update(Message::Tick);
         assert!(!app.panel_fit_busy);
@@ -1922,16 +1985,17 @@ mod tests {
     #[test]
     fn panel_is_visible_while_initial_queries_are_pending() {
         let mut app = app();
+        app.reserve_refresh();
         assert_ne!(app.time_text, "--:--");
         let _ = app.update(Message::Tick);
-        assert_eq!(app.refresh_pending, 7);
+        assert_eq!(app.refresh_pending.len(), 9);
         assert!(!app.notifications_loaded);
         let view = app.view_at(iced_core::Size::new(1920.0, 1080.0));
         assert!(!view.as_widget().children().is_empty());
         drop(view);
-        let _ = app.update(Message::NotifsRefreshed((vec![], None)));
+        let _ = app.update(Message::NotifsRefreshed(0, (vec![], None)));
         assert!(app.notifications_loaded);
-        assert_eq!(app.refresh_pending, 6);
+        assert_eq!(app.refresh_pending.len(), 8);
     }
 
     #[test]
@@ -1954,26 +2018,14 @@ mod tests {
     fn polling_does_not_roll_back_a_drag() {
         let mut app = app();
         let _ = app.update(Message::SliderChanged(SliderKind::Volume, 70.0));
-        let _ = app.update(Message::SlidersLoaded(
-            0,
-            SliderSnapshot {
-                volume: Some(20.0),
-                ..Default::default()
-            },
-        ));
+        let _ = app.update(Message::SliderLoaded(SliderKind::Volume, 0, Some(20.0)));
         assert_eq!(app.volume, Some(70.0));
     }
     #[test]
     fn small_external_volume_changes_are_observed() {
         let mut app = app();
         app.volume = Some(70.0);
-        let _ = app.update(Message::SlidersLoaded(
-            0,
-            SliderSnapshot {
-                volume: Some(69.0),
-                ..Default::default()
-            },
-        ));
+        let _ = app.update(Message::SliderLoaded(SliderKind::Volume, 0, Some(69.0)));
         assert_eq!(app.volume, Some(69.0));
     }
     #[test]
@@ -1981,24 +2033,152 @@ mod tests {
         let mut app = app();
         app.time_text = "stale".into();
         app.date_text = "stale".into();
-        app.refresh_pending = 7;
+        app.refresh_pending = RefreshKind::ALL.into_iter().collect();
         let _ = app.update(Message::Tick);
         assert_ne!(app.time_text, "stale");
         assert_ne!(app.date_text, "stale");
-        assert_eq!(app.refresh_pending, 7);
+        assert_eq!(app.refresh_pending.len(), 9);
     }
 
     #[test]
     fn periodic_refresh_cannot_queue_overlapping_batches() {
         let mut app = app();
+        app.reserve_refresh();
         let _ = app.update(Message::Tick);
-        assert_eq!(app.refresh_pending, 7);
+        assert_eq!(app.refresh_pending.len(), 9);
         let _ = app.update(Message::Tick);
-        assert_eq!(app.refresh_pending, 7);
-        let _ = app.update(Message::NotifsLoaded((vec![], None)));
-        assert_eq!(app.refresh_pending, 7);
-        let _ = app.update(Message::NotifsRefreshed((vec![], None)));
-        assert_eq!(app.refresh_pending, 6);
+        assert_eq!(app.refresh_pending.len(), 9);
+        let _ = app.update(Message::NotifsLoaded(0, (vec![], None)));
+        assert_eq!(app.refresh_pending.len(), 9);
+        let _ = app.update(Message::NotifsRefreshed(0, (vec![], None)));
+        assert_eq!(app.refresh_pending.len(), 8);
+    }
+
+    #[test]
+    fn slow_brightness_does_not_stop_other_refreshes_or_queue_duplicate_work() {
+        let mut app = app();
+        let first = app.reserve_refresh();
+        assert_eq!(first.len(), 9);
+        app.initial_pending = app.refresh_pending.clone();
+        let slow = RefreshKind::Slider(SliderKind::Brightness);
+        for kind in first.into_iter().rev().filter(|kind| *kind != slow) {
+            app.finish_refresh(kind);
+        }
+        for _ in 0..1000 {
+            let next = app.reserve_refresh();
+            assert_eq!(next.len(), 8);
+            assert!(!next.contains(&slow));
+            assert!(app.reserve_refresh().is_empty());
+            for kind in next {
+                app.finish_refresh(kind);
+            }
+            assert_eq!(app.initial_pending, HashSet::from([slow]));
+        }
+        app.finish_refresh(slow);
+        assert!(!app.initial_refresh);
+        assert!(app.refresh_pending.is_empty());
+        assert_eq!(app.reserve_refresh().len(), 9);
+    }
+
+    #[test]
+    fn hidden_sections_do_not_schedule_hardware_queries() {
+        let mut app = TrayApp::state(AppConfig::parse(concat!(
+            "toggles=[]\n[layout]\nshow_weather=false\nshow_metrics=false\n",
+            "show_quick_toggles=false\nshow_power_profiles=false\n",
+            "show_sliders=false\nshow_notifications=false\n",
+        )));
+        assert!(app.reserve_refresh().is_empty());
+        app.config.layout.show_sliders = true;
+        let kinds = app.reserve_refresh();
+        assert_eq!(kinds.len(), 3);
+        assert!(
+            kinds
+                .iter()
+                .all(|kind| matches!(kind, RefreshKind::Slider(_)))
+        );
+    }
+
+    #[test]
+    fn sliders_load_independently_and_drag_revisions_are_per_slider() {
+        let mut app = app();
+        for value in 0..=1000 {
+            let _ = app.update(Message::SliderChanged(
+                SliderKind::Volume,
+                value as f32 / 10.0,
+            ));
+        }
+        let _ = app.update(Message::SliderLoaded(SliderKind::Brightness, 0, Some(45.0)));
+        let _ = app.update(Message::SliderLoaded(SliderKind::Sunset, 0, Some(30.0)));
+        let _ = app.update(Message::SliderLoaded(SliderKind::Volume, 0, Some(20.0)));
+        assert_eq!(app.volume, Some(100.0));
+        assert_eq!(app.brightness, Some(45.0));
+        assert_eq!(app.sunset, Some(30.0));
+        assert!(app.sunset_available);
+        assert_eq!(app.slider_busy.len(), 1);
+        assert_eq!(app.slider_pending.len(), 1);
+        let _ = app.update(Message::SliderLoaded(SliderKind::Brightness, 0, None));
+        assert!(app.brightness.is_none());
+        assert_eq!(app.sunset, Some(30.0));
+        let _ = app.update(Message::SliderLoaded(SliderKind::Sunset, 0, None));
+        assert!(!app.sunset_available);
+        assert_eq!(app.volume, Some(100.0));
+    }
+
+    #[test]
+    fn late_queries_cannot_undo_completed_radio_power_or_dnd_actions() {
+        let mut app = app();
+        let _ = app.update(Message::WifiToggled(false));
+        let _ = app.update(Message::WifiSettled(Some(false)));
+        let _ = app.update(Message::RadioLoaded(0, 0, (Some(true), Some(true))));
+        assert_eq!(app.wifi_on, Some(false));
+        assert_eq!(app.bt_on, Some(true));
+        let _ = app.update(Message::BtToggled(false));
+        let _ = app.update(Message::BtSettled(Some(false)));
+        let _ = app.update(Message::RadioLoaded(1, 0, (Some(false), Some(true))));
+        assert_eq!(app.bt_on, Some(false));
+        let _ = app.update(Message::PowerSelected("balanced".into()));
+        let _ = app.update(Message::PowerSettled(("balanced".into(), true)));
+        let _ = app.update(Message::PowerLoaded(0, Some("performance".into())));
+        assert_eq!(app.power_profile.as_deref(), Some("balanced"));
+        app.dnd = Some(false);
+        let _ = app.update(Message::DndToggled);
+        let _ = app.update(Message::DndSettled(Some(true)));
+        let _ = app.update(Message::NotifsLoaded(0, (vec![], Some(false))));
+        assert_eq!(app.dnd, Some(true));
+        assert!(app.notifications_loaded);
+        let _ = app.update(Message::NotifsLoaded(1, (vec![], Some(false))));
+        assert_eq!(
+            app.dnd,
+            Some(false),
+            "new external changes remain observable"
+        );
+    }
+
+    #[test]
+    fn stale_toggle_results_cannot_undo_optimistic_feedback() {
+        let mut app = app();
+        app.toggle_revision = 1;
+        app.toggles.animations_on = Some(false);
+        let snapshot = ToggleSnapshot {
+            animations_on: Some(true),
+            ..Default::default()
+        };
+        let _ = app.update(Message::TogglesLoaded(0, snapshot.clone()));
+        assert_eq!(app.toggles.animations_on, Some(false));
+        let _ = app.update(Message::TogglesLoaded(1, snapshot));
+        assert_eq!(app.toggles.animations_on, Some(true));
+    }
+
+    #[test]
+    fn hidden_boot_finishes_without_starting_queries() {
+        let config = AppConfig::parse(concat!(
+            "toggles=[]\n[layout]\nshow_weather=false\nshow_metrics=false\n",
+            "show_quick_toggles=false\nshow_power_profiles=false\n",
+            "show_sliders=false\nshow_notifications=false\n",
+        ));
+        let (app, _) = TrayApp::new(config);
+        assert!(app.refresh_pending.is_empty());
+        assert!(!app.initial_refresh);
     }
     #[test]
     fn stale_notification_snapshot_does_not_restore_dismissed_items() {
@@ -2012,10 +2192,10 @@ mod tests {
             desktop_entry: String::new(),
             time: String::new(),
         };
-        let _ = app.update(Message::NotifsLoaded((vec![n.clone()], None)));
+        let _ = app.update(Message::NotifsLoaded(0, (vec![n.clone()], None)));
         app.dismissed.insert(42);
         app.notifications.clear();
-        let _ = app.update(Message::NotifsLoaded((vec![n], None)));
+        let _ = app.update(Message::NotifsLoaded(0, (vec![n], None)));
         assert!(app.notifications.is_empty());
     }
 }
