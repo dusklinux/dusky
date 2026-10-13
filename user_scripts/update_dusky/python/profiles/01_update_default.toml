@@ -82,7 +82,7 @@ tasks = [
     # "S | 045_battery_limiter.sh",
     # "S | 050_pacman_config.sh --auto",
     "S | once | 051_pacman_hooks.sh --auto",
-    "S | once | 055_pacman_reflector.sh",
+    "S | ignore-fail | 055_pacman_reflector.sh",
     # "S | 058_aur_paru_fallback_yay.sh",
     "S | 060_package_installation.py -p updater_packages --no-upgrade --auto-exit",
     # "S | 070_openssh_setup.sh",
