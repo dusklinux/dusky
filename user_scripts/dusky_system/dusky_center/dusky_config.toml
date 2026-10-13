@@ -431,6 +431,27 @@ icon = "system-users-symbolic"
 description = "Manage user session and login behavior"
 
 [[pages.layout.items]]
+type = "button"
+[pages.layout.items.properties]
+title = "Clear Login Lockout"
+description = "Clear your failed-password attempts so you can retry login or sudo"
+icon = "changes-allow-symbolic"
+button_text = "Clear"
+[pages.layout.items.on_press]
+type = "exec"
+command = '''
+if output=$(faillock --user "$(id -un)" --reset 2>&1); then
+    notify-send --app-name='Dusky Center' 'Login Lockout Cleared' 'You can retry your password.'
+else
+    notify-send --app-name='Dusky Center' --urgency=critical 'Could Not Clear Login Lockout' "$output"
+    exit 1
+fi
+'''
+terminal = false
+requires_root = false
+
+
+[[pages.layout.items]]
 type = "toggle"
 [pages.layout.items.properties]
 title = "TTY Auto Login"
