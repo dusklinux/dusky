@@ -1,232 +1,270 @@
 #!/usr/bin/env python3
 #d: Optimize systemd-boot
 
+"""Optimize Type #1 Linux directives; preserve fallback and other entries."""
+
+import argparse
+import difflib
 import os
-import sys
 import re
 import stat
-import argparse
-import tempfile
 import subprocess
+import sys
+import tempfile
 from pathlib import Path
 
 try:
     from rich.console import Console
-    from rich.prompt import Confirm
     from rich.panel import Panel
+    from rich.prompt import Confirm
 except ImportError:
-    print("\033[1;31m[ERR]\033[0m The 'rich' library is required. Install it with: sudo pacman -S python-rich")
+    print("[ERR] The 'rich' library is required. Install it with: sudo pacman -S python-rich", file=sys.stderr)
     sys.exit(1)
 
 console = Console()
+EFI_TIMEOUT = Path("/sys/firmware/efi/efivars/LoaderConfigTimeout-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f")
 
-# --- 1. Robust Atomic File Operations ---
-def atomic_write(file_path: Path, content: str) -> bool:
-    """Writes to a file atomically, with a robust 'sudo tee' fallback for ESP quirks."""
-    temp_file_path = None
+
+def bootctl(*arguments: str) -> str:
+    """Run the documented systemd interface without a pager."""
+    result = subprocess.run(
+        ["bootctl", "--no-pager", *arguments],
+        capture_output=True, text=True, encoding="utf-8", check=True,
+    )
+    return result.stdout.strip()
+
+
+def atomic_write(file_path: Path, content: str) -> None:
+    """Replace a file on its own filesystem and sync both data and rename."""
+    metadata = file_path.stat() if file_path.exists() else None
+    temporary: Path | None = None
     try:
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, encoding='utf-8', dir=file_path.parent) as tf:
-            temp_file_path = Path(tf.name)
-            tf.write(content)
-            tf.flush()
-            os.fsync(tf.fileno())
-
-        if file_path.exists():
-            try:
-                stat_info = file_path.stat()
-                os.chmod(temp_file_path, stat.S_IMODE(stat_info.st_mode))
-                os.chown(temp_file_path, stat_info.st_uid, stat_info.st_gid)
-            except OSError:
-                pass # Non-fatal, FAT32 often doesn't support chown
-
-        os.replace(temp_file_path, file_path)
-        return True
-
-    except (OSError, PermissionError) as e:
-        if temp_file_path and temp_file_path.exists():
-            try: temp_file_path.unlink()
-            except OSError: pass
-            
+        with tempfile.NamedTemporaryFile(
+            mode="w", delete=False, encoding="utf-8", newline="\n",
+            dir=file_path.parent, prefix=".boot-optimizer-",
+        ) as stream:
+            temporary = Path(stream.name)
+            current = os.fstat(stream.fileno())
+            if metadata and (current.st_uid, current.st_gid) != (metadata.st_uid, metadata.st_gid):
+                os.fchown(stream.fileno(), metadata.st_uid, metadata.st_gid)
+            mode = stat.S_IMODE(metadata.st_mode) if metadata else 0o644
+            # FAT exposes mount-wide permissions; normally these already match.
+            if stat.S_IMODE(current.st_mode) != mode:
+                os.fchmod(stream.fileno(), mode)
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, file_path)
+        directory_fd = os.open(file_path.parent, os.O_RDONLY | os.O_DIRECTORY)
         try:
-            res = subprocess.run(
-                ["sudo", "-n", "tee", str(file_path)],
-                input=content.encode(), capture_output=True, timeout=5
-            )
-            if res.returncode == 0:
-                return True
-            console.print(f"[bold red][ERR][/bold red] Sudo tee fallback failed for {file_path.name}.")
-        except Exception as tee_err:
-            console.print(f"[bold red][ERR][/bold red] Atomic commit failed completely: {e} | {tee_err}")
-            
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
     finally:
-        if temp_file_path and temp_file_path.exists():
-            try: temp_file_path.unlink()
-            except OSError: pass
-            
-    return False
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
-# --- 2. Optimization Logic ---
-def optimize_loader(loader_conf: Path) -> bool:
-    """Enforces timeout 0 in loader.conf cleanly."""
-    content = loader_conf.read_text(encoding='utf-8')
-    lines = content.splitlines()
-    out_lines = []
-    found_timeout = False
-    modified = False
 
-    for line in lines:
-        if re.match(r'^[ \t]*timeout', line):
-            found_timeout = True
-            if line.strip() != "timeout  0":
-                out_lines.append("timeout  0")
-                modified = True
-            else:
-                out_lines.append(line)
+def optimize_loader(content: str) -> str:
+    """Keep one exact timeout directive, preserving all unrelated lines."""
+    output: list[str] = []
+    found = False
+    for line in content.splitlines(keepends=True):
+        if re.prefixmatch(r"[ \t]*timeout(?:[ \t]|\r?$)", line):
+            if not found:
+                output.append("timeout 0\n")
+                found = True
         else:
-            out_lines.append(line)
+            output.append(line)
+    if not found:
+        if output and not output[-1].endswith("\n"):
+            output.append("\n")
+        output.append("timeout 0\n")
+    return "".join(output)
 
-    if not found_timeout:
-        out_lines.append("timeout  0")
-        modified = True
 
-    if modified:
-        if atomic_write(loader_conf, "\n".join(out_lines) + "\n"):
-            console.print(f"[bold green][OK][/bold green]   Boot menu disabled (timeout set to 0).")
-            return True
-    else:
-        console.print(f"[bold blue][INFO][/bold blue] Timeout is already 0 in loader.conf.")
-    return False
+def directive_value(line: str, key: str) -> str | None:
+    """Apply systemd-boot's whitespace and whole-value unquoting rules."""
+    match = re.prefixmatch(rf"[ \t]*{key}[ \t]+([^\r\n]*)", line)
+    if match is None:
+        return None
+    value = match[1].strip(" \t")
+    if len(value) >= 2 and value[0] in "\"'" and value[-1] == value[0]:
+        value = value[1:-1]
+    return value
 
-def optimize_entry(entry_file: Path, do_quiet: bool, do_zswap: bool, do_aspm: bool, do_ipv6: bool, do_mem_opt: bool) -> bool:
-    """Safely tokenizes options, enforcing selected parameters."""
-    content = entry_file.read_text(encoding='utf-8')
-    lines = content.splitlines()
-    out_lines = []
-    modified = False
 
-    for line in lines:
-        match = re.match(r'^([ \t]*)options([ \t]+)(.*)$', line)
-        if match:
-            leading_space, spacing, options_val = match.groups()
-            
-            # Extract tokens preserving exact whitespace architecture
-            tokens = re.split(r'((?:[^\s"\']|"[^"]*"|\'[^\']*\')+)', options_val)
-            
-            def enforce_param(search_prefix: str, exact_target: str):
-                nonlocal tokens, modified
-                found = False
-                for i, t in enumerate(tokens):
-                    if t.strip().startswith(search_prefix):
-                        found = True
-                        if t.strip() != exact_target:
-                            tokens[i] = exact_target
-                            modified = True
-                        break
-                
-                if not found:
-                    # FIX: Join the tokens to accurately check the true ending character
-                    current_str = "".join(tokens)
-                    if current_str and not current_str[-1].isspace():
-                        tokens.append(" ")
-                    tokens.append(exact_target)
-                    modified = True
+def optimize_entry(content: str, parameters: dict[str, str]) -> str:
+    """Combine options as systemd does, then enforce exact kernel keys once."""
+    if not parameters:
+        return content
+    lines = content.splitlines(keepends=True)
+    option_lines: list[int] = []
+    values: list[str] = []
+    for index, line in enumerate(lines):
+        value = directive_value(line, "options")
+        if value is not None:
+            option_lines.append(index)
+            values.append(value)
+    value = " ".join(values)
+    # The kernel honors double quotes only, with no shell escaping. Quotes may
+    # span options directives, since systemd joins their values before booting.
+    if value.count('"') % 2:
+        raise ValueError("Unbalanced double quotes in kernel options")
+    parts = re.findall(r'\s+|(?:[^\s"]|"[^"]*")+', value)
+    seen: set[str] = set()
+    boundary = len(parts)
+    for position, token in enumerate(parts):
+        if token.isspace():
+            continue
+        unquoted = token[1:-1] if token.startswith('"') and token.endswith('"') else token
+        if unquoted == "--":
+            boundary = position
+            break
+        key = unquoted.partition("=")[0].replace("-", "_")
+        if key == "slub_debug":
+            key = "slab_debug"  # Migrate the kernel's legacy alias too.
+        if key in parameters:
+            parts[position] = "" if key in seen else parameters[key]
+            seen.add(key)
+    missing = " ".join(value for key, value in parameters.items() if key not in seen)
+    if missing:
+        before = "".join(parts[:boundary])
+        separator = " " if before and not before[-1].isspace() else ""
+        parts.insert(boundary, separator + missing + (" " if boundary < len(parts) else ""))
+    updated = "".join(parts)
+    # Avoid an additional whole-value unquoting pass changing kernel quotes.
+    # systemd trims outer spaces before checking quotes, including spaces left
+    # behind when trailing duplicate parameters were removed.
+    stripped = updated.strip(" \t")
+    if len(stripped) >= 2 and stripped[0] in "\"'" and stripped[-1] == stripped[0]:
+        quote = '"' if stripped[0] == "'" else "'"
+        updated = quote + updated + quote
+    if not option_lines:
+        if lines and not lines[-1].endswith("\n"):
+            lines[-1] += "\n"
+        lines.append(f"options {updated}\n")
+    elif len(option_lines) > 1 or updated != values[0]:
+        first = option_lines[0]
+        prefix = re.prefixmatch(r"[ \t]*options[ \t]+", lines[first])[0]
+        ending = "\r\n" if lines[first].endswith("\r\n") else "\n" if lines[first].endswith("\n") else ""
+        lines[first] = prefix + updated + ending
+        for index in option_lines[1:]:
+            lines[index] = ""
+    return "".join(lines)
 
-            if do_quiet:
-                enforce_param("quiet", "quiet")
-            if do_zswap:
-                enforce_param("zswap.enabled", "zswap.enabled=0")
-            if do_aspm:
-                enforce_param("pcie_aspm", "pcie_aspm=force")
-            if do_ipv6:
-                enforce_param("ipv6.disable", "ipv6.disable=1")
-            if do_mem_opt:
-                enforce_param("slub_debug", "slub_debug=0")
-                enforce_param("init_on_alloc", "init_on_alloc=0")
-                enforce_param("init_on_free", "init_on_free=0")
 
-            out_lines.append(f"{leading_space}options{spacing}{''.join(tokens)}")
-        else:
-            out_lines.append(line)
+def select_parameters(auto: bool, has_entries: bool) -> tuple[bool, dict[str, str]]:
+    timeout = auto or Confirm.ask("Hide boot menu by default? (timeout 0)")
+    parameters: dict[str, str] = {}
+    if has_entries:
+        if auto or Confirm.ask("Reduce kernel boot messages? (quiet)"):
+            parameters["quiet"] = "quiet"
+        if auto or Confirm.ask("Disable zswap to favor zram? (zswap.enabled=0)"):
+            parameters["zswap.enabled"] = "zswap.enabled=0"
+        if not auto and Confirm.ask("Force PCIe ASPM? May cause lockups on unsupported hardware", default=False):
+            parameters["pcie_aspm"] = "pcie_aspm=force"
+        if auto or Confirm.ask("Disable IPv6 networking? (ipv6.disable=1)", default=True):
+            parameters["ipv6.disable"] = "ipv6.disable=1"
+        if auto or Confirm.ask("Disable slab debugging and allocation/free zeroing?", default=True):
+            parameters.update({
+                "slab_debug": "slab_debug=-",
+                "init_on_alloc": "init_on_alloc=0",
+                "init_on_free": "init_on_free=0",
+            })
+    return timeout, parameters
 
-    if modified:
-        if atomic_write(entry_file, "\n".join(out_lines) + "\n"):
-            console.print(f"[bold green][OK][/bold green]   Optimized parameters in [cyan]{entry_file.name}[/cyan].")
-            return True
-    else:
-        console.print(f"[bold blue][INFO][/bold blue] [cyan]{entry_file.name}[/cyan] is already optimized.")
-    return False
 
-# --- 3. Main Execution Flow ---
-def main():
-    parser = argparse.ArgumentParser(description="Systemd-boot Optimizer")
-    parser.add_argument("--auto", action="store_true", help="Run autonomously without interactive prompts.")
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Systemd-boot Optimizer", allow_abbrev=False)
+    parser.add_argument("--auto", action="store_true", help="Use the ISO defaults without prompts; never force ASPM.")
+    parser.add_argument("--dry-run", action="store_true", help="Preview file changes without writing files or EFI variables.")
     args = parser.parse_args()
-
-    # Privilege Escalation while preserving arguments
     if os.geteuid() != 0:
         console.print("[bold blue][INFO][/bold blue] Root privileges required. Elevating...")
-        os.execvp("sudo", ["sudo", sys.executable, os.path.realpath(sys.argv[0])] + sys.argv[1:])
+        os.execvp("sudo", ["sudo", "--", sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]])
 
-    loader_conf = Path("/boot/loader/loader.conf")
-    entries_dir = Path("/boot/loader/entries")
+    installed = subprocess.run(
+        ["bootctl", "--no-pager", "is-installed"],
+        capture_output=True, text=True, encoding="utf-8", check=False,
+    )
+    if installed.returncode == 1 and installed.stdout.strip() == "no":
+        console.print("[yellow]Systemd-boot is not installed; skipping.[/yellow]")
+        return 0
+    if installed.returncode != 0:
+        raise RuntimeError(installed.stderr.strip() or "Could not determine whether systemd-boot is installed")
+    esp = Path(bootctl("--print-esp-path"))
+    boot = Path(bootctl("--print-boot-path"))
+    if not esp.is_absolute() or not boot.is_absolute():
+        raise ValueError("bootctl returned an invalid partition path")
+    loader_conf = esp / "loader/loader.conf"
+    console.print(Panel.fit("[bold]Arch Linux Systemd-boot Optimizer[/bold]", border_style="cyan"))
 
-    if not loader_conf.exists() or not entries_dir.exists():
-        console.print("[bold yellow][WARN][/bold yellow] Systemd-boot configuration not found at /boot/loader/.")
-        sys.exit(0)
+    # Read every candidate before committing anything. Entries using EFI/UKI
+    # directives need a different workflow; only Linux directives are eligible.
+    entries: dict[Path, str] = {}
+    for root in dict.fromkeys((esp, boot)):
+        directory = root / "loader/entries"
+        if not directory.exists():
+            continue
+        for entry in sorted(directory.iterdir()):
+            if entry.suffix.lower() != ".conf" or "-fallback" in entry.name.lower() or not entry.is_file():
+                continue
+            content = entry.read_text(encoding="utf-8", newline="")
+            if any(directive_value(line, "linux") for line in content.splitlines()):
+                entries[entry] = content
+            else:
+                console.print(f"Skipped entry without a Linux directive: {entry}", markup=False, highlight=False)
+    timeout, parameters = select_parameters(args.auto, bool(entries))
+    if not entries:
+        console.print("[yellow]No conventional Linux entries found; kernel parameters were not changed.[/yellow]")
 
-    if not args.auto:
-        os.system('clear' if os.name == 'posix' else 'cls')
-    
-    console.print(Panel.fit("[bold white]Arch Linux Systemd-boot Optimizer[/bold white]", border_style="cyan"))
+    changes: list[tuple[Path, str, str]] = []
+    if timeout:
+        original = loader_conf.read_text(encoding="utf-8", newline="") if loader_conf.exists() else ""
+        updated = optimize_loader(original)
+        if original != updated:
+            changes.append((loader_conf, original, updated))
+    for entry, original in entries.items():
+        try:
+            updated = optimize_entry(original, parameters)
+        except ValueError as error:
+            raise ValueError(f"{entry}: {error}") from error
+        if original != updated:
+            changes.append((entry, original, updated))
 
-    # Securely target ONLY primary active kernels
-    target_entries = [f for f in entries_dir.glob("*.conf") if "-fallback" not in f.name]
-    
-    # Auto logic
-    if args.auto:
-        console.print("[bold blue][INFO][/bold blue] Running in autonomous mode...")
-        do_timeout = True
-        do_quiet = True
-        do_zswap = True
-        do_aspm = False # Strictly prevented in auto mode
-        do_ipv6 = True
-        do_mem_opt = True
-    # Interactive logic
+    for path, original, updated in changes:
+        if args.dry_run:
+            console.print("".join(difflib.unified_diff(
+                original.splitlines(keepends=True), updated.splitlines(keepends=True),
+                fromfile=str(path), tofile=str(path),
+            )), markup=False, highlight=False, end="")
+        else:
+            atomic_write(path, updated)
+            console.print(f"Updated {path}", markup=False, highlight=False)
+    # Menu changes saved by systemd-boot override loader.conf. Remove only an
+    # existing persistent override, avoiding needless firmware writes.
+    if timeout and EFI_TIMEOUT.exists():
+        if args.dry_run:
+            console.print("Would clear the persistent EFI boot-menu timeout override.")
+        else:
+            bootctl("set-timeout", "")
+            console.print("Cleared the persistent EFI boot-menu timeout override.")
+    if args.dry_run:
+        console.print(f"Dry run complete: {len(changes)} file(s) would change.")
     else:
-        do_timeout = Confirm.ask("[bold cyan][?][/bold cyan] Speed up boot? (Disable menu: [yellow]timeout 0[/yellow])")
-        
-        do_quiet = False
-        do_zswap = False
-        do_aspm = False
-        do_ipv6 = False
-        do_mem_opt = False
+        console.print(f"Complete: {len(changes)} file(s) changed. Boot changes take effect on reboot.")
+    return 0
 
-        if target_entries:
-            do_quiet = Confirm.ask("[bold cyan][?][/bold cyan] Ensure graphical boot? (Inject [yellow]quiet[/yellow])")
-            do_zswap = Confirm.ask("[bold cyan][?][/bold cyan] Disable Kernel Zswap to favor Zram? (Inject [yellow]zswap.enabled=0[/yellow])")
-            do_aspm  = Confirm.ask("[bold magenta][!][/bold magenta] Force PCIe ASPM for battery? (Inject [yellow]pcie_aspm=force[/yellow])")
-            do_ipv6 = Confirm.ask("[bold cyan][?][/bold cyan] Disable IPv6 to save kernel memory? (Inject [yellow]ipv6.disable=1[/yellow])", default=True)
-            do_mem_opt = Confirm.ask("[bold cyan][?][/bold cyan] Apply core kernel memory optimizations? (Inject [yellow]slub_debug=0 init_on_alloc=0 init_on_free=0[/yellow])", default=True)
-
-    if not any([do_timeout, do_quiet, do_zswap, do_aspm, do_ipv6, do_mem_opt]):
-        console.print("\n[bold blue][INFO][/bold blue] No changes requested. Exiting.")
-        sys.exit(0)
-
-    console.print(f"\n[bold]:: Applying Configuration...[/bold]")
-
-    if do_timeout:
-        optimize_loader(loader_conf)
-
-    if any([do_quiet, do_zswap, do_aspm, do_ipv6, do_mem_opt]):
-        for entry in target_entries:
-            optimize_entry(entry, do_quiet, do_zswap, do_aspm, do_ipv6, do_mem_opt)
-
-    console.print(f"\n[bold green]   Optimization complete. Changes active on next reboot.[/bold green]")
 
 if __name__ == "__main__":
     try:
-        main()
+        sys.exit(main())
     except KeyboardInterrupt:
-        console.print(f"\n[bold red][!] Script interrupted.[/bold red]")
+        console.print("\n[red]Interrupted; earlier completed file changes remain in place.[/red]")
+        sys.exit(130)
+    except (OSError, ValueError, RuntimeError, EOFError, subprocess.CalledProcessError) as error:
+        detail = error.stderr.strip() if isinstance(error, subprocess.CalledProcessError) and error.stderr else str(error)
+        detail = detail or type(error).__name__
+        console.print(f"[ERR] {detail}. Earlier completed changes, if any, remain in place.", markup=False)
         sys.exit(1)
