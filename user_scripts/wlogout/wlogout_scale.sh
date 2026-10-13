@@ -1,8 +1,5 @@
 #!/bin/bash
-# ──────────────────────────────────────────────────────────────────────────────
-#  wlogout-launch - Dynamic Scaling & Theming Wrapper for Hyprland
-#  Architected for Mass Deployment | Enterprise Grade + Sniper Verification
-# ──────────────────────────────────────────────────────────────────────────────
+# Toggle wlogout with monitor-scaled GTK styling in a Hyprland session.
 
 set -euo pipefail
 
@@ -15,6 +12,8 @@ readonly ICON_DIR="${CONFIG_DIR}/icons"
 readonly MATUGEN_COLORS="${XDG_CONFIG_HOME:-$HOME/.config}/matugen/generated/wlogout-colors.css"
 TMP_CSS=''
 WLOGOUT_PID=''
+LAUNCHING=0
+STATE=''
 
 # Reference: 1080p @ 1.0 scale settings
 readonly REF_HEIGHT=1080
@@ -33,9 +32,8 @@ if [[ -z "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]]; then
     exit 1
 fi
 
-# Hard-fail if the systemd/elogind runtime directory is broken
 if [[ -z "${XDG_RUNTIME_DIR:-}" || ! -d "$XDG_RUNTIME_DIR" || ! -w "$XDG_RUNTIME_DIR" ]]; then
-    echo "ERROR: XDG_RUNTIME_DIR is not available or writable. Session is fundamentally broken." >&2
+    echo "ERROR: XDG_RUNTIME_DIR is not available or writable." >&2
     exit 1
 fi
 
@@ -44,120 +42,127 @@ readonly LOCK_FILE="${RUNTIME_DIR}/wlogout-launch-${HYPRLAND_INSTANCE_SIGNATURE}
 readonly PID_FILE="${RUNTIME_DIR}/wlogout-launch-${HYPRLAND_INSTANCE_SIGNATURE}.pid"
 
 # Enforce dependency availability
-for cmd in hyprctl jq wlogout flock mktemp grep awk; do
+for cmd in hyprctl jq wlogout flock mktemp rm cat; do
     if ! command -v "$cmd" &>/dev/null; then
         echo "ERROR: Required command '$cmd' not found in PATH." >&2
         exit 1
     fi
 done
 
-if [[ ! -f "$LAYOUT_FILE" ]]; then
-    echo "ERROR: Layout file not found at $LAYOUT_FILE" >&2
-    exit 1
-fi
-
-if [[ ! -r "$MATUGEN_COLORS" ]]; then
-    echo "ERROR: Matugen colors file not readable at $MATUGEN_COLORS" >&2
-    exit 1
-fi
-
 # ──────────────────────────────────────────────────────────────
 # 3. Lifecycle Management (Traps & Cleanup)
 # ──────────────────────────────────────────────────────────────
+# /proc/PID/stat field 22 distinguishes a live owner from a reused PID.
+process_start_time() {
+    local stat
+    local -a fields
+    IFS= read -r stat < "/proc/$1/stat" || return
+    read -r -a fields <<< "${stat##*) }"
+    REPLY=${fields[19]:-}
+    [[ "$REPLY" =~ ^[0-9]+$ ]]
+}
+# shellcheck disable=SC2329 # Invoked by the EXIT trap.
 cleanup() {
-    # 1. Purge the specific temporary CSS file
-    [[ -n "${TMP_CSS:-}" && -f "$TMP_CSS" ]] && rm -f -- "$TMP_CSS"
+    trap '' HUP INT TERM
+    # A signal can arrive after spawning the child but before assigning $!.
+    if (( LAUNCHING )); then
+        WLOGOUT_PID=${!:-}
+    fi
+    # Reap the child before removing the stylesheet it may still be using.
+    if [[ -n "$WLOGOUT_PID" ]]; then
+        kill "$WLOGOUT_PID" 2>/dev/null || true
+        wait "$WLOGOUT_PID" 2>/dev/null || true
+    fi
+    [[ -n "$TMP_CSS" ]] || return 0
 
-    # 2. Prevent race conditions: Verify PID file ownership before deletion
-    if [[ -n "${WLOGOUT_PID:-}" && -f "$PID_FILE" ]]; then
-        local recorded_pid='' recorded_css=''
-        read -r recorded_pid recorded_css < "$PID_FILE" 2>/dev/null || true
-        if [[ "$recorded_pid" == "$WLOGOUT_PID" && "$recorded_css" == "$TMP_CSS" ]]; then
+    # Serialize ownership checks AND removal against a replacement launch.
+    flock --exclusive "$LOCK_FD"
+    if [[ -f "$PID_FILE" ]]; then
+        local recorded_pid=''
+        IFS= read -r recorded_pid < "$PID_FILE" || true
+        if [[ -n "$STATE" && "$recorded_pid" == "$STATE" ]]; then
             rm -f -- "$PID_FILE"
         fi
     fi
+    rm -f -- "$TMP_CSS"
 }
-trap cleanup EXIT
+trap 'cleanup' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # ──────────────────────────────────────────────────────────────
-# 4. Concurrency & Toggle Logic (The Sniper Engine)
+# 4. Concurrency & Toggle Logic
 # ──────────────────────────────────────────────────────────────
 exec {LOCK_FD}> "$LOCK_FILE"
-flock -x "$LOCK_FD"
+flock --exclusive "$LOCK_FD"
 
 if [[ -f "$PID_FILE" ]]; then
     existing_pid=''
+    existing_start=''
     existing_css=''
-    read -r existing_pid existing_css < "$PID_FILE" 2>/dev/null || true
+    read -r existing_pid existing_start existing_css < "$PID_FILE" || true
 
-    # Validate data format
-    if [[ "$existing_pid" =~ ^[0-9]+$ ]] && [[ -n "$existing_css" ]]; then
-        
-        # Verify process existence and read access
-        if kill -0 "$existing_pid" 2>/dev/null \
-           && [[ -r "/proc/${existing_pid}/comm" ]] \
-           && [[ -r "/proc/${existing_pid}/cmdline" ]]; then
-            
-            read -r existing_comm < "/proc/${existing_pid}/comm" 2>/dev/null || existing_comm=''
-            
-            # Master verification: Command name AND exact memory payload via null-byte grep
-            if [[ "$existing_comm" == "wlogout" ]] && grep -zFq -- "$existing_css" "/proc/${existing_pid}/cmdline"; then
-                kill "$existing_pid" 2>/dev/null || true
-                rm -f -- "$PID_FILE"
-                
-                # Free resources instantly
-                flock -u "$LOCK_FD"
-                exec {LOCK_FD}>&-
-                exit 0
-            fi
-        fi
+    # The child's start time is stable across exec and prevents PID reuse.
+    if [[ "$existing_pid" =~ ^[1-9][0-9]*$ && "$existing_pid" != "$$" \
+        && "$existing_start" =~ ^[0-9]+$ && -n "$existing_css" ]] \
+        && { process_start_time "$existing_pid"; } 2>/dev/null \
+        && [[ "$REPLY" == "$existing_start" ]]; then
+        kill "$existing_pid" 2>/dev/null || true
+        rm -f -- "$PID_FILE"
+        exit 0
     fi
     # Purge stale state
     rm -f -- "$PID_FILE"
 fi
 
+# Closing an existing menu must still work if its assets have disappeared.
+for file in "$LAYOUT_FILE" "$MATUGEN_COLORS"; do
+    if [[ ! -f "$file" || ! -r "$file" ]]; then
+        echo "ERROR: Required file is not readable: $file" >&2
+        exit 1
+    fi
+done
+
 # ──────────────────────────────────────────────────────────────
 # 5. Asset Generation
 # ──────────────────────────────────────────────────────────────
-# Strict GNU compliant mktemp syntax
 TMP_CSS=$(mktemp --tmpdir="$RUNTIME_DIR" --suffix=.css "wlogout-${HYPRLAND_INSTANCE_SIGNATURE}.XXXXXX")
 
-MON_DATA=''
-if MON_DATA=$(hyprctl monitors -j 2>/dev/null | jq -r '
-    (first(.[] | select(.focused)) // .[0] // {height: 1080, scale: 1})
-    | "\(.height) \(.scale)"
-') && [[ -n "$MON_DATA" ]]; then
-    :
-else
-    MON_DATA="1080 1"
+if ! CALC_VARS=$(hyprctl -j monitors 2>/dev/null | jq -er \
+    --argjson reference "$REF_HEIGHT" \
+    --argjson sizes "[$BASE_FONT_SIZE,$BASE_BUTTON_RAD,$BASE_ACTIVE_RAD,$BASE_MARGIN,$BASE_HOVER_OFFSET,$BASE_COL_SPACING]" '
+    def positive: type == "number" and isfinite and . > 0;
+    (first(.[] | select(.focused == true)) // .[0] // {})
+    | .transform as $transform
+    | (if ([1, 3, 5, 7] | index($transform)) then .width else .height end) as $height
+    | (if ($height | positive) then $height else $reference end) as $height
+    | (if (.scale | positive) then .scale else 1 end) as $scale
+    | ([0.5, ($height / $scale / $reference), 2] | sort | .[1]) as $ratio
+    | $sizes | map(. * $ratio | floor) | @tsv
+' 2>/dev/null); then
+    CALC_VARS="$BASE_FONT_SIZE $BASE_BUTTON_RAD $BASE_ACTIVE_RAD $BASE_MARGIN $BASE_HOVER_OFFSET $BASE_COL_SPACING"
 fi
-
-read -r HEIGHT SCALE <<< "$MON_DATA"
-
-# Fallback for compositor scale anomalies
-if [[ "$SCALE" == "0" || "$SCALE" == "0.0" || -z "$SCALE" ]]; then
-    SCALE=1
-fi
-
-CALC_VARS=$(awk -v h="$HEIGHT" -v s="$SCALE" -v rh="$REF_HEIGHT" \
-                -v f="$BASE_FONT_SIZE" -v br="$BASE_BUTTON_RAD" \
-                -v ar="$BASE_ACTIVE_RAD" -v m="$BASE_MARGIN" \
-                -v ho="$BASE_HOVER_OFFSET" -v cs="$BASE_COL_SPACING" '
-BEGIN {
-    ratio = (h / s) / rh;
-    ratio = (ratio < 0.5) ? 0.5 : (ratio > 2.0 ? 2.0 : ratio);
-
-    printf "%d %d %d %d %d %d",
-        int(f * ratio), int(br * ratio), int(ar * ratio),
-        int(m * ratio), int(ho * ratio), int(cs * ratio)
-}')
 
 read -r FONT_SIZE BTN_RAD ACT_RAD MARGIN HOVER_OFFSET COL_SPACING <<< "$CALC_VARS"
 HOVER_MARGIN=$(( MARGIN - HOVER_OFFSET ))
 
+# Escape CSS strings, including paths with quotes, backslashes or newlines.
+css_escape() {
+    local value=$1
+    value=${value//\\/\\\\}
+    value=${value//\"/\\\"}
+    value=${value//$'\n'/\\a }
+    value=${value//$'\r'/\\d }
+    value=${value//$'\f'/\\c }
+    printf -v "$2" '%s' "$value"
+}
+css_escape "$MATUGEN_COLORS" COLORS_CSS
+css_escape "$ICON_DIR" ICON_CSS
+
 cat > "$TMP_CSS" <<EOF
 /* Import Matugen Colors */
-@import url("file://${MATUGEN_COLORS}");
+@import url("${COLORS_CSS}");
 
 window {
     background-color: rgba(0, 0, 0, 0.5);
@@ -171,6 +176,7 @@ button {
     outline-style: none;
     border: none;
     border-radius: ${BTN_RAD}px;
+    margin: ${MARGIN}px 0;
     box-shadow: none;
     text-shadow: none;
     background-repeat: no-repeat;
@@ -194,46 +200,53 @@ button:hover {
     color: @on_primary;
     background-size: 40%;
     border-radius: ${ACT_RAD}px;
+    margin: ${HOVER_MARGIN}px 0;
 }
 
-#lock { background-image: image(url("${ICON_DIR}/lock_white.png"), url("/usr/share/wlogout/icons/lock.png")); margin: ${MARGIN}px 0; }
-button:hover#lock { margin: ${HOVER_MARGIN}px 0; }
+#lock { background-image: image(url("${ICON_CSS}/lock_white.png"), url("/usr/share/wlogout/icons/lock.png")); }
 
-#logout { background-image: image(url("${ICON_DIR}/logout_white.png"), url("/usr/share/wlogout/icons/logout.png")); margin: ${MARGIN}px 0; }
-button:hover#logout { margin: ${HOVER_MARGIN}px 0; }
+#logout { background-image: image(url("${ICON_CSS}/logout_white.png"), url("/usr/share/wlogout/icons/logout.png")); }
 
-#suspend { background-image: image(url("${ICON_DIR}/suspend_white.png"), url("/usr/share/wlogout/icons/suspend.png")); margin: ${MARGIN}px 0; }
-button:hover#suspend { margin: ${HOVER_MARGIN}px 0; }
+#suspend { background-image: image(url("${ICON_CSS}/suspend_white.png"), url("/usr/share/wlogout/icons/suspend.png")); }
 
-#shutdown { background-image: image(url("${ICON_DIR}/shutdown_white.png"), url("/usr/share/wlogout/icons/shutdown.png")); margin: ${MARGIN}px 0; }
-button:hover#shutdown { margin: ${HOVER_MARGIN}px 0; }
+#shutdown { background-image: image(url("${ICON_CSS}/shutdown_white.png"), url("/usr/share/wlogout/icons/shutdown.png")); }
 
-#soft-reboot { background-image: image(url("${ICON_DIR}/soft-reboot_white.png"), url("/usr/share/wlogout/icons/reboot.png")); margin: ${MARGIN}px 0; }
-button:hover#soft-reboot { margin: ${HOVER_MARGIN}px 0; }
+#soft-reboot { background-image: image(url("${ICON_CSS}/soft-reboot_white.png"), url("/usr/share/wlogout/icons/reboot.png")); }
 
-#reboot { background-image: image(url("${ICON_DIR}/reboot_white.png"), url("/usr/share/wlogout/icons/reboot.png")); margin: ${MARGIN}px 0; }
-button:hover#reboot { margin: ${HOVER_MARGIN}px 0; }
+#reboot { background-image: image(url("${ICON_CSS}/reboot_white.png"), url("/usr/share/wlogout/icons/reboot.png")); }
 EOF
 
 # ──────────────────────────────────────────────────────────────
-# 6. Launch & Daemonize
+# 6. Launch & Wait
 # ──────────────────────────────────────────────────────────────
-wlogout \
-    --layout "$LAYOUT_FILE" \
-    --css "$TMP_CSS" \
-    --protocol layer-shell \
-    --buttons-per-row 6 \
-    --column-spacing "$COL_SPACING" \
-    --row-spacing 0 \
-    "$@" &
+LAUNCHING=1
+(
+    # The child must not keep the wrapper's lock descriptor open.
+    exec {LOCK_FD}>&-
+    exec wlogout \
+        --layout "$LAYOUT_FILE" \
+        --css "$TMP_CSS" \
+        --protocol layer-shell \
+        --buttons-per-row 6 \
+        --column-spacing "$COL_SPACING" \
+        --row-spacing 0 \
+        "$@"
+) &
 WLOGOUT_PID=$!
+LAUNCHING=0
 
-# Record state containing BOTH the PID and the exact payload
-printf '%s %s\n' "$WLOGOUT_PID" "$TMP_CSS" > "$PID_FILE"
+# Publish the child identity while holding the lock. A child that has already
+# exited needs no state; wait below still preserves its exit status.
+if process_start_time "$WLOGOUT_PID" 2>/dev/null; then
+    STATE="$WLOGOUT_PID $REPLY $TMP_CSS"
+    printf '%s\n' "$STATE" > "$PID_FILE"
+fi
 
-# Explicitly disengage locking resources so backgrounding is entirely detached
-flock -u "$LOCK_FD"
-exec {LOCK_FD}>&-
+# Release the launch lock; cleanup reacquires it when the menu closes.
+flock --unlock "$LOCK_FD"
 
-# Suspend script execution to maintain the layer-shell process tree and trap integrity
-wait "$WLOGOUT_PID"
+# Preserve wlogout's exit status, including launch failures.
+status=0
+wait "$WLOGOUT_PID" || status=$?
+WLOGOUT_PID=''
+exit "$status"
