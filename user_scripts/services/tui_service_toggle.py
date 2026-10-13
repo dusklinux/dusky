@@ -90,7 +90,7 @@ CORE_USER_DEFS = {
         "Battery Alerts",
         "Background daemon that monitors your battery level and sends desktop notifications using libnotify when power is running low.",
     ),
-    "network_meter.service": (
+    "dusky_network.service": (
         "Network Traffic Meter",
         "Service to track network traffic. Often used in conjunction with Waybar to display real-time upload and download speeds.",
     ),
@@ -357,7 +357,7 @@ CORE_USER_SECTIONS = (
         "dusky_moonlight_display.service", "app-dev.lizardbyte.app.Sunshine.service",
     )),
     ("Panels & Integration", (
-        "dusky.service", "network_meter.service",
+        "dusky.service", "dusky_network.service",
         "dusky_notif_time.service", "dusky_visualizer.service", "dusky_screentime.service",
         "gamemoded.service",
     )),

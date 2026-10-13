@@ -207,10 +207,10 @@
     },
 
     "custom/net-speed": {
-        "exec": "$HOME/user_scripts/waybar/network/network_meter_calling.sh --horizontal",
+        "exec": "$HOME/.local/bin/dusky-network watch --horizontal",
         "return-type": "json",
         "format": "{}",
-        "interval": 1,
+        "restart-interval": 3,
         "tooltip": true
     },
 

@@ -197,10 +197,10 @@
             "tooltip": true,
             "tooltip-format": "{tooltip}\n\nLMB: Dusky Network\nRMB: WiFi ON\nMMB: WiFi OFF",
             "on-click": "foot --app-id=dusky_tui python $HOME/user_scripts/dusky_tui/python/main/main.py $HOME/user_scripts/network_manager/tui_dusky_network.py",
-            "on-click-right": "systemctl --user restart network_meter.service && nmcli radio wifi on && notify-send 'Turned ON WiFi'",
+            "on-click-right": "systemctl --user restart dusky_network.service && nmcli radio wifi on && notify-send 'Turned ON WiFi'",
             "on-click-middle": "nmcli radio wifi off && notify-send 'Turned OFF WiFi'",
-            "interval": 2,
-            "exec": "$HOME/user_scripts/waybar/network/network_meter_calling.sh --vertical"
+            "restart-interval": 3,
+            "exec": "$HOME/.local/bin/dusky-network watch --vertical"
         },
 
         "custom/updates-trigger": {

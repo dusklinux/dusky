@@ -3389,7 +3389,7 @@ type = "service"
 title = "Network Meter"
 description = "Waybar traffic monitor"
 icon = "network-workgroup-symbolic"
-service = "network_meter.service"
+service = "dusky_network.service"
 scope = "user"
 
 

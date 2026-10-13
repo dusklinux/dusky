@@ -1,0 +1,14 @@
+[Unit]
+Description=Dusky Rust network meter (shared Waybar sampler)
+After=graphical-session.target
+PartOf=graphical-session.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+ExecStart=%h/.local/bin/dusky-network daemon
+Restart=on-failure
+RestartSec=3s
+
+[Install]
+WantedBy=graphical-session.target

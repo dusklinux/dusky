@@ -42,3 +42,9 @@ also set an explicit generic target for compilers they invoke. Bump `pkgver` or
 Keep generated binaries and package archives out of Git. A package installed
 from the ISO remains installed after the offline repository is removed, but
 later binary updates require a new package source or another update mechanism.
+
+`dusky-network` uses the network meter's shared `setup.py --generic` builder:
+frozen/offline Cargo, executable tmpfs, and explicit baseline x86-64 flags. The
+package includes its exact binary/source manifest and disables makepkg stripping
+because the builder already strips the executable. User setup step 154 reuses a
+matching package without a compiler, or builds natively after source edits.

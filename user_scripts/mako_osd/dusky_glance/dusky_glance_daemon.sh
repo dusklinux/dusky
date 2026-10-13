@@ -1078,13 +1078,6 @@ format_hours_minutes() {
     local -n _dest=$1
     printf -v _dest '%dh%dm' "$(($2 / 60))" "$(($2 % 60))"
 }
-fresh_state_file() {
-    local modified age
-    modified=$(stat -c %Y -- "$1" 2>/dev/null) || return 1
-    [[ "$modified" =~ ^[0-9]+$ ]] || return 1
-    age=$((EPOCHSECONDS - modified))
-    (( age >= -5 && age <= 30 ))
-}
 
 case "$MODE" in
     --clock)
@@ -1585,100 +1578,23 @@ case "$MODE" in
     --network-down-session|--network-up-session|--network-session|\
     --network-boot-down|--network-boot-up|--network-boot)
         require_cmd systemctl
-        NET_STATE_DIR="$RUNTIME_DIR/waybar-net"
-        STATE_FILE="$NET_STATE_DIR/state"
-        EXT_STATE_FILE="$NET_STATE_DIR/state_ext"
-        HEARTBEAT_FILE="$NET_STATE_DIR/heartbeat"
-
-        wake_network_daemon() {
-            [[ -d "$NET_STATE_DIR" ]] || mkdir -p -- "$NET_STATE_DIR" 2>/dev/null || true
-            : > "$HEARTBEAT_FILE" 2>/dev/null || true
-            timeout --kill-after=1s 3s systemctl --user --kill-whom=main \
-                --signal=USR1 kill network_meter.service >/dev/null 2>&1 || \
-                timeout --kill-after=1s 3s systemctl --user start \
-                    network_meter.service >/dev/null 2>&1 || true
-        }
-
-        wake_network_daemon
-        last_network_wake=$SECONDS
-        last_fresh_check=-5
-        ext_fresh=false state_fresh=false
+        NETWORK_BIN="$HOME/.local/bin/dusky-network"
+        require_cmd "$NETWORK_BIN"
+        case "$MODE_BASE" in
+            network) network_mode=horizontal ;;
+            network-down) network_mode=down ;;
+            network-up) network_mode=up ;;
+            network-combined) network_mode=combined ;;
+            network-down-session) network_mode=session-down ;;
+            network-up-session) network_mode=session-up ;;
+            network-session) network_mode=session-total ;;
+            network-boot-down) network_mode=boot-down ;;
+            network-boot-up) network_mode=boot-up ;;
+            network-boot) network_mode=boot-total ;;
+        esac
+        timeout --kill-after=1s 3s systemctl --user start dusky_network.service >/dev/null 2>&1 || true
         while true; do
-            [[ -d "$NET_STATE_DIR" ]] && : > "$HEARTBEAT_FILE" 2>/dev/null || true
-            if (( SECONDS - last_fresh_check >= 5 )); then
-                last_fresh_check=$SECONDS
-                ext_fresh=false state_fresh=false
-                if fresh_state_file "$EXT_STATE_FILE"; then ext_fresh=true; fi
-                if fresh_state_file "$STATE_FILE"; then state_fresh=true; fi
-            fi
-            ext_ok=false state_ok=false
-            if [[ "$ext_fresh" == true && -r "$EXT_STATE_FILE" ]]; then
-                for ((attempt = 0; attempt < 3; attempt++)); do
-                    if read -r rx_fmt tx_fmt tot_fmt s_rx_fmt s_tx_fmt s_tot_fmt \
-                        b_rx_fmt b_tx_fmt b_tot_fmt cls iface _ _ _ _ _ _ _ < "$EXT_STATE_FILE" 2>/dev/null &&
-                       [[ -n "${rx_fmt:-}" && -n "${cls:-}" && -n "${iface:-}" ]]; then
-                        ext_ok=true
-                        break
-                    fi
-                done
-            fi
-            if [[ "$state_fresh" == true && -r "$STATE_FILE" ]]; then
-                for ((attempt = 0; attempt < 3; attempt++)); do
-                    if read -r state_unit state_up state_down state_class < "$STATE_FILE" 2>/dev/null &&
-                       [[ "$state_unit" == KB || "$state_unit" == MB ||
-                          "$state_unit" == GB || "$state_unit" == - ]] &&
-                       [[ -n "$state_up" && -n "$state_down" && -n "$state_class" ]]; then
-                        state_ok=true
-                        break
-                    fi
-                done
-            fi
-
-            if [[ "$ext_ok" == true ]]; then
-                if [[ "$cls" == network-disconnected || "$iface" == none ]]; then
-                    reading=Offline
-                else
-                    case "$MODE_BASE" in
-                        network-down) reading=$rx_fmt ;;
-                        network-up) reading=$tx_fmt ;;
-                        network-combined) reading=$tot_fmt ;;
-                        network-down-session) reading=$s_rx_fmt ;;
-                        network-up-session) reading=$s_tx_fmt ;;
-                        network-session) reading=$s_tot_fmt ;;
-                        network-boot-down) reading=$b_rx_fmt ;;
-                        network-boot-up) reading=$b_tx_fmt ;;
-                        network-boot) reading=$b_tot_fmt ;;
-                        network)
-                            if [[ "$state_ok" == true ]]; then
-                                short_unit="${state_unit%B}"
-                                [[ "$state_unit" == - ]] && short_unit=""
-                                reading="${state_up}${short_unit} ${state_down}${short_unit}"
-                            else
-                                reading="${tx_fmt} ${rx_fmt}"
-                            fi ;;
-                    esac
-                    [[ -n "$reading" ]] || reading=N/A
-                fi
-            elif [[ "$state_ok" == true ]]; then
-                if [[ "$state_class" == network-disconnected ]]; then
-                    reading=Offline
-                else
-                    short_unit="${state_unit%B}"
-                    [[ "$state_unit" == - ]] && short_unit=""
-                    case "$MODE_BASE" in
-                        network-down) reading="${state_down}${short_unit}" ;;
-                        network-up) reading="${state_up}${short_unit}" ;;
-                        network) reading="${state_up}${short_unit} ${state_down}${short_unit}" ;;
-                        *) reading=N/A ;;
-                    esac
-                fi
-            else
-                reading=N/A
-            fi
-            if [[ "$ext_ok" == false ]] && (( SECONDS - last_network_wake >= 5 )); then
-                wake_network_daemon
-                last_network_wake=$SECONDS
-            fi
+            reading=$("$NETWORK_BIN" osd "$network_mode") || reading=N/A
             send_osd "$reading"
             wait_tick
         done ;;

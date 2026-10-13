@@ -1,0 +1,25 @@
+pkgname=dusky-network
+pkgver=1.0.0
+pkgrel=3
+pkgdesc='Dusky shared network meter for Waybar and Dusky Glance'
+arch=('x86_64')
+license=('custom')
+depends=('glibc' 'gcc-libs')
+makedepends=('cargo' 'python')
+options=('!debug' '!strip')
+source=()
+
+build() {
+  cp -a -- "$DUSKY_PACKAGE_SOURCE" "$srcdir/project"
+  cd "$srcdir/project"
+  # The shared builder pins generic CPU/release flags, frozen offline Cargo,
+  # one compiler job and executable tmpfs; inherited native flags cannot leak.
+  python setup.py --generic --force-rebuild --output-dir "$srcdir/binary-output"
+}
+
+package() {
+  install -Dm755 "$srcdir/binary-output/dusky-network" "$pkgdir/usr/bin/dusky-network"
+  # Keep the exact build hash: makepkg must not strip the already stripped binary.
+  install -Dm644 "$srcdir/binary-output/binary_manifest.json" \
+    "$pkgdir/usr/share/dusky-network/binary_manifest.json"
+}

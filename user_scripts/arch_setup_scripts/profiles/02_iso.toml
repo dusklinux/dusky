@@ -67,6 +67,7 @@ scripts = [
     # "U | 100_paru_packages.sh",
     # "S | 120_create_mount_directories.sh",
     "S | 127_pam_keyring_greetd.py --mode auto",
+    "U | 154_dusky_network_meter_setup.py",
     "U | 130_systemd_dbus_service_manager.py --default",
     "U | 135_battery_notify_service.sh --auto",
     "U | 137_snapper_isolation_subvolume.sh --auto",
