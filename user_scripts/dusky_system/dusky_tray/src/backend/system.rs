@@ -1076,90 +1076,159 @@ pub struct NetState {
     pub disconnected: bool,
 }
 
-fn network_totals(text: &str, interfaces: &[String]) -> (u64, u64) {
-    let mut rx = 0u64;
-    let mut tx = 0u64;
-    for line in text.lines() {
-        let Some((name, counters)) = line.split_once(':') else {
-            continue;
-        };
-        if !interfaces.iter().any(|i| i == name.trim()) {
-            continue;
-        }
-        let mut values = counters.split_whitespace();
-        rx = rx.saturating_add(
-            values
-                .next()
-                .and_then(|v| v.parse::<u64>().ok())
-                .unwrap_or(0),
-        );
-        tx = tx.saturating_add(
-            values
-                .nth(7)
-                .and_then(|v| v.parse::<u64>().ok())
-                .unwrap_or(0),
-        );
-    }
-    (rx, tx)
+#[derive(Clone, Debug)]
+struct NetworkCounters {
+    iface: String,
+    ifindex: u32,
+    carrier: Option<u64>,
+    rx: u64,
+    tx: u64,
 }
 
-pub fn net_state() -> NetState {
-    // Physical interfaces avoid double-counting VPN/bridge traffic. Virtio
-    // devices also expose a device link. No Waybar helper or daemon is needed.
-    let mut interfaces: Vec<String> = std::fs::read_dir("/sys/class/net")
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter(|e| e.path().join("device").exists())
-        .filter(|e| {
-            std::fs::read_to_string(e.path().join("operstate"))
-                .is_ok_and(|s| s.trim() == "up" || s.trim() == "unknown")
-        })
-        .map(|e| e.file_name().to_string_lossy().into_owned())
-        .collect();
-    // read_dir order is unspecified; compare stable sets across rate samples.
-    interfaces.sort_unstable();
-    let totals = network_totals(
-        &std::fs::read_to_string("/proc/net/dev").unwrap_or_default(),
-        &interfaces,
-    );
-    type Sample = (std::time::Instant, (u64, u64), Vec<String>);
-    static SAMPLE: std::sync::Mutex<Option<Sample>> = std::sync::Mutex::new(None);
-    let now = std::time::Instant::now();
-    let mut sample = SAMPLE.lock().unwrap();
-    let (rx, tx) = match sample.as_ref() {
-        Some((then, previous, previous_interfaces)) if previous_interfaces == &interfaces => {
-            let seconds = now.duration_since(*then).as_secs_f64().max(0.001);
-            (
-                totals.0.saturating_sub(previous.0) as f64 / seconds,
-                totals.1.saturating_sub(previous.1) as f64 / seconds,
-            )
+struct NetworkSample {
+    at: Duration,
+    counters: Vec<NetworkCounters>,
+}
+
+fn read_network_counters(net_dev: &Path, devices: &Path) -> Option<Vec<NetworkCounters>> {
+    // Aggregate physical links (including virtio), avoiding VPN/bridge duplication.
+    // A failed sample must never be converted into valid zero counters.
+    let mut counters = Vec::new();
+    for entry in std::fs::read_dir(devices).ok()? {
+        let entry = entry.ok()?;
+        let path = entry.path();
+        if !path.join("device").exists() {
+            continue;
         }
-        _ => (0.0, 0.0),
+        let state = std::fs::read_to_string(path.join("operstate")).ok()?;
+        if !matches!(state.trim(), "up" | "unknown") {
+            continue;
+        }
+        counters.push(NetworkCounters {
+            iface: entry.file_name().into_string().ok()?,
+            ifindex: std::fs::read_to_string(path.join("ifindex"))
+                .ok()?
+                .trim()
+                .parse()
+                .ok()?,
+            carrier: std::fs::read_to_string(path.join("carrier_up_count"))
+                .ok()
+                .and_then(|value| value.trim().parse().ok()),
+            rx: 0,
+            tx: 0,
+        });
+    }
+    counters.sort_unstable_by(|a, b| a.iface.cmp(&b.iface));
+    // No active links: return immediately without reading the counters file.
+    if counters.is_empty() {
+        return Some(counters);
+    }
+    let text = std::fs::read_to_string(net_dev).ok()?;
+    for counter in &mut counters {
+        let fields = text.lines().find_map(|line| {
+            let (name, values) = line.rsplit_once(':')?;
+            (name.trim() == counter.iface).then_some(values)
+        })?;
+        let mut fields = fields.split_whitespace();
+        counter.rx = fields.next()?.parse().ok()?;
+        counter.tx = fields.nth(7)?.parse().ok()?;
+    }
+    Some(counters)
+}
+
+fn network_time() -> Option<Duration> {
+    // CLOCK_BOOTTIME includes suspend and does not jump when wall time is set.
+    let mut time = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
     };
-    *sample = Some((now, totals, interfaces.clone()));
+    // SAFETY: time is writable, correctly sized storage for the Linux API.
+    if unsafe { libc::clock_gettime(libc::CLOCK_BOOTTIME, &mut time) } != 0 {
+        return None;
+    }
+    Some(Duration::new(
+        time.tv_sec.try_into().ok()?,
+        time.tv_nsec.try_into().ok()?,
+    ))
+}
+
+fn network_reading(
+    counters: Option<Vec<NetworkCounters>>,
+    now: Option<Duration>,
+    previous: &mut Option<NetworkSample>,
+) -> NetState {
+    let Some((counters, now)) = counters.zip(now) else {
+        *previous = None;
+        return NetState {
+            text: "--".into(),
+            tooltip: "Network reading unavailable".into(),
+            disconnected: false,
+        };
+    };
+    if counters.is_empty() {
+        *previous = None;
+        return NetState {
+            text: "--".into(),
+            tooltip: "Disconnected".into(),
+            disconnected: true,
+        };
+    }
+    let (rx, tx) = previous
+        .as_ref()
+        .and_then(|sample| {
+            let elapsed = now.checked_sub(sample.at)?;
+            // Tray refreshes every two seconds. Rebase after a stall/suspend, an
+            // unusually early sample, any link change, or any per-interface reset.
+            if !(Duration::from_millis(500)..=Duration::from_secs(5)).contains(&elapsed)
+                || sample.counters.len() != counters.len()
+                || !sample.counters.iter().zip(&counters).all(|(old, new)| {
+                    old.iface == new.iface
+                        && old.ifindex == new.ifindex
+                        && old.carrier == new.carrier
+                        && new.rx >= old.rx
+                        && new.tx >= old.tx
+                })
+            {
+                return None;
+            }
+            let (rx, tx) = sample.counters.iter().zip(&counters).fold(
+                (0u128, 0u128),
+                |(rx, tx), (old, new)| {
+                    (
+                        rx + u128::from(new.rx - old.rx),
+                        tx + u128::from(new.tx - old.tx),
+                    )
+                },
+            );
+            Some((
+                rx as f64 / elapsed.as_secs_f64(),
+                tx as f64 / elapsed.as_secs_f64(),
+            ))
+        })
+        .unwrap_or((0.0, 0.0));
+    *previous = Some(NetworkSample { at: now, counters });
     let (scale, unit) = if rx.max(tx) >= 1_048_576.0 {
         (1_048_576.0, "MB")
     } else {
         (1024.0, "KB")
     };
     NetState {
-        text: if interfaces.is_empty() {
-            "--".into()
-        } else {
-            format!("{:.0} {unit} {:.0}", tx / scale, rx / scale)
-        },
-        tooltip: if interfaces.is_empty() {
-            "Disconnected".into()
-        } else {
-            format!(
-                "Upload: {:.1} {unit}/s\nDownload: {:.1} {unit}/s",
-                tx / scale,
-                rx / scale
-            )
-        },
-        disconnected: interfaces.is_empty(),
+        text: format!("{:.0} {unit} {:.0}", tx / scale, rx / scale),
+        tooltip: format!(
+            "Upload: {:.1} {unit}/s\nDownload: {:.1} {unit}/s",
+            tx / scale,
+            rx / scale
+        ),
+        disconnected: false,
     }
+}
+
+pub fn net_state() -> NetState {
+    static SAMPLE: std::sync::Mutex<Option<NetworkSample>> = std::sync::Mutex::new(None);
+    let counters = read_network_counters(Path::new("/proc/net/dev"), Path::new("/sys/class/net"));
+    let now = network_time();
+    let mut sample = SAMPLE.lock().unwrap();
+    network_reading(counters, now, &mut sample)
 }
 
 pub fn weather_text() -> Option<String> {
@@ -1428,11 +1497,220 @@ mod tests {
         );
     }
 
+    fn net_counter(iface: &str, rx: u64, tx: u64) -> NetworkCounters {
+        NetworkCounters {
+            iface: iface.into(),
+            ifindex: 1,
+            carrier: Some(1),
+            rx,
+            tx,
+        }
+    }
+
     #[test]
-    fn network_counters_select_interfaces_and_directions() {
-        let text = "lo: 900 0 0 0 0 0 0 0 900 0\nwlan0: 2048 0 0 0 0 0 0 0 1024 0\ntun0: 2048 0 0 0 0 0 0 0 1024 0";
-        assert_eq!(network_totals(text, &["wlan0".into()]), (2048, 1024));
-        assert_eq!(network_totals(text, &[]), (0, 0));
+    fn network_reads_require_complete_samples_and_skip_offline_counters() {
+        let root = runtime_dir().join(format!("network-test-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let devices = root.join("devices");
+        let net_dev = root.join("dev");
+        for iface in ["eth0", "wlan0", "lo", "tun0"] {
+            let path = devices.join(iface);
+            std::fs::create_dir_all(&path).unwrap();
+            std::fs::write(path.join("operstate"), "up\n").unwrap();
+            std::fs::write(path.join("ifindex"), "1\n").unwrap();
+            if iface != "lo" && iface != "tun0" {
+                std::fs::create_dir(path.join("device")).unwrap();
+            }
+        }
+        std::fs::write(devices.join("wlan0/operstate"), "unknown\n").unwrap();
+        std::fs::write(devices.join("wlan0/carrier_up_count"), "7\n").unwrap();
+        std::fs::write(&net_dev, "h\nh\neth0: 20 0 0 0 0 0 0 0 10 0\nwlan0: 30 0 0 0 0 0 0 0 15 0\ntun0: 99999 0 0 0 0 0 0 0 99999 0\n").unwrap();
+        let counters = read_network_counters(&net_dev, &devices).unwrap();
+        assert_eq!(counters.len(), 2);
+        assert_eq!(
+            (counters[0].iface.as_str(), counters[0].rx, counters[0].tx),
+            ("eth0", 20, 10)
+        );
+        assert_eq!(
+            (counters[1].iface.as_str(), counters[1].rx, counters[1].tx),
+            ("wlan0", 30, 15)
+        );
+        assert_eq!(counters[0].carrier, None);
+        assert_eq!(counters[1].carrier, Some(7));
+        for invalid in [
+            "",
+            "eth0: broken",
+            "eth0: 20 0 0 0 0 0 0 0 bad\nwlan0: 30 0 0 0 0 0 0 0 15",
+            "eth0: 20 0 0 0 0 0 0 0 10",
+        ] {
+            std::fs::write(&net_dev, invalid).unwrap();
+            assert!(read_network_counters(&net_dev, &devices).is_none());
+        }
+        std::fs::remove_file(&net_dev).unwrap();
+        assert!(read_network_counters(&net_dev, &devices).is_none());
+        std::fs::write(devices.join("eth0/operstate"), "down\n").unwrap();
+        std::fs::write(devices.join("wlan0/operstate"), "lowerlayerdown\n").unwrap();
+        // The counters file does not exist, yet an offline sample succeeds.
+        assert!(
+            read_network_counters(&net_dev, &devices)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(read_network_counters(&net_dev, &root.join("absent")).is_none());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn network_aggregates_deltas_and_preserves_compact_format() {
+        let mut previous = None;
+        let first = vec![
+            net_counter("eth0", 1000, 2000),
+            net_counter("wlan0", 3000, 4000),
+        ];
+        assert_eq!(
+            network_reading(Some(first.clone()), Some(Duration::ZERO), &mut previous).text,
+            "0 KB 0"
+        );
+        let next = vec![
+            net_counter("eth0", 5096, 4048),
+            net_counter("wlan0", 5048, 8096),
+        ];
+        let reading = network_reading(Some(next), Some(Duration::from_secs(2)), &mut previous);
+        assert_eq!(reading.text, "3 KB 3");
+        assert_eq!(reading.tooltip, "Upload: 3.0 KB/s\nDownload: 3.0 KB/s");
+        let mb = vec![net_counter("eth0", 2 << 20, 2 << 20)];
+        previous = None;
+        network_reading(
+            Some(vec![net_counter("eth0", 0, 0)]),
+            Some(Duration::ZERO),
+            &mut previous,
+        );
+        assert_eq!(
+            network_reading(Some(mb), Some(Duration::from_secs(2)), &mut previous).text,
+            "1 MB 1"
+        );
+    }
+
+    #[test]
+    fn network_read_failure_recovery_cannot_create_false_spike() {
+        let mut previous = None;
+        let counters = vec![net_counter("eth0", 1 << 30, 1 << 29)];
+        network_reading(Some(counters.clone()), Some(Duration::ZERO), &mut previous);
+        let failed = network_reading(None, Some(Duration::from_secs(2)), &mut previous);
+        assert_eq!(failed.text, "--");
+        assert_eq!(failed.tooltip, "Network reading unavailable");
+        assert!(!failed.disconnected);
+        assert!(previous.is_none());
+        assert_eq!(
+            network_reading(Some(counters), Some(Duration::from_secs(4)), &mut previous).text,
+            "0 KB 0"
+        );
+        let offline = network_reading(Some(vec![]), Some(Duration::from_secs(6)), &mut previous);
+        assert!(offline.disconnected);
+        assert_eq!(offline.tooltip, "Disconnected");
+        assert!(previous.is_none());
+    }
+
+    #[test]
+    fn network_rebases_individual_resets_recreation_and_reconnects() {
+        let initial = vec![
+            net_counter("eth0", 1000, 1000),
+            net_counter("wlan0", 1000, 1000),
+        ];
+        let mut variants = vec![vec![
+            net_counter("eth0", 10, 1000),
+            net_counter("wlan0", 5000, 5000),
+        ]];
+        let mut changed = initial.clone();
+        changed[0].ifindex = 2;
+        changed[0].rx = 1 << 30;
+        variants.push(changed);
+        let mut changed = initial.clone();
+        changed[0].carrier = Some(2);
+        changed[0].rx = 1 << 30;
+        variants.push(changed);
+        let mut changed = initial.clone();
+        changed[0].tx = 0;
+        changed[1].tx = 5000;
+        variants.push(changed);
+        variants.push(vec![net_counter("eth0", 1 << 30, 1 << 30)]);
+        let mut changed = initial.clone();
+        changed.push(net_counter("eth1", 1 << 30, 1 << 30));
+        variants.push(changed);
+        for counters in variants {
+            let mut previous = None;
+            network_reading(Some(initial.clone()), Some(Duration::ZERO), &mut previous);
+            assert_eq!(
+                network_reading(Some(counters), Some(Duration::from_secs(2)), &mut previous).text,
+                "0 KB 0"
+            );
+        }
+    }
+
+    #[test]
+    fn network_rebases_delayed_early_and_failed_clock_samples() {
+        for now in [
+            Duration::from_secs(9),
+            Duration::from_secs(10),
+            Duration::from_millis(10100),
+            Duration::from_secs(16),
+            Duration::from_secs(3700),
+        ] {
+            let mut previous = None;
+            network_reading(
+                Some(vec![net_counter("eth0", 0, 0)]),
+                Some(Duration::from_secs(10)),
+                &mut previous,
+            );
+            assert_eq!(
+                network_reading(
+                    Some(vec![net_counter("eth0", 1 << 30, 1 << 30)]),
+                    Some(now),
+                    &mut previous
+                )
+                .text,
+                "0 KB 0"
+            );
+        }
+        let mut previous = None;
+        network_reading(
+            Some(vec![net_counter("eth0", 0, 0)]),
+            Some(Duration::ZERO),
+            &mut previous,
+        );
+        assert_eq!(
+            network_reading(
+                Some(vec![net_counter("eth0", 1 << 30, 1 << 30)]),
+                None,
+                &mut previous
+            )
+            .text,
+            "--"
+        );
+        assert!(previous.is_none());
+        let first = network_time().unwrap();
+        assert!(network_time().unwrap() >= first);
+    }
+
+    #[test]
+    fn network_large_multi_interface_deltas_do_not_saturate_or_overflow() {
+        let mut previous = None;
+        network_reading(
+            Some(vec![net_counter("eth0", 0, 0), net_counter("wlan0", 0, 0)]),
+            Some(Duration::ZERO),
+            &mut previous,
+        );
+        let reading = network_reading(
+            Some(vec![
+                net_counter("eth0", u64::MAX, u64::MAX),
+                net_counter("wlan0", u64::MAX, u64::MAX),
+            ]),
+            Some(Duration::from_secs(2)),
+            &mut previous,
+        );
+        assert_eq!(reading.text, "17592186044416 MB 17592186044416");
+        assert!(!reading.tooltip.contains("inf"));
+        assert!(!reading.tooltip.contains("NaN"));
     }
 
     #[test]
