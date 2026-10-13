@@ -1,221 +1,178 @@
 #!/usr/bin/env bash
-# Hyprland Waybar Visibility Manager Script
-# Version 3.2.0 (Corrected and Optimized)
-#
-# This script manages Waybar visibility in Hyprland based on Hyprland events:
-# 1. Special Workspace: Waybar is hidden if on a specific "special" workspace.
-# 2. Regular Workspaces: Waybar visibility based on active window's fullscreen state.
-#
-# Fixes from 3.1.0:
-# - Added pgrep/pkill to dependency check
-# - Fixed subshell variable scope by using process substitution instead of pipe
-# - Fixed jq exit status capture issue
-# - Proper stdin redirect and disown for backgrounded waybar
-# - Improved locking mechanism with flock
-# - Added XDG_RUNTIME_DIR validation
-# - Eliminated TOCTOU race conditions
-# - Removed unnecessary awk process
+# Hide this session's Waybar on special:magic or while the active window is
+# maximized/fullscreen. Visibility is global, based on the focused monitor.
+# Run inside Hyprland; an event-stream disconnect exits with failure so a
+# supervisor can restart the manager. Waybar itself is left alone on exit.
 
 set -euo pipefail
 
-# --- Configuration ---
-readonly WAYBAR_BIN_NAME="waybar"
-readonly SPECIAL_WORKSPACE_NAME="special:magic"
-# --- End Configuration ---
+readonly SPECIAL_WORKSPACE_NAME='special:magic'
+WAYBAR_BIN_PATH=''
+READER_PID=''
+WAYBAR_START_PID=''
+WAYBAR_STOPPING=false
+RETRY_STATE=false
+RETRY_DELAY=1
 
-# --- Script Globals ---
-WAYBAR_BIN_PATH=""
-_IS_CURRENTLY_ON_SPECIAL="false"
-HYPRLAND_SOCKET2=""
-# --- End Script Globals ---
-
-# --- Helper Functions ---
-
-find_waybar_binary() {
-    WAYBAR_BIN_PATH=$(command -v "$WAYBAR_BIN_NAME" 2>/dev/null) || exit 1
+die() {
+    printf 'waybar visibility: %s\n' "$*" >&2
+    exit 1
 }
 
-check_dependencies() {
-    local cmd
-    # Added pgrep, pkill, and flock which are actually used by the script
-    for cmd in hyprctl jq socat pgrep pkill flock; do
-        command -v "$cmd" &>/dev/null || exit 1
-    done
+cleanup() {
+    if [[ -n $READER_PID ]]; then
+        kill "$READER_PID" 2>/dev/null || true
+        wait "$READER_PID" 2>/dev/null || true
+    fi
+    # Keep the lock file: unlinking it lets contenders lock different inodes.
 }
 
 is_waybar_running() {
-    pgrep -x "$WAYBAR_BIN_NAME" &>/dev/null
+    local status
+    if pgrep --quiet -u "$EUID" -x waybar \
+        --env "HYPRLAND_INSTANCE_SIGNATURE=$HYPRLAND_INSTANCE_SIGNATURE"; then
+        return 0
+    else
+        status=$?
+        (( status == 1 )) || die "pgrep failed (status $status)"
+        return 1
+    fi
 }
 
-start_waybar() {
-    # Don't start if on special workspace
-    [[ "$_IS_CURRENTLY_ON_SPECIAL" != "true" ]] || return 0
-
-    # Don't start if already running
-    is_waybar_running && return 0
-
-    # Start waybar fully detached (stdin, stdout, stderr redirected, disowned)
-    "$WAYBAR_BIN_PATH" </dev/null &>/dev/null &
-    disown "$!" 2>/dev/null || true
+hide_waybar() {
+    local status
+    # Cover the brief interval before the background child execs Waybar.
+    if [[ -n $WAYBAR_START_PID ]]; then
+        kill "$WAYBAR_START_PID" 2>/dev/null || true
+        WAYBAR_START_PID=''
+    fi
+    if pkill -u "$EUID" -x waybar \
+        --env "HYPRLAND_INSTANCE_SIGNATURE=$HYPRLAND_INSTANCE_SIGNATURE"; then
+        :
+    else
+        status=$?
+        (( status == 1 )) || die "pkill failed (status $status)"
+    fi
+    WAYBAR_STOPPING=true
 }
 
-kill_waybar() {
-    # Directly attempt to kill; avoids TOCTOU race condition
-    # Suppress errors if process doesn't exist
-    pkill -x "$WAYBAR_BIN_NAME" 2>/dev/null || true
-}
-
-find_hyprland_socket() {
-    # Validate XDG_RUNTIME_DIR is set and non-empty
-    [[ -n "${XDG_RUNTIME_DIR:-}" ]] || return 1
-
-    local hyprctl_output sig
-
-    hyprctl_output=$(hyprctl instances -j 2>/dev/null) || return 1
-    [[ -n "$hyprctl_output" ]] || return 1
-
-    # Use -e to make jq exit with error if result is null/empty
-    sig=$(jq -re '.[0].instance // empty' <<< "$hyprctl_output" 2>/dev/null) || return 1
-
-    HYPRLAND_SOCKET2="${XDG_RUNTIME_DIR}/hypr/${sig}/.socket2.sock"
-
-    [[ -S "$HYPRLAND_SOCKET2" ]] || return 1
-    return 0
+show_waybar() {
+    if is_waybar_running; then
+        WAYBAR_START_PID=''
+        # SIGTERM is asynchronous. Retry showing after the old bar has exited.
+        $WAYBAR_STOPPING && RETRY_STATE=true
+        RETRY_DELAY=0.1
+        return 0
+    fi
+    if [[ -n $WAYBAR_START_PID ]] && kill -0 "$WAYBAR_START_PID" 2>/dev/null; then
+        RETRY_STATE=true
+        RETRY_DELAY=0.1
+        return 0
+    fi
+    [[ -z $WAYBAR_START_PID ]] || die 'Waybar exited during startup; check its stderr output'
+    WAYBAR_STOPPING=false
+    # Neither the lock nor the event pipe may be inherited by the detached bar.
+    "$WAYBAR_BIN_PATH" 8<&- 9>&- </dev/null >/dev/null &
+    WAYBAR_START_PID=$!
+    disown "$WAYBAR_START_PID"
+    RETRY_STATE=true
+    RETRY_DELAY=0.1
 }
 
 update_waybar_visibility() {
-    local hypr_output ws_name fullscreen_state jq_result
+    local state visibility
+    RETRY_STATE=false
+    RETRY_DELAY=1
 
-    # Try to get active window info (contains workspace and fullscreen state)
-    if hypr_output=$(hyprctl -j activewindow 2>/dev/null); then
-        # Check if we got a valid window (not empty object)
-        if [[ -n "$hypr_output" && "$hypr_output" != "{}" && "$hypr_output" != "null" ]]; then
-            # Parse both values in one jq call using tab-separated output
-            if jq_result=$(jq -re '[(.workspace.name // ""), (.fullscreen // 0)] | @tsv' <<< "$hypr_output" 2>/dev/null); then
-                IFS=$'\t' read -r ws_name fullscreen_state <<< "$jq_result"
-
-                # Check for special workspace
-                if [[ "$ws_name" == "$SPECIAL_WORKSPACE_NAME" ]]; then
-                    _IS_CURRENTLY_ON_SPECIAL="true"
-                    kill_waybar
-                    return 0
-                fi
-
-                _IS_CURRENTLY_ON_SPECIAL="false"
-
-                # Check fullscreen state (1 = fullscreen, 2 = maximized/fake fullscreen)
-                case "$fullscreen_state" in
-                    1|2)
-                        kill_waybar
-                        ;;
-                    *)
-                        start_waybar
-                        ;;
-                esac
-                return 0
-            fi
-        fi
+    # One IPC request and one jq process, including empty special workspaces.
+    # Query errors preserve the current bar state and retry without another event.
+    if ! state=$(hyprctl -j --batch 'monitors; activewindow'); then
+        RETRY_STATE=true
+        return 0
+    fi
+    if ! visibility=$(jq -ers --arg special "$SPECIAL_WORKSPACE_NAME" '
+        if length != 2 or (.[0] | type) != "array" or (.[1] | type) != "object"
+        then error("invalid Hyprland state") else . end
+        | .[1] as $window
+        | if $window != {} and
+             (($window.fullscreen | type) != "number" or $window.fullscreen < 0
+              or $window.fullscreen != ($window.fullscreen | floor))
+          then error("invalid fullscreen state") else . end
+        | [.[0][] | select(.focused == true)]
+        | if length != 1 then error("no unique focused monitor") else .[0] end
+        | if (.specialWorkspace.name | type) != "string"
+          then error("invalid special workspace state") else . end
+        | if (.specialWorkspace.name == $special)
+             or (($window.fullscreen // 0) != 0)
+          then "hide" else "show" end
+    ' <<< "$state"); then
+        RETRY_STATE=true
+        return 0
     fi
 
-    # Fallback: activewindow failed or returned empty, check activeworkspace
-    if hypr_output=$(hyprctl -j activeworkspace 2>/dev/null) && [[ -n "$hypr_output" ]]; then
-        ws_name=$(jq -r '.name // ""' <<< "$hypr_output" 2>/dev/null) || ws_name=""
-
-        if [[ "$ws_name" == "$SPECIAL_WORKSPACE_NAME" ]]; then
-            _IS_CURRENTLY_ON_SPECIAL="true"
-            kill_waybar
-            return 0
-        fi
-    fi
-
-    # Default: not on special workspace, show waybar
-    _IS_CURRENTLY_ON_SPECIAL="false"
-    start_waybar
+    case $visibility in
+        hide) hide_waybar ;;
+        show) show_waybar ;;
+    esac
 }
 
-# --- Main Logic ---
 main() {
-    find_waybar_binary
-    check_dependencies
-    find_hyprland_socket || exit 1
+    local cmd socket event_line fragment='' status
+    local -a read_options
+    for cmd in hyprctl jq socat cat pgrep pkill flock waybar; do
+        command -v "$cmd" >/dev/null || die "missing command: $cmd"
+    done
+    WAYBAR_BIN_PATH=$(command -v waybar)
+    [[ -n ${XDG_RUNTIME_DIR:-} && -d $XDG_RUNTIME_DIR ]] || die 'XDG_RUNTIME_DIR is unavailable'
+    [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]] || die 'HYPRLAND_INSTANCE_SIGNATURE is unset'
+    socket="$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock"
+    [[ -S $socket ]] || die "event socket is unavailable: $socket"
 
-    # Set initial state based on current Hyprland state
+    # Session-specific lock, opened without truncation. Only this shell holds it.
+    exec 9>>"$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/waybar_visibility_manager.lock"
+    flock -n 9 || die 'another visibility manager is running, or locking failed'
+    trap cleanup EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    trap 'exit 129' HUP
+
+    # Connect before acknowledging readiness, then replace the reader with cat.
+    # nofork keeps one reader process; -u leaves its stdout attached to this pipe.
+    exec 8< <(exec socat -u "UNIX-CONNECT:$socket" \
+        'SHELL:echo connected; exec cat,nofork,shell=/bin/sh' 9>&-)
+    READER_PID=$!
+    IFS= read -r -u 8 event_line && [[ $event_line == connected ]] \
+        || die 'could not connect to the Hyprland event socket'
     update_waybar_visibility
 
-    # Declare loop variables outside loop to avoid repeated local declarations
-    local event_line event_type event_payload special_name
+    while true; do
+        read_options=(-u 8)
+        # No polling in steady state; retry only failed queries or pending starts.
+        if $RETRY_STATE; then
+            read_options+=(-t "$RETRY_DELAY")
+        fi
+        if IFS= read -r "${read_options[@]}" event_line; then
+            event_line="$fragment$event_line"
+            fragment=''
+        else
+            status=$?
+            if (( status > 128 )); then
+                # Timed reads may consume partial lines. Keep them for the next read.
+                fragment+=$event_line
+                update_waybar_visibility
+                continue
+            fi
+            wait "$READER_PID" || true
+            READER_PID=''
+            die 'Hyprland event stream disconnected'
+        fi
 
-    # Use process substitution instead of pipe to keep loop in main shell context
-    # This ensures _IS_CURRENTLY_ON_SPECIAL modifications persist correctly
-    while IFS= read -r event_line || [[ -n "$event_line" ]]; do
-        # Parse event type and payload (format: "event_type>>payload")
-        event_type="${event_line%%>>*}"
-        event_payload="${event_line#*>>}"
-
-        case "$event_type" in
-            activespecial)
-                # Payload format: "NAME,MONITOR" or ",MONITOR" (if no special active)
-                special_name="${event_payload%%,*}"
-
-                if [[ "$special_name" == "$SPECIAL_WORKSPACE_NAME" ]]; then
-                    # Entering our target special workspace
-                    if [[ "$_IS_CURRENTLY_ON_SPECIAL" == "false" ]]; then
-                        _IS_CURRENTLY_ON_SPECIAL="true"
-                        kill_waybar
-                    fi
-                elif [[ "$_IS_CURRENTLY_ON_SPECIAL" == "true" ]]; then
-                    # Leaving our special workspace, re-evaluate state
-                    update_waybar_visibility
-                fi
-                ;;
-
-            workspace)
-                # Workspace changed - always re-evaluate
+        case ${event_line%%>>*} in
+            activespecial|workspace|focusedmon|activewindow|fullscreen|openwindow|closewindow|movewindow|moveworkspace|renameworkspace|monitoradded|monitorremoved|configreloaded)
                 update_waybar_visibility
                 ;;
-
-            fullscreen|activewindow)
-                # Only re-evaluate if not on special workspace
-                [[ "$_IS_CURRENTLY_ON_SPECIAL" == "false" ]] && update_waybar_visibility
-                ;;
         esac
-    done < <(socat -u "UNIX-CONNECT:${HYPRLAND_SOCKET2}" - 2>/dev/null)
+    done
 }
 
-# --- Locking Mechanism ---
-# Use XDG_RUNTIME_DIR for lock file (more appropriate than /tmp for session-specific locks)
-readonly LOCK_DIR="${XDG_RUNTIME_DIR:-/tmp}"
-readonly LOCK_FILE="${LOCK_DIR}/waybar_visibility_manager.lock"
-
-cleanup() {
-    # Remove lock file on exit
-    rm -f "$LOCK_FILE" 2>/dev/null || true
-}
-
-setup_lock() {
-    # Ensure lock directory exists
-    [[ -d "$LOCK_DIR" ]] || exit 1
-
-    # Create/truncate lock file
-    : > "$LOCK_FILE" 2>/dev/null || exit 1
-
-    # Open lock file on file descriptor 9
-    exec 9>"$LOCK_FILE"
-
-    # Try to acquire exclusive lock (non-blocking)
-    # flock is atomic and handles stale locks correctly
-    if ! flock -n 9; then
-        # Another instance is already running
-        exit 1
-    fi
-
-    # Write PID to lock file for debugging purposes
-    echo $$ >&9
-
-    # Set up cleanup trap for various exit scenarios
-    trap cleanup EXIT INT TERM HUP
-}
-
-# --- Entry Point ---
-setup_lock
-main
+main "$@"
