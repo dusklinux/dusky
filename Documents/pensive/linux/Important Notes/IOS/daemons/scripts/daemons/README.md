@@ -1,6 +1,15 @@
 # Daemon Manager reference config
 
-The maintained SwiftUI app is at [dusklinux/daemon_manager](https://github.com/dusklinux/daemon_manager), checked out locally at `/mnt/zram1/daemon_manager`. App source, build instructions, and the CI workflow belong there. The old standalone daemonmanager and processkiller instructions are retired.
+## Current USB update — v1.0.21, 2026-10-13
+
+App source is now `/home/dusk/daemon_manager`. The preset still has 512 targets, 318 Off / 194 On; the user reset the phone's native overrides during USB diagnosis, so older reduced-service phone settings below are historical. Do not silently reapply that old profile.
+
+Overrides → USB and wired accessories groups nine computer/accessory jobs and preserves Critical lockdownd/OpenSSH during Off. Both installed menu directions passed after userspace restarts. Final group Off unloaded all nine while USB SSH, paired queries and charging still worked; no single-service cause for the earlier detection failure is proven. The other post-reset choices were left unchanged. Builtin/config defaults are unchanged.
+
+See the [USB test record](../../daemons%20based%20on%20ios%2016.md#current-usb-update--v1021-2026-10-13) for labels, backup evidence, build/source hashes and limits. The app README records the exact Linux daemon build, foreground startup, iproxy and SSH commands. This is a tested convenience group, not a guarantee that it repairs every USB failure.
+
+
+The maintained SwiftUI app is at [dusklinux/daemon_manager](https://github.com/dusklinux/daemon_manager), checked out locally at `/home/dusk/daemon_manager`. App source, build instructions, and the CI workflow belong there. The old standalone daemonmanager and processkiller instructions are retired.
 
 This directory contains `daemon.cfg` and device-use notes. The config mirrors the repository's root `daemon.cfg` and its 512 builtin targets: **318 off, 194 on**. `yes` means disable; `no` means keep enabled; `NO` marks critical enabled targets. A recommendation is not a guarantee that every optional feature or device is safe with a service off.
 
@@ -26,9 +35,9 @@ Read [instructions.md](instructions.md) for usage/install notes and `../../daemo
 
 The Critical tab always retains installed capital-NO services, even when disabled, and puts disabled entries first. The current preset has no separate Recommended On entries; red critical disables retain confirmation. All 512 builtin targets are compiled into the IPA and shown in Defaults, including absent entries; config import is optional.
 
-## Current profile — v1.0.20
+## Previous profile — v1.0.20
 
-See the [current-state summary](../../daemons%20based%20on%20ios%2016.md#current-state--v1020-2026-10-12) for verified feature dependencies, normal phone settings and remaining limits. Historical sections below preserve earlier counts and classifications; their pending checks are superseded only where later tests explicitly passed.
+See the [current-state summary](../../daemons%20based%20on%20ios%2016.md#current-usb-update--v1021-2026-10-13) for verified feature dependencies, normal phone settings and remaining limits. Historical sections below preserve earlier counts and classifications; their pending checks are superseded only where later tests explicitly passed.
 
 Overrides has feature subpages and direct menu On/Off. Critical/shared prerequisites survive group Off. Screen recording requires ReplayKitAngel + replayd and respring; Lock Screen playback requires PosterBoard + liveactivitiesd and userspace restart. PosterBoard/PaperBoard/liveactivitiesd default Off. Drive/Photos sync groups returned Off after successful web-verified tests, while repaired Critical dependencies stay enabled.
 

@@ -1,4 +1,17 @@
-## Current state — v1.0.20, 2026-10-12
+## Current USB update — v1.0.21, 2026-10-13
+
+The app source now lives at `/home/dusk/daemon_manager`. The preset remains 512 targets, 318 Off / 194 On; it is not a snapshot of the phone after the user's full override reset. The previous reduced-service profile and its dated test results below are historical.
+
+Overrides adds USB and wired accessories: afcd, mobile.house_arrest, both mobile notification proxies, accessoryd, iapd, iap2d, iapauthd and usb.networking.addNetworkInterface. On also restores Critical mobile.lockdown and OpenSSH; Off preserves those shared prerequisites. Restart userspace after changes. These are related host features, not a proven minimum set for USB SSH.
+
+The original workstation usbmuxd required missing libplist-2.0.so.4; a temporary source build linked to the installed .12 and restored the old connection. The same source revision and build flags were recreated today, but still detected 0 devices until the user reset phone overrides and restarted userspace. USB SSH then succeeded. Lockdownd was already running before that reset; its 344-entry disabled.backup was preserved locally for comparison. No single-service cause is proven. Disabling all nine optional group jobs and restarting userspace still passed USB SSH and paired ProductType/ProductVersion queries; the jobs were unloaded while lockdownd/OpenSSH remained loaded. No new Critical classification is justified by the broad reset.
+
+Installed v1.0.21/build 22: source 7e00c5a03d7b22955a952cde7343bad7b92d3c4f, Actions 38381048707 passed 23 Python tests, Swift checks and iOS build/package. IPA SHA256 abb7db08b10703d0b7e4e5d96f897507152ece02b579b3615095b5fbaaac345b matched release digest/source/version. TrollStore returned 0. Installed menu-button verification passed in both directions. Backup/restore, wired audio, accessory coverage and RAM/battery gains remain unverified. See the app README for the exact recovered Linux build, foreground daemon, iproxy and SSH commands.
+
+
+Installed-menu validation completed: On → userspace restart loaded all nine jobs, preserved lockdownd/OpenSSH and passed authenticated USB SSH, paired ProductType queries and BatteryIsCharging=true. Menu Off → restart then unloaded all nine, with the same SSH/paired queries and charging still working. The user also confirmed charging in the Off state. Final system and user/501 maps differ from the post-reset baseline only by those nine optional Off entries. Other reset-era service choices were left unchanged. Group Off is the final tested state; builtin targets/config were not changed. These checks do not test every accessory or backup protocol and do not identify the original missing-enumeration cause.
+
+## Previous verified profile — v1.0.20, 2026-10-12
 
 The matching app/config preset contains **512 targets: 318 Off / 194 On** (105 `no`, 89 Critical `NO`). The config is a builtin target list, not a snapshot of every manually customized phone setting. Installing an update does not apply defaults. Versioned test sections below retain their historical counts, classifications and pending checks; this summary and the latest feature results supersede older statements of current behavior.
 

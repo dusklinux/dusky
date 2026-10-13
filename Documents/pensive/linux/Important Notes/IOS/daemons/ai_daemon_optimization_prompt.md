@@ -1,8 +1,16 @@
 # Agent context: iOS 16 daemon testing and Daemon Manager
 
-## Current handoff — v1.0.20, 2026-10-12
+## Current USB update — v1.0.21, 2026-10-13
 
-Read the [current-state summary](daemons%20based%20on%20ios%2016.md#current-state--v1020-2026-10-12) first. Versioned sections below are historical; their older counts, KEEP badges and pending checks must not override later verified results. Current config: **512 targets, 318 Off / 194 On**, with all 89 Critical enabled targets uppercase `NO`; the config matches app builtins, not every custom phone setting.
+App source is now `/home/dusk/daemon_manager`. The preset still has 512 targets, 318 Off / 194 On; the user reset the phone's native overrides during USB diagnosis, so older reduced-service phone settings below are historical. Do not silently reapply that old profile.
+
+Overrides → USB and wired accessories groups nine computer/accessory jobs and preserves Critical lockdownd/OpenSSH during Off. Both installed menu directions passed after userspace restarts. Final group Off unloaded all nine while USB SSH, paired queries and charging still worked; no single-service cause for the earlier detection failure is proven. The other post-reset choices were left unchanged. Builtin/config defaults are unchanged.
+
+See the [USB test record](daemons%20based%20on%20ios%2016.md#current-usb-update--v1021-2026-10-13) for labels, backup evidence, build/source hashes and limits. The app README records the exact Linux daemon build, foreground startup, iproxy and SSH commands. This is a tested convenience group, not a guarantee that it repairs every USB failure.
+
+## Previous handoff — v1.0.20, 2026-10-12
+
+Read the [current-state summary](daemons%20based%20on%20ios%2016.md#current-usb-update--v1021-2026-10-13) first. Versioned sections below are historical; their older counts, KEEP badges and pending checks must not override later verified results. Current config: **512 targets, 318 Off / 194 On**, with all 89 Critical enabled targets uppercase `NO`; the config matches app builtins, not every custom phone setting.
 
 The user identifies the current jailbreak as palera1n on A11, without a device passcode. Earlier Dopamine wording is superseded. Preserve this setup. Native SpringBoard preferences/report paths are under `/var/mobile`; the bootstrap passwd home `/var/jb/var/mobile` is different. This mismatch caused packaged v1.0.18 Off actions to save without applying; v1.0.20 fixes it and adds a regression test.
 
@@ -10,11 +18,11 @@ Lock Screen playback requires tested PosterBoard + liveactivitiesd, with PaperBo
 
 V1.0.20 Control Center/App Library switches passed both directions after resprings; final choices are Off. They block UI access, with RAM savings unverified. Cosmetic dock/status-bar hooks were removed and both restored; failed Today View hooks were removed too. Memory stress allocates real random-filled memory in 100 MiB increments and releases it on minus/Clear/panel close; it does not create RAM or remove jetsam limits. Allocation/release controls passed user checks, not exhaustive system stress.
 
-Installed build: v1.0.20/build 21, source `ca663064295eb14b72a669ececcfcf37eeda7277`; CI passed 23 Python checks, Swift checks and iOS packaging. See the parent reference for release hashes, measured limits and feature-specific evidence. FaceTime calls, paid purchases/Apple Pay, all combinations and net RAM/battery gains remain unverified; the WhatsApp Meta AI action remains unresolved.
+Previous build: v1.0.20/build 21, source `ca663064295eb14b72a669ececcfcf37eeda7277`; CI passed 23 Python checks, Swift checks and iOS packaging. See the parent reference for release hashes, measured limits and feature-specific evidence. FaceTime calls, paid purchases/Apple Pay, all combinations and net RAM/battery gains remain unverified; the WhatsApp Meta AI action remains unresolved.
 
 ## Scope and maintained files
 
-App repository: `/mnt/zram1/daemon_manager`, remote `git@github.com:dusklinux/daemon_manager.git`, main branch. The repository is the sole app source/build location; its root `daemon.cfg` mirrors `scripts/daemons/daemon.cfg` in these notes. Do not recreate duplicate app sources or old daemonmanager/processkiller scripts here.
+App repository: `/home/dusk/daemon_manager`, remote `git@github.com:dusklinux/daemon_manager.git`, main branch. The repository is the sole app source/build location; its root `daemon.cfg` mirrors `scripts/daemons/daemon.cfg` in these notes. Do not recreate duplicate app sources or old daemonmanager/processkiller scripts here.
 
 Keep these five references: this prompt, `daemons based on ios 16.md`, and `scripts/daemons/{daemon.cfg,instructions.md,README.md}`. The raw 2026-10-11 workstation test artifacts were deleted after the results were incorporated into the reference. Device-side originals/backups were left under `/var/mobile/Documents/daemon-test-2026-10-11`.
 

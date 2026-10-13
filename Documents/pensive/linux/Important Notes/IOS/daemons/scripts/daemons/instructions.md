@@ -1,6 +1,15 @@
 # Device use and app installation
 
-The app source and build workflow live in `/mnt/zram1/daemon_manager` and [dusklinux/daemon_manager](https://github.com/dusklinux/daemon_manager). This notes directory keeps references and a matching config, not source/build copies or the retired daemonmanager/processkiller scripts.
+## Current USB update — v1.0.21, 2026-10-13
+
+App source is now `/home/dusk/daemon_manager`. The preset still has 512 targets, 318 Off / 194 On; the user reset the phone's native overrides during USB diagnosis, so older reduced-service phone settings below are historical. Do not silently reapply that old profile.
+
+Overrides → USB and wired accessories groups nine computer/accessory jobs and preserves Critical lockdownd/OpenSSH during Off. Both installed menu directions passed after userspace restarts. Final group Off unloaded all nine while USB SSH, paired queries and charging still worked; no single-service cause for the earlier detection failure is proven. The other post-reset choices were left unchanged. Builtin/config defaults are unchanged.
+
+See the [USB test record](../../daemons%20based%20on%20ios%2016.md#current-usb-update--v1021-2026-10-13) for labels, backup evidence, build/source hashes and limits. The app README records the exact Linux daemon build, foreground startup, iproxy and SSH commands. This is a tested convenience group, not a guarantee that it repairs every USB failure.
+
+
+The app source and build workflow live in `/home/dusk/daemon_manager` and [dusklinux/daemon_manager](https://github.com/dusklinux/daemon_manager). This notes directory keeps references and a matching config, not source/build copies or the retired daemonmanager/processkiller scripts.
 
 On the tested rootless iOS 16 phone, OpenSSH and Python 3.9.9 are available. Use the phone's actual SSH address and root credentials; do not assume the old notes' address or Python version on another device.
 
@@ -28,9 +37,9 @@ Keep com.apple.imagent, com.apple.identityservicesd, and com.apple.nehelper enab
 
 The RAM indicator shows only a value and MiB; the header uses kernel free_count, which already includes speculative pages.
 
-## Current controls — v1.0.20
+## Controls verified in v1.0.20
 
-Overrides provides one subpage per feature and On/Off buttons directly on the feature menu. Group On restores listed jobs and known prerequisites; Off preserves Critical and dependency-only shared jobs. Individual Critical switches remain editable with warnings. Catalog switches load/unload their jobs; broader batches still need userspace restart. Older versioned sections below describe history, including superseded tab locations and classifications. Use the [current-state summary](../../daemons%20based%20on%20ios%2016.md#current-state--v1020-2026-10-12) for the final profile and test limits.
+Overrides provides one subpage per feature and On/Off buttons directly on the feature menu. Group On restores listed jobs and known prerequisites; Off preserves Critical and dependency-only shared jobs. Individual Critical switches remain editable with warnings. Catalog switches load/unload their jobs; broader batches still need userspace restart. Older versioned sections below describe history, including superseded tab locations and classifications. Use the [current-state summary](../../daemons%20based%20on%20ios%2016.md#current-usb-update--v1021-2026-10-13) for the final profile and test limits.
 
 - Screen recording: turn its group On and respring before use; Off restores the requested normal state. Camera recording is separate.
 - Lock Screen media controls: PosterBoard + liveactivitiesd, then restart userspace. The group defaults Off; PaperBoard was not required. Wallpaper shares PosterBoard, so disabling Wallpaper can also break media rendering.
