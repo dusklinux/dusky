@@ -14,6 +14,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
+from urllib.parse import quote
 
 # --- Rich UI Imports ---
 from rich.console import Console
@@ -250,28 +251,71 @@ def deploy_unit_file(src_path: Path, target_file: Path, ctx: UserContext) -> tup
             "XDG_RUNTIME_DIR": f"/run/user/{ctx.uid}",
         })
 
-        # Substitute only known installer variables. Keep systemd's $$ and runtime
-        # variables (e.g. $MAINPID), and leave literal paths/specifiers untouched.
+        # Each systemd directive has its own parser. Command lines and
+        # Environment= consume C escapes; these path lists consume shell-style
+        # escapes, while WorkingDirectory= consumes a literal path.
+        exec_directives = {
+            "ExecCondition", "ExecStartPre", "ExecStart", "ExecStartPost",
+            "ExecReload", "ExecStop", "ExecStopPost",
+        }
+        path_list_directives = {
+            "RequiresMountsFor", "WantsMountsFor", "ReadWritePaths",
+            "ReadOnlyPaths", "InaccessiblePaths",
+        }
+
+        # Keep $$ and unknown runtime variables such as $MAINPID untouched.
         def substitute(match: re.Match[str]) -> str:
             name = match[1] or match[2]
             if name not in replacements:
                 return match[0]
-            # C escapes keep whitespace, quotes and backslashes inside one value;
-            # doubled percent/dollar signs survive systemd's own expansion.
             value = replacements[name]
-            value = "".join(
-                f"\\x{ord(char):02x}" if char in (" ", "\\", '"', "'", "\t", "\n", "\r") else char
-                for char in value
-            )
+            prefix = match.string[:match.start()]
+            directive = prefix.partition("=")[0].strip()
+            if directive in exec_directives or directive == "Environment":
+                value = "".join(
+                    f"\\x{ord(char):02x}" if char in " \\\"'\t\n\r" else char
+                    for char in value
+                )
+            elif directive in path_list_directives:
+                if "\n" in value or "\r" in value:
+                    raise ValueError(f"{directive} cannot represent paths containing newlines")
+                value = "".join(f"\\{char}" if char in " \\\"'\t" else char for char in value)
+            elif directive == "Documentation":
+                value = quote(value, safe="/")
+            elif "\n" in value or "\r" in value:
+                raise ValueError(f"{directive} cannot represent values containing newlines")
             value = value.replace("%", "%%")
-            line_start = raw_content.rfind("\n", 0, match.start()) + 1
-            directive = raw_content[line_start:match.start()].lstrip()
-            return value.replace("$", "$$") if directive.startswith("Exec") else value
+            if directive in exec_directives:
+                command_prefix = prefix.partition("=")[2].lstrip()
+                flags = command_prefix[:len(command_prefix) - len(command_prefix.lstrip("-@:+!|"))]
+                # The executable path itself does not undergo $ expansion.
+                executable = re.fullmatch(r'''[-@:+!|]*(?:"[^"]*|'[^']*|[^\s"']*)''', command_prefix)
+                if ":" not in flags and executable is None:
+                    value = value.replace("$", "$$")
+            return value
 
-        content = re.sub(
+        variable_pattern = re.compile(
             r"\$\$|\$\{([A-Za-z_][A-Za-z_0-9]*)\}|\$([A-Za-z_][A-Za-z_0-9]*)",
-            substitute, raw_content,
         )
+        lines: list[str] = []
+        continued = ""
+        for line in raw_content.split("\n"):
+            if line.lstrip().startswith(("#", ";")):
+                lines.append(line)
+                continue
+            # systemd joins continued lines with a space and ignores intervening
+            # comments. Render the logical directive so its escaping rules apply
+            # equally to variables on every physical line.
+            line = continued + line
+            trailing_backslashes = len(line) - len(line.rstrip("\\"))
+            if trailing_backslashes % 2:
+                continued = line[:-1] + " "
+                continue
+            lines.append(variable_pattern.sub(substitute, line))
+            continued = ""
+        if continued:
+            lines.append(variable_pattern.sub(substitute, continued))
+        content = "\n".join(lines)
 
         # Skip identical content to avoid writes and mtime churn.
         try:
@@ -380,8 +424,11 @@ def run_systemctl(args: list[str], is_user: bool, dry_run: bool, ctx: UserContex
 
     env = get_user_ipc_env(ctx) if is_user else None
     try:
+        # Start/stop deadlines belong to the unit, including notify extensions
+        # and oneshot services whose startup timeout defaults to infinity.
+        timeout = None if args[0] in {"start", "stop"} else 120
         res = subprocess.run(cmd, capture_output=True, env=env, text=True,
-                             encoding="utf-8", errors="replace", timeout=120)
+                             encoding="utf-8", errors="replace", timeout=timeout)
         if res.returncode != 0:
             out_msg = (res.stdout or "").strip()
             err_msg = (res.stderr or "").strip()
@@ -703,7 +750,7 @@ def display_status(ctx: UserContext) -> bool:
         nonlocal overall_ok
         if not units:
             return {}
-        cmd = ["systemctl", "--no-pager", "show", "--property=Id,ActiveState,UnitFileState,LoadState", *units]
+        cmd = ["systemctl", "--no-pager", "show", "--property=Id,Names,ActiveState,UnitFileState,LoadState", *units]
         credentials = {}
         if is_user:
             cmd.insert(1, "--user")
@@ -728,10 +775,12 @@ def display_status(ctx: UserContext) -> bool:
         for block in res.stdout.strip().split("\n\n"):
             item = dict(line.split("=", 1) for line in block.splitlines() if "=" in line)
             if unit_id := item.get("Id"):
-                states[unit_id] = (
+                state = (
                     ("not-found", "not-found") if item.get("LoadState") == "not-found" else
                     (item.get("ActiveState") or "unknown", item.get("UnitFileState") or "static")
                 )
+                for name in {unit_id, *item.get("Names", "").split()}:
+                    states[name] = state
         return states
 
     # Batch Query User Services
@@ -794,8 +843,7 @@ def uninstall_all(
             log_error("Root privileges required for system uninstall.")
             overall_ok = False
             continue
-        dirty = False
-        # Stop timers/sockets before the services they can reactivate.
+        candidates: list[tuple[Path, Path, bool]] = []
         for cfg in sorted(configs, key=lambda cfg: Path(cfg.source_path).suffix == ".service"):
             source = expand_path(cfg.source_path, ctx)
             unit = source.name
@@ -803,17 +851,31 @@ def uninstall_all(
             vendor = source.is_relative_to(Path("/usr/lib/systemd"))
             if not vendor and not (target.exists() or target.is_symlink()):
                 continue
-            if unit in caller_units:
-                log_error(f"Cannot uninstall hosting unit {unit} while it runs this script; run from another terminal.")
-                overall_ok = False
-                continue
             if vendor and target.is_symlink():
                 log_error(f"Cannot uninstall {unit} without risking removal of vendor override {target}. Preserving it.")
                 overall_ok = False
                 continue
-            if not run_systemctl(["stop", unit], is_user, dry_run, ctx):
-                overall_ok = False
-                continue
+            candidates.append((source, target, vendor))
+        hosting_units = {source.name for source, _, _ in candidates} & caller_units
+        if hosting_units:
+            log_error(f"Cannot uninstall hosting units {', '.join(sorted(hosting_units))}; run from another terminal.")
+            overall_ok = False
+            continue
+
+        # Stop every selected trigger and service before removing any files.
+        # A failed timer/socket stop must not leave it able to reactivate a
+        # service whose unit file has just been removed.
+        stopped = True
+        for source, _, _ in candidates:
+            stopped &= run_systemctl(["stop", source.name], is_user, dry_run, ctx)
+        if not stopped:
+            log_error(f"Preserving {'user' if is_user else 'system'} unit files because stopping the batch failed.")
+            overall_ok = False
+            continue
+
+        dirty = False
+        for source, target, vendor in candidates:
+            unit = source.name
             dirty = True
             if not run_systemctl(["disable", "--no-reload", unit], is_user, dry_run, ctx):
                 overall_ok = False
