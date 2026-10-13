@@ -28,14 +28,16 @@ use std::time::{Duration, Instant};
 
 use crate::backend::controls::{self, ServiceStatus, Snapshot};
 use crate::backend::system as sys;
+use crate::backend::worker;
 use crate::config::{
     ActionConfig, AppConfig, ChangeAction, ItemConfig, PageConfig, SectionConfig, ToggleActionPair,
 };
 use crate::icons::render_icon;
 use crate::theme::{AppTheme, mix};
 
-pub type Element<'a, Message> = iced::Element<'a, Message>;
+pub type Element<'a, Message> = iced_core::Element<'a, Message, iced_core::Theme, crate::renderer::Renderer>;
 
+const CORE_CONTROLS: [&str; 4] = ["Volume", "Microphone", "Night Light", "Brightness"];
 const PROFILE_OPTIONS: [&str; 3] = ["Balanced", "Performance", "Power Saver"];
 const GROUP_BACKGROUND_MIX: f32 = 0.05;
 const HOVER_HIGHLIGHT_MIX: f32 = 0.12;
@@ -135,7 +137,7 @@ pub enum Message {
     DragWindow,
     Tick,
     SliderApplied { key: String, result: Result<(), String> },
-    CoreLoaded { revision: u64, values: Vec<(String, Option<f32>, Option<f32>)>, sunset_active: bool },
+    CoreLoaded { key: &'static str, previous: Option<f32>, value: Option<f32>, changed_at: Option<Instant>, sunset_active: Option<bool> },
     ReloadConfig,
     CloseApp,
     ItemEntered(String),
@@ -161,13 +163,11 @@ pub struct CenterApp {
     pub dynamic_options: HashMap<String, Vec<String>>,
     pub service_states: HashMap<String, bool>,
     pub live_labels: HashMap<String, String>,
-    pub cpu_text: String,
-    pub ram_text: String,
     pub active_profile: String,
     pub hovered_item: Option<String>,
     pub active_slider: Option<String>,
     pub sunset_active: bool,
-    pub core_loading: bool,
+    pub core_loading: HashSet<String>,
     pub applying_sliders: HashSet<String>,
     pub pending_sliders: HashMap<String, (f32, Option<ActionConfig>, Option<ItemConfig>)>,
     pub deferred_sliders: HashMap<String, (f32, Option<ChangeAction>, Instant)>,
@@ -188,13 +188,24 @@ pub struct CenterApp {
 }
 
 impl CenterApp {
-    pub fn new(
+    /// Build state and defer queries until the returned task runs.
+    pub fn new(config: AppConfig, initial_page: Option<String>, initial_hover: Option<String>) -> (Self, Task<Message>) {
+        Self::initialize(config, initial_page, initial_hover, false)
+    }
+
+    /// Start read-only queries before Iced initializes the compositor.
+    pub fn boot(config: AppConfig, initial_page: Option<String>, initial_hover: Option<String>) -> (Self, Task<Message>) {
+        Self::initialize(config, initial_page, initial_hover, true)
+    }
+
+    fn initialize(
         mut config: AppConfig,
         initial_page: Option<String>,
         initial_hover: Option<String>,
+        eager: bool,
     ) -> (Self, Task<Message>) {
         expand_app_config_generators(&mut config);
-        let (cpu, ram) = sys::cpu_ram();
+        crate::renderer::trace_phase("generators-ready");
         let start_page = if let Some(ref target) = initial_page {
             let target_lower = target.to_lowercase();
             config
@@ -223,13 +234,11 @@ impl CenterApp {
             dynamic_options: HashMap::new(),
             service_states: HashMap::new(),
             live_labels: HashMap::new(),
-            cpu_text: cpu,
-            ram_text: ram,
             active_profile: "Balanced".to_string(),
             hovered_item: initial_hover,
             active_slider: None,
             sunset_active: false,
-            core_loading: false,
+            core_loading: HashSet::new(),
             applying_sliders: HashSet::new(),
             pending_sliders: HashMap::new(),
             deferred_sliders: HashMap::new(),
@@ -250,7 +259,7 @@ impl CenterApp {
 
         // LAZY LOADING: Only initialize active page on cold start!
         app.lazy_load_page(start_page);
-        let task = Task::batch([app.refresh_core(), app.refresh_controls()]);
+        let task = Task::batch([app.refresh_core_with(eager), app.refresh_controls_with(eager)]);
         (app, task)
     }
 
@@ -284,23 +293,42 @@ impl CenterApp {
         }
     }
 
-    /// Keep blocking hardware IPC off initialization and the UI event loop.
+    /// Each visible hardware control refreshes independently; slow DDC only
+    /// occupies its own slot. All subprocess waits use the blocking worker pool.
     fn refresh_core(&mut self) -> Task<Message> {
-        if self.core_loading { return Task::none(); }
-        self.core_loading = true;
-        let revision = self.slider_revision;
-        let previous: Vec<_> = ["Volume", "Microphone", "Brightness", "Night Light"]
-            .into_iter().map(|key| (key.to_string(), self.slider_values.get(key).copied())).collect();
-        Task::perform(async move {
-            let volume = sys::get_volume();
-            let microphone = sys::get_microphone_volume();
-            let brightness = sys::get_brightness();
-            let sunset_active = sys::is_sunset_active();
-            let sunset = if sunset_active { sys::get_sunset() } else { None };
-            let values = previous.into_iter().zip([volume, microphone, brightness, sunset])
-                .map(|((key, previous), value)| (key, previous, value)).collect();
-            Message::CoreLoaded { revision, values, sunset_active }
-        }, |message| message)
+        self.refresh_core_with(false)
+    }
+
+    fn refresh_core_with(&mut self, eager: bool) -> Task<Message> {
+        if self.closing { return Task::none(); }
+        let visible: HashSet<_> = self.visible_items().into_iter()
+            .filter(|item| matches!(item.item_type.as_str(), "slider" | "spin"))
+            .map(controls::item_key).collect();
+        let mut tasks = Vec::new();
+        // Submit quick IPC before potentially slow DDC discovery.
+        for key in CORE_CONTROLS {
+            if !visible.contains(key) || !self.core_loading.insert(key.into()) { continue; }
+            let changed_at = self.slider_changed_at.get(key).copied();
+            let previous = self.slider_values.get(key).copied();
+            let query = move || {
+                let (value, sunset_active) = match key {
+                    "Volume" => (sys::get_volume(), None),
+                    "Microphone" => (sys::get_microphone_volume(), None),
+                    "Brightness" => (sys::get_brightness(), None),
+                    _ => {
+                        let active = sys::is_sunset_active();
+                        (if active { sys::get_sunset() } else { None }, Some(active))
+                    }
+                };
+                Message::CoreLoaded { key, previous, value, changed_at, sunset_active }
+            };
+            tasks.push(if eager { worker::start(query) } else { worker::perform(query) });
+        }
+        Task::batch(tasks)
+    }
+
+    fn refresh_visible(&mut self) -> Task<Message> {
+        Task::batch([self.refresh_core(), self.refresh_controls()])
     }
 
     fn queue_slider(&mut self, key: String, value: f32, on_change: Option<ChangeAction>) -> Task<Message> {
@@ -328,12 +356,12 @@ impl CenterApp {
         let Some((value, action, item)) = self.pending_sliders.remove(&key) else { return Task::none(); };
         self.applying_sliders.insert(key.clone());
         let sunset = key == "Night Light";
-        Task::perform(async move {
+        worker::perform(move || {
             if action.is_none() && sunset { sys::apply_sunset(value) }
             else if let Some(item) = item { controls::set_scalar(&item, &value.to_string(), action.as_ref()) }
             else if let Some(action) = action { controls::run_action(&action) }
             else { Ok(()) }
-        }, move |result| Message::SliderApplied { key: key.clone(), result })
+        }).map(move |result| Message::SliderApplied { key: key.clone(), result })
     }
 
     fn sync_slider(&mut self, key: &str, value: f32) {
@@ -376,7 +404,7 @@ impl CenterApp {
                 self.search_query.clear();
                 self.search_open = false;
                 self.control_generation += 1;
-                Task::batch([pending, self.refresh_controls()])
+                Task::batch([pending, self.refresh_visible()])
             }
             Message::SelectPage(idx) => {
                 if idx < self.config.pages.len() {
@@ -385,7 +413,7 @@ impl CenterApp {
                     self.nav_stack = vec![NavView::Root(idx)];
                     self.search_query.clear();
                     self.control_generation += 1;
-                    return Task::batch([pending, self.refresh_controls()]);
+                    return Task::batch([pending, self.refresh_visible()]);
                 }
                 Task::none()
             }
@@ -406,7 +434,7 @@ impl CenterApp {
                 });
                 self.search_query.clear();
                 self.control_generation += 1;
-                Task::batch([pending, self.refresh_controls()])
+                Task::batch([pending, self.refresh_visible()])
             }
 
             Message::PopSubPage => {
@@ -415,7 +443,7 @@ impl CenterApp {
                     self.nav_stack.pop();
                 }
                 self.control_generation += 1;
-                Task::batch([pending, self.refresh_controls()])
+                Task::batch([pending, self.refresh_visible()])
             }
 
             Message::ToggleSidebar => {
@@ -466,16 +494,16 @@ impl CenterApp {
                     let pending = self.flush_deferred_sliders();
                     self.toggle_states.insert(key.clone(), is_enabled);
                     self.control_generation += 1;
-                    return Task::batch([pending, self.refresh_controls()]); // Local expander state.
+                    return Task::batch([pending, self.refresh_visible()]); // Local expander state.
                 };
                 self.toggle_states.insert(key.clone(), is_enabled);
                 self.busy_controls.insert(key.clone());
                 self.control_generation += 1;
                 self.action_error = None;
                 let action = on_toggle.map(|pair| if is_enabled { pair.enabled } else { pair.disabled });
-                Task::perform(async move {
+                worker::perform(move || {
                     controls::set_toggle(&item, is_enabled, action.as_ref())
-                }, move |result| Message::ToggleFinished { key: key.clone(), previous, result })
+                }).map(move |result| Message::ToggleFinished { key: key.clone(), previous, result })
             }
 
             Message::ToggleFinished { key, previous, result } => {
@@ -499,6 +527,7 @@ impl CenterApp {
             }
 
             Message::ControlsLoaded { generation, slider_revision, snapshot } => {
+                crate::renderer::trace_phase("controls-ready");
                 if self.controls_loading == Some(generation) { self.controls_loading = None; }
                 if self.control_generation != generation { return self.refresh_controls(); }
                 for (key, value) in snapshot.toggles {
@@ -560,10 +589,10 @@ impl CenterApp {
                 self.busy_controls.insert(key.clone());
                 self.control_generation += 1;
                 self.action_error = None;
-                Task::perform(async move {
+                worker::perform(move || {
                     let result = controls::set_scalar(&item, &value, action.as_ref());
                     Message::EntryFinished { key, value, result }
-                }, |message| message)
+                })
             }
 
             Message::EntryFinished { key, value, result } => {
@@ -647,10 +676,10 @@ impl CenterApp {
                 self.busy_controls.insert(key.clone());
                 self.control_generation += 1;
                 self.action_error = None;
-                Task::perform(async move {
+                worker::perform(move || {
                     let action = action.map(|act| controls::with_value(&act, &option));
                     controls::set_scalar(&item, &option, action.as_ref())
-                }, move |result| Message::SelectionFinished { key: key.clone(), previous: previous.clone(), result })
+                }).map(move |result| Message::SelectionFinished { key: key.clone(), previous: previous.clone(), result })
             }
 
             Message::SelectionFinished { key, previous, result } => {
@@ -673,18 +702,15 @@ impl CenterApp {
                 self.busy_controls.insert(key.clone());
                 self.control_generation += 1;
                 self.action_error = None;
-                Task::perform(async move {
+                worker::perform(move || {
                     controls::set_service(&scope, &unit, !previous)
-                }, move |result| Message::ServiceFinished { key: key.clone(), previous, result })
+                }).map(move |result| Message::ServiceFinished { key: key.clone(), previous, result })
             }
 
             Message::DragWindow => iced::window::latest().and_then(iced::window::drag),
 
             Message::Tick => {
                 if self.closing { return Task::none(); }
-                let (cpu, ram) = sys::cpu_ram();
-                self.cpu_text = cpu;
-                self.ram_text = ram;
 
                 // Dynamically sync theme palette with wallpaper
                 if let Some(theme) = AppTheme::load_generated() { self.theme = theme; }
@@ -701,16 +727,14 @@ impl CenterApp {
                 Task::none()
             }
 
-            Message::CoreLoaded { revision, values, sunset_active } => {
-                self.core_loading = false;
-                self.sunset_active = sunset_active;
-                if revision == self.slider_revision {
-                    for (key, previous, value) in values {
-                        if self.slider_values.get(&key).copied() == previous
-                            && let Some(value) = value
-                        { self.sync_slider(&key, value); }
-                    }
-                }
+            Message::CoreLoaded { key, previous, value, changed_at, sunset_active } => {
+                self.core_loading.remove(key);
+                crate::renderer::trace_phase(format_args!("{key}-ready"));
+                if let Some(active) = sunset_active { self.sunset_active = active; }
+                if self.slider_changed_at.get(key).copied() == changed_at
+                    && self.slider_values.get(key).copied() == previous
+                    && let Some(value) = value
+                { self.sync_slider(key, value); }
                 Task::none()
             }
 
@@ -758,7 +782,7 @@ impl CenterApp {
                     }
                     Err(error) => { self.action_error = Some(format!("Reload: {error}")); }
                 }
-                tasks.push(self.refresh_controls());
+                tasks.push(self.refresh_visible());
                 Task::batch(tasks)
             }
 
@@ -815,6 +839,10 @@ impl CenterApp {
     }
 
     fn refresh_controls(&mut self) -> Task<Message> {
+        self.refresh_controls_with(false)
+    }
+
+    fn refresh_controls_with(&mut self, eager: bool) -> Task<Message> {
         if self.closing { return Task::none(); }
         if self.controls_loading.is_some() { return Task::none(); }
         let generation = self.control_generation;
@@ -828,6 +856,9 @@ impl CenterApp {
             let key = if item.properties.service.is_empty() { controls::item_key(item) }
                 else { controls::service_key(&item.properties.scope, &item.properties.service) };
             if self.busy_controls.contains(&key) { return false; }
+            if matches!(item.item_type.as_str(), "slider" | "spin") && CORE_CONTROLS.contains(&key.as_str()) {
+                return false;
+            }
             let interval = item.properties.interval.unwrap_or(
                 if item.properties.key.is_empty() && matches!(item.item_type.as_str(), "entry" | "secret" | "label") { 0 } else { 3 });
             let poll_key = format!("{}:{key}", item.item_type);
@@ -845,7 +876,9 @@ impl CenterApp {
             return Task::none();
         }
         let slider_revision = self.slider_revision;
-        Task::perform(async move { controls::query(&items) }, move |snapshot| {
+        let query = move || controls::query(&items);
+        let task = if eager { worker::start(query) } else { worker::perform(query) };
+        task.map(move |snapshot| {
             Message::ControlsLoaded { generation, slider_revision, snapshot }
         })
     }
@@ -3001,7 +3034,7 @@ fn make_slim_scrollable<'a>(
     content: impl Into<Element<'a, Message>>,
     padding: Padding,
     accent: Color,
-) -> iced::widget::Scrollable<'a, Message> {
+) -> iced_widget::Scrollable<'a, Message, iced_core::Theme, crate::renderer::Renderer> {
     scrollable(container(content).padding(padding))
         .direction(scrollable::Direction::Vertical(
             scrollable::Scrollbar::new()
@@ -3505,13 +3538,11 @@ mod tests {
             dynamic_options: HashMap::new(),
             service_states: HashMap::new(),
             live_labels: HashMap::new(),
-            cpu_text: String::new(),
-            ram_text: String::new(),
             active_profile: String::new(),
             hovered_item: None,
             active_slider: Some("Microphone".into()),
             sunset_active: false,
-            core_loading: false,
+            core_loading: HashSet::new(),
             applying_sliders: HashSet::new(),
             pending_sliders: HashMap::new(),
             deferred_sliders: HashMap::new(),
@@ -3583,22 +3614,155 @@ mod tests {
     }
 
     #[test]
+    fn stress_coalesced_writes_preserve_metadata_and_failed_persistence_on_close() {
+        let root = std::env::temp_dir().join(format!("dusky-center-write-stress-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        let mut config: AppConfig = toml::from_str("[[pages]]\nid='old'\ntitle='Old'\n[[pages.layout]]\ntype='section'\n[[pages]]\nid='new'\ntitle='New'").unwrap();
+        for index in 0..4 {
+            let mut item: ItemConfig = toml::from_str("type='slider'\n[properties]\ntitle='Fixture'\npersistence='app'\nmin=0\nmax=10000").unwrap();
+            item.properties.key = root.join(index.to_string()).to_string_lossy().into_owned();
+            item.on_change = Some(ChangeAction::Direct(ActionConfig::Argv {
+                argv: vec!["/usr/bin/bash".into(), "-c".into(),
+                    "sleep .002; if [[ $1 == 4095.75 && $3 == fail ]]; then printf deliberate >&2; exit 7; fi; printf '%s\\n' \"$1\" >> \"$2\"".into(),
+                    "fixture".into(), "{value}".into(), root.join(format!("log-{index}")).to_string_lossy().into_owned(),
+                    if index == 3 { "fail" } else { "ok" }.into()],
+                expanded_argv: false, terminal: false, requires_root: false, mode: String::new(), timeout: Some(2),
+            }));
+            config.pages[0].layout[0].items.push(item);
+        }
+        let (mut app, initial) = CenterApp::new(config, None, None);
+        complete(&mut app, initial);
+        let items = app.config.pages[0].layout[0].items.clone();
+        let mut first = Vec::new();
+        for item in &items {
+            let key = controls::item_key(item);
+            first.push(app.update(Message::SliderChanged { key: key.clone(), value: 0.25, on_change: item.on_change.clone(), debounce: false }));
+            for value in 0..4096 {
+                let task = app.update(Message::SliderChanged { key: key.clone(), value: value as f32 + 0.75, on_change: item.on_change.clone(), debounce: false });
+                assert_eq!(task.units(), 0, "only one write per slider may run");
+            }
+        }
+        assert_eq!(app.applying_sliders.len(), 4);
+        assert_eq!(app.pending_sliders.len(), 4);
+        let _ = app.update(Message::SelectPage(1));
+        let _ = app.update(Message::CloseApp);
+        complete(&mut app, Task::batch(first));
+        assert!(app.writes_finished());
+        assert!(app.action_error.as_ref().unwrap().contains("deliberate"));
+        for index in 0..4 {
+            assert_eq!(std::fs::read_to_string(root.join(index.to_string())).unwrap(),
+                if index == 3 { "0.25" } else { "4095.75" });
+            assert_eq!(std::fs::read_to_string(root.join(format!("log-{index}"))).unwrap(),
+                if index == 3 { "0.25\n" } else { "0.25\n4095.75\n" });
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn same_value_edit_after_read_cannot_restore_stale_hardware_state() {
+        let (mut app, _) = CenterApp::new(AppConfig { pages: vec![] }, None, None);
+        app.slider_values.insert("Volume".into(), 80.0);
+        let _ = app.update(Message::SliderChanged { key: "Volume".into(), value: 80.0, on_change: None, debounce: false });
+        app.slider_changed_at.insert("Volume".into(), Instant::now() - Duration::from_secs(4));
+        let _ = app.update(Message::CoreLoaded {
+            key: "Volume", previous: Some(80.0), value: Some(10.0), changed_at: None, sunset_active: None,
+        });
+        assert_eq!(app.slider_values["Volume"], 80.0);
+    }
+
+    #[test]
+    fn unrelated_slider_edits_do_not_discard_core_reads() {
+        let (mut app, _) = CenterApp::new(AppConfig { pages: vec![] }, None, None);
+        app.slider_values.insert("Volume".into(), 50.0);
+        let _ = app.update(Message::SliderChanged {
+            key: "Brightness".into(), value: 80.0, on_change: None, debounce: false,
+        });
+        let _ = app.update(Message::CoreLoaded {
+            key: "Volume", previous: Some(50.0), value: Some(60.0), changed_at: None, sunset_active: None,
+        });
+        assert_eq!(app.slider_values["Volume"], 60.0, "an unrelated edit cannot invalidate a Volume read");
+    }
+
+    #[test]
+    fn hidden_core_controls_schedule_no_queries() {
+        let (mut app, task) = CenterApp::new(AppConfig { pages: vec![] }, None, None);
+        assert_eq!(task.units(), 0);
+        assert!(app.core_loading.is_empty());
+        assert_eq!(app.refresh_core().units(), 0);
+        app.closing = true;
+        assert_eq!(app.refresh_visible().units(), 0);
+    }
+
+    #[test]
+    fn boot_queries_start_early_and_deliver_audio_independently() {
+        use iced_futures::futures::{executor::block_on, StreamExt};
+        use std::os::unix::fs::PermissionsExt;
+        const FIXTURE: &str = "DUSKY_CENTER_BOOT_FIXTURE";
+        if let Some(root) = std::env::var_os(FIXTURE) {
+            let root = PathBuf::from(root);
+            let config: AppConfig = toml::from_str("[[pages]]\nid='home'\ntitle='Home'\n[[pages.layout]]\ntype='controls'\n[[pages.layout.items]]\ntype='slider'\n[pages.layout.items.properties]\ntitle='Volume'\n[[pages.layout.items]]\ntype='slider'\n[pages.layout.items.properties]\ntitle='Microphone'").unwrap();
+            let (mut app, task) = CenterApp::boot(config, None, None);
+            // No Iced task has been polled yet: read-only boot work must already start.
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while !root.join("@DEFAULT_AUDIO_SOURCE@").exists() {
+                assert!(Instant::now() < deadline, "boot query did not start eagerly");
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            let mut stream = iced_runtime::task::into_stream(task).unwrap();
+            let mut order = Vec::new();
+            while let Some(action) = block_on(stream.next()) {
+                if let iced_runtime::Action::Output(message) = action {
+                    let core_reply = matches!(&message, Message::CoreLoaded { .. });
+                    if let Message::CoreLoaded { key, .. } = &message {
+                        order.push((*key).to_string());
+                    }
+                    let _ = app.update(message);
+                    if core_reply && order == ["Microphone"] {
+                        assert!((app.slider_values["Microphone"] - 60.0).abs() < 0.001);
+                        assert!(app.core_loading.contains("Volume"));
+                        assert!(!app.core_loading.contains("Microphone"));
+                        // Only the still-running category is suppressed on the next cycle.
+                        assert_eq!(app.refresh_core().units(), 1);
+                    }
+                }
+            }
+            assert_eq!(order, ["Microphone", "Volume"]);
+            assert_eq!(app.slider_values["Volume"], 40.0);
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("dusky-center-boot-{}", std::process::id()));
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let wpctl = bin.join("wpctl");
+        std::fs::write(&wpctl, concat!("#!/usr/bin/bash\n",
+            "printf started > \"$DUSKY_CENTER_BOOT_FIXTURE/$2\"\n",
+            "if [[ $2 == @DEFAULT_AUDIO_SINK@ ]]; then /usr/bin/sleep .3; printf 'Volume: 0.40\\n'; else printf 'Volume: 0.60\\n'; fi\n")).unwrap();
+        std::fs::set_permissions(wpctl, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "ui::tests::boot_queries_start_early_and_deliver_audio_independently", "--nocapture"])
+            .env(FIXTURE, &root).env("PATH", &bin).output().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+        assert!(result.status.success(), "{}{}", String::from_utf8_lossy(&result.stdout), String::from_utf8_lossy(&result.stderr));
+    }
+
+    #[test]
     fn hardware_refresh_is_deferred_and_cannot_overwrite_a_released_edit() {
-        let (mut app, _task) = CenterApp::new(AppConfig { pages: vec![] }, None, None);
-        assert!(app.core_loading);
-        assert!(app.slider_values.is_empty(), "hardware queries must be deferred to the task");
+        let config: AppConfig = toml::from_str("[[pages]]\nid='home'\ntitle='Home'\n[[pages.layout]]\ntype='controls'\n[[pages.layout.items]]\ntype='slider'\n[pages.layout.items.properties]\ntitle='Volume'\n[[pages.layout.items]]\ntype='slider'\n[pages.layout.items.properties]\ntitle='Microphone'").unwrap();
+        let (mut app, _task) = CenterApp::new(config, None, None);
+        assert_eq!(app.core_loading.len(), 2);
+        assert_eq!(app.slider_values["Volume"], 0.0, "hardware queries must be deferred to the task");
         assert_eq!(app.refresh_core().units(), 0, "only one hardware poll may run");
         app.slider_values.insert("Volume".into(), 80.0);
         let _ = app.update(Message::CoreLoaded {
-            revision: 0,
-            values: vec![("Volume".into(), Some(50.0), Some(40.0)),
-                         ("Microphone".into(), None, Some(60.0))],
-            sunset_active: true,
+            key: "Volume", previous: Some(50.0), value: Some(40.0), changed_at: None, sunset_active: None,
+        });
+        let _ = app.update(Message::CoreLoaded {
+            key: "Microphone", previous: Some(0.0), value: Some(60.0), changed_at: None, sunset_active: Some(true),
         });
         assert_eq!(app.slider_values["Volume"], 80.0);
-        assert_eq!(app.slider_values["Microphone"], 60.0);
+        assert!((app.slider_values["Microphone"] - 60.0).abs() < 0.001);
         assert!(app.sunset_active);
-        assert!(!app.core_loading);
+        assert!(app.core_loading.is_empty());
     }
 
     #[test]
@@ -3610,8 +3774,7 @@ mod tests {
         let _ = app.update(Message::SliderChanged { key: "Night Light".into(), value: 40.0, on_change: None, debounce: false });
         assert_eq!(app.pending_sliders["Night Light"].0, 40.0);
         let _ = app.update(Message::CoreLoaded {
-            revision: 0,
-            values: vec![("Night Light".into(), Some(40.0), Some(10.0))], sunset_active: true,
+            key: "Night Light", previous: Some(40.0), value: Some(10.0), changed_at: None, sunset_active: Some(true),
         });
         assert_eq!(app.slider_values["Night Light"], 40.0);
         let _ = app.update(Message::CloseApp);
@@ -3804,7 +3967,8 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         if let Some(root) = std::env::var_os("DUSKY_WORKER_FIXTURE") {
             let root = std::path::PathBuf::from(root);
-            let (mut app, initial) = CenterApp::new(AppConfig { pages: vec![] }, None, None);
+            let config: AppConfig = toml::from_str("[[pages]]\nid='home'\ntitle='Home'\n[[pages.layout]]\ntype='controls'\n[[pages.layout.items]]\ntype='slider'\n[pages.layout.items.properties]\ntitle='Volume'\n[[pages.layout.items]]\ntype='slider'\n[pages.layout.items.properties]\ntitle='Microphone'\n[[pages.layout.items]]\ntype='slider'\n[pages.layout.items.properties]\ntitle='Night Light'").unwrap();
+            let (mut app, initial) = CenterApp::new(config, None, None);
             let actions = block_on(iced_runtime::task::into_stream(initial).unwrap().collect::<Vec<_>>());
             for action in actions {
                 if let iced_runtime::Action::Output(message) = action { let _ = app.update(message); }
@@ -3865,14 +4029,14 @@ mod tests {
             assert_eq!(std::fs::read_to_string(root.join("brightness-writes")).unwrap(), "set 10%\nset 80%\n");
             app.sync_slider("Brightness", 10.0);
             assert_eq!(app.slider_values["Brightness"], 80.0, "recent writes must resist hardware readback lag");
-            let revision = app.slider_revision;
+            let old_change = app.slider_changed_at.get("Brightness").copied();
             app.slider_changed_at.insert("Brightness".into(), Instant::now() - Duration::from_secs(4));
             let _ = app.update(Message::CoreLoaded {
-                revision: revision - 1, values: vec![("Brightness".into(), Some(80.0), Some(10.0))], sunset_active: true,
+                key: "Brightness", previous: Some(80.0), value: Some(10.0), changed_at: old_change, sunset_active: Some(true),
             });
             assert_eq!(app.slider_values["Brightness"], 80.0, "old polls must be rejected even after the grace period");
             let _ = app.update(Message::CoreLoaded {
-                revision, values: vec![("Brightness".into(), Some(80.0), Some(79.0))], sunset_active: true,
+                key: "Brightness", previous: Some(80.0), value: Some(79.0), changed_at: app.slider_changed_at.get("Brightness").copied(), sunset_active: Some(true),
             });
             assert_eq!(app.slider_values["Brightness"], 79.0, "fresh external changes must still be observed");
             // Simulate reopening after the completed close before testing reload.
@@ -3894,7 +4058,7 @@ mod tests {
             std::fs::write(root.join("dusky_config.toml"), "pages = [").unwrap();
             let _ = app.update(Message::ReloadConfig);
             assert!(app.action_error.as_ref().unwrap().starts_with("Reload:"));
-            assert!(app.config.pages.is_empty());
+            assert_eq!(app.config.pages[0].id, "home");
             assert_eq!(app.dynamic_options["Choice"], ["Old dynamic"]);
             assert_eq!(app.theme, valid_theme);
             std::fs::write(root.join("dusky_config.toml"), "[[pages]]\nid='fixture'\ntitle='Fixture'\n").unwrap();

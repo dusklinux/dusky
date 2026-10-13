@@ -74,8 +74,8 @@ TOML is resolved in this order:
 
 Ctrl+R reloads configuration and colors. Ctrl+F opens search. All 18 pages are
 parsed from TOML; supported widgets are rendered by `src/ui.rs`. See
-[AUDIT.md](AUDIT.md) for current findings and remaining migration gaps; parsing a property does not mean its
-behavior has been implemented.
+[PERFORMANCE_REVIEW.md](PERFORMANCE_REVIEW.md) for the startup/runtime review and
+verification limits. Parsing a property does not mean its behavior has been implemented.
 
 Home uses `type = "controls"` sections named Audio and Display. Audio contains
 output volume and microphone input level (0–100%, targeting WirePlumber's
@@ -130,3 +130,36 @@ A failed parse or semantic validation keeps the current configuration and
 displays the error. Reload preserves the selected page by ID. Temporary
 missing or malformed generated palettes retain the current colors during polling
 and reload; startup still uses the built-in palette if no valid colors exist.
+
+## Startup and responsiveness
+
+Read-only boot queries start before graphics initialization on four bounded
+blocking workers. Two separate Iced workers keep timers and subscriptions
+responsive. Volume, microphone, brightness and Night Light publish independent
+results; each visible hardware control permits one outstanding read. Controls
+outside the current page/subpage or inside collapsed expanders schedule no new
+hardware queries. Existing slider write coalescing,
+per-control stale-read protection and shutdown draining remain in place.
+
+The existing Vulkan-first/Wayland-EGL compositor is connected through explicit
+renderer types. GPU discovery follows the compositor's DRM order when available,
+and otherwise filters only single-card systems; ambiguous multi-GPU systems
+retain normal discovery. Explicit power/offload/loader preferences bypass
+filtering. Standard matching ICDs avoid probing unrelated drivers; unknown
+vendors or ICD filenames
+keep normal discovery. Runtime directories are verified as tmpfs and selected
+once per invocation. Automatic GPU tuning stays within Center; child commands
+retain session preferences. Subprocess waits use pollable Linux process
+descriptors, and normal
+exit cleans up still-active finite-command groups after writes drain. Detached
+application launchers remain independent.
+
+To trace configuration, generator expansion, compositor setup, first frame
+submission and asynchronous query completion:
+
+```bash
+DUSKY_CENTER_TRACE=1 ~/.local/bin/dusky-center
+```
+
+See [PERFORMANCE_REVIEW.md](PERFORMANCE_REVIEW.md) for measurements, test coverage,
+transfer decisions and the remaining hardware/ISO verification limits.

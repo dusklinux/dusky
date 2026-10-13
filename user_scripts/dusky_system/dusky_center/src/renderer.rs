@@ -1,7 +1,7 @@
 //! Initialize EGL only when Vulkan compositor creation fails.
 //!
-//! The layer-shell runner aborts on compositor errors, so fallback must happen
-//! here. Rendering stays with Iced's wgpu renderer; these newtypes only select
+//! The application uses this compositor through its explicit renderer type.
+//! Rendering stays with Iced's wgpu renderer; these newtypes only select
 //! its compositor through Iced's public traits and forward drawing unchanged.
 
 use iced_core::{Background, Color, Font, Pixels, Point, Rectangle, Size, Transformation};
@@ -12,16 +12,16 @@ static STARTUP: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::n
 static FIRST_PRESENT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 pub fn trace_startup() {
-    if std::env::var_os("DUSKY_TRAY_TRACE").is_some() {
+    if std::env::var_os("DUSKY_CENTER_TRACE").is_some() {
         let _ = STARTUP.set(std::time::Instant::now());
         FIRST_PRESENT.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
-pub fn trace_phase(phase: &str) {
+pub fn trace_phase(phase: impl std::fmt::Display) {
     if let Some(start) = STARTUP.get() {
         eprintln!(
-            "tray {phase}: {:.1} ms",
+            "center {phase}: {:.1} ms",
             start.elapsed().as_secs_f64() * 1000.0
         );
     }
@@ -79,7 +79,10 @@ impl graphics::Compositor for Compositor {
         match iced_wgpu::window::Compositor::request(settings, Some(window.clone()), shell.clone())
             .await
         {
-            Ok(compositor) => Ok(Self(compositor)),
+            Ok(compositor) => {
+                trace_phase("vulkan-ready");
+                Ok(Self(compositor))
+            }
             Err(vulkan_error) => {
                 // The failed request has dropped its instance/surface/device.
                 // Do not mutate the environment now that workers are running.
@@ -87,7 +90,10 @@ impl graphics::Compositor for Compositor {
                 settings.backends = wgpu::Backends::GL;
                 iced_wgpu::window::Compositor::request(settings, Some(window), shell)
                     .await
-                    .map(Self)
+                    .map(|compositor| {
+                        trace_phase("egl-ready");
+                        Self(compositor)
+                    })
                     .map_err(|gl_error| {
                         graphics::Error::List(vec![vulkan_error.into(), gl_error.into()])
                     })
@@ -136,7 +142,7 @@ impl graphics::Compositor for Compositor {
             && let Some(start) = STARTUP.get()
         {
             eprintln!(
-                "tray first-present: {:.1} ms",
+                "center first-present: {:.1} ms",
                 start.elapsed().as_secs_f64() * 1000.0
             );
         }
@@ -277,5 +283,144 @@ impl iced_core::svg::Renderer for Renderer {
     fn draw_svg(&mut self, mut svg: iced_core::svg::Svg, bounds: Rectangle, clip: Rectangle) {
         svg.opacity *= self.1;
         self.0.draw_svg(svg, bounds, clip);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires a working Vulkan or Wayland EGL adapter"]
+    fn forwarding_matches_native_renderer_pixels() {
+        use iced_core::renderer::Headless as _;
+        fn scene<R>(renderer: &mut R)
+        where
+            R: iced_core::Renderer + text::Renderer<Font = Font> + iced_core::svg::Renderer,
+        {
+            let viewport = Rectangle::with_size(Size::new(160.0, 90.0));
+            renderer.reset(viewport);
+            renderer.start_layer(Rectangle {
+                x: 8.0,
+                y: 5.0,
+                width: 130.0,
+                height: 72.0,
+            });
+            renderer.start_transformation(
+                Transformation::translate(7.0, 3.0) * Transformation::scale(1.1),
+            );
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds: Rectangle {
+                        x: 0.0,
+                        y: 0.0,
+                        width: 150.0,
+                        height: 90.0,
+                    },
+                    border: iced_core::Border {
+                        color: Color::from_rgb(0.9, 0.2, 0.1),
+                        width: 2.0,
+                        radius: 9.0.into(),
+                    },
+                    ..Default::default()
+                },
+                Color::from_rgba(0.2, 0.4, 0.7, 0.65),
+            );
+            renderer.fill_text(
+                text::Text {
+                    content: "81 • Audio".to_string(),
+                    bounds: Size::new(120.0, 30.0),
+                    size: Pixels(17.0),
+                    line_height: text::LineHeight::default(),
+                    font: Font::MONOSPACE,
+                    align_x: text::Alignment::Default,
+                    align_y: iced_core::alignment::Vertical::Top,
+                    shaping: text::Shaping::Advanced,
+                    wrapping: text::Wrapping::None,
+                },
+                Point::new(14.0, 10.0),
+                Color::WHITE,
+                viewport,
+            );
+            renderer.draw_svg(iced_core::svg::Svg::new(iced_core::svg::Handle::from_memory(
+                br#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path fill="white" d="M2 2h20v20H2z"/></svg>"#.to_vec()
+            )).color(Color::from_rgb(0.8, 0.9, 0.3)),
+                Rectangle { x: 60.0, y: 45.0, width: 24.0, height: 24.0 }, viewport);
+            renderer.end_transformation();
+            renderer.end_layer();
+        }
+        let mut native = iced_futures::futures::executor::block_on(
+            <iced_wgpu::Renderer as renderer::Headless>::new(Font::MONOSPACE, Pixels(17.0), None),
+        )
+        .unwrap();
+        let mut wrapper = iced_futures::futures::executor::block_on(Renderer::new(
+            Font::MONOSPACE,
+            Pixels(17.0),
+            None,
+        ))
+        .unwrap();
+        for scale in [1.0_f32, 1.6, 2.0] {
+            scene(&mut native);
+            scene(&mut wrapper);
+            let size = Size::new((160.0 * scale).ceil() as u32, (90.0 * scale).ceil() as u32);
+            assert_eq!(
+                renderer::Headless::screenshot(&mut native, size, scale, Color::BLACK),
+                wrapper.screenshot(size, scale, Color::BLACK),
+                "renderer forwarding must preserve clipping, transforms, text, quads and SVG pixels at {scale}"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "requires a working Vulkan or Wayland EGL adapter"]
+    fn configured_pages_render_at_fractional_scale() {
+        use iced_core::{Layout, Theme, layout, mouse, widget::Tree};
+        use iced_core::{Renderer as _, renderer::Headless as _};
+        let mut renderer = iced_futures::futures::executor::block_on(Renderer::new(
+            Font::with_name("Atkinson Hyperlegible"),
+            Pixels(16.0),
+            None,
+        ))
+        .expect("a GPU adapter is required");
+        let config = crate::config::AppConfig::load_from_path(
+            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("dusky_config.toml"),
+        )
+        .unwrap();
+        let (mut app, _initial) = crate::ui::CenterApp::new(config, None, None);
+        let viewport = Rectangle::with_size(Size::new(670.0, 720.0));
+        for index in 0..app.config.pages.len() {
+            let _ = app.update(crate::ui::Message::SelectPage(index));
+            for scale in [1.0_f32, 1.6, 2.0] {
+                let mut content = app.view();
+                let mut tree = Tree::new(&content);
+                let node = content.as_widget_mut().layout(
+                    &mut tree,
+                    &renderer,
+                    &layout::Limits::new(viewport.size(), viewport.size()),
+                );
+                renderer.reset(viewport);
+                content.as_widget().draw(
+                    &tree,
+                    &mut renderer,
+                    &Theme::Dark,
+                    &renderer::Style::default(),
+                    Layout::new(&node),
+                    mouse::Cursor::Unavailable,
+                    &viewport,
+                );
+                let size = Size::new((670.0 * scale).ceil() as u32, (720.0 * scale).ceil() as u32);
+                let pixels = renderer.screenshot(size, scale, app.theme.bg);
+                assert_eq!(pixels.len(), size.width as usize * size.height as usize * 4);
+                let background = &pixels[..4];
+                assert!(
+                    pixels
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .any(|pixel| pixel != background),
+                    "page {index} must render content at scale {scale}"
+                );
+            }
+        }
     }
 }

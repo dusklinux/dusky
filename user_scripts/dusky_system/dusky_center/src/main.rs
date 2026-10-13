@@ -7,6 +7,7 @@ pub mod appearance;
 pub mod backend;
 pub mod config;
 pub mod icons;
+mod gpu;
 pub mod renderer;
 pub mod theme;
 pub mod ui;
@@ -19,8 +20,9 @@ struct BackgroundExecutor(iced_futures::futures::executor::ThreadPool);
 
 impl iced_futures::Executor for BackgroundExecutor {
     fn new() -> Result<Self, iced_futures::futures::io::Error> {
+        backend::worker::initialize()?;
         iced_futures::futures::executor::ThreadPool::builder()
-            .pool_size(4)
+            .pool_size(2)
             .name_prefix("center-worker")
             .create()
             .map(Self)
@@ -126,6 +128,8 @@ fn main() -> iced::Result {
         }
     };
 
+    gpu::optimize_environment();
+
     let app_config = match AppConfig::load() {
         Ok(cfg) => cfg,
         Err(err) => {
@@ -133,6 +137,8 @@ fn main() -> iced::Result {
             std::process::exit(1);
         }
     };
+
+    renderer::trace_phase("config-ready");
 
     let window_settings = iced::window::Settings {
         size: iced::Size::new(win_width, win_height),
@@ -149,8 +155,8 @@ fn main() -> iced::Result {
 
     let initial_page_c = initial_page.clone();
     let initial_hover_c = initial_hover.clone();
-    iced::application(
-        move || CenterApp::new(app_config.clone(), initial_page_c.clone(), initial_hover_c.clone()),
+    let result = iced::application(
+        move || CenterApp::boot(app_config.clone(), initial_page_c.clone(), initial_hover_c.clone()),
         CenterApp::update,
         CenterApp::view,
     )
@@ -161,7 +167,9 @@ fn main() -> iced::Result {
     .subscription(CenterApp::subscription)
     .theme(theme)
     .style(style)
-    .run()
+    .run();
+    backend::cmd::shutdown();
+    result
 }
 
 fn style(app: &CenterApp, _theme: &iced_core::Theme) -> iced_core::theme::Style {

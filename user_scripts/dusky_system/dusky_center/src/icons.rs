@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-type Element<'a, Message> = iced::Element<'a, Message>;
+type Element<'a, Message> = iced_core::Element<'a, Message, iced_core::Theme, crate::renderer::Renderer>;
 
 fn is_embedded_control_icon(name: &str) -> bool {
     matches!(

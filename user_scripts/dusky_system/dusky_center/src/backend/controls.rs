@@ -490,6 +490,7 @@ pub fn launch(action: &ActionConfig) -> Result<(), String> {
         return Ok(());
     }
     let mut proc = Command::new("systemd-run");
+    crate::gpu::inherit_session_environment(&mut proc);
     proc.args([
         "--user",
         "--scope",
