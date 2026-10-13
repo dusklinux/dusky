@@ -33,7 +33,7 @@ class ScreentimeDaemon:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
         # A second writer must not silently replace a running daemon's history.
-        self._instance_lock = (DATA_DIR / "daemon.lock").open("a")
+        self._instance_lock = (DATA_DIR / "daemon.lock").open("ab")
         try:
             fcntl.flock(self._instance_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:

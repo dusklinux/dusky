@@ -106,22 +106,28 @@ def ansi_color(hex_str: str, bold: bool = False) -> str:
     return f"{prefix}38;2;{r};{g};{b}m"
 
 
-def load_theme_colors() -> dict[str, str]:
+def _read_theme_colors() -> dict[str, str]:
+    """Read a complete theme; only a missing file selects the defaults."""
     colors = DEFAULT_COLORS.copy()
-    if THEME_FILE.exists():
-        try:
-            with open(THEME_FILE, "r", encoding="utf-8") as f:
-                user_colors = json.load(f)
-                if isinstance(user_colors, dict):
-                    for key, fallback in DEFAULT_COLORS.items():
-                        if key in user_colors:
-                            colors[key] = _safe_color(user_colors[key], fallback)
-                    for key, val in user_colors.items():
-                        if key not in colors:
-                            colors[key] = _safe_color(val, DEFAULT_COLORS["fg"])
-        except Exception as e:
-            log_error(f"load_theme_colors error: {e}")
+    try:
+        with THEME_FILE.open(encoding="utf-8") as f:
+            user_colors = json.load(f)
+    except FileNotFoundError:
+        return colors
+    if not isinstance(user_colors, dict):
+        raise ValueError("theme must be an object")
+    for key, val in user_colors.items():
+        colors[key] = _safe_color(val, DEFAULT_COLORS.get(key, DEFAULT_COLORS["fg"]))
     return colors
+
+
+def load_theme_colors() -> dict[str, str]:
+    """Standalone previews can use defaults when the theme is unreadable."""
+    try:
+        return _read_theme_colors()
+    except (OSError, ValueError) as e:
+        log_error(f"load_theme_colors error: {e}")
+        return DEFAULT_COLORS.copy()
 
 
 def load_screentime_data() -> dict[str, dict[str, Any]]:
@@ -365,7 +371,7 @@ def render_fzf_preview(app_class: str, range_key: str = "today") -> None:
     duration = info["duration"]
     share = duration / total_time * 100 if total_time else 0
     console.print(Text(single_line(info["name"]), style=f"bold {colors['accent']}", no_wrap=True, overflow="ellipsis"))
-    console.print(Text(f"{simplify_category(info['category'])} · {label}", style=colors['warning'], no_wrap=True, overflow="ellipsis"))
+    console.print(Text(f"{single_line(simplify_category(info['category']))} · {label}", style=colors['warning'], no_wrap=True, overflow="ellipsis"))
     console.print(Text(f"{format_duration(duration)} · {share:.1f}% of total · {info['sessions']} sessions", style=colors['success'], no_wrap=True, overflow="ellipsis"))
     if console.width >= 80:
         console.print(Text(f"Class: {single_line(target_class)} · Icon: {single_line(info['icon'])}", style=colors['muted'], no_wrap=True, overflow="ellipsis"))
@@ -726,7 +732,7 @@ def render_details_layout(
     if not target_info:
         empty_grid = Table.grid(expand=True)
         empty_grid.add_row(period_tabs)
-        empty_grid.add_row(Text(f"\n  ✖ No screentime data recorded for '{app_class_clean}' in period: {r_name}\n", style=f"bold {warning}"))
+        empty_grid.add_row(Text(f"\n  ✖ No screentime data recorded for '{single_line(app_class_clean)}' in period: {r_name}\n", style=f"bold {warning}"))
         empty_grid.add_row(Text("  [Esc/Enter/q] Back to Dashboard   [1-5] Switch Period", style=f"bold {accent}"))
         panel = Panel(
             empty_grid,
@@ -738,8 +744,8 @@ def render_details_layout(
         return panel, 0, 0, 0
 
     name = single_line(target_info.get("name", app_class_clean))
-    cat = simplify_category(target_info.get("category", "Application"))
-    icon = target_info.get("icon", "")
+    cat = single_line(simplify_category(target_info.get("category", "Application")))
+    icon = single_line(target_info.get("icon", ""))
     dur = target_info.get("duration", 0)
     sessions = target_info.get("sessions", 1)
     share = (dur / total_time * 100.0) if total_time > 0 else 0.0
@@ -751,7 +757,7 @@ def render_details_layout(
     meta_line.append(f"{name}", style=f"bold {success}" if is_active else f"bold {fg}")
     meta_line.append(f" ({cat})", style=f"dim {warning}")
     meta_line.append("   Class: ", style=f"dim {muted}")
-    meta_line.append(f"{app_class_clean}", style=f"{fg}")
+    meta_line.append(single_line(app_class_clean), style=f"{fg}")
     meta_line.append("   Icon: ", style=f"dim {muted}")
     meta_line.append(f"{icon or 'default'}", style=f"{success}")
 
@@ -1079,6 +1085,7 @@ class _DashCache:
         self.colors = DEFAULT_COLORS.copy()
         self.raw_stamp: tuple[int, int, int] | None = None
         self.colors_stamp: tuple[int, int, int] | None = None
+        self.colors_error = ""
         self.error = ""
         self.summaries: dict[str, tuple[dict[str, dict[str, Any]], float, str]] = {}
         self.summary_date = datetime.now().date()
@@ -1130,12 +1137,17 @@ class _DashCache:
         if force or (t - self.colors_ts) >= 5.0:
             try:
                 stamp = self._stamp(THEME_FILE)
-                if force or stamp != self.colors_stamp:
+                if force or stamp != self.colors_stamp or self.colors_error:
+                    colors = _read_theme_colors()
                     self.colors_stamp = stamp
-                    self.colors = load_theme_colors()
-                    changed = True
-            except OSError as error:
-                log_error(f"Cannot read theme: {error}")
+                    changed |= colors != self.colors
+                    self.colors = colors
+                    self.colors_error = ""
+            except (OSError, ValueError) as error:
+                message = str(error)
+                if message != self.colors_error:
+                    log_error(f"Cannot read theme: {message}")
+                self.colors_error = message
             self.colors_ts = t
         today = datetime.now().date()
         if today != self.summary_date:
@@ -1147,27 +1159,15 @@ class _DashCache:
 
 def _pause_live(live: Live, fd: int, old_settings: list[Any]) -> None:
     """Leave alt-screen + cbreak so a child process (FZF) can own the TTY."""
-    try:
-        live.stop()
-    except Exception as e:
-        log_error(f"live.stop: {e}")
+    live.stop()
     _write_tty(_MOUSE_OFF + _CURSOR_SHOW)
-    try:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-    except Exception as e:
-        log_error(f"pause termios restore: {e}")
+    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 
 def _resume_live(live: Live, fd: int) -> None:
-    try:
-        set_terminal_cbreak(fd)
-    except Exception as e:
-        log_error(f"resume cbreak: {e}")
+    set_terminal_cbreak(fd)
     _write_tty(_MOUSE_ON + _CURSOR_HIDE)
-    try:
-        live.start(refresh=True)
-    except Exception as e:
-        log_error(f"live.start: {e}")
+    live.start(refresh=True)
 
 
 def run_live_dashboard() -> None:
