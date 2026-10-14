@@ -22,7 +22,7 @@ an already authorized key. Verify the SSH host fingerprint when first connecting
 
 Setup enables **Settings → Duskie → Phone clipboard sharing → Phone clipboard
 sync**, creates `dusky/phone_sync.json` under your XDG configuration directory,
-and enables `dusky-phone-sync.service` for your user’s graphical session.
+and enables `dusky_phone_sync.service` for your user’s graphical session.
 The service uses the script directory from which setup was run; keep it installed.
 
 ### USB
@@ -60,7 +60,7 @@ that endpoint to verify its fingerprint before relying on automatic fallback.
 ## Stop / remove
 
 ```sh
-systemctl --user stop dusky-phone-sync.service
+systemctl --user stop dusky_phone_sync.service
 python3 setup.py uninstall
 ```
 
@@ -71,7 +71,7 @@ Turning the phone switch off closes its listener and disconnects an active sessi
 
 ```sh
 python3 setup.py status
-journalctl --user -u dusky-phone-sync.service -n 30 --no-pager
+journalctl --user -u dusky_phone_sync.service -n 30 --no-pager
 python3 test_phone_sync.py
 ```
 

@@ -162,7 +162,7 @@ class Install(unittest.TestCase):
             identity = root / "key"
             identity.write_text("fixture", encoding="utf-8")
             configuration = root / "config/dusky/phone_sync.json"
-            service = root / "config/systemd/user/dusky-phone-sync.service"
+            service = root / "config/systemd/user/dusky_phone_sync.service"
             existing = root / "config/systemd/user/dusky_clipboard.service"
             existing.parent.mkdir(parents=True)
             existing.write_bytes(b"existing service remains identical\n")

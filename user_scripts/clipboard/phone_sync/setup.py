@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import sys
 
-UNIT = "dusky-phone-sync.service"
+UNIT = "dusky_phone_sync.service"
 ROOT = Path(__file__).resolve().parent
 CONFIG_HOME = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
 CONFIG = CONFIG_HOME / "dusky/phone_sync.json"
