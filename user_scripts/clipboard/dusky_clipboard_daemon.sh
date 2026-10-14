@@ -32,12 +32,17 @@ load_env() {
 # A watcher starts this callback for each selection event. Keep the watchers
 # alive across storage switches: reconnecting would import the old selection.
 if [[ ${1:-} == --store ]]; then
-    [[ ${CLIPBOARD_STATE:-} == data ]] || exit 0
+    case ${CLIPBOARD_STATE:-} in
+        data|sensitive) ;;
+        *) exit 0 ;;
+    esac
     settings="${XDG_CONFIG_HOME:-$HOME/.config}/dusky/settings"
     mkdir -p -- "$settings"
     exec {backend_fd}<>"$settings/.clipboard_backend.lock"
     flock --shared "$backend_fd"
     load_env
+    # Capture app-marked private copies too; cliphist otherwise skips sensitive.
+    export CLIPBOARD_STATE=data
     # Retain the shared lock until cliphist has consumed and committed stdin.
     exec cliphist store
 elif (( $# )); then

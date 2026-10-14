@@ -608,7 +608,9 @@ from pathlib import Path
 root=Path(os.environ['AUDIT_ROOT'])
 args=sys.argv[1:];kind=args[args.index('--type')+1];cmd=args[args.index('--watch')+1:]
 def store(path):
-    result=subprocess.run(cmd,input=path.read_bytes(),env=os.environ|{'CLIPBOARD_STATE':'data'},capture_output=True)
+    state_file=path.with_suffix('.state')
+    state=state_file.read_text() if state_file.exists() else 'data'
+    result=subprocess.run(cmd,input=path.read_bytes(),env=os.environ|{'CLIPBOARD_STATE':state},capture_output=True)
     if result.returncode:
         (root/'callback-errors').write_bytes(result.stderr)
         sys.exit(result.returncode)
@@ -666,8 +668,9 @@ else:
             env=f.env|{'CLIPHIST_DB_PATH':str(db)}
             ids=[r.split(b'\t',1)[0] for r in run(['cliphist','list'],env).stdout.splitlines()]
             return [run(['cliphist','decode'],env,i+b'\t\n').stdout for i in ids]
-        def emit(kind,n,data):
+        def emit(kind,n,data,state='data'):
             path=f.root/('queue-'+kind)/f'{n:05d}.data'
+            path.with_suffix('.state').write_text(state)
             temp=path.with_suffix('.tmp');temp.write_bytes(data);temp.replace(path)
             return path.with_suffix('.done')
         main_before=process.pid
@@ -675,24 +678,38 @@ else:
         assert payloads(f.db)==[b'initial-selection']
         switch('disk')
         assert payloads(disk)==[] and payloads(f.db)==[b'initial-selection']
-        done=emit('text',0,b'copied-in-disk');wait_for(done.exists)
-        done=emit('image',0,png());wait_for(done.exists)
+        done=emit('text',0,b'copied-in-disk','sensitive');wait_for(done.exists)
+        done=emit('image',0,png(),'sensitive');wait_for(done.exists)
         assert b'copied-in-disk' in payloads(disk) and png() in payloads(disk)
         switch('ram')
         assert b'copied-in-disk' not in payloads(f.db) and png() not in payloads(f.db)
-        done=emit('text',1,b'copied-in-ram');wait_for(done.exists)
+        done=emit('text',1,b'copied-in-ram','sensitive');wait_for(done.exists)
+        done=emit('image',1,png(),'sensitive');wait_for(done.exists)
         assert b'copied-in-ram' in payloads(f.db) and b'copied-in-ram' not in payloads(disk)
-        print('PASS persistence: real text/image callbacks route to RAM/disk; old selection is never re-imported')
+        assert png() in payloads(f.db)
+        print('PASS persistence: sensitive text/image callbacks route to RAM/disk; old selection is never re-imported')
         lock=f.settings/'.clipboard_backend.lock'
         with open(lock,'r+b') as handle:
             fcntl.flock(handle,fcntl.LOCK_EX)
-            callback=subprocess.Popen([str(ROOT/'dusky_clipboard_daemon.sh'),'--store'],env=f.env|{'CLIPBOARD_STATE':'data'},stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+            callback=subprocess.Popen([str(ROOT/'dusky_clipboard_daemon.sh'),'--store'],env=f.env|{'CLIPBOARD_STATE':'sensitive'},stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
             callback.stdin.write(b'queued-copy');callback.stdin.close();callback.stdin=None
             time.sleep(.08);assert callback.poll() is None
             (f.settings/'cliphist_db_env').write_text(f'CLIPHIST_DB_PATH="{disk}"\n')
         _,error=callback.communicate(timeout=5);assert callback.returncode==0,error
         assert b'queued-copy' in payloads(disk) and b'queued-copy' not in payloads(f.db)
         print('PASS store callback waits for switch lock and reads destination after acquiring it')
+        # Exercise both states against both backends using real cliphist bytes.
+        values=[b'no-final-newline', b'trailing-newlines\n\n',
+                'Unicode 界 café 🧑‍💻 नमस्ते'.encode(), b'\x00\xffbinary\x00',
+                b'large-'+b'x'*220000, png()]
+        for mode,db in [('ram',f.db),('disk',disk)]:
+            switch(mode)
+            for state in ('data','sensitive'):
+                for value in values:
+                    run([str(ROOT/'dusky_clipboard_daemon.sh'),'--store'],
+                        f.env|{'CLIPBOARD_STATE':state},value)
+                    assert payloads(db)[0]==value, (mode,state,value[:40])
+        print('PASS data/sensitive exact-byte roundtrips in RAM/disk: Unicode, newlines, NUL, binary, 220KB and PNG')
         state_paths=[f.settings/'cliphist_db_env',f.settings/'clipboard_persistance']
         for failure in ['fail-once','fail-health-after-set']:
             switch('ram');before=[p.read_bytes() for p in state_paths]
@@ -707,7 +724,7 @@ else:
         def produce():
             completions=[]
             for i,data in enumerate(sorted(expected)):
-                completions.append(emit('text',i+10,data));time.sleep(.002)
+                completions.append(emit('text',i+10,data,'sensitive' if i%2 else 'data'));time.sleep(.002)
             for done in completions:wait_for(done.exists,seconds=20)
         def frontend_switches():
             selector=ROOT.parent/'arch_setup_scripts/scripts/460_switch_clipboard.sh'
@@ -741,13 +758,16 @@ else:
             assert state_lock.stat().st_ino==state_inode
             assert not list(f.settings.glob('.clipboard-mode.*'))
             assert not list((f.root/'cache/rofi-cliphist/thumbs').glob('.menu.*'))
-            print('PASS combined stress: 200 storage switches, 400 copies, 256 frontend switches, 256 Vim updates and 32 Rofi menus; no lost settings/payloads, duplicate copies or watcher restarts')
+            print('PASS combined stress: 200 storage switches, 400 mixed data/sensitive copies, 256 frontend switches, 256 Vim updates and 32 Rofi menus; no lost settings/payloads, duplicate copies or watcher restarts')
         else:
-            print('PASS 80 concurrent switches + 100 new copies: no lost copies, cross-database duplicates, or watcher restarts')
-        for state in ('sensitive','clear','nil',''):
-            run([str(ROOT/'dusky_clipboard_daemon.sh'),'--store'],f.env|{'CLIPBOARD_STATE':state},b'must-not-store')
+            print('PASS 80 concurrent switches + 100 mixed data/sensitive copies: no lost copies, cross-database duplicates, or watcher restarts')
+        for state in ('clear','nil','','unknown',None):
+            env=f.env.copy()
+            env.pop('CLIPBOARD_STATE',None)
+            if state is not None:env['CLIPBOARD_STATE']=state
+            run([str(ROOT/'dusky_clipboard_daemon.sh'),'--store'],env,b'must-not-store')
         assert set(payloads(f.db))==ram and set(payloads(disk))==disc
-        print('PASS sensitive/clear/non-data events neither store nor delete history')
+        print('PASS clear/nil/empty/unset/unknown states neither store nor delete history')
         switch('ram');before=[p.read_bytes() for p in state_paths]
         result=switch('disk','--migrate',check=False)
         assert result.returncode==1 and b'destination already exists' in result.stderr
