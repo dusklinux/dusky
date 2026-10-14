@@ -74,6 +74,12 @@ configuration updates use property events and a coalesced one-shot callback.
 Audio-only files also include music: disable trimming when pauses or very quiet
 passages are part of the recording you want to hear.
 
+## Optional standalone preprocessing
+
+The separate [audio preprocessing tool](../audio/trim_silence_preprocess/README.md)
+uses FFmpeg to prepare a RAM-backed audio file. MPV is only its optional player.
+Normal MPV playback continues to use the live Lua filter.
+
 ## Verification
 
 Requires Python 3.15+, mpv and ffmpeg for tests only:

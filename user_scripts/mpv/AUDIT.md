@@ -78,3 +78,8 @@ perceived sound quality for every recording or hardware output. The user's
 positive listening result supports retaining the existing levels. Their settings
 are preserved on deployment, and Max Plus is optional. Final ISO package features
 still need verification when the ISO package set is finalized.
+
+## Standalone preprocessing
+
+Preprocessing measurements and tests moved to the separate
+[audio tool audit](../audio/trim_silence_preprocess/AUDIT.md).
