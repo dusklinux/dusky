@@ -122,6 +122,10 @@ CORE_USER_DEFS = {
         "Dusky Clipboard Manager",
         "Unified Wayland clipboard history and persistence daemon (cliphist + wl-clip-persist). Seamlessly records copied text and images to SQLite history, preserves clipboard selections even after source apps close, and supports live RAM/disk persistence switching without reboot.",
     ),
+    "dusky_phone_sync.service": (
+        "Phone Clipboard Sync",
+        "Optional two-way text clipboard sharing with Duskie on iPhone over SSH. Shares only new text copies and works independently of clipboard history.",
+    ),
     "dusky_vdagent.service": (
         "VM Clipboard Sharing",
         "Shares text and images between this Wayland guest and its host through the virt-manager or virt-viewer SPICE console. Enable to start clipboard sharing with graphical sessions; disable to stop it. File sharing is handled separately by the guest's virtiofs mount.",
@@ -350,6 +354,7 @@ CORE_USER_SECTIONS = (
     ("Desktop & Session", (
         "hyprsunset.service", "hypridle.service", "dusky_proximity.service",
         "osd_lock.service", "dusky_polkit.service", "dusky_clipboard.service",
+        "dusky_phone_sync.service",
         "dusky_vdagent.service", "dusky_oom_shield.service", "wireplumber.service",
     )),
     ("Remote Displays & Streaming", (
