@@ -71,17 +71,53 @@ def ssh_command(config: dict, host: str, port: int, action: str) -> list[str]:
 
 
 async def stop_process(process: asyncio.subprocess.Process | None) -> None:
-    if process is None or process.returncode is not None:
+    if process is None:
         return
+
+    async def discard(stream: asyncio.StreamReader) -> None:
+        while await stream.read(65536):
+            pass
+
+    # A full, paused stdout pipe can outlive wait(), or prevent it finishing.
+    # Drain discarded output concurrently without accumulating it in memory.
+    async with asyncio.TaskGroup() as group:
+        for stream in (process.stdout, process.stderr):
+            if stream is not None:
+                group.create_task(discard(stream))
+        if process.returncode is None:
+            try:
+                process.terminate()
+                async with asyncio.timeout(2):
+                    await process.wait()
+            except TimeoutError:
+                process.kill()
+                await process.wait()
+            except ProcessLookupError:
+                await process.wait()
+
+
+async def read_clipboard() -> str | None:
+    # Establish startup state even when the text watcher has no initial offer
+    # (for example, an image). Read once, with bounded bytes and waiting time.
+    process = await asyncio.create_subprocess_exec(
+        "wl-paste", "--no-newline", "--type", "text",
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+        limit=MAX_TEXT + 1)
     try:
-        process.terminate()
-        async with asyncio.timeout(2):
-            await process.wait()
-    except TimeoutError:
-        process.kill()
-        await process.wait()
-    except ProcessLookupError:
-        await process.wait()
+        async with asyncio.timeout(3):
+            try:
+                raw = await process.stdout.readexactly(MAX_TEXT + 1)
+            except asyncio.IncompleteReadError as error:
+                raw = error.partial
+            if len(raw) > MAX_TEXT or await process.wait():
+                return None
+            try:
+                text = raw.decode("utf-8")
+            except UnicodeError:
+                return None
+            return text if text else None
+    finally:
+        await stop_process(process)
 
 
 class Sync:
@@ -89,7 +125,6 @@ class Sync:
         self.config = config
         self.writer: asyncio.StreamWriter | None = None
         self.last_text: str | None = None
-        self.baseline = True
         self.retry_delay = 1
         self.pending: dict[str, asyncio.Future] = {}
         self.copies: asyncio.Queue[str] = asyncio.Queue(maxsize=1)
@@ -102,10 +137,6 @@ class Sync:
             text = message.get("text")
             if message.get("type") != "local" or not isinstance(text, str):
                 return
-            if self.baseline:
-                self.baseline = False
-                self.last_text = text
-                return  # Watching starts with an existing selection, not a copy.
             if not valid_text(text):
                 self.last_text = None
                 return
@@ -181,7 +212,6 @@ class Sync:
                 hello = await read_frame(process.stdout)
             if hello != {"type": "hello", "version": 1, "maxBytes": MAX_TEXT}:
                 raise ValueError("Unsupported phone protocol")
-            self.baseline = False
             self.retry_delay = 1
             self.writer = process.stdin
             logging.info("Connected to iPhone via %s:%d", host, port)
@@ -209,6 +239,7 @@ class Sync:
             self.retry_delay = min(self.retry_delay * 2, 30)
 
     async def run(self) -> None:
+        self.last_text = await read_clipboard()
         self.socket_path.unlink(missing_ok=True)
         server = await asyncio.start_unix_server(self.local, path=self.socket_path, limit=MAX_FRAME + 4)
         self.socket_path.chmod(0o600)

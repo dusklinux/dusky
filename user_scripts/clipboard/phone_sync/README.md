@@ -8,6 +8,8 @@ does **not** enable or install phone sharing.
 
 Requires Python 3.15+, systemd user services, OpenSSH and wl-clipboard 2.3+.
 The iPhone needs Duskie 0.2.9+ and SSH access as `mobile`.
+Use Duskie 0.2.26+ for reliable reconnection when an old Wi-Fi SSH session
+remains half-open: the newest connection replaces it, keeping one active peer.
 
 Create an SSH key if necessary, then run:
 
@@ -51,6 +53,8 @@ that endpoint to verify its fingerprint before relying on automatic fallback.
 - No old clipboard is replayed on startup or reconnect. Copies made while
   disconnected remain local. Rapid Linux copies waiting for transmission collapse
   to the latest clipboard value.
+- Startup takes one size-bounded text snapshot before watching for changes. This
+  also preserves the first new text copy when the initial selection is an image.
 - Both sides suppress echoes; Linux-to-phone updates require acknowledgment.
 - The service waits for events, with reconnect backoff and SSH liveness checks.
   It logs connection state and byte counts, never clipboard contents.
@@ -76,6 +80,15 @@ python3 test_phone_sync.py
 ```
 
 The isolated tests never use the live clipboard, phone, history or services.
+
+For the slower stress checks (real fixture subprocesses and Unix sockets):
+
+```sh
+python3 -X dev -W error test_phone_sync_stress.py
+```
+
+These also leave your real clipboard and phone untouched. See
+[STRESS-TEST.md](STRESS-TEST.md) for the exercised loads and verification limits.
 
 ## Protocol
 

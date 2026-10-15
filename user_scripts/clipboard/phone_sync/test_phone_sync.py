@@ -35,6 +35,15 @@ def reader(*messages):
 
 
 class Framing(unittest.IsolatedAsyncioTestCase):
+    async def test_startup_snapshot(self):
+        for data, status, expected in ((b"old\n\n", 0, "old\n\n"), (b"", 1, None),
+                                       (b"\xff", 0, None), (b"x" * (sync.MAX_TEXT + 1), 0, None)):
+            with self.subTest(status=status, size=len(data)):
+                process = AsyncMock(stdout=reader_from_bytes(data), stderr=None, returncode=0)
+                process.wait.return_value = status
+                with patch.object(sync.asyncio, "create_subprocess_exec", return_value=process):
+                    self.assertEqual(await sync.read_clipboard(), expected)
+
     async def test_unicode_newlines_fragmented(self):
         message = {"type": "copy", "id": str(uuid.uuid4()), "text": "α 👋\n\n"}
         stream = asyncio.StreamReader()
@@ -93,10 +102,58 @@ class Behavior(unittest.IsolatedAsyncioTestCase):
         await self.local("two")
         self.assertEqual(self.sync.copies.get_nowait(), "two")
 
-    async def test_remote_copy_and_echo(self):
-        self.sync.baseline = False
+    async def test_connection_before_initial_selection(self):
+        self.sync.last_text = "existing clipboard"  # Startup snapshot precedes watching/SSH.
+        self.sync.config = {"identity": "/fixture/key", "user": "mobile"}
+        stream = asyncio.StreamReader()
+        stream.feed_data(sync.encode({"type": "hello", "version": 1, "maxBytes": sync.MAX_TEXT}))
+        process = AsyncMock(stdin=Writer(), stdout=stream, stderr=None, returncode=0)
+        with patch.object(sync.asyncio, "create_subprocess_exec", return_value=process):
+            task = asyncio.create_task(self.sync.connect("fixture", 22))
+            try:
+                async with asyncio.timeout(1):
+                    while self.sync.writer is None:
+                        await asyncio.sleep(0)
+                await self.local("existing clipboard")
+                self.assertTrue(self.sync.copies.empty(), "Initial selection was queued as a new copy")
+                self.assertFalse(process.stdin.data)
+                await self.local("fresh copy")
+                await asyncio.sleep(0)
+                message = await sync.read_frame(reader_from_bytes(process.stdin.data))
+                self.assertEqual(message["text"], "fresh copy")
+            finally:
+                task.cancel()
+                stream.feed_eof()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+
+    async def test_first_text_after_initial_image(self):
+        # wl-paste --type text emits no initial callback for image-only data.
         self.sync.writer = Writer()
-        process = AsyncMock()
+        await self.local("first text after image")
+        self.assertFalse(self.sync.copies.empty(), "First real copy was discarded as the baseline")
+        self.assertEqual(self.sync.copies.get_nowait(), "first text after image")
+
+    async def test_reconnect_fallback_and_bounded_backoff(self):
+        self.sync.config = {"host": "fixture-wifi", "port": 22, "usb_port": 2222}
+        delays = []
+
+        async def sleep(delay):
+            delays.append(delay)
+            if len(delays) == 7:
+                raise asyncio.CancelledError
+
+        with patch.object(self.sync, "connect", side_effect=OSError) as connect, \
+             patch.object(sync.asyncio, "sleep", side_effect=sleep):
+            with self.assertRaises(asyncio.CancelledError):
+                await self.sync.reconnect()
+        self.assertEqual(delays, [1, 2, 4, 8, 16, 30, 30])
+        self.assertEqual([call.args for call in connect.call_args_list],
+                         [("fixture-wifi", 22), ("127.0.0.1", 2222)] * 7)
+
+    async def test_remote_copy_and_echo(self):
+        self.sync.writer = Writer()
+        process = AsyncMock(stdout=None, stderr=None)
         process.returncode = 0
         with patch.object(sync.asyncio, "create_subprocess_exec", return_value=process) as launch:
             identifier = str(uuid.uuid4())
@@ -111,7 +168,7 @@ class Behavior(unittest.IsolatedAsyncioTestCase):
     async def test_copy_failure_restores_state(self):
         self.sync.writer = Writer()
         self.sync.last_text = "previous"
-        process = AsyncMock()
+        process = AsyncMock(stdout=None, stderr=None)
         process.returncode = 1
         with patch.object(sync.asyncio, "create_subprocess_exec", return_value=process):
             with self.assertRaises(OSError):
@@ -121,7 +178,6 @@ class Behavior(unittest.IsolatedAsyncioTestCase):
 
     async def test_acknowledgement(self):
         self.sync.writer = Writer()
-        self.sync.baseline = False
         task = asyncio.create_task(self.sync.send_copies())
         try:
             await self.local("new")
