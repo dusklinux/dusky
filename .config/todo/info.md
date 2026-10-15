@@ -81,7 +81,7 @@ While Dusky's `scripts` and `atlas` are interactive TUI pickers, Omarchy uses a 
    ```
    This allows users to search `fzf` by **what the script does**, not just its filename!
 3. **Build a Top-Level `dusky` CLI Dispatcher**:
-   Deploy a central router `/usr/bin/dusky` or `~/.local/bin/dusky`:
+   Deploy a central router `/usr/local/bin/dusky` or `~/.local/bin/dusky`:
    - `dusky` (no args) -> launches `scripts` (interactive fzf picker).
    - `dusky atlas` -> launches `cmd_atlas`.
    - `dusky <category> <script> [args...]` -> directly dispatches to `user_scripts/<category>/<script>` without launching fzf.
@@ -565,7 +565,70 @@ Create a post-install hook in Dusky's setup pipeline (Reference: [`setup-fingerp
 
 ---
 
-## 5. Master Reference File Mapping
+## 5. Hardware Platform & Firmware Quirks Catalog
+
+Omarchy contains automated hardware fixes that Dusky can package for diverse laptop models:
+
+1. **Automated Wireless Regulatory Domain Setup**:
+   - Reference: [`set-wireless-regdom.sh`](file:///mnt/zram1/omarchy-quattro/install/hardware/set-wireless-regdom.sh).
+   - Reads `/etc/localtime`, extracts ISO country code from `/usr/share/zoneinfo/zone.tab`, and configures `/etc/conf.d/wireless-regdom` so 5GHz/6GHz Wi-Fi channels are unlocked legally without user intervention.
+2. **Dell XPS Audio Amps & Haptics Firmware**:
+   - Reference: [`install/hardware/dell-xps13-sidecar-amps.sh`](file:///mnt/zram1/omarchy-quattro/install/hardware/dell-xps13-sidecar-amps.sh) and [`dell-xps-touchpad-haptics.sh`](file:///mnt/zram1/omarchy-quattro/install/hardware/dell-xps-touchpad-haptics.sh).
+   - Restores Cirrus logic speaker amp firmware and activates haptic clickpad engines on XPS models.
+3. **Broadcom BCM43xx Wi-Fi Stabilization**:
+   - Reference: [`install/hardware/fix-bcm43xx.sh`](file:///mnt/zram1/omarchy-quattro/install/hardware/fix-bcm43xx.sh).
+   - Blacklists conflicting `b43` and `ssb` drivers, ensuring clean `broadcom-wl` loading.
+4. **Apple Silicon & Framework 16 Quirks**:
+   - Reference: [`install/hardware/apple/`](file:///mnt/zram1/omarchy-quattro/install/hardware/apple) and [`default/udev/framework16-qmk-hid.rules`](file:///mnt/zram1/omarchy-quattro/default/udev/framework16-qmk-hid.rules).
+   - Grants unprivileged userspace access to Framework 16 QMK keyboard modules and handles Mac notch and backlight quirks.
+
+---
+
+## 6. Systemd, Sleep, OOM & Kernel Subsystem Hardening
+
+Key systemd and kernel parameters configured in Omarchy's [`etc/`](file:///mnt/zram1/omarchy-quattro/etc) that Dusky should standardize:
+
+1. **Systemd Fast Shutdown** ([`system.conf.d/10-faster-shutdown.conf`](file:///mnt/zram1/omarchy-quattro/etc/systemd/system.conf.d/10-faster-shutdown.conf)):
+   - Sets `DefaultTimeoutStopSec=5s` (instead of systemd's default 90s). Eliminates long hangs on reboot when services stall.
+2. **Inotify Limits for Developers** ([`90-omarchy-file-watchers.conf`](file:///mnt/zram1/omarchy-quattro/etc/sysctl.d/90-omarchy-file-watchers.conf)):
+   - `fs.inotify.max_user_watches=524288` and `fs.inotify.max_user_instances=512`. Prevents Vite, Webpack, Neovim LSP, and IDEs from crashing with `ENOSPC`.
+3. **High File Descriptor Ceiling** ([`20-omarchy-nofile.conf`](file:///mnt/zram1/omarchy-quattro/etc/systemd/user.conf.d/20-omarchy-nofile.conf)):
+   - `DefaultLimitNOFILE=524288:1048576`. Prevents file descriptor exhaustion under heavy concurrent compilation or container loads.
+4. **Accidental Power Key Protection** ([`10-ignore-power-button.conf`](file:///mnt/zram1/omarchy-quattro/etc/systemd/logind.conf.d/10-ignore-power-button.conf)):
+   - Configures `HandlePowerKey=suspend` (or `ignore`) in logind so brushing the power button on compact laptop keyboards doesn't trigger an immediate hard poweroff.
+5. **Systemd-OOMD Memory Pressure Defense** ([`10-omarchy.conf`](file:///mnt/zram1/omarchy-quattro/etc/systemd/oomd.conf.d/10-omarchy.conf)):
+   - Protects the desktop slice from total system lockup by killing misbehaving memory-hog applications under extreme pressure before the kernel freezes.
+
+---
+
+## 7. Where Dusky Is King & Unrivaled (Dusky's Core Moats to Retain)
+
+Dusky is far superior to Omarchy in several vital domains. **Do not replace or compromise these Dusky superpowers**:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                            DUSKY'S UNIQUE SUPERPOWERS                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ 1. Complete Air-Gapped Offline ISO Installer (orchestrator.py, 135 KB)      │
+│ 2. 56 Dynamic Material You (Matugen) App Templates Generated from Wallpaper │
+│ 3. 20 Modular Switchable Waybar Themes (Capsule, Notch, Mechabar, Minimal)  │
+│ 4. Native Compiled Rust System Daemons (dusky_center & dusky_tray)          │
+│ 5. Bare-Metal VFIO GPU Passthrough Suite for Native Windows Gaming VM       │
+│ 6. Hardware Battery Charging Threshold Limiter (Direct sysfs 80% cutoff)    │
+│ 7. Custom Kernel Compilation Engine (dusky_kernel_compiler)                 │
+│ 8. Audio Studio Virtual Mic & TTS Silence Preprocessor                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+1. **Offline Air-Gapped ISO Architecture**: Dusky can boot from a flash drive and install a complete, tuned Arch Linux environment without an internet connection. Omarchy is fundamentally an online installer requiring live mirrors and GitHub access.
+2. **Dynamic Theming via Matugen**: Omarchy requires pre-authoring static themes in `themes/`. Dusky dynamically parses any image wallpaper and recalculates 56 application themes in real-time.
+3. **Waybar Visual Modularity**: Omarchy's bar is locked to a single Quickshell QML layout. Dusky lets users instantly switch between 20 radically different bar layouts (`01_mechabar_h` to `20_capsule_h`).
+4. **Rust Performance Daemons**: Dusky's custom Rust implementations of `dusky_center` and `dusky_tray` have instant startup times and zero garbage-collection overhead.
+5. **Bare-Metal VFIO GPU Passthrough**: Dusky offers true dual-GPU IOMMU passthrough for 100% native gaming performance in VMs; Omarchy only provides a Docker CPU-emulated Windows container.
+
+---
+
+## 8. Master Reference File Mapping
 
 | Subsystem / Feature | Omarchy Source Path | Dusky Target Location |
 | :--- | :--- | :--- |
@@ -599,9 +662,9 @@ Create a post-install hook in Dusky's setup pipeline (Reference: [`setup-fingerp
 
 ---
 
-## 6. Execution Roadmap for Dusky
+## 9. Phased Action Plan & Execution Roadmap
 
-1. **Phase 1: Biometrics, Discovery & Update Safety (Immediate)**
+1. **Phase 1: Biometrics, Discovery & Update Safety (Immediate Priority)**
    - Implement the complete fingerprint authentication pipeline (sysfs sensor detection, enrollment wizard, clamshell gate in PAM, sleep resume hook, and Hyprlock integration).
    - Standardize `# dusky:summary=` annotations in `user_scripts/` and upgrade `scripts_finder.py` to display descriptions in fzf.
    - Deploy `dusky_migrate.sh` and ALPM Hyprland reload-pause hooks.

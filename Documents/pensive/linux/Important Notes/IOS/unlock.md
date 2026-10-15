@@ -116,7 +116,7 @@ The notification listener is gone after that restart. The standalone **Still** a
 
 ## Self-contained recovery if the temporary project is gone
 
-Save this minimal helper as `UnlockProbe.m`. It uses the same verified wake/unlock sequence and notification names, so the install, request, verification and cleanup commands above still apply. Build its output as `Probe.dylib`; no animation tweak is needed. The full helper above was used for the phone tests; this reduced version is provided to make the notes independent of zram storage.
+Save this minimal helper as `UnlockProbe.m`. It uses the same verified wake/unlock sequence and notification names, so the install, request, verification and cleanup commands above still apply. Build its output as `Probe.dylib`; no animation tweak is needed. The full helper and this reduced version were both built and tested on the phone. The reduced version independently unlocked the phone after a respring (verified current SpringBoard PID 37650, `locked: false`) with Still 0.1.2 installed. It makes these notes independent of zram storage.
 
 ```objc
 #import <UIKit/UIKit.h>
