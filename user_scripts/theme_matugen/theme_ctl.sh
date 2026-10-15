@@ -47,6 +47,7 @@ if (( BASH_VERSINFO[0] < 5 ||
 fi
 
 set -euo pipefail
+shopt -s lastpipe inherit_errexit
 
 # --- CONFIGURATION ------------------------------------------------------------
 
@@ -56,8 +57,9 @@ readonly PUBLIC_STATE_FILE="${STATE_DIR}/state"
 readonly TRACK_LIGHT="${STATE_DIR}/light_wal"
 readonly TRACK_DARK="${STATE_DIR}/dark_wal"
 readonly CURRENT_IMAGE_FILE="${STATE_DIR}/current_image"
+readonly CURRENT_COLOR_FILE="${STATE_DIR}/current_color"
 
-readonly BASE_PICTURES="${HOME}/Pictures"
+readonly BASE_PICTURES="${XDG_PICTURES_DIR:-${HOME}/Pictures}"
 readonly STORED_LIGHT_DIR="${BASE_PICTURES}/light"
 readonly STORED_DARK_DIR="${BASE_PICTURES}/dark"
 readonly WALLPAPER_ROOT="${BASE_PICTURES}/wallpapers"
@@ -125,6 +127,8 @@ AWWW_TRANS_POS=""
 
 STATE_NEEDS_REWRITE=0
 _TEMP_FILE=""
+_DEFER_SIGNALS=0
+_PENDING_SIGNAL=0
 
 COMMAND=""
 INPUT_IMAGE=""
@@ -167,9 +171,24 @@ cleanup() {
 }
 
 trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
-trap 'exit 129' HUP
+handle_signal() {
+    if (( _DEFER_SIGNALS )); then
+        _PENDING_SIGNAL=$1
+    else
+        exit "$1"
+    fi
+}
+
+finish_signal_deferral() {
+    (( _DEFER_SIGNALS -= 1 )) || true
+    if (( ! _DEFER_SIGNALS && _PENDING_SIGNAL )); then
+        exit "$_PENDING_SIGNAL"
+    fi
+}
+
+trap 'handle_signal 130' INT
+trap 'handle_signal 143' TERM
+trap 'handle_signal 129' HUP
 
 # --- GENERAL HELPERS ----------------------------------------------------------
 
@@ -221,16 +240,6 @@ commit_temp() {
 
     mv -fT -- "$_TEMP_FILE" "$destination" ||
         die "Could not replace file: $destination"
-
-    _TEMP_FILE=""
-}
-
-discard_temp() {
-    [[ -n "$_TEMP_FILE" ]] ||
-        die "Internal error: no temporary file to discard"
-
-    rm -f -- "$_TEMP_FILE" ||
-        die "Could not remove temporary file: $_TEMP_FILE"
 
     _TEMP_FILE=""
 }
@@ -373,24 +382,25 @@ is_valid_setting() {
 }
 
 normalize_setting() {
-    local key="$1"
-    local value="$2"
+    local _normalize_key="$1"
+    local _normalize_value="$2"
+    local -n _normalized_ref="$3"
 
-    case "$key" in
+    case "$_normalize_key" in
         SOURCE_COLOR_INDEX|AWWW_TRANS_FPS)
-            if [[ "$value" != "disable" ]]; then
+            if [[ "$_normalize_value" != "disable" ]]; then
                 # Strip leading zeros without arithmetic conversion.
-                value="${value#"${value%%[!0]*}"}"
-                value="${value:-0}"
+                _normalize_value="${_normalize_value#"${_normalize_value%%[!0]*}"}"
+                _normalize_value="${_normalize_value:-0}"
             fi
             ;;
 
         AWWW_TRANS_BEZIER|AWWW_TRANS_POS)
-            value="${value//[[:space:]]/}"
+            _normalize_value="${_normalize_value//[[:space:]]/}"
             ;;
     esac
 
-    printf '%s' "$value"
+    _normalized_ref="$_normalize_value"
 }
 
 # --- STATE MANAGEMENT ---------------------------------------------------------
@@ -461,7 +471,7 @@ read_state() {
             continue
         fi
 
-        normalized=$(normalize_setting "$key" "$value")
+        normalize_setting "$key" "$value" normalized
 
         if [[ "$normalized" != "$value" ]]; then
             printf -v "$key" '%s' "$normalized"
@@ -569,12 +579,16 @@ query_awww() {
 parse_awww_image() {
     local query="$1"
     local -n _parsed_ref="$2"
-    local line
+    local line color_val=""
     local -i saw_color=0
+    local -i saw_nonempty=0
 
     _parsed_ref=""
 
-    while IFS= read -r line; do
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -z "${line//[[:space:]]/}" ]] && continue
+        saw_nonempty=1
+
         if [[ "$line" == *"currently displaying: image: "* ]]; then
             _parsed_ref="${line#*"currently displaying: image: "}"
 
@@ -584,43 +598,69 @@ parse_awww_image() {
             return 0
         elif [[ "$line" == *"currently displaying: color: "* ]]; then
             saw_color=1
+            if [[ -z "$color_val" ]]; then
+                color_val="${line#*"currently displaying: color: "}"
+                color_val="${color_val#"${color_val%%[![:space:]]*}"}"
+                color_val="${color_val%"${color_val##*[![:space:]]}"}"
+            fi
         fi
     done <<< "$query"
 
-    if (( saw_color )); then
+    if (( saw_color || ! saw_nonempty )); then
+        _parsed_ref="$color_val"
         return 1
     fi
 
     return 2
 }
 
+# Usage: ensure_awww_running [wait_for_cache=0|1]
 ensure_awww_running() {
-    local daemon_pid
-    local -i deadline
+    local -i wait_for_cache="${1:-0}"
+    local daemon_pid=""
+    local -i deadline=$(( SECONDS + DAEMON_START_TIMEOUT_SEC ))
+    local -i settle_polls=15 # Grace window after responsive empty queries.
+    local -i poll=0
+    local out=""
 
     check_deps awww timeout
 
-    if query_awww >/dev/null 2>&1; then
-        return 0
+    if out=$(query_awww 2>/dev/null); then
+        if (( ! wait_for_cache )) || [[ "$out" == *"currently displaying: "* ]]; then
+            return 0
+        fi
+    else
+        check_deps awww-daemon
+        log "Starting awww-daemon..."
+
+        if command -v setsid >/dev/null 2>&1; then
+            setsid awww-daemon --format argb </dev/null >/dev/null 2>&1 &
+        else
+            awww-daemon --format argb </dev/null >/dev/null 2>&1 &
+        fi
+        daemon_pid=$!
+
+        disown "$daemon_pid" 2>/dev/null || true
     fi
 
-    check_deps awww-daemon
-    log "Starting awww-daemon..."
-
-    # Process existence alone does not establish daemon readiness.
-    awww-daemon --format argb </dev/null >/dev/null 2>&1 &
-    daemon_pid=$!
-
-    disown "$daemon_pid" 2>/dev/null || true
-
-    deadline=$(( SECONDS + DAEMON_START_TIMEOUT_SEC ))
-
     while (( SECONDS < deadline )); do
-        if query_awww >/dev/null 2>&1; then
-            return 0
+        if out=$(query_awww 2>/dev/null); then
+            if (( ! wait_for_cache )) ||
+               [[ "$out" == *"currently displaying: image: "* ]] ||
+               (( poll >= settle_polls )); then
+                return 0
+            fi
+        elif [[ -n "$daemon_pid" ]] && ! kill -0 "$daemon_pid" 2>/dev/null; then
+            # Re-check query_awww once in case a concurrent daemon instance won the socket race
+            if query_awww >/dev/null 2>&1; then
+                daemon_pid=""
+                continue
+            fi
+            die "awww-daemon exited prematurely during startup; try launching 'awww-daemon --format argb' manually"
         fi
 
         sleep "$DAEMON_POLL_INTERVAL"
+        (( poll += 1 ))
     done
 
     die "awww-daemon did not become ready; try launching 'awww-daemon --format argb' manually to inspect its error"
@@ -679,7 +719,7 @@ remap_path_for_mode() {
     local path="$1"
     local target_mode="$2"
     local source_dir stash_dir
-    local active_root source_root stash_root
+    local -a roots=()
 
     case "$target_mode" in
         dark)
@@ -696,14 +736,16 @@ remap_path_for_mode() {
     esac
 
     if [[ -d "$source_dir" ]]; then
-        canonicalize_path "$ACTIVE_THEME_DIR" active_root -m
-        canonicalize_path "$source_dir" source_root -m
-        canonicalize_path "$stash_dir" stash_root -m
+        if ! mapfile -d '' -t roots < <(
+            realpath -m -z -- "$ACTIVE_THEME_DIR" "$source_dir" "$stash_dir"
+        ) || (( ${#roots[@]} != 3 )); then
+            die "Could not resolve theme root paths"
+        fi
 
-        if [[ "$path" == "$active_root/"* ]]; then
-            path="${stash_root}/${path#"$active_root"/}"
-        elif [[ "$path" == "$source_root/"* ]]; then
-            path="${active_root}/${path#"$source_root"/}"
+        if [[ "$path" == "${roots[0]}/"* ]]; then
+            path="${roots[2]}/${path#"${roots[0]}"/}"
+        elif [[ "$path" == "${roots[1]}/"* ]]; then
+            path="${roots[0]}/${path#"${roots[1]}"/}"
         fi
     fi
 
@@ -716,7 +758,8 @@ move_directories() {
 
     local source_dir stash_dir directory
     local reported="" source="" queried="" output="" mapped=""
-    local mv_help source_device destination_device
+    local active_root stash_root
+    local -a devices=()
     local -i had_active=0
     local -i record_known=0
     local -i query_status=0
@@ -747,8 +790,28 @@ move_directories() {
     done
 
     if [[ ! -d "$source_dir" ]]; then
-        if (( mode_changed )) && [[ -d "$ACTIVE_THEME_DIR" ]]; then
-            die "Cannot switch mode: incoming directory is missing: $source_dir"
+        if [[ -d "$ACTIVE_THEME_DIR" && -d "$stash_dir" ]]; then
+            # A previous swap may have completed before its image record and
+            # desired mode were saved. Preserve the old displayed image's source.
+            if (( mode_changed )) && read_current_record reported source; then
+                canonicalize_path "$ACTIVE_THEME_DIR" active_root -e
+                if [[ "$source" == "$active_root/"* ]]; then
+                    canonicalize_path "$stash_dir" stash_root -e
+                    mapped="${stash_root}/${source#"$active_root"/}"
+                    if [[ -f "$mapped" ]]; then
+                        write_current_record "$reported" "$mapped"
+                    fi
+                fi
+            fi
+            return 0
+        fi
+
+        if [[ -d "$ACTIVE_THEME_DIR" && ! -e "$stash_dir" ]]; then
+            # Single-collection layout: only active_theme exists without separate light/dark folders.
+            if (( mode_changed )); then
+                warn "Stored '$target_mode' directory not found; keeping unified active_theme."
+            fi
+            return 0
         fi
 
         if [[ ! -d "$ACTIVE_THEME_DIR" ]]; then
@@ -764,29 +827,30 @@ move_directories() {
 
     check_deps stat
 
-    # Do not allow mv to silently copy/delete across a filesystem boundary.
-    mv_help=$(LC_ALL=C mv --help) ||
-        die "Could not inspect GNU mv capabilities"
-
-    [[ "$mv_help" == *"--no-copy"* ]] ||
-        die "Directory swaps require GNU mv with --no-copy support"
-
-    source_device=$(stat -Lc '%d' -- "$source_dir") ||
-        die "Could not inspect filesystem: $source_dir"
-    destination_device=$(stat -Lc '%d' -- "$WALLPAPER_ROOT") ||
-        die "Could not inspect filesystem: $WALLPAPER_ROOT"
-
-    [[ "$source_device" == "$destination_device" ]] ||
-        die "Cross-filesystem theme swap is unsupported: $source_dir"
-
     if [[ -d "$ACTIVE_THEME_DIR" ]]; then
-        source_device=$(stat -Lc '%d' -- "$ACTIVE_THEME_DIR") ||
-            die "Could not inspect active-theme filesystem"
-        destination_device=$(stat -Lc '%d' -- "$BASE_PICTURES") ||
-            die "Could not inspect Pictures filesystem"
+        if ! stat -Lc '%d' -- "$source_dir" "$WALLPAPER_ROOT" "$ACTIVE_THEME_DIR" "$BASE_PICTURES" |
+            mapfile -t devices
+        then
+            die "Could not inspect theme filesystems"
+        fi
 
-        [[ "$source_device" == "$destination_device" ]] ||
+        (( ${#devices[@]} == 4 )) || die "Incomplete theme filesystem information"
+
+        [[ "${devices[0]:-}" == "${devices[1]:-}" ]] ||
+            die "Cross-filesystem theme swap is unsupported: $source_dir"
+        [[ "${devices[2]:-}" == "${devices[3]:-}" ]] ||
             die "Cross-filesystem active-theme swap is unsupported"
+    else
+        if ! stat -Lc '%d' -- "$source_dir" "$WALLPAPER_ROOT" |
+            mapfile -t devices
+        then
+            die "Could not inspect theme filesystems"
+        fi
+
+        (( ${#devices[@]} == 2 )) || die "Incomplete theme filesystem information"
+
+        [[ "${devices[0]:-}" == "${devices[1]:-}" ]] ||
+            die "Cross-filesystem theme swap is unsupported: $source_dir"
     fi
 
     if read_current_record reported source; then
@@ -808,16 +872,13 @@ move_directories() {
         else
             query_status=$?
 
-            if (( query_status == 1 )); then
-                reported=""
-                source=""
-                record_known=0
-
-                rm -f -- "$CURRENT_IMAGE_FILE" ||
-                    die "Could not clear stale current-image record"
-            else
+            if (( query_status != 1 )); then
                 die "Could not parse awww query before directory swap: $output"
             fi
+            # When query_status == 1 (displaying solid color or empty state),
+            # preserve any existing current_image record and remap its source
+            # path through the directory swap so --no-wall mode switches
+            # can still recover the recorded image in regenerate_current().
         fi
     fi
 
@@ -827,10 +888,14 @@ move_directories() {
 
     log "Reconciling directories for mode: $target_mode"
 
-    if [[ -d "$ACTIVE_THEME_DIR" ]]; then
-        mv --no-copy -T -- "$ACTIVE_THEME_DIR" "$stash_dir" ||
-            die "Could not stash active theme in: $stash_dir"
+    # Defer termination signals across the two-step directory rename so
+    # an interrupted swap does not leave active_theme unmounted.
+    (( _DEFER_SIGNALS += 1 ))
 
+    if [[ -d "$ACTIVE_THEME_DIR" ]]; then
+        if ! mv --no-copy -T -- "$ACTIVE_THEME_DIR" "$stash_dir"; then
+            die "Could not stash active theme in: $stash_dir"
+        fi
         had_active=1
     fi
 
@@ -851,6 +916,7 @@ move_directories() {
     if (( record_known )); then
         write_current_record "$reported" "$mapped"
     fi
+    finish_signal_deferral
 }
 
 # --- WALLPAPER SELECTION -------------------------------------------------------
@@ -914,22 +980,18 @@ load_wallpapers() {
 
     [[ "$recursive" == "1" ]] || depth_args=(-maxdepth 1)
 
-    begin_temp wallpapers
-
-    # A real pipeline makes find/sort failures visible through pipefail.
+    # Only enumerate formats supported by both awww and the ISO Matugen build.
+    # With shopt -s lastpipe, mapfile runs in the current shell while
+    # preserving pipefail visibility without touching disk.
     if ! find -L "$canonical_root" "${depth_args[@]}" -type f \
         \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \
            -o -iname '*.webp' -o -iname '*.gif' \) \
         -print0 |
-        LC_ALL=C sort -z -V > "$_TEMP_FILE"
+        LC_ALL=C sort -z -V |
+        mapfile -d '' -t found
     then
         die "Could not completely enumerate wallpapers in: $canonical_root"
     fi
-
-    mapfile -d '' -t found < "$_TEMP_FILE" ||
-        die "Could not read wallpaper list"
-
-    discard_temp
 
     (( ${#found[@]} > 0 )) || return 1
 
@@ -1096,15 +1158,39 @@ generate_colors() {
             if ! output=$("${command[@]}" 2>&1); then
                 die "Matugen fallback failed: $output"
             fi
-
-            SOURCE_COLOR_INDEX="0"
-            write_state
         else
             die "Matugen generation failed: $output"
         fi
     fi
 
+    # Matugen can report hook failures while still exiting successfully.
+    [[ -z "$output" ]] || printf '%s\n' "$output" >&2
+    clear_current_color
     update_desktop_color_scheme
+}
+
+read_current_color() {
+    local -n _color_ref="$1"
+    _color_ref=""
+
+    [[ -f "$CURRENT_COLOR_FILE" && -r "$CURRENT_COLOR_FILE" ]] || return 1
+    IFS= read -r _color_ref < "$CURRENT_COLOR_FILE" || [[ -n "$_color_ref" ]] || return 1
+    [[ "$_color_ref" =~ ^#[a-fA-F0-9]{6}$ ]]
+}
+
+write_current_color() {
+    local hex="$1"
+    begin_temp current_color
+    printf '%s\n' "$hex" > "$_TEMP_FILE" ||
+        die "Could not write current-color record"
+    commit_temp "$CURRENT_COLOR_FILE"
+}
+
+clear_current_color() {
+    if [[ -e "$CURRENT_COLOR_FILE" || -L "$CURRENT_COLOR_FILE" ]]; then
+        rm -f -- "$CURRENT_COLOR_FILE" ||
+            warn "Could not remove current-color record: $CURRENT_COLOR_FILE"
+    fi
 }
 
 apply_solid_color() {
@@ -1128,7 +1214,8 @@ apply_solid_color() {
     # run only; the saved scheme is restored right after and stays in state.
     local r g b saved_type="$MATUGEN_TYPE"
     r=$((16#${hex:1:2})) g=$((16#${hex:3:2})) b=$((16#${hex:5:2}))
-    if (( r == g && g == b )) && [[ "$MATUGEN_TYPE" != "scheme-monochrome" ]]; then
+    if (( r == g && g == b )) &&
+        [[ "$MATUGEN_TYPE" != "scheme-monochrome" && "$MATUGEN_TYPE" != "disable" ]]; then
         log "Solid color $hex is achromatic, using scheme-monochrome for it"
         MATUGEN_TYPE="scheme-monochrome"
     fi
@@ -1142,6 +1229,8 @@ apply_solid_color() {
         die "Matugen color generation failed: $output"
     fi
 
+    [[ -z "$output" ]] || printf '%s\n' "$output" >&2
+    write_current_color "$hex"
     update_desktop_color_scheme
 }
 
@@ -1152,22 +1241,23 @@ apply_wallpaper_direct() {
     local -i regenerate="${2:-1}"
     local identifier="${3:-}"
 
-    local image
+    local image logical_path
     local -a command=(awww img)
 
     check_deps awww
+
+    # Preserve collection symlink identity before dereferencing target
+    if [[ -z "$identifier" ]]; then
+        canonicalize_path "$(dirname -- "$input")" logical_path -e
+        logical_path="${logical_path%/}/$(basename -- "$input")"
+        identifier=$(resolve_wallpaper_id "$logical_path")
+    fi
 
     canonicalize_path "$input" image -e
     validate_image "$image"
 
     if (( regenerate )); then
         check_deps matugen
-    fi
-
-    # Cycling keeps the collection path even when a link targets an external
-    # image. Resolving it first would lose our position in the collection.
-    if [[ -z "$identifier" ]]; then
-        identifier=$(resolve_wallpaper_id "$image")
     fi
 
     ensure_awww_running
@@ -1203,7 +1293,7 @@ apply_wallpaper_direct() {
     "${command[@]}" ||
         die "Failed to apply wallpaper with awww"
 
-    # Record what was applied even if subsequent Matugen generation fails.
+    clear_current_color
     write_current_record "$image" "$image"
     update_wallpaper_tracker "$identifier"
 
@@ -1240,15 +1330,21 @@ cycle_command() {
 regenerate_current() {
     local -i allow_fallback="${1:-1}"
 
-    local output current="" resolved=""
+    local output current="" resolved="" saved_color=""
     local recorded_query="" recorded_source=""
     local -i parse_status=0
 
     check_deps awww matugen
 
-    if (( allow_fallback )); then
-        ensure_awww_running
+    # An explicit color is the palette source until an image is applied or
+    # explicitly used for generation, including when refreshing that palette.
+    if read_current_color saved_color; then
+        log "Regenerating active solid color: $saved_color"
+        apply_solid_color "$saved_color"
+        return 0
     fi
+
+    ensure_awww_running 1
 
     if ! output=$(query_awww 2>&1); then
         die "awww query failed or timed out: $output"
@@ -1281,8 +1377,24 @@ regenerate_current() {
             die "Could not parse awww query output: $output"
         fi
 
+        # When awww is displaying a solid color and --no-wall is set, regenerate from that color
+        if (( ! allow_fallback )) && [[ "$current" =~ ^#?[a-fA-F0-9]{6}$ ]]; then
+            log "awww is displaying solid color $current; regenerating palette from color."
+            apply_solid_color "$current"
+            return 0
+        fi
+
+        # If awww query output was empty (uninitialized cache), try recorded wallpaper
+        if [[ -z "$current" ]] &&
+           read_current_record recorded_query recorded_source &&
+           [[ -f "$recorded_source" ]]; then
+            log "Current wallpaper source (from record): $recorded_source"
+            generate_colors "$recorded_source"
+            return 0
+        fi
+
         if (( ! allow_fallback )); then
-            die "awww is displaying a color; --no-wall forbids a fallback wallpaper"
+            die "awww is displaying a color and no recorded wallpaper exists; --no-wall forbids a fallback wallpaper"
         fi
 
         log "awww is displaying a color; selecting a random wallpaper."
@@ -1294,9 +1406,10 @@ regenerate_current() {
 # --- COMMAND IMPLEMENTATIONS --------------------------------------------------
 
 cmd_get() {
-    cat -- "$STATE_FILE"
-    printf '\n# Public State (%s):\n' "$PUBLIC_STATE_FILE"
-    cat -- "$PUBLIC_STATE_FILE"
+    printf '%s\n\n# Public State (%s):\n%s\n' \
+        "$(<"$STATE_FILE")" \
+        "$PUBLIC_STATE_FILE" \
+        "$(<"$PUBLIC_STATE_FILE")"
 }
 
 cmd_set() {
@@ -1306,11 +1419,12 @@ cmd_set() {
     local previous_index="$SOURCE_COLOR_INDEX"
     local previous_base16="$BASE16_BACKEND"
 
-    local key image="" mapped_image=""
+    local key image="" mapped_image="" logical_image="" identifier=""
 
     local -i mode_changed=0
     local -i palette_changed=0
     local -i same_mode_requested=0
+    local -i defaults_requested=0
     local -i want_wall=0
     local -i want_regen=0
 
@@ -1331,24 +1445,26 @@ cmd_set() {
         palette_changed=1
     fi
 
-    if [[ "$MODE_REQUEST_KIND" == "explicit" ]] &&
-        (( ! mode_changed ))
-    then
+    if [[ "$MODE_REQUEST_KIND" == "explicit" ]] && (( ! mode_changed )); then
         same_mode_requested=1
+    elif [[ "$MODE_REQUEST_KIND" == "defaults" ]]; then
+        defaults_requested=1
     fi
 
     # Resolve the requested file before directory mutation changes its meaning.
     if [[ -n "$INPUT_IMAGE" ]]; then
+        canonicalize_path "$(dirname -- "$INPUT_IMAGE")" logical_image -e
+        logical_image="${logical_image%/}/$(basename -- "$INPUT_IMAGE")"
         canonicalize_path "$INPUT_IMAGE" image -e
         validate_image "$image"
 
         want_wall=$(( ! SKIP_WALL ))
         want_regen=$(( ! SKIP_REGEN ))
-    elif (( ! SKIP_WALL && (mode_changed || same_mode_requested) )); then
+    elif (( ! SKIP_WALL && (mode_changed || same_mode_requested || defaults_requested) )); then
         want_wall=1
         want_regen=$(( ! SKIP_REGEN ))
     elif (( ! SKIP_REGEN &&
-            (mode_changed || same_mode_requested || palette_changed) )); then
+            (mode_changed || same_mode_requested || defaults_requested || palette_changed) )); then
         want_regen=1
     fi
 
@@ -1368,24 +1484,30 @@ cmd_set() {
         fi
     fi
 
-    if (( mode_changed || same_mode_requested )); then
+    if (( mode_changed || same_mode_requested || defaults_requested )); then
         if [[ -n "$image" ]]; then
             mapped_image=$(remap_path_for_mode "$image" "$THEME_MODE")
+            logical_image=$(remap_path_for_mode "$logical_image" "$THEME_MODE")
         fi
 
+        (( _DEFER_SIGNALS += 1 ))
         move_directories "$THEME_MODE" "$mode_changed"
 
         if [[ -n "$mapped_image" ]]; then
             image="$mapped_image"
         fi
-    fi
 
-    # Desired configuration is saved before external application.
-    write_state
+        write_state
+        finish_signal_deferral
+    else
+        # Desired configuration is saved before external application.
+        write_state
+    fi
 
     if (( want_wall )); then
         if [[ -n "$image" ]]; then
-            apply_wallpaper_direct "$image" "$want_regen"
+            identifier=$(resolve_wallpaper_id "$logical_image")
+            apply_wallpaper_direct "$image" "$want_regen" "$identifier"
         else
             apply_wallpaper_selection next "$want_regen"
         fi
@@ -1396,6 +1518,11 @@ cmd_set() {
         else
             regenerate_current "$(( ! SKIP_WALL ))"
         fi
+    fi
+
+    # Ensure GTK/Portal color-scheme stays in sync even when --no-regen is used
+    if (( (mode_changed || same_mode_requested || defaults_requested) && ! want_regen )); then
+        update_desktop_color_scheme
     fi
 }
 
@@ -1432,7 +1559,7 @@ Commands:
   previous [--no-regen]         Alias of prev
   random [--no-regen]           Select a random wallpaper
 
-  refresh                      Regenerate from the current wallpaper
+  refresh                      Regenerate the selected color or current wallpaper
   apply                        Alias of refresh
   color <hex>                  Generate a theme from a six-digit hex color
   get                          Show saved configuration and public state
@@ -1511,7 +1638,7 @@ parse_cli() {
                         is_valid_setting "$key" "$value" ||
                             die "Invalid value for $option: $value"
 
-                        value=$(normalize_setting "$key" "$value")
+                        normalize_setting "$key" "$value" value
                         REQUESTED_SETTINGS["$key"]="$value"
 
                         if [[ "$key" == "THEME_MODE" ]]; then
@@ -1542,6 +1669,23 @@ parse_cli() {
                     --help)
                         COMMAND="help"
                         return 0
+                        ;;
+
+                    --)
+                        shift
+                        if (( $# > 0 )); then
+                            [[ -z "$INPUT_IMAGE" ]] ||
+                                die "Unexpected additional argument: $1"
+                            (( $# == 1 )) ||
+                                die "Unexpected additional argument: $2"
+                            [[ -n "$1" ]] ||
+                                die "Image path must not be empty"
+                            [[ "$1" != *$'\n'* ]] ||
+                                die "Image paths containing newlines are unsupported"
+                            INPUT_IMAGE="$1"
+                            shift
+                        fi
+                        break
                         ;;
 
                     -*)
@@ -1632,7 +1776,6 @@ check_deps mkdir mktemp mv rm realpath timeout cat
 
 # Catch invalid explicit images before initializing or rewriting state.
 if [[ -n "$INPUT_IMAGE" ]]; then
-    canonicalize_path "$INPUT_IMAGE" INPUT_IMAGE -e
     validate_image "$INPUT_IMAGE"
 fi
 
