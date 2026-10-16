@@ -265,24 +265,6 @@ SCHEMA: dict[int, list[ConfigItem]] = {
             extended_help="**Theme Change Notification**\n\nSends desktop notification upon theme update completion."
         ),
         ConfigItem(
-            label="Dusky Control Center",
-            key="dusky_control_center",
-            scope="DEFAULT",
-            type_="bool",
-            default=False,
-            group="Dusky Services",
-            extended_help="**Dusky Control Center Service**\n\nTriggers `dusky.service` systemd restart on theme changes."
-        ),
-        ConfigItem(
-            label="Dusky Tray",
-            key="dusky_tray",
-            scope="DEFAULT",
-            type_="bool",
-            default=True,
-            group="Applications",
-            extended_help="**Dusky Tray Palette**\n\nGenerates the tray palette. An open tray reloads theme changes automatically."
-        ),
-        ConfigItem(
             label="Dusky TUI Theme",
             key="dusky_tui",
             scope="DEFAULT",
@@ -605,7 +587,6 @@ SCHEMA: dict[int, list[ConfigItem]] = {
             confirm_message="Apply Standard Workstation profile? This will enable the curated Dusky desktop suite and disable optional extras.",
             preset_payload={
                 "alacritty": False, "beeper": False, "btop": True, "cava": True,
-                "dusky_control_center": False, "dusky_tray": True,
                 "dusky_cursor": False,
                 "dusky_sites": True, "dusky_tui": True, "dusky_visualizer_colors": True,
                 "fastfetch": True, "foot": True, "gtk3": True, "gtk4": True,
@@ -634,7 +615,6 @@ SCHEMA: dict[int, list[ConfigItem]] = {
             confirm_message="Apply Minimal profile? Only Hyprland, Waybar, Kitty/Foot, Rofi and Mako will remain enabled.",
             preset_payload={
                 "alacritty": False, "beeper": False, "btop": False, "cava": False,
-                "dusky_control_center": False, "dusky_tray": True,
                 "dusky_cursor": False,
                 "dusky_sites": False, "dusky_tui": True, "dusky_visualizer_colors": False,
                 "fastfetch": False, "foot": True, "gtk3": False, "gtk4": False,
@@ -663,7 +643,6 @@ SCHEMA: dict[int, list[ConfigItem]] = {
             confirm_message="Enable **all** templates? This will uncomment every `[templates.*]` block.",
             preset_payload={
                 "alacritty": True, "beeper": True, "btop": True, "cava": True,
-                "dusky_control_center": True, "dusky_tray": True,
                 "dusky_cursor": True,
                 "dusky_sites": True, "dusky_tui": True, "dusky_visualizer_colors": True,
                 "fastfetch": True, "foot": True, "gtk3": True, "gtk4": True,

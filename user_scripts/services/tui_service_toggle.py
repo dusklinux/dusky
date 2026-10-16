@@ -94,10 +94,6 @@ CORE_USER_DEFS = {
         "Network Traffic Meter",
         "Service to track network traffic. Often used in conjunction with Waybar to display real-time upload and download speeds.",
     ),
-    "dusky.service": (
-        "Control Center Preload",
-        "Autostarts Control center to open it faster on the first invocation, second invocation is always the same",
-    ),
     "update_checker.timer": (
         "Automatic Update Checker",
         "Checks local main against origin/main, then refreshes cached Pacman, AUR, and Dusky commit counts for the panels and status bar. Runs 10 minutes after the user manager starts, then every 6 hours after completion, with up to 10 minutes of jitter. Toggle this timer; its static companion service is started by the timer.",
@@ -362,7 +358,7 @@ CORE_USER_SECTIONS = (
         "dusky_moonlight_display.service", "app-dev.lizardbyte.app.Sunshine.service",
     )),
     ("Panels & Integration", (
-        "dusky.service", "dusky_network.service",
+        "dusky_network.service",
         "dusky_notif_time.service", "dusky_visualizer.service", "dusky_screentime.service",
         "gamemoded.service",
     )),

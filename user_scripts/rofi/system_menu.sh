@@ -23,8 +23,8 @@
 set -uo pipefail
 
 declare -gr SCRIPTS_DIR="${HOME}/user_scripts"
-declare -gr CC_DIR="${SCRIPTS_DIR}/dusky_system/control_center"
-declare -gr TEXT_EDITOR_BIN="${CC_DIR}/dusky_text_editor.py"
+declare -gr DUSKY_CENTER_DIR="${SCRIPTS_DIR}/dusky_system/dusky_center"
+declare -gr TEXT_EDITOR_BIN="${DUSKY_CENTER_DIR}/dusky_text_editor.py"
 declare -gr HYPR_EDIT_DIR="${HOME}/.config/hypr/edit_here"
 declare -gr SEARCH_DIR="${HOME}/Documents/pensive/linux"
 
@@ -156,7 +156,7 @@ declare -agr POWER_MENU=(
 )
 
 declare -agr CONFIGS_MENU=(
-    '  Control Center'
+    '  Dusky Center'
     '  Hypr Reload'
     '  Main Config'
     '  Keybinds'
@@ -725,8 +725,8 @@ show_configs_menu() {
         choice=$(menu_select "Configs" CONFIGS_MENU "" "$SUB_HINT") || return 0
 
         case "$choice" in
-            '  Control Center')
-                run_app python3 "$CC_DIR/dusky_control_center.py"
+            '  Dusky Center')
+                run_app dusky-center
                 ;;
             '  Hypr Reload')
                 run_app hyprctl reload

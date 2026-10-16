@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Dusky Center
+GenericName=System Settings
+Comment=Centralized configuration for Dusky OS
+Exec=dusky-center
+Icon=preferences-system
+Terminal=false
+Categories=System;Settings;
+Keywords=dusky;settings;control;center;panel;sound;audio;network;wifi;bluetooth;display;monitor;theme;appearance;update;power;dotfiles;
+StartupWMClass=dusky-center
+StartupNotify=true

@@ -102,10 +102,8 @@ SETUP_COMMANDS: list[FleetCommand] = [
         'gcc -shared -fPIC -o "$TARGET/libwaylandgrab.so" "$TARGET/dusky.c" "$TARGET/hyprland-focus-grab-v1-client-protocol.c" -lwayland-client -lpthread -ldl',
         "Compile Wayland Click-Away Shared Library"
     ),
-    FleetCommand(Mode.USER, '"$HOME/user_scripts/dusky_system/reload_cc/cc_restart.sh" --quiet >/dev/null 2>&1 < /dev/null &', "Background Restart Control Center"),
     FleetCommand(Mode.USER, 'update-desktop-database "$HOME/.local/share/applications" || true', "Update Desktop Entry Database Cache"),
     # --- System Services ---
-    # FleetCommand(Mode.USER, 'systemctl --user disable dusky.service || true', "Disable Legacy Dusky Service"),
     # FleetCommand(Mode.SUDO, 'systemctl enable --now tlp.service || true', "Enable TLP Power Management Service"),
 ]
 
@@ -120,6 +118,7 @@ BEFORE_COMMANDS: list[FleetCommand] = [
     FleetCommand(Mode.USER, 'mkdir -p ~/.config/opencode/themes || true', "Create Opencode Themes Directory"),
     FleetCommand(Mode.USER, 'mkdir -p ~/.config/Kvantum/matugen || true', "Create Kvantum Matugen Directory"),
     FleetCommand(Mode.USER, 'systemctl --user disable --now dusky_sliders.service || true', "Disable Legacy Sliders Service"),
+    FleetCommand(Mode.USER, 'systemctl --user disable --now dusky.service || true', "Disable Legacy Dusky Service"),
     # --- Remove old dusky_snapshot units before re-deployment ---
     FleetCommand(
         Mode.SUDO,
@@ -130,7 +129,6 @@ BEFORE_COMMANDS: list[FleetCommand] = [
     FleetCommand(Mode.SUDO, 'rm -f /etc/systemd/system/dusky_snapshot.service /etc/systemd/system/dusky_snapshot.timer', "Remove Snapshot Unit Files"),
     FleetCommand(Mode.SUDO, 'systemctl daemon-reload', "Systemd System Daemon Reload"),
     # --- System Services ---
-    # FleetCommand(Mode.USER, 'systemctl --user disable dusky.service || true', "Disable Legacy Dusky Service"),
     # FleetCommand(Mode.SUDO, 'systemctl enable --now tlp.service || true', "Enable TLP Power Management Service"),
 ]
 

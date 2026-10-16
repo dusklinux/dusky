@@ -113,8 +113,8 @@ hl.bind(
 
 hl.bind(
     "SUPER + SPACE",
-    hl.dsp.exec_cmd([[gdbus call --session --dest com.github.dusky.controlcenter --object-path /com/github/dusky/controlcenter --method org.freedesktop.Application.Activate "{}"]]),
-    { description = "System Menu" }
+    hl.dsp.exec_cmd([[pkill -x dusky-center || dusky-run dusky-center]]),
+    { description = "Dusky Center" }
 )
 
 hl.bind(

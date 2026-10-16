@@ -53,8 +53,6 @@ USER_SERVICES: list[ServiceConfig] = [
     ServiceConfig("$HOME/user_scripts/dusky_system/dusky_polkit/dusky_polkit.service", "enable"),
     # Network Meter (Default: Enable)
     ServiceConfig("$HOME/user_scripts/waybar/network/rust/dusky_network.service", "enable"),
-    # Dusky Control Center Daemon (Default: Disable)
-    ServiceConfig("$HOME/user_scripts/dusky_system/control_center/service/dusky.service", "disable"),
     # Dusky Update Checker (Default: Disable)
     ServiceConfig("$HOME/user_scripts/update_dusky/update_checker/service/update_checker.service", "disable"),
     ServiceConfig("$HOME/user_scripts/update_dusky/update_checker/service/update_checker.timer", "disable"),
@@ -77,13 +75,7 @@ USER_SERVICES: list[ServiceConfig] = [
 # ------------------------------------------------------------------------------
 # 2. DBus & User Service Symlinks
 # ------------------------------------------------------------------------------
-DBUS_SYMLINKS: list[SymlinkConfig] = [
-    # Dusky Control Center DBus Activation
-    SymlinkConfig(
-        "$HOME/user_scripts/dusky_system/control_center/service/com.github.dusky.controlcenter.service",
-        "$XDG_DATA_HOME/dbus-1/services/com.github.dusky.controlcenter.service",
-    ),
-]
+DBUS_SYMLINKS: list[SymlinkConfig] = []
 
 # ------------------------------------------------------------------------------
 # 3. Systemd System Services (Target: /etc/systemd/system/ - Requires Root)
