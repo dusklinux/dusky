@@ -102,7 +102,7 @@ Even with an idle footprint of roughly **~700 MB of RAM** and **~9 GB of disk sp
 * **Wireless Tools:** Terminal Wi-Fi connection tool (`nmcli_wifi.sh`) and an `airmon` auditing script (strictly for testing access points you own).
 
 ### Desktop Workflow, Graphics & Gaming
-* **Dynamic System Theming:** `Matugen` powers unified Light and Dark color schemes across the entire desktop—including Firefox/Gecko website theming via Dusky Sites.
+* **Dynamic System Theming:** `Matugen` powers unified Light and Dark color schemes across the entire desktop—including Firefox/Gecko website theming via **Dusky Sites**.
 * **Tuned Physics & Instant Shaders:** Days of fine-tuning went into the window momentum and animations for a liquid feel, alongside instant visual shader switching from Rofi.
 * **Display & Controls:** Dynamic fractional scaling via keybind, scale-aware `wlogout` rendering, single-keybind blur/transparency/shadow toggles, and pop-up GUI sliders for Volume, Brightness, and Nightlight (`hyprsunset`).
 * **Touchpad Gestures:** Laptop touchpad gestures for volume, brightness, screen locking, media play/pause, muting, and opening the notification center.
@@ -178,7 +178,7 @@ Because Arch is a rolling release, an upstream package change can occasionally t
 * [**Matugen**](https://github.com/InioX/matugen) — For enabling system-wide dynamic theming across everything.
 * [**TLP**](https://github.com/linrunner/TLP) — For allowing extensive configurability for power management.
 * [**Mako**](https://github.com/emersion/mako) — This isn’t just a notification daemon; it is far beyond that and one of the most impressive projects out there.
-* [**MatugenFox**](https://github.com/Ubaidullah-Web-Dev/MatugenFox) & [**refox**](https://github.com/ADIOR-enigma/refox) — For inspiring **Dusky Sites**, which makes dynamic website theming on Firefox/Gecko browsers possible.
+* [**MatugenFox**](https://github.com/Ubaidullah-Web-Dev/MatugenFox) & [**refox**](https://github.com/ADIOR-enigma/refox) — For inspiring Dusky Sites, which makes dynamic website theming on Firefox/Gecko browsers possible.
 * [**SilentSDDM**](https://github.com/uiriansan/SilentSDDM/) — Our optional SDDM greeter is a fork of this project.
 * [**Papirus Icon Theme**](https://github.com/PapirusDevelopmentTeam/papirus-icon-theme) — The icon pack Dusky uses.
 * [**mpv**](https://github.com/mpv-player/mpv) — The media player Dusky uses.
