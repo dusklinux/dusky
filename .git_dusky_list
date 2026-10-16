@@ -62,7 +62,6 @@
 .config/rofi/
 .config/systemd/user/swaync.service.d/
 .config/systemd/user/hyprland-session.target
-.config/todo/
 .config/xdg-desktop-portal/hyprland-portals.conf
 .config/xdg-terminals.list
 .config/xsettingsd/
