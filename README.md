@@ -1,320 +1,190 @@
-## If you need help with installation, troubleshooting or just want to hangout, participate on the Community discord server.
-
-### The official Discord Server has been deleted.
-
-A community Discord server has been created! You can join it below. Please note that the original developer is not involved with this community server in any capacity.
-
-[Join Community Discord Server](https://discord.gg/gmyAxpAQYK)
-
-## Updated demo video now out on YouTube with all major features covered! 
-(since the release of this video around 5 major features have been added, scroll down to the `overview` section for details)
-
-[Watch now][video]
-
-[video]: https://youtu.be/JmgvSdEIK8c
-
-### If you're here just for the wallpapers, you can get all of them (+1050 wallpapers) from my [images repo][images].
-
-[images]: https://github.com/dusklinux/images
-
-### to get this out of the way cuz i'm getting so many questions about waybar. 
-YES YOU CAN HAVE HORIZONTAL WAYBAR. and you will be asked which side you want it on bottom/top/left/right. 
-
-- **waybar horizontal and vertical,:**  Take your pick during setup, easily toggleable from rofi as well. 
-here's what it looks like. 
-
-![New Nerdy Horizontal Waybar](Pictures/readme_assets/waybar_horizontal.webp)
-
-![waybar block](Pictures/readme_assets/waybar_block.webp)
-
-![waybar circular](Pictures/readme_assets/waybar_circular.webp)
-
-![waybar_minimal](Pictures/readme_assets/waybar_minimal.webp)
-
-## 🎨 Theming & Acknowledgments
-
-A massive shoutout to [@Ubaidullah-Web-Dev](https://github.com/Ubaidullah-Web-Dev) for his amazing project that enables website theming on gecko based browsers like firefox! This configuration wouldn't have been possible without him.
-
-⭐ **Support the Developer:** If you like the look of this setup, please head over and drop a star on his repository:
-👉 [MatugenFox on GitHub](https://github.com/Ubaidullah-Web-Dev/MatugenFox)
-
-### There's also a brand new Dusky Control Center that acts as a system overview gui for settings and features, it's exhaustive in it's scope, almost anything you want to set/change can be done from this one stop shop intuitive gui app. I'll keep adding more quality of life features to it over time.
-
-![Dusky Control Center](Pictures/readme_assets/dusky_control_center.webp)
-
-This repository is the result of 8 months of tinkering/breaking/fixing and polishing. Its a labor of love designed to feel as easy to install as a "standard" distribution but with the raw power and minimalism of arch. **please consider starring ⭐ this repo** as a token of support.
-
-## ⚠️ Prerequisites & Hardware
-
-### Filesystem
-
-This setup is strictly optimized for **BTRFS file system format**. (should also work on ext4 but not recommanded)
-
-- **Why?** ZSTD compression, copy on write (CoW) to prevent data corruption, and you also get instant Snapshots.
-    
-
-### Hardware Config (Intel/Nvidia/AMD)
-
-The setup scripts are written to auto detect your hardware and set the appropriate environment variables but in case your hardware is not detected or has some issues, you're advised to configure the following files to set your environment variables.
-
-> [!Note]
->
-> Configure the uwsm env files to set your gpu environment variables.
->
-> 1. Open the files at ~/.config/uwsm/env and ~/.config/uwsm/env-hyprland
->
-> 2. Replace Intel/Nvidia/Amd -specific variables with your hardware equivalents.
->
-
-
-### Dual Booting
-
-- Compatible with Windows or other Linux distros.
-
-- **Bootloader:** Defaults to `systemd-boot` for UEFI (boots up to 5s faster). Defaults to `GRUB` for BIOS.
-
-
-
-# Installation 💿
-
-[Watch Video Tutorial][Watch Video Tutorial]
-
-[Watch Video Tutorial]: https://youtu.be/OzeFAY_8T8Y
-
-**Best for:** Users who already have a fresh, unconfigured Arch Linux installation with Hyprland, set up either via the archinstall script or through a manual install. If you have not installed yet, use the Arch ISO and ensure you select Btrfs as the filesystem and Hyprland as the window manager.
-
-after installing arch, boot into the os and then run this in the terminal. 
-
-
-# Dusky ISO is now available!!, its an offline installer.
-```
-https://drive.google.com/drive/folders/1P368khN1p-IfzWoaDnPyQNEcpkKBsOte?usp=sharing
-```
-
-
-### Step 1: Clone Dotfiles (Bare Repo Method)
-
-i use a bare git repository method to drop files exactly where they belong in your home directory.
-
-make sure your connected to the internet and git is installed, 
-
-```
-sudo pacman -Syu --needed git
-```
-
-
-clone the repo
-```
-git clone --bare --depth 1 https://github.com/dusklinux/dusky.git $HOME/dusky
-```
-
-deploy the files on your system.
-
-```bash
-git --git-dir=$HOME/dusky/ --work-tree=$HOME checkout -f
-```
-
-> Note:
-> 
-> This will immediately list a few errors at the top, but dont worry, that's expected behaviour, the errors will later go away on there own after matugen generates colors and cycles through a wallpaper. 
-
-
-### Step 2: Run the Orchestra
-
-Run the master script to install dependencies, themes, and services, this will take a while. because it sets up everything. You'll be prompted to say yes/no during setup, so dont leave it running unattended.
-
-```bash
-~/user_scripts/arch_setup_scripts/orchestrator.sh
-```
-
-## The Orchestra Script
-
-The `ORCHESTRA.sh` is a "conductor" that manages ~80 subscripts.
-
-- **Smart:** It detects installed packages and skips them.
-
-- **Safe:** You can re-run it as many times as you like without breaking things.
-
-- **Time:** Expect 30–60 minutes. We use `paru` to install a few AUR packages, and compiling from source takes time. Grab a coffee!
-
-
-## ⌨️ Usage & Keybinds
-
-The steepest learning curve will be the keybinds. I have designed them to be intuitive, but feel free to change them in the config.
-
-> 💡 Pro Tip:
->
-> Press `CTRL + SHIFT + SPACE` to open the Keybinds Cheatsheet. You can click commands in this menu to run them directly!
-
-
-It's been tested to work on other arch based distros with hyprland installed (fresh installed) like catchyOS
-
-
-## 🔧 Troubleshooting
-
-If a script fails (which can happen on a rolling release distro):
-
-1. **Don't Panic.** The scripts are modular. The rest of the system usually installs fine.
-    
-2. **Check the Output.** Identify which subscript failed (located in `$HOME/user_scripts/setup_scripts/scripts/`).
-    
-3. **Run Manually.** You can try running that specific subscript individually.
-    
-4. **AI Help.** Copy the script content and the error message into ChatGPT/Gemini. It can usually pinpoint the exact issue (missing dependency, changed package name, etc.).
-    
-
-## overview
-
-Note : i've purposely decided to not use quickshell for anything in the interest of keeping this as light weight as possible, Quickshell can quickly add to ram and slow down your system, therefore everything is user friendly Tui to keep it snappy and lightweight while delivering on A WHOLE HOST OF FEATURES. Read below for most features.
-
-**utilities**
-
-- Music Recognition - allows you to look up what music is playing. 
-
-- Circle to search type feature. uses Google lens. 
-
-- Tui for chaining your hyprland's appearience like gaps, shadow color, blur strength, opacity strength and a lottt more!!
-
-- Ai llm local infrense using ollama side bar (terminal, incredilby resource efficient)
-
-- keybind TUI setter that auto checks for conflicts and unbinds any existing keybind in the default hyrland keybind.conf
-
-- Easily switch Swaync's side to either lift or right.
-
-- airmon wifi script for wifi testing/password cracking
-    (only use on access points that you own, i'm not legally responsible if you use it for nefarious purposes)
-- live disk i/o monitoring, to allow you to see live read/write disk speed during copying and infer if copying has actually finsihed, useful for flashdrives, external drives. 
-
-- quick audio input/output switch with a keybind, eg if you have bluetooth headphones connected, you can quicly switch to speakers without disconnecting. 
-
-- mono/sterio audio toggling. 
-
-- also supports touchpad gestures for volume/brightess, locking the screen, invoking swaync, pause/play, muting.(requires a laptop or a touchpad for pc)
-
-- battery notifier for laptops, you can customize it to show notifications at certain levels.
-
-- Togglable power saver mode.
-
-- system clean up (cache purge)- removes unwanted files to reclaim storage. 
-
-- usb sounds , get notified when usb devices are plugged/unplugged.
-
-- FTP server auto setup. 
-
-- Tailscale auto setup. 
-
-- Openssh auto setup. with or without tailscale.
-
-- auto warp- cloudflaire setup and toggleale right from rofi. 
-
-- Vnc setup for iphones (wired)
-
-- dynamic frantional scalling script so you can scale your display with a keybind. 
-
-- toggle window transparancy, blur and shadow with a single keybind. 
-
-- hypridle tui configuration.
-
-- wifi connecting script for setup at ~/user_scripts/network_manager/nmcli_wifi.sh
-
-- Sysbench benchmarking script. 
-
-- color picker
-
-- neovim configured, you could also use your own later on. or install lazyvim or any another neovim rice
-
-
-- github repo integration so you can easily create your own repo to backup all files, this uses bare repo so your specific existing files, listed in ~/.git_dusky_list will backup to github, you can add more files/remove existing ones from this text file.
-
-- btrfs system compression ratio - scans your os files to see how much space zstd compression is saving you. 
-
-- drive manager, easily lock/unlock encrypted drives from the terminal using "unlock media or lock media", it automaticlaly mounts your drives at a specified path, also unmounts when you lock it. This requires you to first configure the ~/user_scripts/drives/drive_manager.sh script with your drives' uuid. 
-
-- ntfs drives have a tendency to not unlock if the drive had previously been disconnected without unmounting first, because of corrupted metadata, i've a script that fixes this. ntfs_fix.sh
-
-RoFI menus. 
-
-- Emoji
-- Calculator
-- Matugen Theme switcher. 
-- Animation switcher. 
-- Power menu. 
-- Clipboard
-- Wallpaper selector
-- Shader menu.
-- System menu. 
-
-and a lot more that would take forever to list, trust me these dotfiles are the shit! try em out. 
-
-GUI keybind invokable sliders for:
-- Volume control 
-- Brightness control 
-- Nightlight/hyprsunset intensity. 
-
-
-Speech to text 
-- Parakeet - for nvidia gpus (CUDA) or cpu 
-
-text to speech 
-- kokoro for cpu, nvidia gpus and amd gpus (via ROCm)
-
-- mechanical keypress sounds
-togglalble with a keybind or from rofi. 
-
-- Wlogout is drawn using a dynamic script that respects your frational scaling. 
-
-
-**performance and system**
-
-- **light weight**, ~900MB RAM usage and ~5GB disk usage (fully configured).
-    
-- **ZSTD & ZRAM:** Compression enabled by default to save storage and triple your effective RAM (great for low-spec machines).
-    
-- **Native Optimization:** AUR helpers configured to build with CPU-native flags (up to 20% performance boost).
-    
-
-- **UWSM Environment:** Optimized specifically for Hyprland.
-    
-
-**Graphics & Gaming**
-
-- **Fluid Animations:** Tuned physics and momentum for a "liquid" feel, I've spent days fine tuning this.
-    
-- **GPU Passthrough Guide:** Zero latency (native performance) for dual-GPU setups using Looking Glass.
-    
-- **Instant Shaders:** Switch visual shaders instantly via Rofi.
-    
-- **Android Support:** Automated Waydroid installer script.
-    
-
-**Usability & Theming**
-
-- **Universal Theming:** `Matugen` powers a unified Light/Dark mode across the system.
-    
-- **Dual Workflow:** Designed for both GUI-centric (mouse) and Terminal-centric (keyboard) users.
-    
-- **Accessibility:** Text-to-Speech (TTS) and Speech-to-Text (STT) capabilities (hardware dependent).
-    
-- **Keybind Cheatsheet:** Press `CTRL` + `SHIFT` + `?` or `CTRL` + `SHIFT` + `SPACE` anytime to see your controls.
-    
-
-
 <div align="center">
 
-Enjoy the experience!
+# DUSKY
 
-If you run into issues, check the detailed Obsidian notes included in the repo (~2MB).
+**Arch Linux & Hyprland, engineered from the ground up to stay out of your way.**
+
+[**Watch the Full System Walkthrough**](https://youtu.be/JmgvSdEIK8c) • [**Download Offline ISO**](https://drive.google.com/drive/folders/1P368khN1p-IfzWoaDnPyQNEcpkKBsOte?usp=sharing) • [**1,050+ Wallpapers**](https://github.com/dusklinux/images) • [**Community Discord**](https://discord.gg/gmyAxpAQYK)
+
+*(Note: I’m not involved with the community-run Discord server—the best place to reach me is through the Issues section of this repo.)*
 
 </div>
 
+---
 
+## Why Dusky Exists
 
-# Acknowledgments:
-Thank you to all the Contributors!
+Unfortunately, Linux is heading in the exact same direction as Windows, and I wanted something that used the absolute *least* amount of resources possible. It is easy to bloat an operating system, dress up heavy background services as "must-have features," and ship them to everyone. What is actually difficult—what takes thousands of hours of obsessive engineering—is making sure not a single background process uses a megabyte more than it strictly has to. That is why I spent 3 days studying Polkit to break it down to its first principles just to debloat a service that constantly used 20 MB of RAM—and that is just one among a countless list of examples. 
 
-sddm is a modified version of the SilentSDDM project by @uiriansan (this is a great project! Kindly star it on github)
+The honest truth is that the majority of bundled features in modern distros are never touched by the vast majority of users. They just sit there, eating resources and taking control out of your hands because a distro maintainer assumed they knew better than you. An OS shouldn't gobble up GIGABYTES of your RAM at idle or burn CPU cycles on mystery tasks in the background.
 
-[SilentSDDM by uiriansan][repo_linkk]
+At the same time, there is a fine line between minimalism and misery.
 
-[repo_linkk]: https://github.com/uiriansan/SilentSDDM/
+I used to think a minimal Arch Linux ISO with a few applications on top was all you needed for a proper setup. I was wrong. Over the last year, I learned the hard way that system configuration has no bottom. A stock minimal install might boot, but under the hood it is completely unconfigured—just waiting for you to hit a wall with PAM, sudoers, firewall rules, swap, memory tuning, filesystem compression, or backups among an exhaustive list of things. You shouldn't have to spend weeks debugging low-level plumbing, and you shouldn't have to wonder why a background daemon is eating your RAM. That burden belongs on the developer, not the user.
 
+Finding that exact balance is what I have spent the last year obsessing over. Across more than **7,000 commits** and thousands of iterations, I studied what other distributions and projects did well, borrowed their best ideas, stripped away their overhead, and rebuilt them to be faster and cleaner.
+
+---
+
+## How It Works Under the Hood
+
+### 22 Megabytes of Instructions—Nothing Installed at Root
+Dusky has more built-in capabilities than almost any distribution out there, yet none of them weigh down your system. Why? Because **they aren't "installed."**
+
+Everything lives inside a **~22 MB folder** in your user directory containing thousands of lines of modular scripts. A script is nothing more than a sequence of instructions waiting for your computer to run it. Until you actually call a feature, it uses **zero** RAM and **zero** CPU. Nothing is permanently wired into your operating system at the root level. If you delete that one folder, all of it is gone.
+
+### One Shared TUI Engine for Every Config
+I didn't want myself, or anyone else, to have to dig through raw text files every time a setting needed changing. At the same time, I refused to build a bloated GUI with a mountain of heavy dependencies when every Linux system already has a terminal.
+
+Instead, **every single configuration file on the system has its own Terminal User Interface (TUI)**. You launch the TUI for what you want to tweak, navigate it cleanly, and close it. Most importantly, every TUI runs on the **exact same shared engine**. Nothing is copied, nothing is repetitive, and the entire engine sits right inside that same user directory as a script!
+
+### Rust vs. Quickshell
+I made a deliberate, stubborn decision: **nothing in Dusky stays resident in RAM if it doesn't have to.** While Quickshell is easy to configure and write new UIs for, it is unbelievably resource-heavy—Omarchy, for example, uses 2 GB of RAM with *nothing* open. That should be a crime. 
+
+I’ve written everything—no, **EVERYTHING**—in **Rust**. And since Rust is such a fast language, it doesn’t need a background service constantly running just to keep libraries loaded in memory for fast invocation. Instead, its **cold start beats Quickshell even when Quickshell has a background service running!**
+
+* **Our Control Center (Settings App), Notification Panel, and Wallpaper Selector** are all written in Rust.
+* **The Control Center** simply organizes all of Dusky's underlying **700+ scripts** into an intuitive visual interface for times when you don't want to browse scripts manually. You open it, it runs the script with the right flags, and when you close it, it is completely out of memory.
+* **FZF-based TUI Clipboard** with image preview support and syntax highlighting for supported text.
+
+We do not play around here. Every megabyte of baseline RAM we save is another megabyte you can put toward the heavy workloads you actually care about.
+
+![Dusky Control Center](Pictures/readme_assets/dusky_control_center.webp)
+
+### The 5-Step Custom Kernel Compiler
+Normally, compiling the Linux kernel takes three to four hours because mainline kernels pack tens of thousands of drivers for hardware you will never own. Those unused drivers sit on your disk and take up memory because traditional distributions have to mass-distribute one generic kernel for everyone. Because Dusky only compiles what your hardware actually needs, **it takes only 13 minutes on my 12th-gen laptop CPU, and 51 minutes on a 4th-gen i5 mobile CPU to compile a custom kernel!**
+
+For the first time in any setup like this, Dusky includes a **5-step Kernel Compiler script** that builds a kernel tailored strictly to your machine. I took the best parts from CachyOS, Zen, and TKG, and added a *lot* more low-level performance kernel tuning above and beyond what anyone else does—with a **70/30 ratio** of optimizations baked directly into the kernel vs. runtime tweaks applied after the fact.
+
+Two notable highlights:
+* **Hardware Pruning:** Automatically strips out every driver your specific hardware doesn't need, shrinking the kernel size by **up to 90%** and cutting measurable baseline RAM usage by **50 MB**.
+* **Native CPU Flags:** Compiles locally on your machine to match **YOUR** processor's exact instruction set, delivering a **minimum 7% performance uplift across the board** and **up to 25% higher performance** in specialized workloads (the benefit of not doing a one-size-fits-all kernel).
+
+---
+
+## A Personal Note on Sustainability
+
+The reality of building on Arch Linux is that rolling releases break things constantly. Every now and then, an upstream update changes compositor syntax, or a package like the wallpaper daemon renames its binary overnight, forcing me to rewrite dozens of configs and scripts from scratch. Keeping a system this tightly integrated takes an enormous amount of patience and energy.
+
+Right now, this is not an economically viable path. I haven't made a single cent off of Dusky, and **I refuse to ever monetize it or lock it behind a paywall.** It will remain completely free forever.
+
+It can feel discouraging watching a handful of heavily marketed Linux projects pull in tens of millions of dollars in funding while independent developers burn out in a winner-takes-all ecosystem. Still, I want to keep doing this for as long as I can, because I know there are people who care about real craftsmanship. Our computers are deeply personal tools we use for hours every day—we shouldn't have to compromise on excellence or settle for bloatware.
+
+All I ask is that you **speak with your time**:
+* **Use software that respects your hardware** instead of settling for bloat.
+* **Star this repository** and **open an issue** whenever an upstream update breaks something so I can fix it and keep making Dusky better.
+* **If you are able, consider donating.**
+
+---
+
+## What's Inside the Box
+
+Even with an idle footprint of roughly **~700 MB of RAM** and **~9 GB of disk space**, Dusky packs an enormous toolkit ready to run on demand:
+
+### System, Storage & Hardware
+* **TUIs for Everything (Around 50 TUIs!):** Edit Hyprland appearance (gaps, shadows, blur, opacity), configure `hypridle`, or remap shortcuts with a conflict-checking Keybind TUI that automatically unbinds collisions in `keybind.conf`.
+* **Under-the-Hood Defaults:** Pre-configured BTRFS + ZSTD compression, ZRAM (tripling effective memory on low-spec machines), firewall, PAM, sudoers, and CPU-native AUR compilation flags.
+* **Live Disk I/O Monitor:** Watch real-time read/write speeds so you know when USB or external drive transfers have genuinely finished flushing to disk.
+* **BTRFS Compression Scanner:** Calculates exactly how much disk space ZSTD compression is saving across your OS.
+* **Bare-Repo GitHub Backup:** Back up and sync your tracked dotfiles (configured via `~/.git_dusky_list`) directly to your own GitHub repository.
+* **Maintenance & Power:** One-command cache purging, customizable laptop battery notifications, toggleable power-saver mode, and a `sysbench` benchmarking script.
+
+### AI, Audio & Media
+* **Offline Speech-to-Text & Text-to-Speech:** Local STT powered by **Parakeet** (CUDA / CPU) and local TTS powered by **Kokoro** (CPU / NVIDIA CUDA / AMD ROCm).
+* **Circle to Search & Music Lookup:** On-screen Google Lens visual search and instant audio recognition for whatever is playing.
+* **Two-Way Noise Cancellation:** Built-in bidirectional noise cancellation through **Dusky Audio Studio**.
+* **Smart Audio Controls:** Single-keybind switching between outputs (e.g., jump from Bluetooth headphones to speakers without disconnecting), mono/stereo toggling, optional mechanical keypress sounds, and USB plug/unplug audio cues.
+
+### Networking & Connectivity
+* **One-Command Server Setups:** Automated scripts for **Tailscale**, **OpenSSH** (standalone or over Tailscale), and local **FTP servers**.
+* **Cloudflare WARP:** Auto-setup and instant toggling directly from Rofi.
+* **Wired & Wireless VNC:** Pre-built setup for low-latency remote screen control.
+* **Wireless Tools:** Terminal Wi-Fi connection tool (`nmcli_wifi.sh`) and an `airmon` auditing script (strictly for testing access points you own).
+
+### Desktop Workflow, Graphics & Gaming
+* **Dynamic System Theming:** `Matugen` powers unified Light and Dark color schemes across the entire desktop—including Firefox/Gecko website theming via **Dusky Sites**.
+* **Tuned Physics & Instant Shaders:** Days of fine-tuning went into the window momentum and animations for a liquid feel, alongside instant visual shader switching from Rofi.
+* **Display & Controls:** Dynamic fractional scaling via keybind, scale-aware `wlogout` rendering, single-keybind blur/transparency/shadow toggles, and pop-up GUI sliders for Volume, Brightness, and Nightlight (`hyprsunset`).
+* **Touchpad Gestures:** Laptop touchpad gestures for volume, brightness, screen locking, media play/pause, muting, and opening the notification center.
+* **Gaming & Android:** Zero-latency GPU passthrough guide (Looking Glass for dual-GPU setups) and an automated **Waydroid** installer script.
+* **Rofi Applets:** Emoji picker, Calculator, Matugen theme switcher, Animation switcher, Power menu, Clipboard manager, Wallpaper selector, Shader menu, and System menu.
+
+---
+
+## Prerequisites & Hardware
+
+1. **Filesystem:** Strictly optimized for **BTRFS** (required for ZSTD compression, Copy-on-Write protection against data corruption, and instant snapshots; `ext4` works but is not recommended).
+2. **Dual Booting & Bootloader:** Works cleanly alongside Windows or other Linux distros. Defaults to `systemd-boot` on UEFI (boots up to 5 seconds faster) and `GRUB` on BIOS.
+3. **GPU Environment Variables (Intel / NVIDIA / AMD):** Hardware is auto-detected during setup. If you ever need to set GPU variables manually, edit `~/.config/uwsm/env` and `~/.config/uwsm/env-hyprland`.
+
+---
+
+## Installation
+
+[**Watch the Installation Tutorial Video**](https://youtu.be/OzeFAY_8T8Y)
+
+### Option 1: Dusky Offline ISO
+If you want a ready-to-go offline installer without setting up base Arch first:
+* [**Download the Dusky Offline ISO (Google Drive)**](https://drive.google.com/drive/folders/1P368khN1p-IfzWoaDnPyQNEcpkKBsOte?usp=sharing)
+
+### Option 2: Fresh Arch + Hyprland Install
+Best if you already have a fresh, unconfigured Arch Linux (or Arch-based distro like CachyOS) install with **BTRFS** and **Hyprland** selected via `archinstall` or manual setup.
+
+#### Step 1: Clone Dotfiles (Bare Repo Method)
+Dusky uses a bare Git repository to place files directly where they belong in `$HOME`.
+
+Make sure you are connected to the internet and `git` is installed:
+```bash
+sudo pacman -Syu --needed git
+```
+
+Clone the repository and deploy the files:
+```bash
+git clone --bare --depth 1 https://github.com/dusklinux/dusky.git $HOME/dusky
+git --git-dir=$HOME/dusky/ --work-tree=$HOME checkout -f
+```
+> **Note:** You will briefly see a few errors at the top of the screen right after checkout. Don't worry—this is normal and disappears automatically once `matugen` generates your colors and sets a wallpaper.
+
+#### Step 2: Run the Orchestra
+Run the master setup script to configure system services and install packages:
+```bash
+~/user_scripts/arch_setup_scripts/orchestrator.sh
+```
+* **How it works:** `orchestrator.sh` coordinates roughly 80 modular subscripts. It detects already-installed packages, skips them automatically, and is completely safe to re-run as many times as you like.
+* **Time:** Expect **30 to 60 minutes** as `paru` compiles several packages from source. Stay near your machine to answer occasional `yes/no` prompts.
+
+---
+
+## Usage & Troubleshooting
+
+### Keybinds Cheatsheet
+Press `CTRL + SHIFT + SPACE` (or `CTRL + SHIFT + ?`) at any time to pull up the interactive Keybinds Cheatsheet. You can even click commands inside the menu to run them directly.
+
+### If a Script Fails
+Because Arch is a rolling release, an upstream package change can occasionally trip up a script:
+1. **Don't panic.** The setup is completely modular—one failed subscript won't break the rest of the installation.
+2. **Check the terminal output** to see which subscript in `~/user_scripts/arch_setup_scripts/scripts/` failed, and try running it individually.
+3. **Check the Obsidian Vault or Open an Issue:** Browse the included ~2 MB Obsidian documentation notes in the repo, or open a ticket on GitHub and let me know so I can fix it.
+
+---
+
+## Acknowledgments
+
+* [**hyprmoncfg**](https://github.com/crmne/hyprmoncfg) — For doing the heavy lifting behind the TUI monitor configuration.
+* [**Omarchy**](https://github.com/basecamp/omarchy) — Our audio source switcher, network TUI, AI crash report generator, and fingerprint setup were partly borrowed from them with further tweaks and optimizations.
+* [**linux-cachyos**](https://github.com/dusklinux/linux-cachyos) & [**linux-tkg**](https://github.com/Frogging-Family/linux-tkg) — For inspiring the Dusky Kernel.
+* [**skwd-wall**](https://github.com/liixini/skwd-wall) — For inspiring the Rust-based Dusky Paper.
+* [**Looking Glass**](https://github.com/gnif/LookingGlass) — For the low-latency Windows GPU passthrough setup.
+* [**Matugen**](https://github.com/InioX/matugen) — For enabling system-wide dynamic theming across everything.
+* [**TLP**](https://github.com/linrunner/TLP) — For allowing extensive configurability for power management.
+* [**Mako**](https://github.com/emersion/mako) — This isn’t just a notification daemon; it is far beyond that and one of the most impressive projects out there.
+* [**MatugenFox**](https://github.com/Ubaidullah-Web-Dev/MatugenFox) & [**refox**](https://github.com/ADIOR-enigma/refox) — For inspiring **Dusky Sites**, which makes dynamic website theming on Firefox/Gecko browsers possible.
+* [**SilentSDDM**](https://github.com/uiriansan/SilentSDDM/) — Our optional SDDM greeter is a fork of this project.
+* [**Papirus Icon Theme**](https://github.com/PapirusDevelopmentTeam/papirus-icon-theme) — The icon pack Dusky uses.
+* [**mpv**](https://github.com/mpv-player/mpv) — The media player Dusky uses.
+* [**Neovim**](https://github.com/neovim/neovim) — The terminal text editor.
+* [**Yazi**](https://github.com/sxyazi/yazi) — The terminal file manager.
+* [**Firefox**](https://github.com/mozilla-firefox/firefox) — Our default browser. Big thanks to them for keeping Manifest V2 supported even when incentivized not to.
+* [**Foot**](https://github.com/yonasBSD/foot) & [**Kitty**](https://github.com/kovidgoyal/kitty) — For enabling a great terminal experience.
+* [**Zsh**](https://github.com/zsh-users/zsh) — For being better than Bash while retaining compatibility with Bash.
+* **All Contributors** — Thank you to everyone who has tested, submitted bug reports, shared suggestions, opened pull requests, or spread the word about Dusky. Thank you!
