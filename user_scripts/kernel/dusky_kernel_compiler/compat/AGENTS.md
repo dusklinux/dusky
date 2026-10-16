@@ -65,8 +65,9 @@ diagnostic did that and faulted on IBT. No such calls are in production code.
 Verified development evidence: stock D3cold; unchanged custom kernel initially
 D0; fixed logging build D3cold for 61/61 samples over 60 seconds, three successful
 nvidia-smi wake/sleep cycles and a 600-frame NVIDIA Wayland Vulkan render followed
-by D3cold. Final clean DKMS build installed; reboot verification was pending at
-the time these instructions were written. Three additional 3,600-frame NVIDIA
+by D3cold. The final clean DKMS build subsequently passed reboot verification:
+61/61 D3cold idle samples, successful wake/return and NVIDIA Wayland rendering
+followed by D3cold, without kernel faults or Xid. Three additional 3,600-frame NVIDIA
 Wayland rendering cycles each returned to D3cold without kernel faults/Xid.
 Compiler integration passed 109 regression tests, actual source/ELF checks and
 repeated live overlay preparation. Raw local evidence stays under

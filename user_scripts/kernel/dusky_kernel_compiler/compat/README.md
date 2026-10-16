@@ -19,8 +19,11 @@ three subsequent `nvidia-smi` wake cycles also succeeded and each returned to
 D3cold in approximately 23 seconds without kernel faults or NVIDIA Xid errors.
 A 600-frame Vulkan rendering test on NVIDIA through Wayland also succeeded
 and returned to D3cold approximately 9.5 seconds after exit. A rebuild/install
-through DKMS with the minimal patch and no diagnostic logging succeeded;
-the final rebuilt binary still needs its separate reboot verification.
+through DKMS with the minimal patch and no diagnostic logging succeeded.
+That final clean build also passed separate reboot verification: 61/61 D3cold
+idle samples with zero active-time increase, successful GPU wake and return to
+sleep, and successful NVIDIA Wayland rendering followed by D3cold. No kernel
+faults or NVIDIA Xid errors appeared.
 Three longer 3,600-frame Wayland rendering cycles also succeeded (10,800
 frames total, about 75–77 seconds rendering per cycle), each returning to
 D3cold within 10.5–11.1 seconds. No kernel faults or NVIDIA Xid errors appeared.

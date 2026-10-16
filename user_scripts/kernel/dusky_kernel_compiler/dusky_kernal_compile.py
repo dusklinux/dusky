@@ -4759,7 +4759,7 @@ def write_bls_entries(p: KernelProfile, facts: HostFacts, d: Derived) -> None:
                 ucode.append(f"initrd  /{img}")
     entries_dir = Path(root) / "loader" / "entries"
     files: dict[Path, tuple[str, str]] = {}
-    default_body = [f"title   Arch Linux ({p.pkgbase})", f"version {d.kernelrelease or d.version}", f"sort-key dusky-{p.suffix}", f"linux   /vmlinuz-{p.pkgbase}",
+    default_body = [f"title   Dusky {p.name}", f"version {d.kernelrelease or d.version}", f"sort-key dusky-{p.suffix}", f"linux   /vmlinuz-{p.pkgbase}",
                     *ucode, f"initrd  /initramfs-{p.pkgbase}.img", "options " + " ".join(params)]
     files[entries_dir / f"{p.pkgbase}.conf"] = ("\n".join(default_body) + "\n", "0644")
 
@@ -4767,7 +4767,7 @@ def write_bls_entries(p: KernelProfile, facts: HostFacts, d: Derived) -> None:
     fallback_conf = entries_dir / f"{p.pkgbase}-fallback.conf"
     has_fallback = (Path(root) / fallback_img).is_file() or (Path("/boot") / fallback_img).is_file()
     if has_fallback:
-        fb_body = [f"title   Arch Linux ({p.pkgbase}) (fallback initramfs)", f"version {d.kernelrelease or d.version}", f"sort-key dusky-{p.suffix}", f"linux   /vmlinuz-{p.pkgbase}",
+        fb_body = [f"title   Dusky {p.name} (fallback initramfs)", f"version {d.kernelrelease or d.version}", f"sort-key dusky-{p.suffix}", f"linux   /vmlinuz-{p.pkgbase}",
                    *ucode, f"initrd  /{fallback_img}", "options " + " ".join(params)]
         files[fallback_conf] = ("\n".join(fb_body) + "\n", "0644")
     elif fallback_conf.is_file():

@@ -56,6 +56,8 @@ After boot, `--doctor` or `--doctor --json` includes passive NVIDIA power status
 
 `boot.write_entries` and `boot.set_default` separately control systemd-boot entries and default selection. GRUB/rEFInd/Limine/UKI command-line integration still depends on the target setup. No service starts on the build computer during compilation.
 
+Generated systemd-boot entries use `Dusky <profile name>` (for example, `Dusky battery`), with `(fallback initramfs)` appended for fallback entries.
+
 ## Build on a stronger computer
 
 Export from the target (including a chosen tuning profile):
