@@ -4,7 +4,7 @@
 
 **Arch Linux & Hyprland, engineered from the ground up to stay out of your way.**
 
-[**Watch the Full System Walkthrough**](https://youtu.be/JmgvSdEIK8c) • [**Download Offline ISO**](https://drive.google.com/drive/folders/1P368khN1p-IfzWoaDnPyQNEcpkKBsOte?usp=sharing) • [**1,050+ Wallpapers**](https://github.com/dusklinux/images) • [**Community Discord**](https://discord.gg/gmyAxpAQYK)
+[**Watch the Full System Walkthrough**](https://youtu.be/JmgvSdEIK8c) • [**Download Offline ISO (3.5 GB)**](https://drive.google.com/drive/folders/1P368khN1p-IfzWoaDnPyQNEcpkKBsOte?usp=sharing) • [**1,050+ Wallpapers**](https://github.com/dusklinux/images) • [**Community Discord**](https://discord.gg/gmyAxpAQYK)
 
 *(Note: I’m not involved with the community-run Discord server—the best place to reach me is through the Issues section of this repo.)*
 
@@ -14,7 +14,7 @@
 
 ## Why Dusky Exists
 
-Unfortunately, Linux is heading in the exact same direction as Windows, and I wanted something that used the absolute *least* amount of resources possible. It is easy to bloat an operating system, dress up heavy background services as "must-have features," and ship them to everyone. What is actually difficult—what takes thousands of hours of obsessive engineering—is making sure not a single background process uses a megabyte more than it strictly has to. That is why I spent 3 days studying Polkit to break it down to its first principles just to debloat a service that constantly used 20 MB of RAM—and that is just one among a countless list of examples. 
+Unfortunately, Linux is heading in the exact same direction as Windows, and I wanted something that used the absolute *least* amount of resources possible. It is easy to bloat an operating system, dress up heavy background services as "must-have features," and ship them to everyone. What is actually difficult—what takes thousands of hours of obsessive engineering—is making sure not a single background process uses a megabyte more than it strictly has to. That is why I spent 3 days studying Polkit to break it down to its first principles just to debloat a service that constantly used 20 MB of RAM—and that is just one among a countless list of examples.
 
 The honest truth is that the majority of bundled features in modern distros are never touched by the vast majority of users. They just sit there, eating resources and taking control out of your hands because a distro maintainer assumed they knew better than you. An OS shouldn't gobble up GIGABYTES of your RAM at idle or burn CPU cycles on mystery tasks in the background.
 
@@ -102,7 +102,7 @@ Even with an idle footprint of roughly **~700 MB of RAM** and **~9 GB of disk sp
 * **Wireless Tools:** Terminal Wi-Fi connection tool (`nmcli_wifi.sh`) and an `airmon` auditing script (strictly for testing access points you own).
 
 ### Desktop Workflow, Graphics & Gaming
-* **Dynamic System Theming:** `Matugen` powers unified Light and Dark color schemes across the entire desktop—including Firefox/Gecko website theming via **Dusky Sites**.
+* **Dynamic System Theming:** `Matugen` powers unified Light and Dark color schemes across the entire desktop—including Firefox/Gecko website theming via Dusky Sites.
 * **Tuned Physics & Instant Shaders:** Days of fine-tuning went into the window momentum and animations for a liquid feel, alongside instant visual shader switching from Rofi.
 * **Display & Controls:** Dynamic fractional scaling via keybind, scale-aware `wlogout` rendering, single-keybind blur/transparency/shadow toggles, and pop-up GUI sliders for Volume, Brightness, and Nightlight (`hyprsunset`).
 * **Touchpad Gestures:** Laptop touchpad gestures for volume, brightness, screen locking, media play/pause, muting, and opening the notification center.
@@ -114,7 +114,7 @@ Even with an idle footprint of roughly **~700 MB of RAM** and **~9 GB of disk sp
 ## Prerequisites & Hardware
 
 1. **Filesystem:** Strictly optimized for **BTRFS** (required for ZSTD compression, Copy-on-Write protection against data corruption, and instant snapshots; `ext4` works but is not recommended).
-2. **Dual Booting & Bootloader:** Works cleanly alongside Windows or other Linux distros. Defaults to `systemd-boot` on UEFI (boots up to 5 seconds faster) and `GRUB` on BIOS.
+2. **Dual Booting & Bootloader:** Works cleanly alongside Windows or other Linux distros. Defaults to `systemd-boot` on UEFI (boots up to 5 seconds faster and light weight) and `GRUB` on BIOS.
 3. **GPU Environment Variables (Intel / NVIDIA / AMD):** Hardware is auto-detected during setup. If you ever need to set GPU variables manually, edit `~/.config/uwsm/env` and `~/.config/uwsm/env-hyprland`.
 
 ---
