@@ -4,19 +4,20 @@
 Workflow: collect modules -> select profile/release -> configure and verify ->
 make pacman-pkg -> install locally or transfer packages to the target.
 RAM builds prefer /mnt/zram1, checkpointing objects to persistent storage.
-No kernel feature patches or third-party module source modifications.
+No kernel feature patches; narrowly validated NVIDIA DKMS compatibility overlay.
 
 Use --help for CLI options or run without arguments for the guided menu.
 """
 
 import sys
 
-if sys.version_info < (3, 14):
-    sys.stderr.write(f"Dusky Kernel Compiler requires Python >= 3.14 (running {sys.version.split()[0]}).\n")
+if sys.version_info < (3, 15):
+    sys.stderr.write(f"Dusky Kernel Compiler requires Python >= 3.15 (running {sys.version.split()[0]}).\n")
     raise SystemExit(70)
 
 import argparse
 import kernel_storage
+lazy import kernel_nvidia
 import collections
 import functools
 import fcntl
@@ -3827,20 +3828,16 @@ def _ops_gpu(mx: Matrix, p: KernelProfile, d: Derived) -> None:
              "'modprobed-db store' before rebuilding; if the disable is intentional, ignore this.")
     if "nvidia" in gpus or portable:
         nvidia_dkms = _has_nvidia_dkms(f.dkms_modules)
-        rc_target = "-rc" in d.version.lower()
-        if portable or not nvidia_dkms or rc_target:
+        if portable or not nvidia_dkms:
             if portable:
                 reason = "portable target (host DKMS says nothing about the target machine)"
-            elif not nvidia_dkms:
+            else:
                 reason = (f"NVIDIA GPU without nvidia-dkms "
                           f"({', '.join(f.dkms_modules) or 'no DKMS'} installed)")
-            else:
-                reason = (f"NVIDIA + nvidia-dkms but target {d.version} is -rc "
-                          f"(DKMS routinely fails on rc trees; fallback keeps GPU alive)")
             mx.m("DRM_NOUVEAU", why=reason)
         else:
-            debug(f"skipping DRM_NOUVEAU: NVIDIA + {', '.join(f.dkms_modules)} on stable "
-                  f"{d.version} (proprietary covers the card)")
+            # localmodconfig's seed may already contain Nouveau; explicitly prune it.
+            mx.n("DRM_NOUVEAU", why="target uses NVIDIA DKMS; do not add a second GPU driver for RC kernels")
     for gpu, sym in (("virtio", "DRM_VIRTIO_GPU"), ("qxl", "DRM_QXL"), ("bochs", "DRM_BOCHS"), ("vmware", "DRM_VMWGFX")):
         if gpu in gpus or portable:
             mx.m(sym, optional=True)
@@ -4563,6 +4560,56 @@ def audit_dkms(krel: str, pkgbase: str) -> bool:
     return True
 
 
+def prepare_nvidia_compat() -> bool:
+    """Prepare only a validated open-driver overlay on the actual install target."""
+    if "nvidia" not in _gpu_vendors():
+        return False
+    package = run(["pacman", "-Q", "nvidia-open-dkms"], check=False)
+    fields = package.stdout.split()
+    if package.returncode or len(fields) != 2:
+        return False  # Nouveau, proprietary or prebuilt modules are not this repair's target.
+    version = fields[1].split(":", 1)[-1].rsplit("-", 1)[0]
+    if version != kernel_nvidia.VERSION:
+        warn(f"NVIDIA open {version} is outside the validated RTD3 repair; "
+             "review compat/AGENTS.md and check --doctor after boot")
+        return False
+    registered = Path("/var/lib/dkms/nvidia")
+    source = registered / kernel_nvidia.VERSION / "source"
+    if not source.is_dir():
+        raise BuildError(f"Installed nvidia-open-dkms {version} has no registered source at {source}")
+    try:
+        files = kernel_nvidia.repair_files(source, SCRIPT_DIR / "compat", Path("/etc/dkms"))
+        PRIV.write_files(files)
+    except (OSError, ValueError) as e:
+        raise BuildError(f"NVIDIA compatibility preparation failed: {e}") from e
+    info(f"NVIDIA open {kernel_nvidia.VERSION}: source checked; RTD3 compatibility verification enabled")
+    return True
+
+
+def verify_nvidia_compat(kernelrelease: str) -> None:
+    """DKMS 'installed' is insufficient: require the fixed ELF import for this driver."""
+    try:
+        if not kernel_nvidia.target_needs_init_fs(Path("/usr/lib/modules") / kernelrelease / "build"):
+            return
+
+        def repaired() -> bool:
+            version = run(["modinfo", "-k", kernelrelease, "-F", "version", "nvidia"]).stdout.strip()
+            if version != kernel_nvidia.VERSION:
+                raise ValueError(f"installed NVIDIA version {version!r} differs from validated {kernel_nvidia.VERSION}")
+            filename = run(["modinfo", "-k", kernelrelease, "-F", "filename", "nvidia"]).stdout.strip()
+            return kernel_nvidia.module_uses_init_fs(Path(filename))
+
+        if not repaired():
+            info(f"Rebuilding NVIDIA {kernel_nvidia.VERSION} for {kernelrelease} with the RTD3 fix")
+            for action in ("build", "install"):
+                PRIV.run(["dkms", action, f"nvidia/{kernel_nvidia.VERSION}", "-k", kernelrelease, "--force"], capture=False)
+            if not repaired():
+                raise ValueError("rebuilt NVIDIA module still lacks userspace_init_fs; boot promotion stopped")
+    except (OSError, ValueError, subprocess.SubprocessError) as e:
+        raise BuildError(f"NVIDIA compatibility verification failed: {e}") from e
+    ok(f"NVIDIA RTD3 compatibility verified in the installed module for {kernelrelease}")
+
+
 def ensure_install_dependencies(p: KernelProfile) -> None:
     packages = ["mkinitcpio", "python", "systemd", "util-linux", "kmod"]
     if p.g("scheduler", "scx") != "none" and p.g("runtime", "enabled"):
@@ -4626,6 +4673,8 @@ def install_packages(pkgs: Sequence[Path], profile: KernelProfile, kernelrelease
     rule("Install packages (pacman -U)")
     ensure_install_dependencies(profile)
     PRIV.ensure()
+    # Must precede pacman: its DKMS hook may build the driver immediately.
+    nvidia_compat = prepare_nvidia_compat()
     # Ensure /etc/mkinitcpio.d/<pkgbase>.preset exists so the pacman mkinitcpio hook runs for this kernel
     preset_path = Path(f"/etc/mkinitcpio.d/{profile.pkgbase}.preset")
     if not preset_path.is_file():
@@ -4653,6 +4702,8 @@ def install_packages(pkgs: Sequence[Path], profile: KernelProfile, kernelrelease
     # "installed", then Exec format error at modprobe). Audit and force-rebuild.
     if not audit_dkms(kernelrelease, profile.pkgbase):
         raise BuildError("Kernel installed, but DKMS failed; boot configuration was not promoted. Review DKMS logs before rebooting.")
+    if nvidia_compat:
+        verify_nvidia_compat(kernelrelease)
 
     # DKMS repairs happen after pacman hooks: include their resulting modules.
     # Also regenerate stale images when an alpm hook failed or did not run.
@@ -5223,8 +5274,9 @@ def do_matrix(args: argparse.Namespace) -> int:
 
 def do_doctor(args: argparse.Namespace) -> int:
     facts = host_facts()
+    nvidia = kernel_nvidia.power_status() if "nvidia" in facts.gpus else []
     if args.json:
-        say(json.dumps({"facts": facts.as_json(), "python": sys.version.split()[0], "paths": {"build": str(BUILD_DIR), "profiles": [str(d) for d in profile_dirs()],
+        say(json.dumps({"facts": facts.as_json(), "nvidia": nvidia, "python": sys.version.split()[0], "paths": {"build": str(BUILD_DIR), "profiles": [str(d) for d in profile_dirs()],
                         "snapshots": str(CONFIG_SNAPSHOT_DIR), "logs": str(LOG_DIR)}}, indent=2))
         return 0
     banner()
@@ -5243,6 +5295,12 @@ def do_doctor(args: argparse.Namespace) -> int:
         ["amd_pstate", _read("/sys/devices/system/cpu/amd_pstate/status").strip() or "n/a"], ["THP", _read("/sys/kernel/mm/transparent_hugepage/enabled").strip() or "n/a"],
         ["zram", ", ".join(p.name for p in Path("/sys/block").glob("zram*")) or "none"],
     ])
+    if nvidia:
+        rule("NVIDIA runtime power (passive snapshot)")
+        for gpu in nvidia:
+            say(f"  {gpu['pci']}: {gpu['driver']} / {gpu['power_state']} / {gpu['runtime_status']} / control={gpu['control']}")
+            say(textwrap.indent(gpu['nvidia_power'], "    "))
+        note("D0 can be expected with active GPU clients or displays; a snapshot alone does not prove a PM fault")
     rule("Toolchain & Systems Integration")
     rows = []
     # (tool, category, is_required)

@@ -617,6 +617,28 @@ class AuditTests(unittest.TestCase):
             (tree / '.config').write_text('# CONFIG_DRM_I915 is not set\n')
             with self.assertRaises(k.ProfileError): k._ops_gpu(k.Matrix(idx), p, d)
 
+    def test_nvidia_dkms_never_adds_rc_nouveau_fallback(self):
+        idx = k.KconfigIndex(frozenset({'DRM_NOUVEAU', 'PREEMPT_LAZY'}), 4)
+        for version in ('7.3', '7.3-rc7', '7.4-rc1'):
+            for vendors in (('nvidia',), ('intel', 'nvidia'), ('amd', 'nvidia')):
+                for dkms in ((), ('nvidia',), ('nvidia-open-dkms',)):
+                    with self.subTest(version=version, vendors=vendors, dkms=dkms), patch.object(k, '_gpu_hide_active', return_value=False):
+                        p = profile(); d = derived(p, facts(gpus=vendors, dkms_modules=dkms), idx)
+                        d.version = version
+                        # No .config exists here: Intel census validation has a separate test.
+                        with tempfile.TemporaryDirectory() as td:
+                            d.tree = Path(td)
+                            mx = k.Matrix(idx); k._ops_gpu(mx, p, d)
+                        ops = {o.symbol:o.action for o in mx.ops}
+                        self.assertEqual(ops['DRM_NOUVEAU'], 'n' if dkms else 'm')
+
+    def test_portable_kernel_keeps_nouveau_independent_of_builder_dkms(self):
+        p = profile(); p.set('meta', 'portable_package', True)
+        d = derived(p, facts(gpus=('nvidia',), dkms_modules=('nvidia',)))
+        d.version = '7.3-rc7'
+        mx = k.Matrix(d.idx); k._ops_gpu(mx, p, d)
+        self.assertEqual({o.symbol:o.action for o in mx.ops}['DRM_NOUVEAU'], 'm')
+
     def test_network_only_enables_selected_algorithms(self):
         p = profile(); idx = k.KconfigIndex(frozenset({'PREEMPT_LAZY', 'TCP_CONG_BBR', 'TCP_CONG_CUBIC', 'NET_SCH_CAKE', 'NET_SCH_FQ', 'NET_SCH_FQ_CODEL'}), 4)
         mx = k.Matrix(idx); k._ops_network(mx, p, derived(p, idx=idx))

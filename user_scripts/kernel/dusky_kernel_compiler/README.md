@@ -1,6 +1,6 @@
 # Dusky kernel compiler
 
-Build a stock upstream Linux kernel for the exact x86-64 hardware that will run it. Requires Arch Linux, Python 3.14+, Linux 7.3+ (including explicitly selected 7.3 RCs), and LLVM 21+ or the current GCC toolchain. Keep the compiler, schema, storage helper and runtime helper together.
+Build a stock upstream Linux kernel for the exact x86-64 hardware that will run it. Requires Arch Linux, Python 3.15+, Linux 7.3+ (including explicitly selected 7.3 RCs), and LLVM 21+ or the current GCC toolchain. Keep the compiler, schema, storage/runtime/NVIDIA helpers and `compat/` assets together.
 
 ## 1. Prepare the target
 
@@ -34,7 +34,7 @@ python dusky_kernal_compile.py -p battery --pin 7.3-rc5 --allow-rc --no-install
 
 Stable remains the default channel. The interactive picker permits explicit RC selection; unattended RC builds require `--allow-rc`. `--pin VERSION` bypasses the release picker. No kernel older than the 7.3 series is accepted. Release snapshots have no kernel.org archive signature/checksum; the script reports this limitation.
 
-No scheduler/enhancement/ACS/Polly patches, custom HZ injection, or NVIDIA source modifications are applied. Old profile patch fields are rejected as unknown settings: remove them rather than expecting silent fallback. Adjacent old patch artifacts remain on disk but are unused. Timer choices are upstream's 100/250/300/1000 Hz. The kernel stays EEVDF; optional sched_ext uses the in-tree BPF interface.
+No scheduler/enhancement/ACS/Polly patches or custom HZ injection are applied. The NVIDIA repair described below uses a DKMS overlay; package-owned sources stay unchanged. Old profile patch fields are rejected as unknown settings: remove them rather than expecting silent fallback. Adjacent old patch artifacts remain on disk but are unused. Timer choices are upstream's 100/250/300/1000 Hz. The kernel stays EEVDF; optional sched_ext uses the in-tree BPF interface.
 
 ThinLTO, native tuning and stripped/compressed module packaging are retained. All supplied profiles use ZSTD for the kernel image, modules and compressed swap. Package compression follows makepkg settings (Arch defaults to ZSTD); the audited packages are `.pkg.tar.zst`. Exported hardware bundles use ZSTD through Python 3.14. Existing initramfs settings are respected (mkinitcpio defaults to ZSTD). Upstream hibernation supports only LZO/LZ4, so its existing LZ4 setting remains; firmware and archive readers retain other codecs for compatibility. O2 remains the performance default; O3 and full LTO have workload-dependent tradeoffs. `thp="never"` disables automatic THP allocation while retaining support required by upstream GPU SVM helpers; only selected ZRAM compression backends are compiled. Single-node targets omit NUMA even when the profile permits it. Strict pruning restores census-listed Intel generated platform drivers missed by upstream localmodconfig. Explicit `modules.keep_symbols` and `dusky.extra_config` remain available for deliberate workload features.
 
@@ -48,7 +48,11 @@ A normal local build installs the resulting packages and refreshes supported boo
 python dusky_kernal_compile.py --install-pkg /path/to/linux-dusky-*.pkg.tar.zst
 ```
 
-Headers are built automatically when the target needs DKMS, or explicitly with `--headers always`. Existing third-party modules remain the target user's responsibility; the compiler does not patch or add their sources. An unsuccessful DKMS audit stops boot-entry promotion. Use the existing working kernel if a new driver/kernel combination needs separate maintenance.
+Headers are built automatically when the target needs DKMS, or explicitly with `--headers always`. An unsuccessful DKMS audit stops boot-entry promotion. Strict NVIDIA targets with DKMS omit Nouveau on stable and RC kernels; portable builds and targets without NVIDIA DKMS retain its existing fallback.
+
+On installation targets with NVIDIA hardware and the tested nvidia-open-dkms 615.78.08 source, the compiler automatically prepares the [RTD3 compatibility overlay](compat/README.md) before pacman's DKMS hooks run. It verifies the actual installed module's ELF import after DKMS, rebuilds only if that fix is absent, and stops before initramfs/boot promotion if repair fails. Existing DKMS overrides are preserved. AMD/Intel-only hosts skip the NVIDIA path, and building/exporting for another machine never patches the builder's drivers. Other driver versions/flavors are not automatically patched; new releases still require validation.
+
+After boot, `--doctor` or `--doctor --json` includes passive NVIDIA power status, using discovered PCI addresses rather than unstable DRM card numbers. An active display or workload may legitimately keep a GPU in D0; this snapshot is diagnostic, not a universal requirement to power off every NVIDIA GPU.
 
 `boot.write_entries` and `boot.set_default` separately control systemd-boot entries and default selection. GRUB/rEFInd/Limine/UKI command-line integration still depends on the target setup. No service starts on the build computer during compilation.
 
