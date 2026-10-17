@@ -1,1086 +1,713 @@
 #!/usr/bin/env python3
-"""
-Phase 3: Libvirt Cryptographic State & Complete Infrastructure Continuity Manager
-Target: Arch Linux (Kernel 7.1.0+), Python 3.14+, systemd 260+, libvirt 12.6+, QEMU 11.1+
-Scope: Full Inactive XML Topology Extraction, NVRAM/Firmware Variables, vTPM 2.0 State & Local CA,
-       Libvirt Secrets & Master Encryption Key, Managed Save States, Snapshots/Checkpoints DAG,
-       Host Hooks (VFIO/Looking Glass), Network Filters, and Daemon Configurations.
-Philosophy: Surgical Extraction & High-Fidelity Injection. Zero Data Loss. Strict DAC/MAC Preservation.
+"""Back up and restore local qemu:///system definitions and persistent VM state.
+
+Target: Linux 7.3+, Python 3.15+, systemd 262+, current Arch libvirt.
+Guest disks, external snapshot data, managed-save RAM, firmware binaries and host
+packages are NOT backed up. Guest recovery uses a cold boot.
+Do not change libvirt configuration or start guests during backup/restore.
+Restore merges into the target host; it does not delete unrelated definitions.
 """
 
 import argparse
-import glob
-import grp
+import fcntl
+lazy import glob
 import hashlib
 import json
 import os
+import platform
 import pwd
-import readline
+lazy import readline
 import shutil
+import signal
 import subprocess
 import sys
+import tempfile
 import time
 import xml.etree.ElementTree as ET
-from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, List, Never, Optional, Self, Tuple
+from typing import Any
 
-# ==============================================================================
-# TTY AUTO-COMPLETION & READLINE SUPPORT
-# ==============================================================================
-def path_completer(text: str, state: int) -> Optional[str]:
-    """Standard library path auto-completer for readline supporting ~ and spaces."""
-    try:
-        expanded = os.path.expanduser(text)
-        if os.path.isdir(expanded) and not text.endswith('/'):
-            search_dir = expanded
-            base_prefix = ""
-        else:
-            search_dir = os.path.dirname(expanded) or '.'
-            base_prefix = os.path.basename(expanded)
-
-        escaped_dir = glob.escape(search_dir)
-        pattern = os.path.join(escaped_dir, glob.escape(base_prefix) + '*')
-        matches = glob.glob(pattern)
-
-        results: List[str] = []
-        user_home = os.path.expanduser('~')
-        for m in matches:
-            if os.path.isdir(m):
-                m += '/'
-            if text.startswith('~/') and m.startswith(user_home):
-                m = '~' + m[len(user_home):]
-            results.append(m)
-
-        results.sort()
-        return results[state] if state < len(results) else None
-    except Exception:
-        return None
-
-readline.set_completer_delims('\t\n;')
-readline.parse_and_bind("tab: complete")
-readline.set_completer(path_completer)
-
-# ==============================================================================
-# PRIVILEGE ELEVATION
-# ==============================================================================
-def require_root() -> None:
-    """Hard enforcement of eUID 0. Auto-elevates via sudo if executed as standard user."""
-    if os.geteuid() != 0:
-        print("\n[INFO] Administrative privileges required. Elevating via sudo...")
-        try:
-            os.execvp("sudo", ["sudo", sys.executable] + sys.argv)
-        except OSError as e:
-            print(f"\n[FATAL] Failed to elevate privileges dynamically: {e}", file=sys.stderr)
-            sys.exit(1)
-
-require_root()
-
-# ==============================================================================
-# UI DEPENDENCIES (Rich 15.0+)
-# ==============================================================================
 try:
     from rich.console import Console
-    from rich.panel import Panel
-    from rich.table import Table
-    from rich.theme import Theme
 except ImportError:
-    print("\n[FATAL] 'python-rich' is missing. Please install it via 'pacman -S python-rich'.", file=sys.stderr)
-    sys.exit(1)
+    sys.exit("Install python-rich before running this tool.")
 
-custom_theme = Theme({
-    "info": "cyan",
-    "warning": "yellow",
-    "danger": "bold red",
-    "success": "bold green",
-    "highlight": "bold magenta"
-})
-console = Console(theme=custom_theme)
+console = Console(highlight=False, markup=False)
+URI = "qemu:///system"
+SCHEMA = "3.0.0"
+MANIFEST = "backup_manifest.json"
+TAR_METADATA = ("--xattrs", "--xattrs-include=*", "--acls", "--selinux", "--sparse")
+DAEMONS = ("libvirtd", "virtqemud", "virtsecretd", "virtnetworkd", "virtstoraged",
+           "virtnwfilterd", "virtproxyd", "virtnodedevd", "virtinterfaced")
 
-# ==============================================================================
-# DATA MODELS & MANIFEST SCHEMA
-# ==============================================================================
-@dataclass(slots=True)
-class EntityMetadata:
-    name: str
-    uuid: str = ""
-    autostart: bool = False
-    active: bool = False
-    extra: Dict[str, Any] = field(default_factory=dict)
 
-@dataclass(slots=True)
-class BackupManifest:
-    version: str = "2.0.0"
-    created_at: str = ""
-    kernel: str = ""
-    os_name: str = ""
-    hostname: str = ""
-    libvirt_version: str = ""
-    qemu_version: str = ""
-    swtpm_version: str = ""
-    python_version: str = ""
-    domains: List[EntityMetadata] = field(default_factory=list)
-    networks: List[EntityMetadata] = field(default_factory=list)
-    pools: List[EntityMetadata] = field(default_factory=list)
-    nwfilters: List[EntityMetadata] = field(default_factory=list)
-    secrets: List[EntityMetadata] = field(default_factory=list)
-    snapshots: Dict[str, List[str]] = field(default_factory=dict)
-    current_snapshots: Dict[str, str] = field(default_factory=dict)
-    checkpoints: Dict[str, List[str]] = field(default_factory=dict)
-    archives: Dict[str, str] = field(default_factory=dict)
-    file_hashes: Dict[str, str] = field(default_factory=dict)
+class BackupError(Exception):
+    """An operation could not be completed reliably."""
 
-# ==============================================================================
-# SYSTEM UTILITIES & PROMPT HELPERS
-# ==============================================================================
-def bail(msg: str) -> Never:
-    """Exit gracefully with a clear error panel."""
-    console.print(Panel(f"[danger]FATAL ERROR:[/danger] {msg}", border_style="red"))
-    sys.exit(1)
 
-def prompt_choice(prompt_text: str, choices: List[str], default: str = "") -> str:
-    """Safe TUI prompt that decouples rich ANSI styling from Readline input buffer."""
-    choices_str = "/".join(choices)
-    default_str = f" [default: {default}]" if default else ""
-    console.print(f"\n[bold cyan]{prompt_text}[/bold cyan] [dim]({choices_str}){default_str}[/dim]")
-    while True:
-        try:
-            val = input("> ").strip()
-        except EOFError:
-            return default
-        if not val and default:
-            return default
-        if val in choices:
-            return val
-        console.print(f"[warning]Invalid selection '{val}'. Please enter one of: {', '.join(choices)}[/warning]")
+@dataclass(frozen=True, slots=True)
+class StateTarget:
+    key: str
+    path: Path
+    excludes: tuple[str, ...] = ()
 
-def prompt_confirm(prompt_text: str, default: bool = True) -> bool:
-    """Safe TUI boolean confirmation prompt with decoupled readline buffer."""
-    default_str = "Y/n" if default else "y/N"
-    console.print(f"\n[bold cyan]{prompt_text}[/bold cyan] [dim][{default_str}][/dim]")
-    while True:
-        try:
-            val = input("> ").strip().lower()
-        except EOFError:
-            return default
-        if not val:
-            return default
-        if val in ("y", "yes"):
-            return True
-        if val in ("n", "no"):
-            return False
-        console.print("[warning]Please enter 'y' or 'n'.[/warning]")
 
-def run_cmd(
-    cmd: List[str],
-    check: bool = True,
-    capture: bool = True,
-    timeout: Optional[float] = None
-) -> subprocess.CompletedProcess[str]:
-    """Execute shell commands safely and reliably."""
+# One definition controls both backup and restore destinations. Runtime QEMU
+# directories (including master-key.aes) are not portable cold-boot state.
+STATE_TARGETS = (
+    StateTarget("nvram", Path("/var/lib/libvirt/qemu/nvram")),
+    StateTarget("varstore", Path("/var/lib/libvirt/qemu/varstore")),
+    StateTarget("swtpm", Path("/var/lib/libvirt/swtpm")),
+    StateTarget("swtpm_localca", Path("/var/lib/swtpm-localca")),
+    StateTarget("secrets_var", Path("/var/lib/libvirt/secrets")),
+    StateTarget("secrets_etc", Path("/etc/libvirt/secrets")),
+    StateTarget("hooks", Path("/etc/libvirt/hooks")),
+    StateTarget("hooks_qemu_d", Path("/etc/libvirt/hooks.qemu.d")),
+    StateTarget("daemon_configs", Path("/etc/libvirt"), (
+        "libvirt/qemu", "libvirt/secrets", "libvirt/nwfilter", "libvirt/storage",
+        "libvirt/hooks", "libvirt/hooks.qemu.d", "libvirt/lxc")),
+)
+
+
+def run_cmd(cmd: list[str], *, check: bool = True,
+            timeout: float | None = None, discard_stdout: bool = False
+            ) -> subprocess.CompletedProcess[str]:
+    """Use stable English output for the few tabular virsh interfaces."""
     try:
-        return subprocess.run(
-            cmd,
-            check=check,
-            capture_output=capture,
-            text=True,
-            timeout=timeout
-        )
-    except subprocess.CalledProcessError as e:
-        if check:
-            console.print(f"[danger]FATAL: Command failed with exit code {e.returncode}:[/danger] {' '.join(cmd)}")
-            err_msg = (e.stderr or e.stdout or "").strip()
-            if err_msg:
-                console.print(f"[red]Details:[/red] {err_msg}")
-            sys.exit(1)
-        return e
-    except subprocess.TimeoutExpired:
-        bail(f"Command timed out after {timeout} seconds: {' '.join(cmd)}")
+        result = subprocess.run(cmd, stdin=subprocess.DEVNULL,
+                                stdout=subprocess.DEVNULL if discard_stdout else subprocess.PIPE,
+                                stderr=subprocess.PIPE, text=True,
+                                encoding="utf-8", errors="strict", timeout=timeout,
+                                env={**os.environ, "LC_ALL": "C"}, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise BackupError(f"Cannot execute {cmd[0]}: {exc}") from exc
+    if check and result.returncode:
+        raise BackupError(f"Command failed ({result.returncode}): {' '.join(cmd)}\n"
+                          f"{(result.stderr or result.stdout or "").strip()}")
+    return result
 
-def resolve_user_path(path_str: str) -> Path:
-    """Intelligently route '~/' to the human user's home, bypassing the root shell."""
-    if path_str.startswith('~/'):
-        sudo_user = os.environ.get("SUDO_USER", "")
-        if sudo_user:
-            try:
-                home_dir = pwd.getpwnam(sudo_user).pw_dir
-                return (Path(home_dir) / path_str[2:]).resolve()
-            except KeyError:
-                pass
-    return Path(path_str).expanduser().resolve()
 
-def sanitize_filename(name: str) -> str:
-    """Sanitize strings to be safely used as filenames."""
-    return name.replace("/", "_").replace("\\", "_").replace("..", "_")
+def virsh(*args: str, check: bool = True) -> str:
+    return run_cmd(["virsh", "--connect", URI, *args], check=check).stdout.rstrip("\n")
 
-def compute_sha256(filepath: Path) -> str:
-    """Compute SHA-256 hash using Python 3.11+ hashlib.file_digest."""
-    with open(filepath, "rb") as f:
-        return hashlib.file_digest(f, "sha256").hexdigest()
 
-def check_libvirt_connection() -> None:
-    """Verify modular/monolithic IPC socket responsiveness."""
-    res = run_cmd(["virsh", "uri"], check=False)
-    if res.returncode != 0:
-        bail("Cannot connect to the libvirt daemon. Ensure virtqemud.socket / libvirtd is active.")
+def names(*args: str) -> list[str]:
+    return [line for line in virsh(*args).splitlines() if line]
 
-def verify_system_users() -> None:
-    """Ensure required hypervisor users and groups exist before state injection."""
-    required_users = ["tss"]
-    has_qemu_user = False
-    for candidate in ["libvirt-qemu", "qemu"]:
-        try:
-            pwd.getpwnam(candidate)
-            has_qemu_user = True
-            break
-        except KeyError:
-            continue
 
-    missing = []
-    for user in required_users:
-        try:
-            pwd.getpwnam(user)
-        except KeyError:
-            missing.append(user)
+def resolve_user_path(value: str) -> Path:
+    if value == "~" or value.startswith("~/"):
+        user = os.environ.get("SUDO_USER")
+        home = Path(pwd.getpwnam(user).pw_dir) if user else Path.home()
+        return (home / value[2:]).resolve()
+    return Path(value).expanduser().resolve()
 
-    if not has_qemu_user:
-        missing.append("libvirt-qemu (or qemu)")
 
-    if missing:
-        bail(
-            f"The following required system users are missing: {', '.join(missing)}\n"
-            "Please ensure 'swtpm' and 'libvirt' are fully installed on this system."
-        )
+def path_completer(text: str, state: int) -> str | None:
+    try:
+        expanded = glob.escape(str(resolve_user_path(text)))
+        pattern = expanded + ("/*" if not text or text.endswith("/") or text == "~" else "*")
+        matches = sorted(glob.glob(pattern))
+        match = matches[state]
+        return match + "/" if Path(match).is_dir() else match
+    except (IndexError, OSError, KeyError):
+        return None
 
-def get_active_domains() -> List[str]:
-    """Retrieve list of currently running or paused domains."""
-    res = run_cmd(["virsh", "list", "--name"], check=False)
-    if res.returncode != 0:
-        return []
-    return [line.strip() for line in res.stdout.split('\n') if line.strip()]
 
-def handle_running_vms(interactive: bool = True, shutdown_running: bool = False) -> None:
-    """Check for active VMs and handle them gracefully to prevent torn binary state."""
-    active_vms = get_active_domains()
-    if not active_vms:
+def ask(prompt: str) -> str:
+    console.print(prompt)
+    try:
+        value = input("> ").strip()
+    except EOFError as exc:
+        raise BackupError("Input closed; operation cancelled.") from exc
+    if not value:
+        raise BackupError("No selection/path provided; operation cancelled.")
+    return value
+
+
+def compute_sha256(path: Path) -> str:
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def backup_path(root: Path, relative: str) -> Path:
+    """Reject broken manifest paths before reading or restoring any state."""
+    path = root / relative
+    if not relative or Path(relative).is_absolute() or not path.resolve().is_relative_to(root):
+        raise BackupError(f"Invalid backup path: {relative!r}")
+    return path
+
+
+def write_payload(root: Path, relative: str, text: str, manifest: dict[str, Any]) -> str:
+    path = backup_path(root, relative)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text + "\n", encoding="utf-8")
+    manifest["file_hashes"][relative] = compute_sha256(path)
+    return relative
+
+
+def handle_running_vms(interactive: bool, shutdown_running: bool) -> None:
+    active = names("list", "--name")
+    if not active:
         return
+    action = "shutdown" if shutdown_running else ""
+    if not action and interactive:
+        console.print(f"Active guests: {', '.join(active)}")
+        action = ask("Enter shutdown or abort:")
+    if action != "shutdown":
+        raise BackupError("Shut down guests first, or use --shutdown-running.")
+    for vm in active:
+        virsh("shutdown", "--domain", vm, "--mode", "acpi")
+    deadline = time.monotonic() + 60
+    while names("list", "--name"):
+        if time.monotonic() >= deadline:
+            raise BackupError("Guests did not stop within 60 seconds.")
+        time.sleep(2)
 
-    console.print(f"[warning]Active virtual machines detected:[/warning] {', '.join(active_vms)}")
-    
-    if shutdown_running:
-        action = "1"
-    elif interactive:
-        console.print("\n[bold cyan]Action required to prevent inconsistent/torn cryptographic state:[/bold cyan]")
-        console.print("  [cyan]1.[/cyan] Gracefully shut down active VMs (ACPI)")
-        console.print("  [cyan]2.[/cyan] Suspend active VMs (virsh managedsave)")
-        console.print("  [cyan]3.[/cyan] Abort operation")
-        action = prompt_choice("Select action", choices=["1", "2", "3"], default="1")
-    else:
-        bail(f"Active VMs detected ({', '.join(active_vms)}). Shut them down or use --shutdown-running.")
 
-    match action:
-        case "1":
-            for vm in active_vms:
-                console.print(f"[info]Sending ACPI shutdown signal to '{vm}'...[/info]")
-                run_cmd(["virsh", "shutdown", vm, "--mode", "acpi"], check=False)
-            
-            with console.status("[cyan]Waiting for domains to power off...[/cyan]", spinner="dots"):
-                timeout = 60
-                start_t = time.time()
-                while time.time() - start_t < timeout:
-                    still_active = get_active_domains()
-                    if not still_active:
-                        console.print("[success]All domains gracefully powered off.[/success]")
-                        return
-                    time.sleep(2)
-                bail("Timed out waiting for domains to gracefully shut down. Please stop them manually.")
-        case "2":
-            for vm in active_vms:
-                console.print(f"[info]Managed saving domain '{vm}'...[/info]")
-                run_cmd(["virsh", "managedsave", vm])
-            console.print("[success]All domains saved to disk.[/success]")
-        case "3":
-            bail("Operation aborted by operator.")
+@contextmanager
+def offline_state() -> Iterator[None]:
+    """Stop activation sockets as well as daemons; always recover active units.
 
-# ==============================================================================
-# PHASE AUTOMATION: BACKUP
-# ==============================================================================
-def execute_backup(dest_dir_arg: Optional[str] = None, non_interactive: bool = False, shutdown_running: bool = False) -> Path:
-    check_libvirt_connection()
-    handle_running_vms(interactive=not non_interactive, shutdown_running=shutdown_running)
-
-    console.print("\n[bold cyan]─── Libvirt Surgical Infrastructure & Cryptographic Backup ───[/bold cyan]")
-
-    if dest_dir_arg:
-        target_dir = resolve_user_path(dest_dir_arg)
-    else:
-        console.print("[bold cyan]Enter absolute path to save backups (e.g., /mnt/Storage/VM_Backup):[/bold cyan]")
-        target_input = input("> ").strip()
-        if not target_input:
-            bail("No destination path provided.")
-        target_dir = resolve_user_path(target_input)
-
-    if not target_dir.exists():
-        if non_interactive or prompt_confirm(f"Directory '{target_dir}' does not exist. Create it?", default=True):
-            target_dir.mkdir(parents=True, exist_ok=True)
-        else:
-            bail("Backup aborted by operator.")
-
-    # Prepare directories
-    (target_dir / "vms").mkdir(exist_ok=True)
-    (target_dir / "networks").mkdir(exist_ok=True)
-    (target_dir / "pools").mkdir(exist_ok=True)
-    (target_dir / "nwfilters").mkdir(exist_ok=True)
-    (target_dir / "secrets").mkdir(exist_ok=True)
-    (target_dir / "snapshots").mkdir(exist_ok=True)
-    (target_dir / "checkpoints").mkdir(exist_ok=True)
-    (target_dir / "state_archives").mkdir(exist_ok=True)
-
-    manifest = BackupManifest(
-        created_at=datetime.now(timezone.utc).isoformat(),
-        kernel=run_cmd(["uname", "-r"]).stdout.strip(),
-        os_name="Arch Linux",
-        hostname=run_cmd(["uname", "-n"]).stdout.strip(),
-        python_version=sys.version.split()[0]
-    )
-
-    # Collect package versions
+    libvirt autostarts once per host boot. Do not remove its /run markers or
+    copy them to another host. Other clients must remain idle during this block.
+    """
+    if names("list", "--name"):
+        raise BackupError("A guest started during the operation; state copy aborted.")
+    patterns = [f"{daemon}*" for daemon in DAEMONS]
+    output = run_cmd(["systemctl", "list-units", "--all", "--plain", "--no-legend",
+                      "--no-pager", *patterns]).stdout
+    units = []
+    for line in output.splitlines():
+        fields = line.split()
+        if len(fields) >= 4 and fields[0].endswith((".socket", ".service")):
+            if fields[2] == "active":
+                units.append(fields[0])
+            elif fields[2] in {"activating", "deactivating", "reloading"}:
+                raise BackupError(f"Wait for {fields[0]} to finish its state transition.")
+    if not units:
+        raise BackupError("No active libvirt systemd units found; cannot quiesce state.")
+    console.print("Temporarily stopping libvirt management daemons and sockets.")
     try:
-        manifest.libvirt_version = run_cmd(["virsh", "--version"]).stdout.strip()
-    except Exception:
-        manifest.libvirt_version = "unknown"
+        run_cmd(["systemctl", "stop", *units])
+        yield
+    finally:
+        # Socket activation must be restored even if stop or state copy failed.
+        run_cmd(["systemctl", "start", *units])
 
-    try:
-        qemu_ver_res = run_cmd(["qemu-system-x86_64", "--version"], check=False)
-        if qemu_ver_res.returncode == 0:
-            manifest.qemu_version = qemu_ver_res.stdout.splitlines()[0]
-    except Exception:
-        manifest.qemu_version = "unknown"
 
-    try:
-        swtpm_ver_res = run_cmd(["swtpm", "--version"], check=False)
-        if swtpm_ver_res.returncode == 0:
-            manifest.swtpm_version = swtpm_ver_res.stdout.splitlines()[0]
-    except Exception:
-        manifest.swtpm_version = "unknown"
+def export_entities(root: Path, manifest: dict[str, Any]) -> list[Path]:
+    """Export persistent infrastructure, retaining human names only as metadata."""
+    firmware_paths: list[Path] = []
+    for category, listing, dump, tag in (
+        ("networks", "net-list", "net-dumpxml", "network"),
+        ("pools", "pool-list", "pool-dumpxml", "pool"),
+        ("domains", "list", "dumpxml", "domain"),
+    ):
+        transient = names(listing, "--all", "--transient", "--name")
+        if transient:
+            raise BackupError(f"Persist or remove transient {category} first: {transient}")
+        autostart = set(names(listing, "--all", "--autostart", "--name"))
+        active = set(names(listing, "--name"))
+        manifest[category] = []
+        for name in names(listing, "--all", "--persistent", "--name"):
+            flags = ["--inactive"] + (["--security-info"] if tag == "domain" else [])
+            xml = virsh(dump, f"--{tag}", name, *flags)
+            tree = ET.fromstring(xml)
+            uuid = tree.findtext("uuid")
+            if not uuid:
+                raise BackupError(f"Missing UUID in {category}: {name}")
+            relative = write_payload(root, f"{category}/{uuid}.xml", xml, manifest)
+            item = {"name": name, "uuid": uuid, "xml": relative,
+                    "autostart": name in autostart, "active": name in active}
+            manifest[category].append(item)
+            if tag == "domain":
+                info = dict(line.split(":", 1) for line in virsh("dominfo", "--domain", uuid).splitlines() if ":" in line)
+                once = info.get("Autostart Once", "").strip()
+                if once not in {"enable", "disable"}:
+                    raise BackupError(f"Cannot determine one-time autostart for {name}")
+                item["autostart_once"] = once == "enable"
+                firmware_paths.extend(domain_state_paths(tree))
+                export_history(root, manifest, item)
+        console.print(f"Exported {len(manifest[category])} {category}.")
 
-    table = Table(title=f"Backup Telemetry ({target_dir.name})", show_header=True, header_style="bold magenta")
-    table.add_column("Component", style="cyan")
-    table.add_column("Type", justify="center")
-    table.add_column("Status", justify="left")
+    # These two virsh commands have no --name/--uuid output mode.
+    for category, listing, dump in (("nwfilters", "nwfilter-list", "nwfilter-dumpxml"),
+                                     ("secrets", "secret-list", "secret-dumpxml")):
+        manifest[category] = []
+        for line in virsh(listing).splitlines()[2:]:
+            fields = line.split()
+            if not fields:
+                continue
+            uuid = fields[0]
+            xml = virsh(dump, uuid)
+            tree = ET.fromstring(xml)
+            if category == "secrets" and tree.get("ephemeral") == "yes":
+                raise BackupError(f"Ephemeral secret {uuid} cannot be backed up from persistent state.")
+            relative = write_payload(root, f"{category}/{uuid}.xml", xml, manifest)
+            manifest[category].append({"name": tree.get("name") or uuid,
+                                       "uuid": uuid, "xml": relative})
+    return firmware_paths
 
-    # --------------------------------------------------------------------------
-    # 1. Archive Cryptographic, Firmware, Secrets & Hooks State Files
-    # --------------------------------------------------------------------------
-    state_targets = [
-        {
-            "id": "nvram",
-            "name": "NVRAM (UEFI Vars)",
-            "parent_dir": "/var/lib/libvirt/qemu",
-            "target": "nvram",
-            "archive_name": "nvram_state.tar.zst"
-        },
-        {
-            "id": "varstore",
-            "name": "Firmware Varstore",
-            "parent_dir": "/var/lib/libvirt/qemu",
-            "target": "varstore",
-            "archive_name": "varstore_state.tar.zst"
-        },
-        {
-            "id": "swtpm",
-            "name": "vTPM 2.0 State",
-            "parent_dir": "/var/lib/libvirt",
-            "target": "swtpm",
-            "archive_name": "swtpm_state.tar.zst"
-        },
-        {
-            "id": "swtpm_localca",
-            "name": "vTPM Local CA & Keys",
-            "parent_dir": "/var/lib",
-            "target": "swtpm-localca",
-            "archive_name": "swtpm_localca_state.tar.zst"
-        },
-        {
-            "id": "secrets_var",
-            "name": "Libvirt Secrets (Var)",
-            "parent_dir": "/var/lib/libvirt",
-            "target": "secrets",
-            "archive_name": "secrets_var_state.tar.zst"
-        },
-        {
-            "id": "secrets_etc",
-            "name": "Libvirt Secrets (Etc)",
-            "parent_dir": "/etc/libvirt",
-            "target": "secrets",
-            "archive_name": "secrets_etc_state.tar.zst"
-        },
-        {
-            "id": "save",
-            "name": "Managed Save States",
-            "parent_dir": "/var/lib/libvirt/qemu",
-            "target": "save",
-            "archive_name": "save_state.tar.zst"
-        },
-        {
-            "id": "hooks",
-            "name": "KVM / VFIO Hooks",
-            "parent_dir": "/etc/libvirt",
-            "target": "hooks",
-            "archive_name": "hooks_state.tar.zst"
-        },
-        {
-            "id": "hooks_qemu_d",
-            "name": "KVM Hooks.qemu.d",
-            "parent_dir": "/etc/libvirt",
-            "target": "hooks.qemu.d",
-            "archive_name": "hooks_qemu_d_state.tar.zst"
-        },
-        {
-            "id": "daemon_configs",
-            "name": "Daemon Configs",
-            "parent_dir": "/etc",
-            "target": "libvirt",
-            "archive_name": "daemon_configs.tar.zst",
-            "extra_flags": ["--exclude=libvirt/qemu", "--exclude=libvirt/secrets", "--exclude=libvirt/nwfilter", "--exclude=libvirt/storage", "--exclude=libvirt/hooks*", "--exclude=libvirt/lxc"]
-        }
-    ]
 
-    with console.status("[cyan]Archiving binary states, NVRAM, vTPM, and secrets (Zstandard + xattrs)...[/cyan]", spinner="dots"):
-        for state in state_targets:
-            target_path = Path(state["parent_dir"]) / state["target"]
-            if target_path.exists():
-                has_content = any(target_path.iterdir()) if target_path.is_dir() else True
-                if not has_content:
-                    table.add_row(state["name"], "Binary State", "[dim]Empty Directory (Skipped)[/dim]")
-                    continue
-
-                archive_path = target_dir / "state_archives" / state["archive_name"]
-                cmd = [
-                    "tar", "--zstd", "--sparse", "--xattrs", "--xattrs-include=*", "--acls",
-                    "--exclude=*.sock", "--exclude=*.pid", "--exclude=*monitor.sock", "--exclude=*.lock*",
-                    "-cf", str(archive_path), "-C", state["parent_dir"], state["target"]
-                ]
-                if "extra_flags" in state:
-                    cmd[1:1] = state["extra_flags"]
-
-                res = run_cmd(cmd, check=False)
-                if res.returncode == 0 and archive_path.exists() and archive_path.stat().st_size > 0:
-                    sha = compute_sha256(archive_path)
-                    manifest.archives[state["id"]] = state["archive_name"]
-                    manifest.file_hashes[f"state_archives/{state['archive_name']}"] = sha
-                    size_kb = archive_path.stat().st_size / 1024
-                    table.add_row(state["name"], "Zstd Archive", f"[green]Archived ({size_kb:.1f} KB)[/green]")
-                else:
-                    table.add_row(state["name"], "Zstd Archive", "[yellow]Empty / Skipped[/yellow]")
-            else:
-                table.add_row(state["name"], "Binary State", "[dim]Not Found (Skipped)[/dim]")
-
-    # --------------------------------------------------------------------------
-    # 2. Extract Virtual Networks (--inactive)
-    # --------------------------------------------------------------------------
-    with console.status("[cyan]Dumping Virtual Network Blueprints...[/cyan]", spinner="dots"):
-        net_res = run_cmd(["virsh", "net-list", "--all", "--name"], check=False)
-        autostart_nets = set(run_cmd(["virsh", "net-list", "--all", "--autostart", "--name"], check=False).stdout.split())
-        active_nets = set(run_cmd(["virsh", "net-list", "--name"], check=False).stdout.split())
-
-        for net in [n.strip() for n in net_res.stdout.splitlines() if n.strip()]:
-            xml_res = run_cmd(["virsh", "net-dumpxml", net, "--inactive"], check=False)
-            if xml_res.returncode == 0:
-                xml_file = target_dir / "networks" / f"{net}.xml"
-                xml_file.write_text(xml_res.stdout, encoding="utf-8")
-                manifest.file_hashes[f"networks/{net}.xml"] = compute_sha256(xml_file)
-                manifest.networks.append(EntityMetadata(
-                    name=net,
-                    autostart=(net in autostart_nets),
-                    active=(net in active_nets)
-                ))
-                table.add_row(net, "Network", "[green]XML Extracted[/green]")
-
-    # --------------------------------------------------------------------------
-    # 3. Extract Storage Pools (--inactive)
-    # --------------------------------------------------------------------------
-    with console.status("[cyan]Dumping Storage Pool Blueprints...[/cyan]", spinner="dots"):
-        pool_res = run_cmd(["virsh", "pool-list", "--all", "--name"], check=False)
-        autostart_pools = set(run_cmd(["virsh", "pool-list", "--all", "--autostart", "--name"], check=False).stdout.split())
-        active_pools = set(run_cmd(["virsh", "pool-list", "--name"], check=False).stdout.split())
-
-        for pool in [p.strip() for p in pool_res.stdout.splitlines() if p.strip()]:
-            xml_res = run_cmd(["virsh", "pool-dumpxml", pool, "--inactive"], check=False)
-            if xml_res.returncode == 0:
-                xml_file = target_dir / "pools" / f"{pool}.xml"
-                xml_file.write_text(xml_res.stdout, encoding="utf-8")
-                manifest.file_hashes[f"pools/{pool}.xml"] = compute_sha256(xml_file)
-
-                # Extract target path if available
-                target_path_str = ""
-                try:
-                    root_elem = ET.fromstring(xml_res.stdout)
-                    target_elem = root_elem.find("./target/path")
-                    if target_elem is not None and target_elem.text:
-                        target_path_str = target_elem.text
-                except Exception:
-                    pass
-
-                manifest.pools.append(EntityMetadata(
-                    name=pool,
-                    autostart=(pool in autostart_pools),
-                    active=(pool in active_pools),
-                    extra={"target_path": target_path_str}
-                ))
-                table.add_row(pool, "Storage Pool", "[green]XML Extracted[/green]")
-
-    # --------------------------------------------------------------------------
-    # 4. Extract Network Filters (NWFilters)
-    # --------------------------------------------------------------------------
-    with console.status("[cyan]Dumping Network Filters...[/cyan]", spinner="dots"):
-        nw_res = run_cmd(["virsh", "nwfilter-list"], check=False)
-        if nw_res.returncode == 0:
-            lines = nw_res.stdout.splitlines()
-            for line in lines[2:]:
-                parts = line.split()
-                if len(parts) >= 2:
-                    uuid_val, nw_name = parts[0], parts[1]
-                    xml_res = run_cmd(["virsh", "nwfilter-dumpxml", nw_name], check=False)
-                    if xml_res.returncode == 0:
-                        xml_file = target_dir / "nwfilters" / f"{nw_name}.xml"
-                        xml_file.write_text(xml_res.stdout, encoding="utf-8")
-                        manifest.file_hashes[f"nwfilters/{nw_name}.xml"] = compute_sha256(xml_file)
-                        manifest.nwfilters.append(EntityMetadata(name=nw_name, uuid=uuid_val))
-            if manifest.nwfilters:
-                table.add_row(f"{len(manifest.nwfilters)} NWFilters", "NWFilter", "[green]Extracted[/green]")
-
-    # --------------------------------------------------------------------------
-    # 5. Extract Libvirt Secrets
-    # --------------------------------------------------------------------------
-    with console.status("[cyan]Dumping Libvirt Secrets...[/cyan]", spinner="dots"):
-        sec_res = run_cmd(["virsh", "secret-list"], check=False)
-        if sec_res.returncode == 0:
-            lines = sec_res.stdout.splitlines()
-            for line in lines[2:]:
-                parts = line.split()
-                if parts:
-                    sec_uuid = parts[0]
-                    sec_xml_res = run_cmd(["virsh", "secret-dumpxml", sec_uuid], check=False)
-                    if sec_xml_res.returncode == 0:
-                        sec_file = target_dir / "secrets" / f"{sec_uuid}.xml"
-                        sec_file.write_text(sec_xml_res.stdout, encoding="utf-8")
-                        manifest.file_hashes[f"secrets/{sec_uuid}.xml"] = compute_sha256(sec_file)
-                        manifest.secrets.append(EntityMetadata(name=sec_uuid, uuid=sec_uuid))
-            if manifest.secrets:
-                table.add_row(f"{len(manifest.secrets)} Secrets", "Secret", "[green]Extracted[/green]")
-
-    # --------------------------------------------------------------------------
-    # 6. Extract Virtual Machines (--inactive --security-info)
-    # --------------------------------------------------------------------------
-    with console.status("[cyan]Dumping Virtual Machine Blueprints & Snapshots...[/cyan]", spinner="dots"):
-        vm_res = run_cmd(["virsh", "list", "--all", "--name"], check=False)
-        autostart_vms = set(run_cmd(["virsh", "list", "--all", "--autostart", "--name"], check=False).stdout.split())
-
-        for vm in [v.strip() for v in vm_res.stdout.splitlines() if v.strip()]:
-            xml_res = run_cmd(["virsh", "dumpxml", vm, "--inactive", "--security-info"], check=False)
-            if xml_res.returncode == 0:
-                xml_file = target_dir / "vms" / f"{vm}.xml"
-                xml_file.write_text(xml_res.stdout, encoding="utf-8")
-                manifest.file_hashes[f"vms/{vm}.xml"] = compute_sha256(xml_file)
-
-                # Parse UUID
-                vm_uuid = ""
-                try:
-                    root_elem = ET.fromstring(xml_res.stdout)
-                    uuid_elem = root_elem.find("uuid")
-                    if uuid_elem is not None and uuid_elem.text:
-                        vm_uuid = uuid_elem.text
-                except Exception:
-                    pass
-
-                manifest.domains.append(EntityMetadata(
-                    name=vm,
-                    uuid=vm_uuid,
-                    autostart=(vm in autostart_vms)
-                ))
-                table.add_row(vm, "VM Blueprint", "[green]XML Extracted (Clean Inactive)[/green]")
-
-                # Snapshots extraction
-                snap_list_res = run_cmd(["virsh", "snapshot-list", vm, "--name", "--topological"], check=False)
-                if snap_list_res.returncode == 0 and snap_list_res.stdout.strip():
-                    vm_snap_dir = target_dir / "snapshots" / vm
-                    vm_snap_dir.mkdir(parents=True, exist_ok=True)
-                    snapshots = [s.strip() for s in snap_list_res.stdout.splitlines() if s.strip()]
-                    (vm_snap_dir / "order.txt").write_text('\n'.join(snapshots) + '\n', encoding="utf-8")
-                    manifest.snapshots[vm] = snapshots
-
-                    # Capture current snapshot pointer
-                    curr_snap_res = run_cmd(["virsh", "snapshot-current", vm, "--name"], check=False)
-                    if curr_snap_res.returncode == 0 and curr_snap_res.stdout.strip():
-                        manifest.current_snapshots[vm] = curr_snap_res.stdout.strip()
-
-                    snap_count = 0
-                    for snap in snapshots:
-                        snap_res = run_cmd(["virsh", "snapshot-dumpxml", vm, snap, "--security-info"], check=False)
-                        if snap_res.returncode == 0:
-                            safe_name = sanitize_filename(snap)
-                            snap_file = vm_snap_dir / f"{safe_name}.xml"
-                            snap_file.write_text(snap_res.stdout, encoding="utf-8")
-                            manifest.file_hashes[f"snapshots/{vm}/{safe_name}.xml"] = compute_sha256(snap_file)
-                            snap_count += 1
-
-                    table.add_row(vm, "Snapshots", f"[green]{snap_count}/{len(snapshots)} Topological Dumped[/green]")
-
-                # Checkpoints extraction (if any)
-                ckpt_list_res = run_cmd(["virsh", "checkpoint-list", vm, "--name", "--topological"], check=False)
-                if ckpt_list_res.returncode == 0 and ckpt_list_res.stdout.strip():
-                    vm_ckpt_dir = target_dir / "checkpoints" / vm
-                    vm_ckpt_dir.mkdir(parents=True, exist_ok=True)
-                    ckpts = [c.strip() for c in ckpt_list_res.stdout.splitlines() if c.strip()]
-                    manifest.checkpoints[vm] = ckpts
-                    for ckpt in ckpts:
-                        ckpt_res = run_cmd(["virsh", "checkpoint-dumpxml", vm, ckpt, "--security-info"], check=False)
-                        if ckpt_res.returncode == 0:
-                            safe_name = sanitize_filename(ckpt)
-                            ckpt_file = vm_ckpt_dir / f"{safe_name}.xml"
-                            ckpt_file.write_text(ckpt_res.stdout, encoding="utf-8")
-                            manifest.file_hashes[f"checkpoints/{vm}/{safe_name}.xml"] = compute_sha256(ckpt_file)
-                    table.add_row(vm, "Checkpoints", f"[green]{len(ckpts)} Dumped[/green]")
-
-    # --------------------------------------------------------------------------
-    # 7. Write Manifest
-    # --------------------------------------------------------------------------
-    manifest_file = target_dir / "backup_manifest.json"
-    manifest_dict = asdict(manifest)
-    manifest_file.write_text(json.dumps(manifest_dict, indent=2), encoding="utf-8")
-
-    console.print("\n")
-    console.print(table)
-    console.print(f"[success]✓ Complete. Infrastructure & cryptographic state frozen at: {target_dir}[/success]")
-    return target_dir
-
-# ==============================================================================
-# PHASE AUTOMATION: INTEGRITY VERIFICATION
-# ==============================================================================
-def execute_verify(source_dir_arg: Optional[str] = None) -> bool:
-    console.print("\n[bold cyan]─── Libvirt Backup Integrity & Telemetry Verification ───[/bold cyan]")
-
-    if source_dir_arg:
-        source_dir = resolve_user_path(source_dir_arg)
-    else:
-        console.print("[bold cyan]Enter absolute path to backup directory to verify:[/bold cyan]")
-        source_input = input("> ").strip()
-        if not source_input:
-            bail("No source path provided.")
-        source_dir = resolve_user_path(source_input)
-
-    if not source_dir.exists():
-        bail(f"Backup directory '{source_dir}' does not exist.")
-
-    manifest_file = source_dir / "backup_manifest.json"
-    if not manifest_file.exists():
-        bail(f"Manifest 'backup_manifest.json' not found in '{source_dir}'.")
-
-    try:
-        manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
-    except Exception as e:
-        bail(f"Corrupted manifest file: {e}")
-
-    table = Table(title=f"Verification Report ({source_dir.name})", show_header=True, header_style="bold magenta")
-    table.add_column("File / Component", style="cyan")
-    table.add_column("Expected Hash", justify="center")
-    table.add_column("Status", justify="left")
-
-    file_hashes: Dict[str, str] = manifest_data.get("file_hashes", {})
-    all_valid = True
-    passed_count = 0
-
-    for rel_path, expected_hash in file_hashes.items():
-        full_path = source_dir / rel_path
-        if not full_path.exists():
-            table.add_row(rel_path, expected_hash[:8] + "...", "[red]MISSING[/red]")
-            all_valid = False
+def domain_state_paths(tree: ET.Element) -> list[Path]:
+    paths = []
+    for element in tree.findall("./os/nvram") + tree.findall("./os/varstore"):
+        source = element.find("source")
+        if element.get("type", "file") != "file":
+            raise BackupError("Only file-backed firmware state is supported.")
+        value = (element.get("path") if element.tag == "varstore" else
+                 source.get("file") if source is not None else (element.text or "").strip())
+        if value:
+            path = Path(value)
+            paths.append(path)
+            if path.is_symlink():
+                paths.append(path.resolve(strict=True))
+    for backend in tree.findall("./devices/tpm/backend"):
+        if backend.get("type") != "emulator":
+            if backend.get("type") == "external":
+                raise BackupError("External TPM state must be backed up through its emulator; only libvirt-managed emulators are supported.")
             continue
+        source = backend.find("source")
+        value = source.get("path") if source is not None else None
+        if value:
+            path = Path(value)
+            paths.append(path)
+            if path.is_symlink():
+                paths.append(path.resolve(strict=True))
+    return paths
 
-        actual_hash = compute_sha256(full_path)
-        if actual_hash == expected_hash:
-            passed_count += 1
-            table.add_row(rel_path, expected_hash[:8] + "...", "[green]VALID (SHA-256 MATCH)[/green]")
-        else:
-            table.add_row(rel_path, expected_hash[:8] + "...", f"[red]CORRUPTED (Hash Mismatch!)[/red]")
-            all_valid = False
 
-    console.print(table)
-    
-    meta_table = Table(title="Backup Metadata", show_header=False)
-    meta_table.add_column("Key", style="bold yellow")
-    meta_table.add_column("Value", style="white")
-    meta_table.add_row("Created At", manifest_data.get("created_at", "unknown"))
-    meta_table.add_row("Origin Hostname", manifest_data.get("hostname", "unknown"))
-    meta_table.add_row("Kernel", manifest_data.get("kernel", "unknown"))
-    meta_table.add_row("Libvirt Version", manifest_data.get("libvirt_version", "unknown"))
-    meta_table.add_row("Domains", ", ".join(d.get("name", "") for d in manifest_data.get("domains", [])))
-    meta_table.add_row("Networks", ", ".join(n.get("name", "") for n in manifest_data.get("networks", [])))
-    meta_table.add_row("Storage Pools", ", ".join(p.get("name", "") for p in manifest_data.get("pools", [])))
-    console.print(meta_table)
+def export_history(root: Path, manifest: dict[str, Any], domain: dict[str, Any]) -> None:
+    uuid = domain["uuid"]
+    for category, command in (("snapshots", "snapshot"), ("checkpoints", "checkpoint")):
+        entries = []
+        for name in names(f"{command}-list", "--domain", uuid, "--name", "--topological"):
+            xml = virsh(f"{command}-dumpxml", "--domain", uuid,
+                        f"--{command}name", name, "--security-info")
+            ET.fromstring(xml)
+            filename = hashlib.sha256(name.encode("utf-8")).hexdigest()
+            relative = write_payload(root, f"{category}/{uuid}/{filename}.xml", xml, manifest)
+            entries.append({"name": name, "xml": relative})
+        domain[category] = entries
+    if domain["snapshots"]:
+        current = run_cmd(["virsh", "--connect", URI, "snapshot-current", "--domain", uuid, "--name"], check=False)
+        if current.returncode == 0:
+            domain["current_snapshot"] = current.stdout.rstrip("\n")
+        elif "the domain does not have a current snapshot" not in current.stderr:
+            raise BackupError(f"Cannot query current snapshot for {uuid}: {current.stderr.strip()}")
 
-    if all_valid:
-        console.print(f"\n[success]✓ All {passed_count} files successfully verified with zero errors.[/success]")
-    else:
-        console.print("\n[danger]✗ Integrity verification failed! Some files are corrupted or missing.[/danger]")
 
-    return all_valid
+def archive_state(root: Path, manifest: dict[str, Any], extra_paths: list[Path]) -> None:
+    targets = list(STATE_TARGETS)
+    disk_paths = []
+    for domain in manifest.get("domains", []):
+        tree = ET.parse(root / domain["xml"]).getroot()
+        disk_paths.extend(Path(source.get("file")).resolve()
+                          for source in tree.findall("./devices/disk//source") if source.get("file"))
+    # Tar preserves symlinks rather than following them. Save both the link and
+    # its state directory, including links in a custom path's parent directories.
+    extra_paths = [*extra_paths, *(target.path.resolve(strict=True)
+                                 for target in targets if target.path.is_symlink())]
+    extra_paths = [*extra_paths, *(path.resolve(strict=True) for path in extra_paths if path.exists())]
+    covered = [target.path for target in targets if target.key != "daemon_configs"]
+    for path in sorted(set(extra_paths)):
+        if not path.is_absolute():
+            raise BackupError(f"VM state path is not absolute: {path}")
+        if not path.exists():
+            # A never-started domain may have no generated firmware/TPM state yet.
+            console.print(f"No generated state at {path}; skipped.")
+            continue
+        if not any(path.is_relative_to(parent) for parent in covered):
+            key = "custom_" + hashlib.sha256(os.fsencode(path)).hexdigest()
+            targets.append(StateTarget(key, path))
+            covered.append(path)
+    for target in targets:
+        if target.path.exists() and not (target.path.is_file() or target.path.is_dir()):
+            raise BackupError(f"State must be a regular file or directory: {target.path}")
+        if any(disk.is_relative_to(target.path.resolve()) for disk in disk_paths):
+            raise BackupError(f"Guest disk overlaps archived state: {target.path}")
+        if root.resolve().is_relative_to(target.path.resolve()):
+            raise BackupError(f"Backup destination is inside archived state: {target.path}")
+    manifest["archives"] = []
+    (root / "state_archives").mkdir()
+    for target in targets:
+        if not target.path.exists():
+            continue
+        relative = f"state_archives/{target.key}.tar.zst"
+        archive = root / relative
+        run_cmd(["tar", "--create", "--zstd", *TAR_METADATA,
+                 *(f"--exclude={pattern}" for pattern in target.excludes),
+                 "--file", str(archive), "--directory", str(target.path.parent),
+                 "--", target.path.name])
+        manifest["file_hashes"][relative] = compute_sha256(archive)
+        manifest["archives"].append({"key": target.key, "file": relative,
+                                     "destination": str(target.path.parent),
+                                     "member": target.path.name})
+        console.print(f"Archived {target.path}.")
 
-# ==============================================================================
-# PHASE AUTOMATION: RESTORE
-# ==============================================================================
-def execute_restore(source_dir_arg: Optional[str] = None, non_interactive: bool = False, shutdown_running: bool = False) -> None:
-    check_libvirt_connection()
-    verify_system_users()
-    handle_running_vms(interactive=not non_interactive, shutdown_running=shutdown_running)
 
-    console.print("\n[bold cyan]─── Libvirt Surgical High-Fidelity Restoration ───[/bold cyan]")
-    console.print("[dim]Note: Ensure your external drive holding raw disk images (.qcow2/.img) is mounted.[/dim]\n")
+SECRET_KEY = Path("/var/lib/libvirt/secrets/secrets-encryption-key")
 
-    if source_dir_arg:
-        source_dir = resolve_user_path(source_dir_arg)
-    else:
-        console.print("[bold cyan]Enter absolute path to your backup directory:[/bold cyan]")
-        source_input = input("> ").strip()
-        if not source_input:
-            bail("No source path provided.")
-        source_dir = resolve_user_path(source_input)
 
-    if not source_dir.exists():
-        bail(f"Backup directory '{source_dir}' does not exist.")
+def export_secret_key(root: Path, manifest: dict[str, Any]) -> None:
+    """Make Arch's machine-bound libvirt credential recoverable on another host."""
+    if not SECRET_KEY.is_file():
+        return
+    relative = "secrets-encryption-key"
+    output = root / relative
+    run_cmd(["systemd-creds", "decrypt", "--name=secrets-encryption-key",
+             str(SECRET_KEY), str(output)], discard_stdout=True)
+    output.chmod(0o600)
+    if output.stat().st_size != 32:
+        raise BackupError("Libvirt secrets encryption key must contain exactly 32 bytes.")
+    manifest["secret_key"] = relative
+    manifest["file_hashes"][relative] = compute_sha256(output)
 
-    # Integrity verification prior to injection
-    manifest_file = source_dir / "backup_manifest.json"
-    manifest_data: Optional[Dict[str, Any]] = None
-    if manifest_file.exists():
-        try:
-            manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
-            console.print("[info]Validating backup integrity checksums before state injection...[/info]")
-            file_hashes: Dict[str, str] = manifest_data.get("file_hashes", {})
-            for rel_path, expected_hash in file_hashes.items():
-                target_f = source_dir / rel_path
-                if target_f.exists():
-                    if compute_sha256(target_f) != expected_hash:
-                        bail(f"Integrity check failed: '{rel_path}' is corrupted!")
-        except json.JSONDecodeError:
-            console.print("[warning]Manifest is corrupted. Proceeding with raw files...[/warning]")
 
-    table = Table(title=f"Restoration Telemetry ({source_dir.name})", show_header=True, header_style="bold magenta")
-    table.add_column("Component", style="cyan")
-    table.add_column("Action", justify="center")
-    table.add_column("Result", justify="left")
+@contextmanager
+def prepared_secret_key(source: Path | None) -> Iterator[Path | None]:
+    """Rewrap before state injection; keep the result ready for atomic replacement."""
+    if source is None:
+        yield None
+        return
+    SECRET_KEY.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".restore-key-", dir=SECRET_KEY.parent) as temporary:
+        output = Path(temporary) / SECRET_KEY.name
+        run_cmd(["systemd-creds", "encrypt", "--name=secrets-encryption-key",
+                 str(source), str(output)], discard_stdout=True)
+        output.chmod(0o600)
+        yield output
 
-    # --------------------------------------------------------------------------
-    # 1. Restore Binary & Cryptographic State Archives
-    # --------------------------------------------------------------------------
-    state_targets = [
-        {"name": "vTPM Local CA", "archive": "state_archives/swtpm_localca_state.tar.zst", "extract_to": "/var/lib"},
-        {"name": "vTPM 2.0 State", "archive": "state_archives/swtpm_state.tar.zst", "extract_to": "/var/lib/libvirt"},
-        {"name": "NVRAM (UEFI Vars)", "archive": "state_archives/nvram_state.tar.zst", "extract_to": "/var/lib/libvirt/qemu"},
-        {"name": "Firmware Varstore", "archive": "state_archives/varstore_state.tar.zst", "extract_to": "/var/lib/libvirt/qemu"},
-        {"name": "Libvirt Secrets (Var)", "archive": "state_archives/secrets_var_state.tar.zst", "extract_to": "/var/lib/libvirt"},
-        {"name": "Libvirt Secrets (Etc)", "archive": "state_archives/secrets_etc_state.tar.zst", "extract_to": "/etc/libvirt"},
-        {"name": "Managed Save States", "archive": "state_archives/save_state.tar.zst", "extract_to": "/var/lib/libvirt/qemu"},
-        {"name": "KVM / VFIO Hooks", "archive": "state_archives/hooks_state.tar.zst", "extract_to": "/etc/libvirt"},
-        {"name": "KVM Hooks.qemu.d", "archive": "state_archives/hooks_qemu_d_state.tar.zst", "extract_to": "/etc/libvirt"},
-        {"name": "Daemon Configs", "archive": "state_archives/daemon_configs.tar.zst", "extract_to": "/etc"}
-    ]
 
-    legacy_map = {
-        "state_archives/swtpm_state.tar.zst": "swtpm_state.tar.gz",
-        "state_archives/nvram_state.tar.zst": "nvram_state.tar.gz"
+def execute_backup(dest_dir_arg: str | None = None, non_interactive: bool = False,
+                   shutdown_running: bool = False) -> Path:
+    target = resolve_user_path(dest_dir_arg or ask("Backup destination (new or empty directory):"))
+    if target.exists() and (not target.is_dir() or any(target.iterdir())):
+        raise BackupError("Backup destination must be a new or empty directory.")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    virsh("uri")
+    handle_running_vms(not non_interactive, shutdown_running)
+    manifest: dict[str, Any] = {
+        "version": SCHEMA, "created_at": datetime.now(UTC).isoformat(),
+        "uri": URI, "kernel": os.uname().release, "hostname": os.uname().nodename,
+        "os_name": platform.freedesktop_os_release().get("PRETTY_NAME", "Linux"),
+        "python_version": sys.version.split()[0], "libvirt_version": virsh("--version"),
+        "file_hashes": {},
     }
+    # A manifest appears at the requested destination only after every step passes.
+    with tempfile.TemporaryDirectory(prefix=f".{target.name}-", dir=target.parent) as temporary:
+        staging = Path(temporary)
+        extra_paths = export_entities(staging, manifest)
+        export_secret_key(staging, manifest)
+        with offline_state():
+            archive_state(staging, manifest, extra_paths)
+        (staging / MANIFEST).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        validate_backup(staging, check_hashes=False)
+        staging.rename(target)
+    console.print(f"Backup complete: {target}\nGuest disks, external snapshot data and managed-save RAM are excluded.")
+    return target
 
-    with console.status("[cyan]Injecting cryptographic states (preserving DAC/MAC contexts)...[/cyan]", spinner="dots"):
-        for state in state_targets:
-            archive_path = source_dir / state["archive"]
-            if not archive_path.exists() and state["archive"] in legacy_map:
-                legacy_path = source_dir / legacy_map[state["archive"]]
-                if legacy_path.exists():
-                    archive_path = legacy_path
 
-            if archive_path.exists():
-                dest = Path(state["extract_to"])
-                dest.mkdir(parents=True, exist_ok=True)
-                
-                # Detect compression format
-                if archive_path.suffix == ".zst" or archive_path.name.endswith(".tar.zst"):
-                    cmd = ["tar", "--zstd", "--xattrs", "--xattrs-include=*", "--acls", "--sparse", "-xpf", str(archive_path), "-C", str(dest)]
-                else:
-                    cmd = ["tar", "--xattrs", "--acls", "-xzpf", str(archive_path), "-C", str(dest)]
-                
-                res = run_cmd(cmd, check=False)
-                if res.returncode == 0:
-                    table.add_row(state["name"], "State Injection", "[green]Restored with DAC/MAC[/green]")
-                else:
-                    table.add_row(state["name"], "State Injection", f"[yellow]Partial / Warning: {res.stderr.strip()}[/yellow]")
-            else:
-                table.add_row(state["name"], "State Injection", "[dim]Not Found (Skipped)[/dim]")
+def upgrade_manifest(data: dict[str, Any]) -> dict[str, Any]:
+    """Read existing v2 backups without trusting their directory contents."""
+    data = dict(data)
+    archives = data.get("archives")
+    if not isinstance(archives, dict):
+        raise BackupError("Invalid version 2 archive inventory.")
+    for key in ("snapshots", "checkpoints", "current_snapshots"):
+        if not isinstance(data.get(key, {}), dict):
+            raise BackupError(f"Invalid version 2 {key} metadata.")
+    if not isinstance(data.get("file_hashes"), dict):
+        raise BackupError("Invalid version 2 checksum inventory.")
+    for category in ("domains", "networks", "pools", "nwfilters", "secrets"):
+        if not isinstance(data.get(category), list):
+            raise BackupError(f"Invalid version 2 {category} inventory.")
+    targets = {target.key: target for target in STATE_TARGETS}
+    data["archives"] = []
+    for key, filename in archives.items():
+        if key == "save":
+            # RAM images are deliberately outside this tool's recovery scope.
+            data["file_hashes"].pop(f"state_archives/{filename}", None)
+            continue
+        if key not in targets or not isinstance(filename, str):
+            raise BackupError(f"Unknown version 2 archive: {key}")
+        target = targets[key]
+        data["archives"].append({"key": key, "file": f"state_archives/{filename}",
+                                 "destination": str(target.path.parent), "member": target.path.name})
+    for category in ("domains", "networks", "pools", "nwfilters", "secrets"):
+        converted = []
+        for item in data[category]:
+            item = dict(item)
+            directory = "vms" if category == "domains" else category
+            filename = item["uuid"] if category == "secrets" else item["name"]
+            item["xml"] = f"{directory}/{filename}.xml"
+            converted.append(item)
+            if category == "domains":
+                item["autostart_once"] = None
+                for history in ("snapshots", "checkpoints"):
+                    entries = []
+                    for name in data.get(history, {}).get(item["name"], []):
+                        safe = name.replace("/", "_").replace("\\", "_").replace("..", "_")
+                        entries.append({"name": name, "xml": f"{history}/{item['name']}/{safe}.xml"})
+                    item[history] = entries
+                if current := data.get("current_snapshots", {}).get(item["name"]):
+                    item["current_snapshot"] = current
+        data[category] = converted
+    data.update(version=SCHEMA, uri=URI)
+    return data
 
-    # Ownership & Permission Enforcement
+
+def validate_backup(source: Path, *, check_hashes: bool = True) -> dict[str, Any]:
+    """Check payloads, archive decompression and restore metadata before host writes.
+
+    Backup publication skips rehashing newly written payloads; --verify and
+    --restore always perform full checks.
+    """
+    data = json.loads((source / MANIFEST).read_text(encoding="utf-8"))
+    if isinstance(data, dict) and data.get("version") == "2.0.0":
+        data = upgrade_manifest(data)
+    if not isinstance(data, dict) or data.get("version") != SCHEMA or data.get("uri") != URI:
+        raise BackupError(f"Expected a {SCHEMA} {URI} backup. Backups without a version 2/3 manifest need separate recovery.")
+    hashes = data.get("file_hashes")
+    if not isinstance(hashes, dict):
+        raise BackupError("Manifest is missing its file hash inventory.")
+    referenced: set[str] = set()
+
+    def reference(relative: str) -> Path:
+        if not isinstance(relative, str) or relative in referenced:
+            raise BackupError(f"Invalid or duplicate payload reference: {relative!r}")
+        referenced.add(relative)
+        path = backup_path(source, relative)
+        expected = hashes.get(relative)
+        if not isinstance(expected, str) or len(expected) != 64 or not path.is_file() or (check_hashes and compute_sha256(path) != expected):
+            raise BackupError(f"Missing or corrupted payload: {relative}")
+        return path
+
+    for category in ("domains", "networks", "pools", "nwfilters", "secrets"):
+        items = data.get(category)
+        if not isinstance(items, list):
+            raise BackupError(f"Manifest is missing {category}.")
+        seen = set()
+        for item in items:
+            if isinstance(item, dict) and not item.get("uuid") and item.get("xml"):
+                path = backup_path(source, item["xml"])
+                expected = hashes.get(item["xml"])
+                if not expected or compute_sha256(path) != expected:
+                    raise BackupError(f"Missing or corrupted payload: {item['xml']}")
+                item["uuid"] = ET.parse(path).getroot().findtext("uuid")
+            if (not isinstance(item, dict) or
+                    not all(isinstance(item.get(key), str) and item[key] for key in ("name", "uuid", "xml"))):
+                raise BackupError(f"Invalid {category} entry.")
+            if item["uuid"] in seen:
+                raise BackupError(f"Duplicate {category} UUID: {item['uuid']}")
+            seen.add(item["uuid"])
+            tree = ET.parse(reference(item["xml"])).getroot()
+            expected_tag = {"domains": "domain", "networks": "network", "pools": "pool",
+                            "nwfilters": "filter", "secrets": "secret"}[category]
+            if tree.tag != expected_tag:
+                raise BackupError(f"Wrong XML type for {category}: {item['xml']}")
+            if tree.findtext("uuid") != item["uuid"]:
+                raise BackupError(f"XML UUID does not match manifest: {item['xml']}")
+            xml_name = tree.get("name") if category == "nwfilters" else tree.findtext("name")
+            if category != "secrets" and xml_name != item["name"]:
+                raise BackupError(f"XML name does not match manifest: {item['xml']}")
+            if category in {"domains", "networks", "pools"}:
+                if any(type(item.get(key)) is not bool for key in ("active", "autostart")):
+                    raise BackupError(f"Missing active/autostart metadata: {item['name']}")
+            if category == "domains":
+                if item.get("autostart_once") is not None and type(item["autostart_once"]) is not bool:
+                    raise BackupError(f"Missing one-time autostart metadata: {item['name']}")
+                for history in ("snapshots", "checkpoints"):
+                    entries = item.get(history)
+                    if not isinstance(entries, list):
+                        raise BackupError(f"Missing {history} metadata: {item['name']}")
+                    history_names = set()
+                    for entry in entries:
+                        if not isinstance(entry, dict) or not isinstance(entry.get("name"), str) or not entry["name"]:
+                            raise BackupError(f"Invalid {history} entry.")
+                        tree = ET.parse(reference(entry["xml"])).getroot()
+                        if tree.findtext("name") != entry["name"] or entry["name"] in history_names:
+                            raise BackupError(f"Invalid {history} name: {entry['name']}")
+                        embedded_uuid = tree.findtext("domain/uuid")
+                        if embedded_uuid and embedded_uuid != item["uuid"]:
+                            raise BackupError(f"History belongs to another domain: {entry['xml']}")
+                        parent = tree.findtext("parent/name")
+                        if parent and parent not in history_names:
+                            raise BackupError(f"Invalid {history} parent order: {parent}")
+                        history_names.add(entry["name"])
+                    if history == "snapshots" and item.get("current_snapshot") not in history_names | {None}:
+                        raise BackupError("Current snapshot is absent from snapshot inventory.")
+    archives = data.get("archives")
+    if not isinstance(archives, list):
+        raise BackupError("Missing archive inventory.")
+    archive_keys = set()
+    for archive in archives:
+        if (not isinstance(archive, dict) or
+                not all(isinstance(archive.get(key), str) and archive[key]
+                        for key in ("key", "file", "destination", "member"))):
+            raise BackupError("Invalid archive entry.")
+        if archive["key"] in archive_keys:
+            raise BackupError(f"Duplicate archive: {archive['key']}")
+        archive_keys.add(archive["key"])
+        path = reference(archive["file"])
+        destination = Path(archive["destination"])
+        member = archive["member"]
+        if not destination.is_absolute() or not member or Path(member).name != member or member in {".", ".."}:
+            raise BackupError(f"Invalid archive destination: {destination}/{member}")
+        known = next((target for target in STATE_TARGETS if target.key == archive["key"]), None)
+        if known is not None and known.path != destination / member:
+            raise BackupError(f"Incorrect destination for {archive['key']}")
+        if known is None and not archive["key"].startswith("custom_"):
+            raise BackupError(f"Unknown archive key: {archive['key']}")
+        if check_hashes:
+            # Discard member listings: a large archive can contain millions of files.
+            run_cmd(["tar", "--list", "--zstd", "--file", str(path)], discard_stdout=True)
+    credential = data.get("secret_key")
+    if credential is not None:
+        if not isinstance(credential, str) or reference(credential).stat().st_size != 32:
+            raise BackupError("Invalid portable libvirt secrets key.")
+    if referenced != set(hashes):
+        raise BackupError("Payload references and checksum inventory differ.")
+    return data
+
+
+def execute_verify(source_dir_arg: str | None = None) -> bool:
+    source = resolve_user_path(source_dir_arg or ask("Backup directory to verify:"))
     try:
-        # swtpm permissions
-        swtpm_dir = Path("/var/lib/libvirt/swtpm")
-        if swtpm_dir.exists():
-            os.chmod(swtpm_dir, 0o711)
-            for item in swtpm_dir.glob("*/tpm2"):
-                try:
-                    tss_uid = pwd.getpwnam("tss").pw_uid
-                    tss_gid = grp.getgrnam("tss").gr_gid
-                    os.chown(item, tss_uid, tss_gid)
-                    os.chmod(item, 0o700)
-                    for f in item.iterdir():
-                        os.chown(f, tss_uid, tss_gid)
-                        os.chmod(f, 0o600)
-                except Exception:
-                    pass
+        data = validate_backup(source)
+    except (BackupError, OSError, ValueError, KeyError, TypeError, ET.ParseError) as exc:
+        console.print(f"Verification FAILED: {exc}")
+        return False
+    console.print(f"Verified {len(data['file_hashes'])} payloads, XML identities and history ordering.\n"
+                  f"Created: {data.get('created_at', 'unknown')} on {data.get('hostname', 'unknown')}")
+    return True
 
-        # nvram permissions
-        nvram_dir = Path("/var/lib/libvirt/qemu/nvram")
-        if nvram_dir.exists():
-            try:
-                qemu_uid = pwd.getpwnam("libvirt-qemu").pw_uid
-                qemu_gid = grp.getgrnam("libvirt-qemu").gr_gid
-            except KeyError:
-                qemu_uid = pwd.getpwnam("qemu").pw_uid
-                qemu_gid = grp.getgrnam("qemu").gr_gid
 
-            for fd in nvram_dir.glob("*.fd"):
-                try:
-                    os.chown(fd, qemu_uid, qemu_gid)
-                    os.chmod(fd, 0o600)
-                except Exception:
-                    pass
-    except Exception as e:
-        console.print(f"[warning]Permission fixup note:[/warning] {e}")
+def restore_entities(source: Path, data: dict[str, Any]) -> None:
+    for category, command, tag in (("secrets", "secret-define", "secret"),
+                                    ("nwfilters", "nwfilter-define", "filter"),
+                                    ("pools", "pool-define", "pool"),
+                                    ("networks", "net-define", "network"),
+                                    ("domains", "define", "domain")):
+        for item in data[category]:
+            virsh(command, str(source / item["xml"]))
+            if category in {"pools", "networks", "domains"}:
+                prefix = {"pools": "pool-", "networks": "net-", "domains": ""}[category]
+                virsh(f"{prefix}autostart", f"--{tag}", item["uuid"],
+                      *([] if item["autostart"] else ["--disable"]))
+                if category == "domains" and item.get("autostart_once") is not None:
+                    virsh("autostart", "--domain", item["uuid"], "--once",
+                          *([] if item["autostart_once"] else ["--disable"]))
+                if category != "domains" and item["active"]:
+                    active = set(names(f"{prefix}list", "--uuid"))
+                    if item["uuid"] not in active:
+                        virsh(f"{prefix}start", f"--{tag}", item["uuid"])
+            console.print(f"Defined {category}: {item['name']}")
+    for domain in data["domains"]:
+        for category, command in (("snapshots", "snapshot"), ("checkpoints", "checkpoint")):
+            for entry in domain[category]:
+                virsh(f"{command}-create", "--domain", domain["uuid"],
+                      "--xmlfile", str(source / entry["xml"]), "--redefine")
+        if current := domain.get("current_snapshot"):
+            virsh("snapshot-current", "--domain", domain["uuid"], "--snapshotname", current)
 
-    # --------------------------------------------------------------------------
-    # 2. Rebuild Libvirt Secrets (XML definitions)
-    # --------------------------------------------------------------------------
-    secrets_dir = source_dir / "secrets"
-    if secrets_dir.exists():
-        with console.status("[cyan]Registering Libvirt Secrets...[/cyan]", spinner="dots"):
-            for sec_file in secrets_dir.glob("*.xml"):
-                sec_res = run_cmd(["virsh", "secret-define", str(sec_file)], check=False)
-                if sec_res.returncode == 0:
-                    table.add_row(sec_file.stem, "SECRET", "[green]Defined[/green]")
 
-    # --------------------------------------------------------------------------
-    # 3. Rebuild Network Filters (NWFilters)
-    # --------------------------------------------------------------------------
-    nwfilters_dir = source_dir / "nwfilters"
-    if nwfilters_dir.exists():
-        with console.status("[cyan]Registering Network Filters...[/cyan]", spinner="dots"):
-            for nw_file in nwfilters_dir.glob("*.xml"):
-                nw_res = run_cmd(["virsh", "nwfilter-define", str(nw_file)], check=False)
-                if nw_res.returncode == 0:
-                    table.add_row(nw_file.stem, "NWFILTER", "[green]Defined[/green]")
+def execute_restore(source_dir_arg: str | None = None, non_interactive: bool = False,
+                    shutdown_running: bool = False) -> None:
+    source = resolve_user_path(source_dir_arg or ask("Backup directory to restore:"))
+    data = validate_backup(source)
+    credential = data.get("secret_key")
+    with prepared_secret_key(source / credential if credential else None) as prepared:
+        virsh("uri")
+        saved = set(names("list", "--all", "--with-managed-save", "--uuid"))
+        conflicts = [item["name"] for item in data["domains"] if item["uuid"] in saved]
+        if conflicts:
+            raise BackupError(f"Remove existing managed-save RAM before cold restoration (virsh managedsave-remove): {', '.join(conflicts)}")
+        handle_running_vms(not non_interactive, shutdown_running)
+        console.print("Restoring state; guest disks and external snapshot data must already be available.")
+        with offline_state():
+            for archive in data["archives"]:
+                destination = Path(archive["destination"])
+                destination.mkdir(parents=True, exist_ok=True)
+                run_cmd(["tar", "--extract", "--zstd", *TAR_METADATA,
+                         "--same-owner", "--same-permissions", "--file", str(source / archive["file"]),
+                         "--directory", str(destination)])
+            if prepared is not None:
+                prepared.replace(SECRET_KEY)
+    restore_entities(source, data)
+    console.print("Restoration complete. Guests remain stopped; autostart settings were restored.")
 
-    # --------------------------------------------------------------------------
-    # 4. Restore Storage Pools
-    # --------------------------------------------------------------------------
-    pools_dir = source_dir / "pools"
-    pool_meta_map = {}
-    if manifest_data:
-        for p in manifest_data.get("pools", []):
-            pool_meta_map[p.get("name")] = p
 
-    if pools_dir.exists():
-        with console.status("[cyan]Rebuilding Storage Pools...[/cyan]", spinner="dots"):
-            for xml_file in pools_dir.glob("*.xml"):
-                name = xml_file.stem
-                p_meta = pool_meta_map.get(name, {})
-                should_autostart = p_meta.get("autostart", True)
-                was_active = p_meta.get("active", True)
-                target_path_str = p_meta.get("extra", {}).get("target_path", "")
+def require_root() -> None:
+    if os.geteuid() != 0:
+        os.execvp("sudo", ["sudo", "--", sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]])
 
-                if target_path_str:
-                    Path(target_path_str).mkdir(parents=True, exist_ok=True)
 
-                run_cmd(["virsh", "pool-define", str(xml_file)], check=False)
-                
-                if was_active:
-                    start_res = run_cmd(["virsh", "pool-start", name], check=False)
-                    status_str = "[green]Defined & Started[/green]" if start_res.returncode == 0 else "[yellow]Defined (Start Pending Mount)[/yellow]"
-                else:
-                    status_str = "[green]Defined[/green]"
-
-                if should_autostart:
-                    run_cmd(["virsh", "pool-autostart", name], check=False)
-                else:
-                    run_cmd(["virsh", "pool-autostart", name, "--disable"], check=False)
-
-                table.add_row(name, "STORAGE POOL", status_str)
-
-    # --------------------------------------------------------------------------
-    # 5. Restore Virtual Networks
-    # --------------------------------------------------------------------------
-    networks_dir = source_dir / "networks"
-    net_meta_map = {}
-    if manifest_data:
-        for n in manifest_data.get("networks", []):
-            net_meta_map[n.get("name")] = n
-
-    if networks_dir.exists():
-        with console.status("[cyan]Rebuilding Layer 2/3 Virtual Networks...[/cyan]", spinner="dots"):
-            for xml_file in networks_dir.glob("*.xml"):
-                name = xml_file.stem
-                n_meta = net_meta_map.get(name, {})
-                should_autostart = n_meta.get("autostart", True)
-                was_active = n_meta.get("active", True)
-
-                run_cmd(["virsh", "net-define", str(xml_file)], check=False)
-                if was_active:
-                    run_cmd(["virsh", "net-start", name], check=False)
-                
-                if should_autostart:
-                    run_cmd(["virsh", "net-autostart", name], check=False)
-                else:
-                    run_cmd(["virsh", "net-autostart", name, "--disable"], check=False)
-
-                table.add_row(name, "NETWORK", "[green]Defined & Configured[/green]")
-
-    # --------------------------------------------------------------------------
-    # 6. Re-link Virtual Machines
-    # --------------------------------------------------------------------------
-    vms_dir = source_dir / "vms"
-    vm_meta_map = {}
-    if manifest_data:
-        for v in manifest_data.get("domains", []):
-            vm_meta_map[v.get("name")] = v
-
-    if vms_dir.exists():
-        with console.status("[cyan]Registering Virtual Machines...[/cyan]", spinner="dots"):
-            for xml_file in vms_dir.glob("*.xml"):
-                vm_name = xml_file.stem
-                vm_meta = vm_meta_map.get(vm_name, {})
-                should_autostart = vm_meta.get("autostart", False)
-
-                def_res = run_cmd(["virsh", "define", str(xml_file)], check=False)
-                if def_res.returncode == 0:
-                    if should_autostart:
-                        run_cmd(["virsh", "autostart", vm_name], check=False)
-                    table.add_row(vm_name, "VM Blueprint", "[green]Successfully Linked[/green]")
-                else:
-                    table.add_row(vm_name, "VM Blueprint", f"[red]Define Failed: {def_res.stderr.strip()}[/red]")
-
-    # --------------------------------------------------------------------------
-    # 7. Re-inject VM Snapshots & Checkpoints (Topological Order)
-    # --------------------------------------------------------------------------
-    snap_base_dir = source_dir / "snapshots"
-    curr_snaps_map = manifest_data.get("current_snapshots", {}) if manifest_data else {}
-
-    if snap_base_dir.exists():
-        with console.status("[cyan]Re-registering VM Snapshots & Hierarchies...[/cyan]", spinner="dots"):
-            for vm_snap_dir in snap_base_dir.iterdir():
-                if vm_snap_dir.is_dir():
-                    vm_name = vm_snap_dir.name
-                    order_file = vm_snap_dir / "order.txt"
-                    if order_file.exists():
-                        snapshots = [line.strip() for line in order_file.read_text(encoding="utf-8").splitlines() if line.strip()]
-                        success_count = 0
-                        for snap in snapshots:
-                            safe_name = sanitize_filename(snap)
-                            snap_xml_file = vm_snap_dir / f"{safe_name}.xml"
-                            if snap_xml_file.exists():
-                                snap_res = run_cmd(
-                                    ["virsh", "snapshot-create", vm_name, str(snap_xml_file), "--redefine"],
-                                    check=False
-                                )
-                                if snap_res.returncode == 0:
-                                    success_count += 1
-
-                        # Restore current snapshot pointer if recorded
-                        curr_snap = curr_snaps_map.get(vm_name)
-                        if curr_snap and curr_snap in snapshots:
-                            run_cmd(["virsh", "snapshot-current", vm_name, curr_snap], check=False)
-
-                        if success_count == len(snapshots) and snapshots:
-                            table.add_row(vm_name, "SNAPSHOTS", f"[green]{success_count} Topological Re-registered[/green]")
-                        elif success_count > 0:
-                            table.add_row(vm_name, "SNAPSHOTS", f"[yellow]{success_count}/{len(snapshots)} Re-registered[/yellow]")
-                        else:
-                            table.add_row(vm_name, "SNAPSHOTS", "[red]0 Re-registered (Failed)[/red]")
-
-    # Re-inject Checkpoints
-    ckpt_base_dir = source_dir / "checkpoints"
-    if ckpt_base_dir.exists():
-        with console.status("[cyan]Re-registering VM Checkpoints...[/cyan]", spinner="dots"):
-            for vm_ckpt_dir in ckpt_base_dir.iterdir():
-                if vm_ckpt_dir.is_dir():
-                    vm_name = vm_ckpt_dir.name
-                    for ckpt_xml in vm_ckpt_dir.glob("*.xml"):
-                        run_cmd(["virsh", "checkpoint-create", vm_name, str(ckpt_xml), "--redefine"], check=False)
-                    table.add_row(vm_name, "CHECKPOINTS", "[green]Re-registered[/green]")
-
-    console.print("\n")
-    console.print(table)
-    console.print("[success]✓ Restoration Complete. Systemd modular sockets & libvirt have synced your infrastructure.[/success]")
-
-# ==============================================================================
-# MAIN & CLI ENTRYPOINT
-# ==============================================================================
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Phase 3: Libvirt Cryptographic State & Infrastructure Continuity Manager",
-        formatter_class=argparse.RawDescriptionHelpFormatter
-    )
-    parser.add_argument("--backup", metavar="DEST", type=str, help="Execute backup non-interactively to DEST directory")
-    parser.add_argument("--restore", metavar="SRC", type=str, help="Execute restoration non-interactively from SRC directory")
-    parser.add_argument("--verify", metavar="DIR", type=str, help="Verify backup integrity in DIR")
-    parser.add_argument("--shutdown-running", action="store_true", help="Gracefully shut down active VMs before operation")
-    parser.add_argument("--non-interactive", "-y", action="store_true", help="Run without interactive confirmation prompts")
-
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    actions = parser.add_mutually_exclusive_group()
+    actions.add_argument("--backup", metavar="DEST", help="Back up to a new or empty directory")
+    actions.add_argument("--restore", metavar="SRC", help="Restore a version 2/3 backup")
+    actions.add_argument("--verify", metavar="DIR", help="Verify a version 2/3 backup without libvirt/root")
+    parser.add_argument("--shutdown-running", action="store_true", help="Request ACPI shutdown and wait up to 60s")
+    parser.add_argument("--non-interactive", "-y", action="store_true", help="Require explicit action and path; never prompt")
     args = parser.parse_args()
-
     if args.verify:
-        execute_verify(args.verify)
-        sys.exit(0)
-    elif args.backup:
-        execute_backup(args.backup, non_interactive=args.non_interactive, shutdown_running=args.shutdown_running)
-        sys.exit(0)
-    elif args.restore:
-        execute_restore(args.restore, non_interactive=args.non_interactive, shutdown_running=args.shutdown_running)
-        sys.exit(0)
-
-    # Interactive TUI Mode
-    console.clear()
-    console.print(Panel(
-        "[bold green]KVM GPU Passthrough: Phase 3[/bold green]\n"
-        "Target: State Isolation & Continuity Manager (Arch / Kernel 7.1+ / Python 3.14+)",
-        expand=False
-    ))
-
-    check_libvirt_connection()
-
-    while True:
-        console.print("\n[bold]Select an operation vector:[/bold]")
-        console.print("  [cyan]1.[/cyan] Extract and Archive State (Backup)")
-        console.print("  [cyan]2.[/cyan] Inject and Rebuild State (Restore)")
-        console.print("  [cyan]3.[/cyan] Verify Backup Integrity (Audit/Check)")
-        console.print("  [cyan]4.[/cyan] Exit gracefully")
-
-        choice = prompt_choice("Vector", choices=["1", "2", "3", "4"], default="4")
-
+        return 0 if execute_verify(args.verify) else 1
+    if args.non_interactive and not (args.backup or args.restore):
+        parser.error("--non-interactive requires --backup, --restore or --verify")
+    if not (args.backup or args.restore):
+        readline.set_completer_delims("\t\n")
+        readline.parse_and_bind("tab: complete")
+        readline.set_completer(path_completer)
+        choice = ask("Select: 1 backup, 2 restore, 3 verify, 4 exit")
         match choice:
             case "1":
-                execute_backup(non_interactive=False)
-                break
+                args.backup = ask("Backup destination:")
             case "2":
-                execute_restore(non_interactive=False)
-                break
+                args.restore = ask("Backup directory to restore:")
             case "3":
-                execute_verify()
-                break
+                return 0 if execute_verify() else 1
             case "4":
-                console.print("[yellow]Execution aborted gracefully.[/yellow]")
-                sys.exit(0)
+                return 0
+            case _:
+                raise BackupError("Unknown selection.")
+        # Preserve interactive selections through privilege elevation.
+        sys.argv = [sys.argv[0], "--backup" if args.backup else "--restore", args.backup or args.restore]
+        if args.shutdown_running:
+            sys.argv.append("--shutdown-running")
+    require_root()
+    for command in ("virsh", "tar", "zstd", "systemctl", "systemd-creds"):
+        if shutil.which(command) is None:
+            raise BackupError(f"Required command is missing: {command}")
+    # Prevent two instances of this script from interleaving export/injection.
+    with Path("/run/lock/dusky-libvirt-backup.lock").open("w", encoding="utf-8") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise BackupError("Another backup/restore operation is running.") from exc
+        operation = execute_backup if args.backup else execute_restore
+        operation(args.backup or args.restore, args.non_interactive, args.shutdown_running)
+    return 0
+
+
+def terminate(signum: int, _frame: Any) -> None:
+    # Unwind offline_state() before exiting on a normal service/job termination.
+    raise SystemExit(128 + signum)
+
 
 if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, terminate)
     try:
-        main()
+        sys.exit(main())
     except KeyboardInterrupt:
-        console.print("\n\n[danger]⚠ Process interrupted by operator. Exiting cleanly.[/danger]\n")
+        console.print("Interrupted; any in-progress restore may be partial.")
         sys.exit(130)
+    except (BackupError, OSError, ValueError, KeyError, TypeError, ET.ParseError) as exc:
+        console.print(f"ERROR: {exc}")
+        sys.exit(1)
