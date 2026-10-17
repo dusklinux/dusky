@@ -22,14 +22,8 @@ lazy import shutil
 lazy import subprocess
 lazy import sys
 lazy import time
-lazy from math.integer import isqrt
 lazy from pathlib import Path
 lazy from typing import Any, Final
-
-# -----------------------------------------------------------------------------
-# Python 3.15 Built-in Constants & Sentinels
-# -----------------------------------------------------------------------------
-MISSING: Final = sentinel("MISSING")
 
 # Multi-purpose vendors (Elan, STMicro) are excluded from raw vendor match to
 # avoid false positives on touchscreen laptops; they match on product string.
@@ -205,6 +199,18 @@ class IdentityResolver:
         if not cls.SAFE_USERNAME_RE.match(username):
             raise ValueError(f"Username contains disallowed characters: {username!r}")
         return username
+
+    @classmethod
+    def resolve_user_home(cls, username: str | None = None) -> Path:
+        """
+        Resolves the true home directory for a target user.
+        Guards against Path.home() pointing to /root when executing under sudo.
+        """
+        user = cls.validate_username(username) if username else cls.resolve_target_user()
+        try:
+            return Path(pwd.getpwnam(user).pw_dir)
+        except KeyError as err:
+            raise RuntimeError(f"Cannot resolve home directory for user {user!r}") from err
 
 
 # =============================================================================
@@ -574,10 +580,16 @@ class PrivilegedRunner:
         )
 
     @staticmethod
-    def write_file(target: Path, content: str, mode: int = 0o644) -> None:
+    def write_file(
+        target: Path,
+        content: str,
+        mode: int = 0o644,
+        owner: str | None = None,
+    ) -> None:
         """
         Writes a file atomically. If running unprivileged and writing to a
         system path, stages in /tmp and invokes sudo install.
+        When running as root, preserves or assigns user ownership if owner is provided.
         """
         target = target.resolve()
         target_dir = target.parent
@@ -588,10 +600,28 @@ class PrivilegedRunner:
 
         if os.geteuid() == 0 or os.access(curr, os.W_OK):
             target_dir.mkdir(parents=True, exist_ok=True)
+            if os.geteuid() == 0 and owner:
+                try:
+                    pw = pwd.getpwnam(owner)
+                    p = target_dir
+                    while p != Path("/") and p != Path(pw.pw_dir).parent:
+                        if str(p).startswith(pw.pw_dir):
+                            st = p.stat()
+                            if st.st_uid == 0:
+                                os.chown(p, pw.pw_uid, pw.pw_gid)
+                        p = p.parent
+                except (KeyError, OSError):
+                    pass
             tmp_path = target_dir / f".tmp_{target.name}_{os.getpid()}_{time.time_ns()}"
             try:
                 tmp_path.write_text(content, encoding="utf-8")
                 tmp_path.chmod(mode)
+                if os.geteuid() == 0 and owner:
+                    try:
+                        pw = pwd.getpwnam(owner)
+                        os.chown(tmp_path, pw.pw_uid, pw.pw_gid)
+                    except (KeyError, OSError):
+                        pass
                 tmp_path.replace(target)
             finally:
                 if tmp_path.exists():
@@ -602,10 +632,11 @@ class PrivilegedRunner:
             try:
                 tmp_path.write_text(content, encoding="utf-8")
                 tmp_path.chmod(mode)
-                PrivilegedRunner.run_cmd(
-                    ["install", f"-Dm{mode:o}", "-o", "root", "-g", "root", str(tmp_path), str(target)],
-                    check=True,
-                )
+                install_cmd = ["install", f"-Dm{mode:o}"]
+                if owner:
+                    install_cmd.extend(["-o", owner])
+                install_cmd.extend([str(tmp_path), str(target)])
+                PrivilegedRunner.run_cmd(install_cmd, check=True)
             finally:
                 if tmp_path.exists():
                     tmp_path.unlink(missing_ok=True)
@@ -1033,7 +1064,8 @@ class HyprlockConfigurator:
     FPRINT_BLOCK_START: Final = "# --- DUSKY HYPRLOCK FINGERPRINT CONFIG (AUTO-MANAGED) ---"
     FPRINT_BLOCK_END: Final = "# --- END DUSKY HYPRLOCK FINGERPRINT CONFIG ---"
 
-    def __init__(self, hypr_dir: Path | None = None) -> None:
+    def __init__(self, hypr_dir: Path | None = None, user: str | None = None) -> None:
+        self.user = user
         if hypr_dir:
             self.hypr_dir = hypr_dir
         else:
@@ -1041,7 +1073,8 @@ class HyprlockConfigurator:
             if env_val:
                 self.hypr_dir = Path(env_val)
             else:
-                self.hypr_dir = Path.home() / ".config" / "hypr"
+                user_home = IdentityResolver.resolve_user_home(user)
+                self.hypr_dir = user_home / ".config" / "hypr"
 
     def _get_hyprlock_conf(self) -> Path:
         return self.hypr_dir / "hyprlock.conf"
@@ -1082,12 +1115,13 @@ class HyprlockConfigurator:
         self.hypr_dir.mkdir(parents=True, exist_ok=True)
         conf = self._get_hyprlock_conf()
         fprint_file = self._get_fingerprint_conf()
+        target_user = self.user or IdentityResolver.resolve_target_user()
 
         auth_block = self.generate_auth_block(enabled=enabled)
 
         # 1. Write standalone fingerprint.conf
         try:
-            PrivilegedRunner.write_file(fprint_file, auth_block, mode=0o644)
+            PrivilegedRunner.write_file(fprint_file, auth_block, mode=0o644, owner=target_user)
         except Exception as err:
             return False, f"Failed to write {fprint_file}: {err}"
 
@@ -1115,7 +1149,7 @@ class HyprlockConfigurator:
         # Append fresh auth block
         final_text = "".join(cleaned_lines).rstrip() + "\n\n" + auth_block
         try:
-            PrivilegedRunner.write_file(conf, final_text, mode=0o644)
+            PrivilegedRunner.write_file(conf, final_text, mode=0o644, owner=target_user)
             return True, "Configured Hyprlock native fingerprint authentication."
         except Exception as err:
             return False, f"Failed to update {conf}: {err}"
@@ -1124,6 +1158,7 @@ class HyprlockConfigurator:
         """Removes the fingerprint configuration from Hyprlock."""
         conf = self._get_hyprlock_conf()
         fprint_file = self._get_fingerprint_conf()
+        target_user = self.user or IdentityResolver.resolve_target_user()
 
         PrivilegedRunner.remove_file(fprint_file)
 
@@ -1145,7 +1180,7 @@ class HyprlockConfigurator:
                     cleaned_lines.append(line)
 
             final_text = "".join(cleaned_lines).rstrip() + "\n"
-            PrivilegedRunner.write_file(conf, final_text, mode=0o644)
+            PrivilegedRunner.write_file(conf, final_text, mode=0o644, owner=target_user)
             return True, "Removed fingerprint configuration from Hyprlock."
         except Exception as err:
             return False, f"Failed to clean {conf}: {err}"
@@ -1225,7 +1260,12 @@ class EnrollmentManager:
         except (subprocess.SubprocessError, OSError):
             return "unknown", []
 
-    def enroll(self, user: str, finger: str = "right-index-finger") -> tuple[bool, str]:
+    def enroll(
+        self,
+        user: str,
+        finger: str = "right-index-finger",
+        interactive: bool = True,
+    ) -> tuple[bool, str]:
         """Invokes fprintd-enroll for the specified user and finger."""
         fprintd_enroll_bin = shutil.which("fprintd-enroll")
         if not fprintd_enroll_bin:
@@ -1233,14 +1273,23 @@ class EnrollmentManager:
 
         cmd = [fprintd_enroll_bin, "-f", finger, user]
         try:
-            proc = PrivilegedRunner.run_cmd(cmd, check=False)
+            is_tty = sys.stdin.isatty() and sys.stdout.isatty()
+            should_stream = interactive and is_tty
+
+            proc = PrivilegedRunner.run_cmd(cmd, check=False, capture_output=not should_stream)
             if proc.returncode == 0:
                 return True, f"Fingerprint enrolled successfully for {user} ({finger})."
-            return False, f"Enrollment exited with status {proc.returncode}: {proc.stderr.strip()}"
+            err_msg = proc.stderr.strip() if proc.stderr else f"Exit code {proc.returncode}"
+            return False, f"Enrollment exited with status {proc.returncode}: {err_msg}"
         except Exception as err:
             return False, f"Failed to execute fprintd-enroll: {err}"
 
-    def verify(self, user: str, finger: str | None = None) -> tuple[bool, str]:
+    def verify(
+        self,
+        user: str,
+        finger: str | None = None,
+        interactive: bool = True,
+    ) -> tuple[bool, str]:
         """Runs fprintd-verify to validate enrolled prints."""
         fprintd_verify_bin = shutil.which("fprintd-verify")
         if not fprintd_verify_bin:
@@ -1252,10 +1301,14 @@ class EnrollmentManager:
         cmd.append(user)
 
         try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15, check=False)
+            is_tty = sys.stdin.isatty() and sys.stdout.isatty()
+            should_stream = interactive and is_tty
+
+            proc = PrivilegedRunner.run_cmd(cmd, check=False, capture_output=not should_stream, timeout=20)
             if proc.returncode == 0:
                 return True, f"Fingerprint verification passed for {user}."
-            return False, f"Verification failed (code {proc.returncode}): {proc.stderr.strip()}"
+            err_msg = proc.stderr.strip() if proc.stderr else f"Exit code {proc.returncode}"
+            return False, f"Verification failed (code {proc.returncode}): {err_msg}"
         except Exception as err:
             return False, f"Failed to run fprintd-verify: {err}"
 
@@ -1372,18 +1425,21 @@ class FingerprintRetryModel:
 class FingerprintOrchestrator:
     """Master orchestrator for detection, setup, verification, and teardown."""
 
-    def __init__(self, simulate: bool = False) -> None:
+    def __init__(self, simulate: bool = False, user: str | None = None) -> None:
         self.simulate = simulate or (os.environ.get(ENV_SIMULATE_SENSOR) == "1")
+        self.user = user
         self.detector = HardwareDetector(simulate=self.simulate)
         self.clamshell = ClamshellGate()
         self.pam = PamConfigurator()
         self.systemd = SystemdRecoveryManager()
-        self.hyprlock = HyprlockConfigurator()
+        self.hyprlock = HyprlockConfigurator(user=self.user)
         self.enrollment = EnrollmentManager()
 
     def get_system_status(self, user: str | None = None) -> SystemStatus:
         """Collects and returns comprehensive status across all subsystems."""
-        target_user = IdentityResolver.validate_username(user) if user else IdentityResolver.resolve_target_user()
+        target_user = IdentityResolver.validate_username(user or self.user) if (user or self.user) else IdentityResolver.resolve_target_user()
+        if self.hyprlock.user != target_user:
+            self.hyprlock = HyprlockConfigurator(user=target_user)
         readers = self.detector.detect_readers()
         probe_cls, fingers = self.enrollment.list_enrolled(target_user)
         lid_info = self.clamshell.check()
@@ -1444,7 +1500,9 @@ class FingerprintOrchestrator:
         4. Enrollment & verification
         5. PAM and Hyprlock configuration
         """
-        target_user = IdentityResolver.validate_username(user) if user else IdentityResolver.resolve_target_user()
+        target_user = IdentityResolver.validate_username(user or self.user) if (user or self.user) else IdentityResolver.resolve_target_user()
+        if self.hyprlock.user != target_user:
+            self.hyprlock = HyprlockConfigurator(user=target_user)
         print(f"\033[1;34m[::]\033[0m Initiating Fingerprint Setup for user: \033[1m{target_user}\033[0m")
 
         # Step 0: Sudo validation upfront
@@ -1532,7 +1590,9 @@ class FingerprintOrchestrator:
 
     def run_removal(self, user: str | None = None, purge_packages: bool = False) -> tuple[bool, str]:
         """Rolls back all PAM changes, Hyprlock configuration, hooks, and local prints."""
-        target_user = IdentityResolver.validate_username(user) if user else IdentityResolver.resolve_target_user()
+        target_user = IdentityResolver.validate_username(user or self.user) if (user or self.user) else IdentityResolver.resolve_target_user()
+        if self.hyprlock.user != target_user:
+            self.hyprlock = HyprlockConfigurator(user=target_user)
         print(f"\033[1;33m[::]\033[0m Removing fingerprint configuration for {target_user}...")
 
         # Step 0: Sudo validation upfront
@@ -1574,39 +1634,48 @@ class FingerprintOrchestrator:
 class InvitationManager:
     """Manages first-run fingerprint setup invitation notifications."""
 
-    STATE_DIR: Final = Path.home() / ".local" / "state" / "dusky"
+    @classmethod
+    def get_state_dir(cls, user: str | None = None) -> Path:
+        """Returns the state directory for the user, safely resolving home directory."""
+        user_home = IdentityResolver.resolve_user_home(user)
+        return user_home / ".local" / "state" / "dusky"
 
     @classmethod
-    def get_marker_file(cls) -> Path:
+    def get_marker_file(cls, user: str | None = None) -> Path:
         """Returns the marker file path, respecting DUSKY_INVITED_MARKER for testing."""
         env_val = os.environ.get("DUSKY_INVITED_MARKER")
         if env_val:
             return Path(env_val)
-        return cls.STATE_DIR / "fingerprint-setup-invited"
+        return cls.get_state_dir(user) / "fingerprint-setup-invited"
 
     @classmethod
-    def should_invite(cls, orchestrator: FingerprintOrchestrator) -> bool:
+    def should_invite(cls, orchestrator: FingerprintOrchestrator, user: str | None = None) -> bool:
         """Returns True if hardware is present, not yet configured, and not yet invited."""
+        target_user = user or orchestrator.user or IdentityResolver.resolve_target_user()
         if not orchestrator.detector.has_reader():
             return False
         if orchestrator.pam.is_sudo_configured() and orchestrator.hyprlock.is_configured():
             return False
-        if cls.get_marker_file().is_file():
+        if cls.get_marker_file(target_user).is_file():
             return False
         return True
 
     @classmethod
-    def send_invitation(cls, orchestrator: FingerprintOrchestrator, force: bool = False) -> bool:
+    def send_invitation(cls, orchestrator: FingerprintOrchestrator, user: str | None = None, force: bool = False) -> bool:
         """Sends a notification inviting the user to configure fingerprint authentication."""
-        if not force and not cls.should_invite(orchestrator):
+        target_user = user or orchestrator.user or IdentityResolver.resolve_target_user()
+        if not force and not cls.should_invite(orchestrator, user=target_user):
             return False
 
-        marker = cls.get_marker_file()
-        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker = cls.get_marker_file(target_user)
         try:
-            marker.touch()
-        except OSError:
-            pass
+            PrivilegedRunner.write_file(marker, "", mode=0o644, owner=target_user)
+        except Exception:
+            try:
+                marker.parent.mkdir(parents=True, exist_ok=True)
+                marker.touch()
+            except OSError:
+                pass
 
         notify_bin = shutil.which("notify-send")
         if not notify_bin:
@@ -1710,7 +1779,7 @@ def main() -> int:
     simulate = getattr(args, "simulate", False)
     user = getattr(args, "user", None)
 
-    orchestrator = FingerprintOrchestrator(simulate=simulate)
+    orchestrator = FingerprintOrchestrator(simulate=simulate, user=user)
     subcommand = args.subcommand or "setup"
 
     match subcommand:
@@ -1800,7 +1869,7 @@ def main() -> int:
             return 0 if ok else 1
 
         case "should-invite":
-            should = InvitationManager.should_invite(orchestrator)
+            should = InvitationManager.should_invite(orchestrator, user=user)
             if should:
                 print("Invitation recommended: Fingerprint reader detected and unconfigured.")
                 return 0
@@ -1809,7 +1878,7 @@ def main() -> int:
                 return 1
 
         case "invite":
-            sent = InvitationManager.send_invitation(orchestrator, force=getattr(args, "force", False))
+            sent = InvitationManager.send_invitation(orchestrator, user=user, force=getattr(args, "force", False))
             if sent:
                 print("\033[1;32m[✓]\033[0m Invitation notification dispatched.")
                 return 0
