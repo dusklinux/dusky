@@ -17,6 +17,8 @@ type ManagedObjects = HashMap<OwnedObjectPath, Interfaces>;
 // Discovery replies include controller work; allow BlueZ's five-second scan
 // transition to finish without imposing this delay on successful calls.
 const BLUEZ_METHOD_TIMEOUT: Duration = Duration::from_secs(10);
+// Real paired LE wearables can need more than two seconds to re-establish a link.
+const CONNECTION_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(5);
 
 // BlueZ 5.87 keeps a single pending discovery reply per adapter. Serialize our
 // filter/start/stop transactions across daemon, scan and test processes.
@@ -187,8 +189,10 @@ impl BluetoothWatcher {
                 Some((key, connected))
             })
             .collect();
-        let discovery_enabled = config.has_proximity_devices()
-            || (config.proximity_enabled && config.active_devices().is_empty());
+        let discovery_enabled = config.uses_advertisements()
+            || (config.proximity_enabled
+                && config.proximity_source == crate::config::ProximitySource::Advertisement
+                && config.active_devices().is_empty());
         let mut filter = HashMap::new();
         if discovery_enabled {
             filter = HashMap::from([
@@ -261,6 +265,103 @@ impl BluetoothWatcher {
                     .get("org.bluez.Device1")
                     .is_some_and(input_disconnected)
         }))
+    }
+    /// Connect configured proximity targets only. Never acquire discovery or touch HID devices.
+    pub fn reconnect_targets(&self, config: &Config) -> tokio::task::JoinHandle<()> {
+        let conn = self.conn.clone();
+        let prefix = format!("{}/", self.adapter_path);
+        let targets: Vec<_> = config
+            .active_devices()
+            .into_iter()
+            .filter(|d| d.proximity)
+            .collect();
+        tokio::spawn(async move {
+            let snapshot = match objects(&conn).await {
+                Ok(snapshot) => snapshot,
+                Err(e) => {
+                    eprintln!("[bluetooth] Reconnection snapshot: {e}");
+                    return;
+                }
+            };
+            // LE connection initiation uses the same controller resources as HID
+            // reconnection. Give disconnected paired input devices priority.
+            if snapshot.iter().any(|(path, interfaces)| {
+                path.as_str().starts_with(&prefix)
+                    && interfaces
+                        .get("org.bluez.Device1")
+                        .is_some_and(input_disconnected)
+            }) {
+                eprintln!(
+                    "[bluetooth] Deferring proximity connection attempts for disconnected input devices"
+                );
+                return;
+            }
+            for d in targets {
+                let path = format!("{prefix}{}", mac_to_dbus_suffix(&d.mac));
+                let Some(props) = snapshot
+                    .get(&OwnedObjectPath::try_from(path.as_str()).expect("generated device path"))
+                    .and_then(|i| i.get("org.bluez.Device1"))
+                else {
+                    continue;
+                };
+                if props.get("Connected").and_then(|v| bool::try_from(v).ok()) == Some(true) {
+                    continue;
+                }
+                if props.get("Paired").and_then(|v| bool::try_from(v).ok()) != Some(true) {
+                    continue;
+                }
+                let attempt = tokio::time::timeout(
+                    CONNECTION_ATTEMPT_TIMEOUT,
+                    conn.call_method(
+                        Some("org.bluez"),
+                        path.as_str(),
+                        Some("org.bluez.Device1"),
+                        "Connect",
+                        &(),
+                    ),
+                )
+                .await;
+                match attempt {
+                    Ok(Ok(_)) => {}
+                    Ok(Err(e)) => eprintln!("[bluetooth] Connecting {}: {e}", d.name),
+                    Err(_) => {
+                        // Dropping a D-Bus call does not cancel BlueZ's controller operation.
+                        // Cancel an unfinished attempt so an absent band cannot keep it busy.
+                        let device: Result<Proxy<'_>, _> = ProxyBuilder::new(&conn)
+                            .destination("org.bluez")
+                            .and_then(|b| b.path(path.as_str()))
+                            .and_then(|b| b.interface("org.bluez.Device1"))
+                            .map(|b| b.cache_properties(CacheProperties::No))
+                            .expect("valid generated proxy")
+                            .build()
+                            .await;
+                        if let Ok(device) = device
+                            && matches!(
+                                tokio::time::timeout(
+                                    Duration::from_secs(1),
+                                    device.get_property::<bool>("Connected")
+                                )
+                                .await,
+                                Ok(Ok(false))
+                            )
+                        {
+                            let cancellation = tokio::time::timeout(
+                                Duration::from_secs(2),
+                                device.call::<_, _, ()>("Disconnect", &()),
+                            )
+                            .await;
+                            if !matches!(cancellation, Ok(Ok(()))) {
+                                eprintln!(
+                                    "[bluetooth] Could not cancel connection attempt for {}",
+                                    d.name
+                                );
+                            }
+                        }
+                        eprintln!("[bluetooth] {} connection attempt timed out", d.name);
+                    }
+                }
+            }
+        })
     }
     /// Detect daemon/controller loss as an observation failure, not device departure.
     /// True means discovery was interrupted/pending: discard stale measurement evidence.
@@ -535,6 +636,7 @@ mod tests {
     #[test]
     fn adapter_selection_uses_power_and_known_targets() {
         let c = Config {
+            proximity_source: crate::config::ProximitySource::Advertisement,
             device_mac: "AA:BB:CC:DD:EE:FF".into(),
             ..Config::default()
         };
@@ -633,6 +735,162 @@ mod integration_tests {
     }
     struct Device(AtomicUsize);
     struct DisconnectedInput;
+    struct ConnectableDevice {
+        attempts: Arc<AtomicUsize>,
+        cancellations: Arc<AtomicUsize>,
+    }
+    #[zbus::interface(name = "org.bluez.Device1")]
+    impl ConnectableDevice {
+        async fn connect(&self) {
+            self.attempts.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(CONNECTION_ATTEMPT_TIMEOUT + Duration::from_secs(2)).await;
+        }
+        fn disconnect(&self) {
+            self.cancellations.fetch_add(1, Ordering::SeqCst);
+        }
+        #[zbus(property)]
+        fn paired(&self) -> bool {
+            true
+        }
+        #[zbus(property)]
+        fn connected(&self) -> bool {
+            false
+        }
+    }
+    #[tokio::test]
+    async fn connected_mode_never_discovers_and_cancels_only_target_connection_attempts() {
+        let mut child = Command::new("dbus-daemon")
+            .args(["--session", "--nofork", "--print-address=1", "--nosyslog"])
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut address = String::new();
+        std::io::BufReader::new(child.stdout.take().unwrap())
+            .read_line(&mut address)
+            .unwrap();
+        let _bus = PrivateBus(child);
+        let state = Arc::new(ScanState::default());
+        state.powered.store(true, Ordering::SeqCst);
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let cancellations = Arc::new(AtomicUsize::new(0));
+        let unrelated = Arc::new(AtomicUsize::new(0));
+        let server = Builder::address(address.trim())
+            .unwrap()
+            .name("org.bluez")
+            .unwrap()
+            .serve_at("/", zbus::fdo::ObjectManager)
+            .unwrap()
+            .serve_at("/org/bluez/hci0", Adapter(state.clone()))
+            .unwrap()
+            .serve_at(
+                "/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF",
+                ConnectableDevice {
+                    attempts: attempts.clone(),
+                    cancellations: cancellations.clone(),
+                },
+            )
+            .unwrap()
+            .serve_at("/org/bluez/hci0/dev_11_22_33_44_55_66", DisconnectedInput)
+            .unwrap()
+            .serve_at(
+                "/org/bluez/hci0/dev_22_22_33_44_55_66",
+                ConnectableDevice {
+                    attempts: unrelated.clone(),
+                    cancellations: unrelated.clone(),
+                },
+            )
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        let client = Builder::address(address.trim())
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        let mut c = Config {
+            device_mac: "AA:BB:CC:DD:EE:FF".into(),
+            auto_connect: false,
+            notifications: false,
+            on_lock: crate::config::CommandList::default(),
+            ..Config::default()
+        };
+        let watcher = BluetoothWatcher::with_connection(client, &c).await.unwrap();
+        watcher.reconnect_targets(&c).await.unwrap();
+        assert_eq!(
+            attempts.load(Ordering::SeqCst),
+            0,
+            "input reconnection takes priority"
+        );
+        assert_eq!(cancellations.load(Ordering::SeqCst), 0);
+        server
+            .object_server()
+            .remove::<DisconnectedInput, _>("/org/bluez/hci0/dev_11_22_33_44_55_66")
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(8), watcher.reconnect_targets(&c))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+        assert_eq!(cancellations.load(Ordering::SeqCst), 1);
+        assert_eq!(unrelated.load(Ordering::SeqCst), 0);
+        c.auto_connect = true;
+        let control = async {
+            tokio::time::timeout(Duration::from_secs(3), async {
+                while attempts.load(Ordering::SeqCst) < 2 {
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            })
+            .await
+            .unwrap();
+            for _ in 0..512 {
+                server
+                    .emit_signal(
+                        None::<&str>,
+                        "/org/bluez/hci0/dev_11_22_33_44_55_66",
+                        "org.freedesktop.DBus.Properties",
+                        "PropertiesChanged",
+                        &(
+                            "org.bluez.Device1",
+                            HashMap::from([("Connected", OwnedValue::from(false))]),
+                            Vec::<String>::new(),
+                        ),
+                    )
+                    .await
+                    .unwrap();
+            }
+            tokio::time::sleep(Duration::from_millis(600)).await;
+            assert_eq!(state.starts.load(Ordering::SeqCst), 0);
+            assert_eq!(state.filters.load(Ordering::SeqCst), 0);
+            server
+                .emit_signal(
+                    None::<&str>,
+                    "/",
+                    "org.freedesktop.DBus.ObjectManager",
+                    "InterfacesRemoved",
+                    &(
+                        OwnedObjectPath::try_from("/org/bluez/hci0").unwrap(),
+                        vec!["org.bluez.Adapter1"],
+                    ),
+                )
+                .await
+                .unwrap();
+        };
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(8), async {
+            tokio::join!(crate::observe(watcher, &c, false), control)
+        })
+        .await
+        .unwrap();
+        assert!(result.unwrap_err().to_string().contains("adapter removed"));
+        assert_eq!(state.stops.load(Ordering::SeqCst), 0);
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            cancellations.load(Ordering::SeqCst),
+            2,
+            "shutdown must finish controller cancellation"
+        );
+    }
     #[zbus::interface(name = "org.bluez.Device1")]
     impl DisconnectedInput {
         #[zbus(property)]
@@ -719,6 +977,7 @@ mod integration_tests {
             let marker = tmp.path().join("unexpected-departure");
             let disconnected = tmp.path().join("disconnected");
             let c = Config {
+                proximity_source: crate::config::ProximitySource::Advertisement,
                 device_mac: "AA:BB:CC:DD:EE:FF".into(),
                 notifications: false,
                 signal_timeout_secs: 1,
@@ -907,6 +1166,7 @@ mod integration_tests {
                 .await
                 .unwrap();
             let c = Config {
+                proximity_source: crate::config::ProximitySource::Advertisement,
                 device_mac: "AA:BB:CC:DD:EE:FF".into(),
                 proximity_enabled: false,
                 ..Config::default()
@@ -1019,6 +1279,7 @@ mod integration_tests {
             let temp = tempfile::tempdir().unwrap();
             let marker = temp.path().join("unexpected-departure");
             let c = Config {
+                proximity_source: crate::config::ProximitySource::Advertisement,
                 device_mac: "AA:BB:CC:DD:EE:FF".into(),
                 notifications: false,
                 signal_timeout_secs: 1,
@@ -1103,9 +1364,15 @@ mod integration_tests {
                 .build()
                 .await
                 .unwrap();
-            let mut watcher = BluetoothWatcher::with_connection(client, &Config::default())
-                .await
-                .unwrap();
+            let mut watcher = BluetoothWatcher::with_connection(
+                client,
+                &Config {
+                    proximity_source: crate::config::ProximitySource::Advertisement,
+                    ..Config::default()
+                },
+            )
+            .await
+            .unwrap();
             state.start_delay_ms.store(0, Ordering::SeqCst);
             assert_eq!(state.starts.load(Ordering::SeqCst), 1);
             assert!(!watcher.ensure_discovery().await.unwrap());

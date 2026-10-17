@@ -83,6 +83,14 @@ pub enum SignalLossAction {
     Far,
     Hold,
 }
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProximitySource {
+    #[default]
+    Connection,
+    Connected,
+    Advertisement,
+}
 #[derive(Debug, Clone, Copy)]
 pub struct DeviceThresholds {
     pub far: i16,
@@ -98,6 +106,10 @@ pub struct Config {
     pub devices: Vec<DeviceEntry>,
     pub transport: String,
     pub proximity_enabled: bool,
+    pub proximity_source: ProximitySource,
+    pub poll_interval_ms: u64,
+    pub auto_connect: bool,
+    pub reconnect_interval_secs: u64,
     pub signal_loss_action: SignalLossAction,
     pub connect_hold_secs: u64,
     pub disconnect_hold_secs: u64,
@@ -159,9 +171,13 @@ impl Default for Config {
             devices: Vec::new(),
             transport: "le".into(),
             proximity_enabled: true,
+            proximity_source: ProximitySource::Connection,
+            poll_interval_ms: 1000,
+            auto_connect: false,
+            reconnect_interval_secs: 15,
             signal_loss_action: SignalLossAction::Far,
-            connect_hold_secs: 0,
-            disconnect_hold_secs: 2,
+            connect_hold_secs: 2,
+            disconnect_hold_secs: 5,
             run_initial_connection_hooks: false,
             adapter_path: String::new(),
             proximity_level: None,
@@ -260,6 +276,18 @@ impl Config {
                 self.devices.iter().any(|d| d.enabled && d.proximity)
             }
     }
+    pub fn uses_advertisements(&self) -> bool {
+        self.has_proximity_devices() && self.proximity_source == ProximitySource::Advertisement
+    }
+    pub fn uses_connection_state(&self) -> bool {
+        self.has_proximity_devices() && self.proximity_source == ProximitySource::Connection
+    }
+    pub fn uses_links(&self) -> bool {
+        self.uses_connection_state() || self.uses_connected_rssi()
+    }
+    pub fn uses_connected_rssi(&self) -> bool {
+        self.has_proximity_devices() && self.proximity_source == ProximitySource::Connected
+    }
     pub fn thresholds(&self, dev: &DeviceEntry) -> DeviceThresholds {
         let (far, near) = dev
             .proximity_level
@@ -294,6 +322,14 @@ impl Config {
         Ok(())
     }
     pub fn validate(&self) -> Result<(), Box<dyn std::error::Error>> {
+        if !(500..=10000).contains(&self.poll_interval_ms)
+            || !(5..=86400).contains(&self.reconnect_interval_secs)
+        {
+            return Err(
+                "poll_interval_ms must be 500..10000; reconnect_interval_secs must be 5..86400"
+                    .into(),
+            );
+        }
         if !matches!(self.transport.as_str(), "le" | "bredr" | "auto") {
             return Err("transport must be le, bredr or auto".into());
         }
@@ -404,6 +440,31 @@ pub fn mac_to_dbus_suffix(mac: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn connected_source_and_sampling_limits_are_validated() {
+        let mut c = Config {
+            device_mac: "AA:BB:CC:DD:EE:FF".into(),
+            ..Config::default()
+        };
+        assert!(c.uses_connection_state());
+        assert!(!c.uses_connected_rssi());
+        c.proximity_source = ProximitySource::Connected;
+        assert!(c.uses_connected_rssi());
+        assert!(!c.uses_advertisements());
+        for interval in [0, 499, 10001, u64::MAX] {
+            c.poll_interval_ms = interval;
+            assert!(c.validate().is_err());
+        }
+        c.poll_interval_ms = 500;
+        c.reconnect_interval_secs = 4;
+        assert!(c.validate().is_err());
+        c.reconnect_interval_secs = 5;
+        c.validate().unwrap();
+        c.proximity_source = ProximitySource::Advertisement;
+        assert!(c.uses_advertisements());
+        assert!(!c.uses_connected_rssi());
+        assert!(toml::from_str::<Config>("proximity_source='guess'").is_err());
+    }
     #[test]
     fn shell_command_whitespace_is_preserved_exactly() {
         let command = "printf '%s' continued\\\n";

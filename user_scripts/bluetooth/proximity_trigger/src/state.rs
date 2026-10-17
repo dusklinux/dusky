@@ -17,6 +17,10 @@ pub struct TrackedDevice {
     pub filtered_rssi: Option<i16>,
     pub state: ProximityState,
     pub connected: bool,
+    pub connection_epoch: u64,
+    connection_observed: bool,
+    disconnected_since: Option<Instant>,
+    connected_since: Option<Instant>,
     reported_connection: Option<bool>,
     connection_since: Option<Instant>,
     last_sample: Option<Instant>,
@@ -33,6 +37,10 @@ impl TrackedDevice {
             filtered_rssi: None,
             state: ProximityState::Unknown,
             connected: false,
+            connection_epoch: 0,
+            connection_observed: false,
+            disconnected_since: None,
+            connected_since: None,
             reported_connection: Some(false),
             connection_since: None,
             last_sample: None,
@@ -69,7 +77,7 @@ pub enum ActionRequired {
     Near {
         device_name: String,
         mac: String,
-        rssi: i16,
+        rssi: Option<i16>,
     },
 }
 impl StateTracker {
@@ -105,13 +113,35 @@ impl StateTracker {
     fn reset_at(&mut self, now: Instant) {
         self.startup_time = now;
         for d in self.devices.values_mut() {
+            d.connection_epoch = d.connection_epoch.wrapping_add(1);
             d.clear_evidence();
             d.last_seen = None;
             d.state = ProximityState::Unknown;
+            d.connected_since = d.connected.then_some(now);
         }
     }
     pub fn handle_rssi_sample(&mut self, key: &str, rssi: i16, config: &Config) -> ActionRequired {
         self.sample_at(key, rssi, config, Instant::now())
+    }
+    pub fn handle_connected_reading(
+        &mut self,
+        reading: crate::connected::Reading,
+        config: &Config,
+    ) -> ActionRequired {
+        let Some(d) = self.devices.get(&reading.key) else {
+            return ActionRequired::None;
+        };
+        if !config.uses_connected_rssi()
+            || !d.connected
+            || d.connection_epoch != reading.epoch
+            || reading.observed.elapsed() > Duration::from_secs(config.sample_max_gap_secs)
+        {
+            return ActionRequired::None;
+        }
+        let Some(rssi) = reading.rssi else {
+            return ActionRequired::None;
+        };
+        self.sample_at(&reading.key, rssi, config, reading.observed)
     }
     fn sample_at(&mut self, key: &str, rssi: i16, config: &Config, now: Instant) -> ActionRequired {
         // BlueZ/HCI uses 127 for an unavailable RSSI. Do not count it as presence.
@@ -121,7 +151,7 @@ impl StateTracker {
         let Some(d) = self.devices.get_mut(key) else {
             return ActionRequired::None;
         };
-        if !config.proximity_enabled || !d.config.proximity {
+        if !config.proximity_enabled || !d.config.proximity || config.uses_connection_state() {
             return ActionRequired::None;
         }
         let limits = config.thresholds(&d.config);
@@ -187,6 +217,9 @@ impl StateTracker {
     pub fn seed_connections(&mut self, snapshot: &HashMap<String, bool>, config: &Config) {
         for (key, d) in &mut self.devices {
             d.connected = snapshot.get(key).copied().unwrap_or(false);
+            d.connection_observed = d.connected;
+            d.connected_since = d.connected.then_some(self.startup_time);
+            d.disconnected_since = (!d.connected).then_some(self.startup_time);
             d.reported_connection = if config.run_initial_connection_hooks {
                 None
             } else {
@@ -199,14 +232,32 @@ impl StateTracker {
             };
         }
     }
-    pub fn observe_connection(&mut self, key: &str, connected: bool) {
-        self.connection_at(key, connected, Instant::now());
+    pub fn observe_connection(&mut self, key: &str, connected: bool, config: &Config) {
+        self.connection_at(key, connected, Instant::now(), config);
     }
-    fn connection_at(&mut self, key: &str, connected: bool, now: Instant) {
+    fn connection_at(&mut self, key: &str, connected: bool, now: Instant, config: &Config) {
         if let Some(d) = self.devices.get_mut(key)
             && d.connected != connected
         {
             d.connected = connected;
+            d.connection_observed |= connected;
+            d.connection_epoch = d.connection_epoch.wrapping_add(1);
+            d.disconnected_since = (!connected).then_some(now);
+            d.connected_since = connected.then_some(now);
+            if config.uses_connection_state() && connected {
+                // A returning link is pending presence, never inherited absence.
+                // This also prevents a first-ever connection from locking during its debounce.
+                d.state = ProximityState::Unknown;
+            }
+            if config.uses_connected_rssi() {
+                d.clear_evidence();
+                if connected {
+                    d.state = ProximityState::Unknown;
+                    // A new link proves reception, but supplies no strength evidence.
+                    // Give it a full measurement timeout instead of reusing old silence.
+                    d.last_seen = Some(now);
+                }
+            }
             d.connection_since = if d.reported_connection == Some(connected) {
                 None
             } else {
@@ -253,7 +304,38 @@ impl StateTracker {
             if !d.config.proximity {
                 continue;
             }
+            if config.uses_connection_state() {
+                if d.connected {
+                    if d.connected_since.is_some_and(|since| {
+                        now.duration_since(since) >= Duration::from_secs(config.connect_hold_secs)
+                    }) {
+                        d.state = ProximityState::Near;
+                    }
+                } else if d.disconnected_since.is_some_and(|since| {
+                    now.duration_since(since) >= Duration::from_secs(config.disconnect_hold_secs)
+                }) {
+                    d.state = ProximityState::Far;
+                    if expired.as_ref().is_none_or(|old| key < old) {
+                        expired = Some(key.clone());
+                    }
+                }
+                continue;
+            }
             let limits = config.thresholds(&d.config);
+            if config.uses_connected_rssi() && !d.connected {
+                if d.disconnected_since.is_some_and(|since| {
+                    now.duration_since(since) >= Duration::from_secs(config.disconnect_hold_secs)
+                }) {
+                    if d.state != ProximityState::Far
+                        && expired.as_ref().is_none_or(|old| key < old)
+                    {
+                        expired = Some(key.clone());
+                    }
+                    d.state = ProximityState::Far;
+                    d.clear_evidence();
+                }
+                continue;
+            }
             let age = now.duration_since(d.last_seen.unwrap_or(self.startup_time));
             if age >= Duration::from_secs(limits.timeout.saturating_add(config.lock_hold_secs)) {
                 if config.signal_loss_action == SignalLossAction::Far {
@@ -279,6 +361,15 @@ impl StateTracker {
         if !config.proximity_enabled || !self.devices.values().any(|d| d.config.proximity) {
             return ActionRequired::None;
         }
+        // A configured address alone is not an established presence baseline.
+        if config.uses_links()
+            && !self
+                .devices
+                .values()
+                .any(|d| d.config.proximity && d.connection_observed)
+        {
+            return ActionRequired::None;
+        }
         let near = self
             .devices
             .iter()
@@ -286,6 +377,12 @@ impl StateTracker {
                 d.config.proximity
                     && d.state == ProximityState::Near
                     && (self.current_state != ProximityState::Far
+                        || (config.uses_connection_state()
+                            && d.connected
+                            && d.connected_since.is_some_and(|since| {
+                                now.duration_since(since)
+                                    >= Duration::from_secs(config.connect_hold_secs)
+                            }))
                         || (d.last_sample.is_some_and(|t| {
                             now.duration_since(t) <= Duration::from_secs(config.sample_max_gap_secs)
                         }) && d.near_since.is_some_and(|t| {
@@ -307,7 +404,7 @@ impl StateTracker {
                 return ActionRequired::Near {
                     device_name: d.config.name.clone(),
                     mac: d.config.mac.clone(),
-                    rssi: d.filtered_rssi.unwrap_or(0),
+                    rssi: d.filtered_rssi,
                 };
             }
         } else if self
@@ -332,6 +429,10 @@ impl StateTracker {
                     Some((raw, filtered)) => {
                         format!("sustained weak signal ({filtered} dBm filtered, {raw} dBm raw)")
                     }
+                    None if config.uses_links() && !d.connected => format!(
+                        "{} disconnected (held {}s)",
+                        d.config.name, config.disconnect_hold_secs
+                    ),
                     None if key.is_some() => format!(
                         "{} signal timeout ({}s + hold {}s)",
                         d.config.name,
@@ -364,11 +465,280 @@ impl StateTracker {
 mod tests {
     use super::*;
     const KEY: &str = "dev_AA_BB_CC_DD_EE_FF";
+    #[test]
+    fn connection_presence_ignores_signal_and_requires_stable_link_transitions() {
+        let (mut t, mut c, n) = fixture();
+        c.proximity_source = crate::config::ProximitySource::Connection;
+        c.connect_hold_secs = 2;
+        t.seed_connections(&HashMap::new(), &c);
+        assert_eq!(
+            t.timeouts_at(&c, n + Duration::from_secs(100)),
+            ActionRequired::None
+        );
+        assert_eq!(t.current_state, ProximityState::Unknown);
+        t.connection_at(KEY, true, n + Duration::from_secs(101), &c);
+        assert_eq!(
+            t.timeouts_at(&c, n + Duration::from_secs(101)),
+            ActionRequired::None
+        );
+        assert_eq!(
+            t.timeouts_at(&c, n + Duration::from_secs(102)),
+            ActionRequired::None
+        );
+        assert_eq!(t.current_state, ProximityState::Unknown);
+        assert_eq!(
+            t.timeouts_at(&c, n + Duration::from_secs(103)),
+            ActionRequired::None
+        );
+        assert_eq!(t.current_state, ProximityState::Near);
+        for i in 104..1104 {
+            assert_eq!(sample(&mut t, &c, n, i, -127), ActionRequired::None);
+            assert_eq!(
+                t.timeouts_at(&c, n + Duration::from_secs(i)),
+                ActionRequired::None
+            );
+        }
+        assert!(t.devices[KEY].samples.is_empty());
+        t.connection_at(KEY, false, n + Duration::from_secs(1104), &c);
+        assert_eq!(
+            t.timeouts_at(&c, n + Duration::from_secs(1105)),
+            ActionRequired::None
+        );
+        t.connection_at(KEY, true, n + Duration::from_secs(1105), &c);
+        assert_eq!(
+            t.timeouts_at(&c, n + Duration::from_secs(1107)),
+            ActionRequired::None
+        );
+        t.connection_at(KEY, false, n + Duration::from_secs(1108), &c);
+        assert!(matches!(
+            t.timeouts_at(&c, n + Duration::from_secs(1110)),
+            ActionRequired::Far { rssi: None, .. }
+        ));
+        t.connection_at(KEY, true, n + Duration::from_secs(1111), &c);
+        assert_eq!(
+            t.timeouts_at(&c, n + Duration::from_secs(1112)),
+            ActionRequired::None
+        );
+        t.connection_at(KEY, true, n + Duration::from_secs(1112), &c);
+        assert!(matches!(
+            t.timeouts_at(&c, n + Duration::from_secs(1113)),
+            ActionRequired::Near { rssi: None, .. }
+        ));
+        assert_eq!(
+            t.timeouts_at(&c, n + Duration::from_secs(1114)),
+            ActionRequired::None
+        );
+    }
+    #[test]
+    fn connection_presence_aggregates_targets_and_resets_return_debounce() {
+        let (_, mut c, n) = fixture();
+        c.proximity_source = crate::config::ProximitySource::Connection;
+        c.connect_hold_secs = 2;
+        c.devices = vec![
+            DeviceEntry {
+                mac: "AA:BB:CC:DD:EE:FF".into(),
+                ..DeviceEntry::default()
+            },
+            DeviceEntry {
+                mac: "11:22:33:44:55:66".into(),
+                ..DeviceEntry::default()
+            },
+        ];
+        let other = "dev_11_22_33_44_55_66";
+        let mut t = StateTracker::new_at(&c.active_devices(), n);
+        t.seed_connections(
+            &HashMap::from([(KEY.into(), true), (other.into(), true)]),
+            &c,
+        );
+        t.timeouts_at(&c, n + Duration::from_secs(2));
+        t.connection_at(KEY, false, n + Duration::from_secs(3), &c);
+        assert_eq!(
+            t.timeouts_at(&c, n + Duration::from_secs(5)),
+            ActionRequired::None
+        );
+        t.connection_at(other, false, n + Duration::from_secs(6), &c);
+        assert!(matches!(
+            t.timeouts_at(&c, n + Duration::from_secs(8)),
+            ActionRequired::Far { .. }
+        ));
+        t.connection_at(KEY, true, n + Duration::from_secs(10), &c);
+        t.reset_at(n + Duration::from_secs(11));
+        assert_eq!(
+            t.timeouts_at(&c, n + Duration::from_secs(12)),
+            ActionRequired::None
+        );
+        assert!(matches!(
+            t.timeouts_at(&c, n + Duration::from_secs(13)),
+            ActionRequired::Near { rssi: None, .. }
+        ));
+    }
+    #[test]
+    fn stress_connection_presence_flapping_and_noisy_measurements() {
+        let (mut t, mut c, n) = fixture();
+        c.proximity_source = crate::config::ProximitySource::Connection;
+        c.connect_hold_secs = 2;
+        c.lock_cooldown_secs = 0;
+        t.seed_connections(&HashMap::from([(KEY.into(), true)]), &c);
+        let mut departures = 0;
+        let mut returns = 0;
+        for i in 0..100_000 {
+            let now = n + Duration::from_millis(i * 100);
+            // 10-second cycles include a short ignored dropout and a real departure.
+            let connected = !matches!(i % 100, 30..=34 | 50..=79);
+            t.connection_at(KEY, connected, now, &c);
+            assert_eq!(
+                t.sample_at(KEY, if i % 2 == 0 { -127 } else { -20 }, &c, now),
+                ActionRequired::None
+            );
+            match t.timeouts_at(&c, now) {
+                ActionRequired::Far { .. } => {
+                    departures += 1;
+                    assert!(!connected);
+                }
+                ActionRequired::Near { rssi, .. } => {
+                    returns += 1;
+                    assert!(connected);
+                    assert_eq!(rssi, None);
+                }
+                ActionRequired::None => {}
+            }
+            assert!(t.devices[KEY].samples.is_empty());
+        }
+        assert_eq!(departures, 1000);
+        assert_eq!(returns, 999);
+    }
+    #[test]
+    fn connected_locking_arms_only_after_a_real_connection() {
+        let (mut t, mut c, n) = fixture();
+        c.proximity_source = crate::config::ProximitySource::Connected;
+        t.seed_connections(&HashMap::new(), &c);
+        assert_eq!(
+            t.timeouts_at(&c, n + Duration::from_secs(1000)),
+            ActionRequired::None
+        );
+        assert_eq!(t.current_state, ProximityState::Unknown);
+        t.connection_at(KEY, true, n + Duration::from_secs(1001), &c);
+        assert_eq!(
+            t.timeouts_at(&c, n + Duration::from_secs(1001)),
+            ActionRequired::None,
+            "first connection needs a fresh measurement allowance"
+        );
+        t.connection_at(KEY, false, n + Duration::from_secs(1002), &c);
+        assert!(matches!(
+            t.timeouts_at(&c, n + Duration::from_secs(1004)),
+            ActionRequired::Far { .. }
+        ));
+    }
+    #[test]
+    fn connected_disconnect_debounce_is_independent_of_signal_loss_policy() {
+        let (mut t, mut c, n) = fixture();
+        c.proximity_source = crate::config::ProximitySource::Connected;
+        c.signal_loss_action = SignalLossAction::Hold;
+        t.seed_connections(&HashMap::from([(KEY.into(), true)]), &c);
+        sample(&mut t, &c, n, 0, -40);
+        sample(&mut t, &c, n, 2, -40);
+        t.connection_at(KEY, false, n + Duration::from_secs(3), &c);
+        assert!(t.devices[KEY].filtered_rssi.is_none());
+        assert_eq!(
+            t.timeouts_at(&c, n + Duration::from_secs(4)),
+            ActionRequired::None
+        );
+        t.connection_at(KEY, true, n + Duration::from_secs(4), &c);
+        assert_eq!(
+            t.timeouts_at(&c, n + Duration::from_secs(6)),
+            ActionRequired::None
+        );
+        t.connection_at(KEY, false, n + Duration::from_secs(7), &c);
+        assert!(matches!(
+            t.timeouts_at(&c, n + Duration::from_secs(9)),
+            ActionRequired::Far { .. }
+        ));
+        t.connection_at(KEY, true, n + Duration::from_secs(10), &c);
+        assert_eq!(
+            t.timeouts_at(&c, n + Duration::from_secs(13)),
+            ActionRequired::None
+        );
+        assert_eq!(
+            t.current_state,
+            ProximityState::Far,
+            "a connection alone cannot unlock"
+        );
+        sample(&mut t, &c, n, 14, -40);
+        assert!(matches!(
+            sample(&mut t, &c, n, 16, -40),
+            ActionRequired::Near { .. }
+        ));
+    }
+    #[test]
+    fn old_connected_results_cannot_cross_disconnect_or_observation_reset() {
+        let (mut t, mut c, _) = fixture();
+        c.proximity_source = crate::config::ProximitySource::Connected;
+        c.unlock_hold_secs = 0;
+        t.seed_connections(&HashMap::from([(KEY.into(), true)]), &c);
+        let old_epoch = t.devices[KEY].connection_epoch;
+        t.observe_connection(KEY, false, &c);
+        t.observe_connection(KEY, true, &c);
+        let reading = |epoch, observed| crate::connected::Reading {
+            key: KEY.into(),
+            epoch,
+            observed,
+            rssi: Some(-40),
+        };
+        assert_eq!(
+            t.handle_connected_reading(reading(old_epoch, Instant::now()), &c),
+            ActionRequired::None
+        );
+        assert!(t.devices[KEY].last_sample.is_none());
+        let epoch = t.devices[KEY].connection_epoch;
+        t.handle_connected_reading(reading(epoch, Instant::now() - Duration::from_secs(11)), &c);
+        assert!(t.devices[KEY].last_sample.is_none());
+        t.reset_observations();
+        t.handle_connected_reading(reading(epoch, Instant::now()), &c);
+        assert!(t.devices[KEY].last_seen.is_none());
+        t.handle_connected_reading(reading(t.devices[KEY].connection_epoch, Instant::now()), &c);
+        assert!(t.devices[KEY].last_seen.is_some());
+    }
+    #[test]
+    fn stress_connected_link_flaps_noise_and_resets() {
+        let (mut t, mut c, n) = fixture();
+        c.proximity_source = crate::config::ProximitySource::Connected;
+        c.lock_hold_secs = 1;
+        c.unlock_hold_secs = 1;
+        c.disconnect_hold_secs = 2;
+        t.seed_connections(&HashMap::from([(KEY.into(), true)]), &c);
+        for i in 0..100_000u64 {
+            let now = n + Duration::from_millis(i * 100);
+            if i % 53 == 0 {
+                t.connection_at(KEY, false, now, &c);
+            }
+            if i % 53 == 3 {
+                t.connection_at(KEY, true, now, &c);
+            }
+            if i % 911 == 0 {
+                t.reset_at(now);
+            }
+            let before = t.current_state;
+            let action = if t.devices[KEY].connected {
+                t.sample_at(KEY, if i / 50 % 2 == 0 { -45 } else { -95 }, &c, now)
+            } else {
+                t.timeouts_at(&c, now)
+            };
+            if matches!(action, ActionRequired::Near { .. }) {
+                assert_eq!(before, ProximityState::Far);
+                assert!(t.devices[KEY].connected);
+                assert!(t.devices[KEY].near_since.is_some());
+            }
+            assert!(t.devices[KEY].samples.len() <= c.rssi_window);
+        }
+    }
     fn fixture() -> (StateTracker, Config, Instant) {
         let c = Config {
+            proximity_source: crate::config::ProximitySource::Advertisement,
             device_mac: "AA:BB:CC:DD:EE:FF".into(),
             rssi_window: 1,
             signal_timeout_secs: 45,
+            disconnect_hold_secs: 2,
+            connect_hold_secs: 0,
             startup_grace_secs: 0,
             ..Config::default()
         };
@@ -472,7 +842,7 @@ mod tests {
                                 assert_eq!(previous, ProximityState::Far);
                                 let d = &tracker.devices[&mac_to_dbus_suffix(&mac)];
                                 assert!(d.config.proximity);
-                                assert!(rssi >= c.thresholds(&d.config).near);
+                                assert!(rssi.unwrap() >= c.thresholds(&d.config).near);
                                 assert!(
                                     now.duration_since(d.last_sample.unwrap())
                                         <= Duration::from_secs(c.sample_max_gap_secs)
@@ -614,9 +984,9 @@ mod tests {
         let (mut t, c, n) = fixture();
         sample(&mut t, &c, n, 0, -40);
         sample(&mut t, &c, n, 2, -40);
-        t.connection_at(KEY, true, n);
+        t.connection_at(KEY, true, n, &c);
         assert_eq!(t.connections_at(&c, n), vec![(KEY.into(), true)]);
-        t.connection_at(KEY, false, n + Duration::from_secs(1));
+        t.connection_at(KEY, false, n + Duration::from_secs(1), &c);
         assert!(t.connections_at(&c, n + Duration::from_secs(2)).is_empty());
         assert_eq!(
             t.connections_at(&c, n + Duration::from_secs(3)),
@@ -725,7 +1095,7 @@ mod tests {
         let (mut t, c, n) = fixture();
         t.seed_connections(&HashMap::from([(KEY.into(), true)]), &c);
         assert!(t.connections_at(&c, n).is_empty());
-        t.connection_at(KEY, false, n + Duration::from_secs(1));
+        t.connection_at(KEY, false, n + Duration::from_secs(1), &c);
         assert_eq!(
             t.connections_at(&c, n + Duration::from_secs(3)),
             vec![(KEY.into(), false)]
@@ -738,16 +1108,16 @@ mod tests {
         let (mut t, mut c, n) = fixture();
         c.connect_hold_secs = 2;
         t.seed_connections(&HashMap::from([(KEY.into(), true)]), &c);
-        t.connection_at(KEY, false, n);
-        t.connection_at(KEY, true, n + Duration::from_secs(1));
+        t.connection_at(KEY, false, n, &c);
+        t.connection_at(KEY, true, n + Duration::from_secs(1), &c);
         assert!(t.connections_at(&c, n + Duration::from_secs(3)).is_empty());
-        t.connection_at(KEY, false, n + Duration::from_secs(4));
-        t.connection_at(KEY, false, n + Duration::from_secs(5));
+        t.connection_at(KEY, false, n + Duration::from_secs(4), &c);
+        t.connection_at(KEY, false, n + Duration::from_secs(5), &c);
         assert_eq!(
             t.connections_at(&c, n + Duration::from_secs(6)),
             vec![(KEY.into(), false)]
         );
-        t.connection_at(KEY, true, n + Duration::from_secs(7));
+        t.connection_at(KEY, true, n + Duration::from_secs(7), &c);
         assert!(t.connections_at(&c, n + Duration::from_secs(8)).is_empty());
         assert_eq!(
             t.connections_at(&c, n + Duration::from_secs(9)),
@@ -786,7 +1156,7 @@ mod tests {
             t.timeouts_at(&c, n + Duration::from_secs(500)),
             ActionRequired::None
         );
-        t.connection_at(KEY, true, n);
+        t.connection_at(KEY, true, n, &c);
         assert_eq!(t.connections_at(&c, n), vec![(KEY.into(), true)]);
     }
     #[test]

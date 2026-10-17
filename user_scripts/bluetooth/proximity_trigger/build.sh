@@ -17,6 +17,13 @@ CARGO_TARGET_DIR="$BUILD_DIR/target" \
 mkdir -p -- "$TARGET_BIN_DIR"
 INSTALL_TMP=$(mktemp "$TARGET_BIN_DIR/.dusky_proximity.XXXXXXXX")
 install -m 755 -- "$BUILD_DIR/target/$BUILD_HOST/release/dusky_proximity" "$INSTALL_TMP"
+# HCI_CHANNEL_CONTROL requires CAP_NET_ADMIN; hooks still execute as the user.
+if (( EUID == 0 )); then
+    setcap cap_net_admin=ep "$INSTALL_TMP"
+else
+    sudo setcap cap_net_admin=ep "$INSTALL_TMP"
+fi
+setcap -v cap_net_admin=ep "$INSTALL_TMP"
 mv -fT -- "$INSTALL_TMP" "$TARGET_BIN_DIR/dusky_proximity"
 INSTALL_TMP=''
 printf 'Installed executable: %s\n' "$TARGET_BIN_DIR/dusky_proximity"

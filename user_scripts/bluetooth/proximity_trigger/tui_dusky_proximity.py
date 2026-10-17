@@ -22,10 +22,10 @@ ENABLE_USER_PRESETS = False
 _BINARY = Path.home() / '.local/bin/dusky_proximity'
 TABS = ['General', 'Signal', 'Timing', 'Commands', 'Devices', 'Service']
 TAB_NOTICES = {
-    0: {'level': 'info', 'message': 'Default: hyprlock on departure, unlock and wake on return. Ctrl+S saves; Service > Restart service, then Ctrl+S applies. ? opens help.'},
-    1: {'level': 'info', 'message': 'Levels are signal presets, not metres. Clear the preset to use explicit thresholds.'},
+    0: {'level': 'info', 'message': 'Default: Bluetooth connection state; lock on departure, unlock and wake on return. Pair/connect the target first. Ctrl+S saves; queue Service > Restart service, then Ctrl+S applies.'},
+    1: {'level': 'info', 'message': 'Ignored in connection-state mode. RSSI is not a distance ruler: calibrate at your desk and departure point. A preset overrides global thresholds; clear it to use the explicit values.'},
     3: {'level': 'info', 'message': 'Enter a command or TOML string array. Wrap commands starting [ in an array. [] disables commands.'},
-    4: {'level': 'info', 'message': 'Setup: turn Bluetooth on, scan, enter the target MAC/name in its device menu and enable it. Ctrl+S saves; Service > Restart service, then Ctrl+S applies.'},
+    4: {'level': 'info', 'message': 'Setup: pair/connect your target first; scanning is optional. Enter its identity MAC/name in its device menu and enable it. Ctrl+S saves; Service > Restart service, then Ctrl+S applies.'},
     5: {'level': 'info', 'message': 'Save edits first. Validate/Restart buttons queue actions for Ctrl+S. Diagnostics use saved settings.'},
 }
 _GENERAL_NOTICE = TAB_NOTICES[0]['message']
@@ -47,10 +47,12 @@ def control(label, key, help_text, *, group, **kwargs):
 
 SCHEMA = {
     0: [
-        item('Proximity actions', 'proximity_enabled', True, 'Enable distance sensing and near/far actions. Disable for connection-only automation; actual connect/disconnect hooks still run.', group='Operation'),
-        item('Discovery transport', 'transport', 'le', 'Transport used for proximity scanning. le = Bluetooth LE; bredr = classic Bluetooth; auto = both supported transports. Connection-only operation does not scan.', group='Operation', type_='cycle', options=['le', 'bredr', 'auto']),
+        item('Proximity actions', 'proximity_enabled', True, 'Enable departure/return actions using the selected presence source. Disable for connect/disconnect hooks only.', group='Operation'),
+        item('Presence source', 'proximity_source', 'connection', 'connection: lock after sustained link loss and unlock after stable reconnection; ignores RSSI and does not scan. Bluetooth range is not a three-foot boundary. connected: optional LE RSSI sensing without discovery; wrist/body/table obstruction can cause false locks. advertisement: optional scan-based sensing; can interfere with HID reconnection. Locking arms after an observed connection in both link modes.', group='Operation', type_='cycle', options=['connection', 'connected', 'advertisement']),
+        item('Reconnect paired targets', 'auto_connect', False, 'Off by default: observe links managed by BlueZ or your Bluetooth controls. Unlocking still follows a returning connection. Opt-in retries initiate controller connections and can compete with input reconnection, even without discovery. Retries defer while a paired trusted input device is disconnected. Dry runs never connect.', group='Operation'),
+        item('Discovery transport', 'transport', 'le', 'Used only in advertisement mode and the explicit five-second scan. le = Bluetooth LE; bredr = classic Bluetooth; auto = both supported transports. Connection-only operation does not scan.', group='Operation', type_='cycle', options=['le', 'bredr', 'auto']),
         item('Adapter path', 'adapter_path', '', 'Empty selects an adapter automatically. Set a BlueZ object path such as /org/bluez/hci0 to select one explicitly. All targets use that adapter.', group='Operation'),
-        item('Silence policy', 'signal_loss_action', 'far', 'far: signal silence eventually triggers departure. hold: preserve the last proximity state during silence, potentially missing real departures. Neither policy creates missing radio measurements.', group='Operation', type_='cycle', options=['far', 'hold']),
+        item('Silence policy', 'signal_loss_action', 'far', 'Policy when RSSI becomes unavailable: far eventually departs; hold keeps the last state and can miss departures. In connected mode a confirmed disconnection always departs after its disconnect hold, regardless of this policy.', group='Operation', type_='cycle', options=['far', 'hold']),
         item('Desktop notifications', 'notifications', True, 'Show notifications for emitted proximity and connection events.', group='Desktop'),
         item('Automatic hyprlock unlock', 'direct_hyprlock_signal', True, 'Signal a running hyprlock on confirmed proximity return. Disable for custom automation that should not unlock the screen. Actual connection hooks do not use this behavior.', group='Desktop'),
         item('Wake displays on return', 'wake_display', True, 'Wake Hyprland monitors on confirmed proximity return, independently of on_near commands.', group='Desktop'),
@@ -64,14 +66,16 @@ SCHEMA = {
         item('Consecutive weak samples', 'consecutive_drops', 3, 'Number of consecutive raw and filtered weak readings required in addition to the departure hold. Positive integer.', group='Filtering', min_val=1, step=1),
     ],
     2: [
-        seconds('Silence timeout (s)', 'signal_timeout_secs', 120, 'No live RSSI or advertisement data for this many seconds plus the far hold causes departure under the far policy. A nearby device may go silent too.', group='Proximity', minimum=1),
+        item('Connected sampling interval (ms)', 'poll_interval_ms', 1000, 'Read connected LE RSSI every 500..10000 ms without discovery. Kernel/controller measurements may be briefly cached. Lower intervals do not guarantee fresher readings.', group='Connections', min_val=500, max_val=10000, step=500),
+        seconds('Reconnect retry interval (s)', 'reconnect_interval_secs', 15, 'Minimum interval between automatic connection attempt batches. Only configured paired proximity targets are attempted; in-flight batches never overlap.', group='Connections', minimum=5),
+        seconds('Silence timeout (s)', 'signal_timeout_secs', 120, 'No usable measurement for this many seconds plus the far hold causes departure under the far policy. Advertisement data also refreshes reception in advertisement mode. Connected-mode disconnection uses its own shorter hold.', group='Proximity', minimum=1),
         seconds('Far hold (s)', 'far_hold_secs', 6, 'Continuous weak-reading hold; also added to the signal silence timeout.', group='Proximity'),
         seconds('Near hold (s)', 'near_hold_secs', 2, 'Continuous strong-reading hold before return. Fresh measurements are required.', group='Proximity'),
         seconds('Maximum sample gap (s)', 'sample_max_gap_secs', 10, 'Longer RSSI gaps clear median and strength-hold evidence. Data heartbeats prove reception but do not complete strength holds.', group='Proximity', minimum=1),
         seconds('Startup/resume grace (s)', 'startup_grace_secs', 10, 'Minimum grace before departure after startup or an observation reset.', group='Proximity'),
         seconds('Return cooldown (s)', 'return_cooldown_secs', 3, 'Minimum interval between departure and return actions; stale samples cannot complete a return.', group='Proximity'),
-        seconds('Connect debounce (s)', 'connect_hold_secs', 0, 'Require a stable Bluetooth link to this computer before on_connect. Duplicate updates do not restart the hold.', group='Connections'),
-        seconds('Disconnect debounce (s)', 'disconnect_hold_secs', 2, 'Require disconnection to persist before on_disconnect. Reconnection during the hold cancels it.', group='Connections'),
+        seconds('Connect debounce (s)', 'connect_hold_secs', 2, 'Require a stable Bluetooth link before on_connect and connection-state return/unlock. Duplicate updates do not restart the hold.', group='Connections'),
+        seconds('Disconnect debounce (s)', 'disconnect_hold_secs', 5, 'Require disconnection to persist before on_disconnect and, in connected proximity mode, departure/locking. A brief reconnection cancels departure. Connection-state mode returns after connect debounce; connected RSSI mode requires fresh strong readings.', group='Connections'),
         item('Run initial link hooks', 'run_initial_connection_hooks', False, 'Also emit connect or disconnect for the initial BlueZ link state, subject to debounce. Normally startup only establishes a baseline.', group='Connections'),
     ],
     3: [
@@ -84,7 +88,8 @@ SCHEMA = {
     5: [
         control('Validate saved configuration', 'validate', 'Queue a native --check-config check; Ctrl+S runs it. Does not scan, replace the file or execute configured hooks.', group='Service'),
         control('Restart service', 'restart', 'Save pending edits first. Queue validation and restart, then Ctrl+S runs it. Does not change service enablement.', group='Service'),
-        item('Live RSSI dry run', 'action_test', shlex.join([str(_BINARY), '--config', TARGET_FILE, '--test']), 'Observe live measurements without actions from this test process. An independently running service remains active. Ctrl+C ends the test.', group='Diagnostics', type_='action', force_interactive=True),
+        control('Recover Bluetooth', 'recover', 'Queue Bluetooth recovery; Ctrl+S runs it. Briefly disconnects Bluetooth devices, restarts BlueZ, unblocks and powers on adapters, then restores proximity monitoring only if it was running. Does not change pairing or configuration.', group='Service'),
+        item('Live signal / calibration dry run', 'action_test', shlex.join([str(_BINARY), '--config', TARGET_FILE, '--test']), 'Observe the saved presence source, connection transitions and (in signal modes) live RSSI without hooks or connection attempts from this process. Pair/connect the target first for connected mode. Compare desk versus departure readings before tuning thresholds. The running service remains active; Ctrl+C ends the test.', group='Diagnostics', type_='action', force_interactive=True),
     ],
 }
 
@@ -93,11 +98,11 @@ def discover_devices():
     initialize(path)
     data = canonical(tomllib.loads(path.read_text(encoding='utf-8')))
     if not any(device.get('enabled', True) for device in data['devices']):
-        TAB_NOTICES[0]['message'] = 'First setup: Devices > Scan, enter the target MAC/name and enable it; Ctrl+S saves. Service > Restart service, then Ctrl+S activates. Fresh defaults use hyprlock.'
+        TAB_NOTICES[0]['message'] = 'First setup: pair/connect the target with Bluetooth settings; Devices > Scan can find its identity address. Enter MAC/name and enable it; Ctrl+S saves; queue Service > Restart service, then Ctrl+S applies. Default sensing uses connection state; RSSI settings apply only to optional signal modes.'
     else:
-        TAB_NOTICES[0]['message'] = _GENERAL_NOTICE
+        TAB_NOTICES[0]['message'] = f"Signal source: {data.get('proximity_source', 'connection')}. " + _GENERAL_NOTICE
     rows = [
-        item('Scan known/live devices', 'action_scan', shlex.join([str(_BINARY), '--config', TARGET_FILE, '--scan']), 'Turn Bluetooth on and make the target discoverable or advertising. Scan for five seconds using saved adapter/transport settings. Copy its MAC into the device menu, enter its name and enable it; Ctrl+S saves. Restart the service to activate. For rotating addresses, pair the device and use its resolved BlueZ identity.', group='Setup', type_='action', force_interactive=True),
+        item('Scan known/live devices', 'action_scan', shlex.join([str(_BINARY), '--config', TARGET_FILE, '--scan']), 'Optional discovery diagnostic: turn Bluetooth on and make the target discoverable or advertising. Temporarily scan for five seconds using saved adapter/transport, even in connected mode. Pair/connect through normal Bluetooth settings. Copy its MAC into the device menu, enter its name and enable it; Ctrl+S saves. Restart the service to activate. For rotating addresses, pair the device and use its resolved BlueZ identity.', group='Setup', type_='action', force_interactive=True),
         control('Add disabled device', 'add_device', 'Save pending edits first. Queue a blank disabled target, Ctrl+S commits it, then F5 displays it. Fill its MAC before enabling.', group='Management'),
         control('Remove last device', 'remove_last_device', 'Save edits first. Queue removal of the final entry; Ctrl+S commits it, then F5 refreshes rows. Other indices remain stable. Disable other targets to stop using them.', group='Management', confirm_message='Remove the last configured device?'),
     ]
@@ -110,7 +115,7 @@ def discover_devices():
             ('MAC address', 'mac', '', 'Bluetooth identity address, AA:BB:CC:DD:EE:FF. Pair rotating-address devices and use the resolved address shown by BlueZ.'),
             ('Device name', 'name', 'Bluetooth Device', 'Friendly name used in logs, notifications and hook environment.'),
             ('Enabled', 'enabled', False, 'Enable this target. A valid unique MAC is required. Disabled entries may be blank; resetting a target disables it.'),
-            ('Use for proximity', 'proximity', True, 'Participate in aggregate near/far decisions. False keeps only connection hooks. Global proximity must also be enabled.'),
+            ('Use for proximity', 'proximity', True, 'Participate in aggregate near/far decisions using the global presence source. Connection state requires a link; connected RSSI requires an LE link to this computer. False keeps only connection hooks.'),
             ('Level override', 'proximity_level', '', 'Empty inherits global thresholds. Otherwise 1..10; explicit device thresholds override this preset.'),
             ('Far RSSI override', 'far_rssi', '', 'Empty inherits global/preset departure threshold; otherwise an integer dBm value -127..20.'),
             ('Near RSSI override', 'near_rssi', '', 'Empty inherits global/preset approach threshold; otherwise an integer dBm value -127..20.'),

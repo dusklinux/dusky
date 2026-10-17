@@ -3,6 +3,7 @@ import tomllib
 lazy import os
 from pathlib import Path
 lazy import subprocess
+lazy import sys
 lazy import tempfile
 
 from python.engines.toml import TomlEngine
@@ -98,7 +99,7 @@ class BluetoothProximityEngine(TomlEngine):
                 values[key] = '' if val is None else TomlEngine._format_val([val] if isinstance(val, str) else val)
             for key, val in values.items():
                 state[f'devices/{index}/{key}'] = val
-        for key in ['add_device', 'remove_last_device', 'validate', 'restart']:
+        for key in ['add_device', 'remove_last_device', 'validate', 'restart', 'recover']:
             state[f'controls/{key}'] = False
         return state
 
@@ -152,10 +153,16 @@ class BluetoothProximityEngine(TomlEngine):
                 if not changes:
                     return True, 'No pending changes.', ''
                 service_actions = [key for key, scope, _, _ in changes
-                                   if scope == 'controls' and key in {'validate', 'restart'}]
+                                   if scope == 'controls' and key in {'validate', 'restart', 'recover'}]
                 if service_actions:
                     if len(changes) != 1:
                         raise ValueError('Save pending edits before service actions.')
+                    if service_actions[0] == 'recover':
+                        result = subprocess.run([sys.executable, str(_SOURCE.parent / 'bluetooth_recovery.py')],
+                                                capture_output=True, text=True, encoding='utf-8', timeout=120)
+                        if result.returncode:
+                            return False, result.stderr.strip() or 'Bluetooth recovery failed.', ''
+                        return True, result.stdout.strip() or 'Bluetooth recovery completed.', ''
                     self.validate_text(text)
                     if service_actions[0] == 'restart':
                         result = subprocess.run(['systemctl', '--user', 'restart', 'dusky_proximity.service'],

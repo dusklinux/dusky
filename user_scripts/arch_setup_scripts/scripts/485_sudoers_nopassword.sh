@@ -719,6 +719,14 @@ main() {
         done
     fi
 
+    # Shared tray/TUI recovery needs this exact system-service action, not general systemctl access.
+    local bluetooth_rule bluetooth_dropin
+    printf -v bluetooth_rule '%s ALL=(root) NOPASSWD: /usr/bin/systemctl restart bluetooth.service' "${target_user}"
+    bluetooth_dropin="zzzz-bluetooth-recovery-$(stable_hash "${target_user}" 'bluetooth-recovery')"
+    if ! process_custom_dropin "${bluetooth_dropin}" "${bluetooth_rule}"; then
+        (( custom_dropin_failure_count++ )) || true
+    fi
+
     # 2. Process Passwordless Binaries (NOPASSWD Rules)
     local -a execution_queue=("${DEFAULT_BINARIES[@]}")
     if (( ${#CLI_BINARIES[@]} > 0 )); then

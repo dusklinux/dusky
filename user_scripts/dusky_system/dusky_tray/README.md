@@ -78,7 +78,12 @@ The notification timestamp daemon runs independently.
   wrap. Left, middle, and right mouse commands are supported.
 - Compact 22 × 44 px Wi-Fi / Bluetooth switches and power profile controls retain
   the existing desktop integrations. Click the Wi-Fi icon to open the network TUI,
-  or the Bluetooth icon to open Blueman, independently of their radio switches.
+  or left-click the Bluetooth icon to open Blueman, independently of their radio switches.
+  Right-click the Bluetooth icon for master Bluetooth recovery: pause proximity
+  monitoring, unblock Bluetooth, restart BlueZ, power on detected adapters, then
+  restore monitoring only if it was running. Paired-device identities are retained.
+  This shares `user_scripts/bluetooth/bluetooth_recovery.py` with the proximity TUI.
+  Run `485_sudoers_nopassword.sh` to install its passwordless restart permission.
   Unknown radio states are unavailable rather than
   being reported as successful changes.
 - Volume, brightness, and night-light sliders use 12 px rails and live values.

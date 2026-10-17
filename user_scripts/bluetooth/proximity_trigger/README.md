@@ -1,7 +1,9 @@
 # Dusky Bluetooth automation
 
 Rust Bluetooth proximity and connection automation for Linux, BlueZ and Hyprland
-on Wayland. Locking is the default departure action. Every action is configurable
+on Wayland. The primary mode observes an actual Bluetooth connection without
+starting discovery. Advertisement sensing remains an optional mode. Locking is
+the default departure action. Every action is configurable
 in TOML; phones, beacons, headsets and wearables can have different connection hooks.
 
 ## Install on a fresh system
@@ -14,7 +16,13 @@ This downloads missing dependencies from crates.io, builds the versions in
 `Cargo.lock`, installs a real executable at `~/.local/bin/dusky_proximity`,
 creates the configuration and four optional hook
 scripts, installs/enables the user service, and preserves existing settings/scripts.
-It requires a Linux Rust/Cargo toolchain, linker, Bash and systemd. Network access is
+It requires a Linux Rust/Cargo toolchain, linker, Bash, systemd and libcap (`setcap`).
+The build grants the executable `cap_net_admin=ep` using sudo, before atomic
+replacement. Linux requires this capability for its management socket; the daemon
+still runs as your user. Every rebuild reapplies the capability. Hooks execute as
+your user without inheriting this file capability. Do not copy the executable with
+a tool that drops extended attributes without reapplying the capability.
+Network access is
 needed for dependencies that are not already in Cargo's cache. The installer builds
 for the compiler's native host, even if `CARGO_BUILD_TARGET` is set for another architecture.
 
@@ -29,7 +37,8 @@ ${XDG_CONFIG_HOME:-$HOME/.config}/dusky/settings/bluetooth_proximity/
   hooks/on_disconnect.sh
 ```
 
-Fresh defaults select proximity locking: hyprlock on departure, automatic unlock
+Fresh defaults select connection-state locking: hyprlock on departure,
+automatic unlock
 and display waking on confirmed return. No enabled device is shipped. Configure
 your target through the TUI steps below, then restart the service.
 With no enabled devices the program exits successfully without
@@ -57,11 +66,72 @@ Hyprland socket exists, display waking can discover it without the instance sign
 Configuration errors exit with status 2 and stop automatic retries; Bluetooth/bus
 failures are retried by systemd. Restart after correcting the configuration.
 
-With an adapter present but powered off, the daemon sleeps on D-Bus events:
-proximity timers and periodic health polling are paused, and startup does not
-retry discovery. Pending connection hooks finish their debounce before timers
-sleep. A power-on event reacquires discovery and starts fresh signal evidence.
-Radio-off silence never triggers departure. Adapter removal or BlueZ owner loss
+## Sensing modes and Bluetooth input devices
+
+`proximity_source = "connection"` is the default, including files that omit this
+setting. Existing explicit `connected` or `advertisement` settings retain their
+meaning. Connection-state mode uses BlueZ link events alone: lock after five seconds
+disconnected, unlock after two seconds continuously reconnected, subject to startup
+grace and return cooldown. Initial presence establishes a baseline without unlocking.
+Locking arms only after a participating target has connected in this daemon session.
+Any connected participating target maintains presence; all must depart before locking.
+There is no discovery session or RSSI polling in this mode. Signal thresholds,
+median filtering, strength holds and silence policy do not apply. Connection range
+can extend across rooms; this mode cannot enforce a two- or three-foot boundary.
+
+Select `connected` for optional connected LE RSSI sensing, or `advertisement` for
+optional discovery sensing. Connected RSSI mode reads Linux management
+**Get Connections** and **Get Connection Information**, using the resolved identity
+and LE address type returned by the kernel. It never calls SetDiscoveryFilter or
+StartDiscovery. It does not use BlueZ's advertisement RSSI as connected evidence.
+BR/EDR-only links can use connection-state mode, but cannot supply connected LE
+RSSI: their HCI RSSI is not LE dBm.
+
+Pair the target with this computer using normal Bluetooth settings. A connection
+to your phone alone is insufficient. By default, connections are managed by BlueZ
+or your normal Bluetooth controls; the observer never initiates them. Automatic
+unlocking still follows a returning link. Opt-in `auto_connect = true` can retry
+configured paired proximity targets every `reconnect_interval_secs`; retry
+batches do not overlap. Each Connect attempt gets five seconds; an unfinished
+attempt is cancelled through BlueZ Disconnect when the device is still disconnected.
+Connection initiation can involve short controller scanning and compete with
+mouse/keyboard reconnection even without a discovery session. Automatic attempts
+are skipped while a paired, trusted input device on the adapter is disconnected.
+Stopping the observer lets an in-flight bounded attempt finish cancellation rather
+than abandoning the controller operation. No unrelated device is connected,
+paired, or trusted.
+Disable automatic connection if another application manages the link. Some wearables
+cannot maintain a laptop connection while their phone app is using them; verify
+this with your actual device. Unknown/unpaired targets require normal pairing first.
+
+In connected RSSI mode, RSSI is sampled every `poll_interval_ms` (default 1000 ms). The kernel/controller
+may briefly cache measurements. Filtering and near/far holds apply to usable
+readings, never to the connection flag alone. Departure locking arms after a
+configured proximity target has actually connected at least once in this daemon
+session (including the startup snapshot). A never-connected address alone neither
+locks nor unlocks the screen. Confirmed disconnection then causes far
+after `disconnect_hold_secs` and startup grace, even under the `hold` silence policy.
+An unavailable RSSI does not prove proximity; it follows the configured silence
+policy and timeout. Reconnection requires fresh strong readings before unlocking.
+Results from before a disconnect, power cycle, or observation reset are discarded.
+
+Bluetooth RSSI cannot guarantee a boundary at two or three feet. Use the live dry
+run to compare readings at your desk, with your wrist in normal positions, and at
+your departure point. Choose separated near/far thresholds only if those readings
+actually separate. If their ranges overlap, no preset can reliably distinguish
+those positions. Levels are signal presets, not distance units.
+
+`proximity_source = "advertisement"` enables the optional discovery observer.
+The explicit `--scan` diagnostic also starts a five-second discovery session,
+regardless of the selected mode. Only advertisement mode needs the input-device
+reconnection workaround described below.
+
+With an adapter present but powered off, RSSI modes pause proximity timers and
+periodic health polling, and startup does not retry discovery. Pending connection
+hooks finish their debounce before timers sleep. Connection-state mode also marks
+links disconnected on power-off and evaluates departure after its normal debounce.
+A power-on event starts fresh RSSI evidence in signal modes; advertisement mode
+also reacquires discovery. Radio-off silence alone does not trigger RSSI departure. Adapter removal or BlueZ owner loss
 restarts observation through systemd. `--scan` requires a powered radio.
 Changes to another client's scan filter can briefly interrupt controller discovery.
 An owned discovery session gets five seconds to settle before forced recovery;
@@ -107,21 +177,23 @@ Device-management and Validate/Restart buttons queue operations; Ctrl+S executes
 The editor starts in batch mode so MAC, thresholds and enablement can be validated
 together. Its scan action uses the saved adapter and transport.
 
-### First setup: proximity locking
+### First setup: connection-state locking
 
-1. Turn Bluetooth on and make your target discoverable or advertising.
-2. In **Devices**, run **Scan known/live devices** and copy the target's MAC.
+1. Turn Bluetooth on and pair/connect your target to this computer.
+2. Enter the paired target's identity MAC, using **Scan known/live devices** only if needed.
 3. Open **1: Bluetooth Device**, fill its MAC and name, and enable it. Leave
    **Use for proximity** enabled. Press **Ctrl+S** to save the complete batch.
 4. In **Service**, select **Restart service**, then press **Ctrl+S** to activate.
-5. Use **Live RSSI dry run** in Service to observe signal readings, and tune
-   **Signal** and **Timing** for your device/environment. This diagnostic process
-   does not execute hooks; the separately running service still does.
+5. Use the Service dry run to observe connection transitions without executing hooks.
+   The separately running service still acts. For optional RSSI modes, compare
+   normal wrist positions and departure readings before tuning Signal and Timing.
 
 The default departure command uses `~/user_scripts/hyprlock/lock.sh` when executable,
 otherwise `hyprlock` from PATH. Hyprlock and its configuration must be installed.
-Scan is an observation tool: pairing and Bluetooth power are managed with your
-normal Bluetooth controls. Devices with rotating addresses should be paired and
+Scan is an optional advertisement observation tool; pairing and Bluetooth power
+are managed with your normal Bluetooth controls. It need not show live advertisement
+RSSI for a connected target to work. The connected dry run measures its link
+instead. Devices with rotating addresses should be paired and
 configured using their resolved BlueZ identity. Later changes to actions, device
 overrides, signal policy and timings follow the same validated save/restart flow.
 
@@ -183,8 +255,12 @@ only to that device. Unknown/misplaced keys are rejected. The complete commented
 
 | Global setting | Shipped value | Meaning |
 |---|---:|---|
-| `proximity_enabled` | true | Enable distance actions; false means connection hooks only |
-| `transport` | `le` | Proximity discovery: `le`, `bredr`, or `auto` |
+| `proximity_enabled` | true | Enable presence actions; false means connection hooks only |
+| `proximity_source` | `connection` | Link state; optional `connected` LE RSSI or `advertisement` sensing |
+| `poll_interval_ms` | 1000 | Connected measurement interval, 500–10000 ms |
+| `auto_connect` | false | Opt-in retries; defer while paired trusted input devices are disconnected |
+| `reconnect_interval_secs` | 15 | Retry batch interval, 5–86400 s; attempts never overlap |
+| `transport` | `le` | Advertisement discovery: `le`, `bredr`, or `auto` |
 | `adapter_path` | empty | Auto-select adapter; or specify its BlueZ object path |
 | `proximity_level` | 8 | Signal threshold preset; remove to use explicit thresholds |
 | `far_rssi` / `near_rssi` | -80 / -70 | Departure below / approach at-or-above thresholds |
@@ -197,7 +273,7 @@ only to that device. Unknown/misplaced keys are rejected. The complete commented
 | `signal_timeout_secs` | 120 | Silence allowance before additional departure hold |
 | `startup_grace_secs` | 10 | Departure grace after startup or observation reset |
 | `return_cooldown_secs` | 3 | Minimum interval from departure to approach actions |
-| `connect_hold_secs` / `disconnect_hold_secs` | 0 / 2 | Connection event debounce |
+| `connect_hold_secs` / `disconnect_hold_secs` | 2 / 5 | Link debounce; also return/departure in connection-state mode |
 | `run_initial_connection_hooks` | false | Run hooks for startup link state too |
 | `direct_hyprlock_signal` | true | On proximity approach, SIGUSR1 unlock via stable pidfd |
 | `wake_display` / `dpms_settle_ms` | true / 200 | On proximity approach, wake monitors after delay |
@@ -238,7 +314,10 @@ Use live measurements to select thresholds and timers for the actual device:
 ```
 
 `--test` runs observations but executes no hooks, notifications, unlock signals,
-or display commands. An independently running service remains active. `--scan`
+display commands, or connection attempts. In connected mode the target must already
+be connected; its measurements are logged for calibration. `--source connection`, `--source connected`, or
+`--source advertisement` can override the saved source for diagnostics.
+An independently running service remains active. `--scan`
 shows cached names/pairing status but labels only readings received during its
 five-second scan as live RSSI. Scan can use `--adapter` and `--transport` overrides.
 Scan, test and validation modes are mutually exclusive.
@@ -251,12 +330,13 @@ reset pending approach holds. Advertisement data proves reception without fabric
 strength measurements. RSSI 127 is unavailable and ignored. Suspend/stall, radio-off,
 and discovery recovery clear stale evidence; valid connection events remain independent.
 
-With `signal_loss_action = "far"`, complete silence locks after about 120 + 6 seconds
+In advertisement mode, with `signal_loss_action = "far"`, complete silence locks after about 120 + 6 seconds
 at the shipped settings. A nearby wearable connected to a phone can be silent too:
 **no finite timeout guarantees freedom from false locks while the target is silent.**
 `"hold"` avoids silence-driven departures but can miss a real departure during silence.
-Neither policy supplies missing radio measurements. Connected devices need to keep
-advertising to support reliable passive distance estimation. These choices apply to
+Neither policy supplies missing radio measurements. Advertisement mode requires
+continued advertising, even if the device happens to be connected. Connected mode
+reads the actual link instead and does not require advertising. These choices apply to
 any Bluetooth target, not specifically to watches.
 
 ## Commands and hooks
@@ -313,7 +393,8 @@ shellcheck ~/user_scripts/bluetooth/proximity_trigger/{build,setup,hook-example}
 
 Build and development commands download missing dependencies as needed. Integration
 tests require `dbus-daemon` and use an isolated bus; they do not change live Bluetooth connections.
-Tests cover configuration creation/preservation, event baselines/debounce, phone
+Tests cover native management datagrams, timeouts, address types, unavailable RSSI,
+stale connected results, link flapping, source selection, configuration creation/preservation, event baselines/debounce, phone
 hook execution, RSSI/timeout policies, discovery recovery, BlueZ owner changes,
 radio-off sleep without polling, power-on recovery, adapter removal, TOML 1.1,
 600,000 mixed signal inputs, a 4,096-message burst, 128 controller recovery cycles,
@@ -323,7 +404,8 @@ pidfd signalling and socket reply handling. Hardware distance and real suspend/r
 still need target-system validation. Check final ISO versions/features at assembly;
 development-machine checks do not establish the final ISO baseline.
 
-References: [BlueZ adapter API](https://bluez.readthedocs.io/en/latest/adapter-api/),
+References: [Linux Bluetooth management protocol](https://github.com/bluez/bluez/blob/5.87/doc/mgmt-protocol.rst),
+[BlueZ adapter API](https://bluez.readthedocs.io/en/latest/adapter-api/),
 [BlueZ device API](https://bluez.readthedocs.io/en/latest/device-api/),
 [D-Bus ObjectManager](https://dbus.freedesktop.org/doc/dbus-specification.html#standard-interfaces-objectmanager),
 [hyprlock signals](https://wiki.hypr.land/Hypr-Ecosystem/hyprlock/#user-signals),

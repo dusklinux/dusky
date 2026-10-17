@@ -66,6 +66,7 @@ pub enum Message {
     WeatherPressed,
     WifiManager,
     BluetoothManager,
+    BluetoothRecovery,
     VolumeControl,
     OutputSelector,
     MetricPressed(String),
@@ -650,6 +651,10 @@ impl TrayApp {
             }
             Message::BluetoothManager => {
                 execute_detached("blueman-manager");
+                return iced_runtime::exit();
+            }
+            Message::BluetoothRecovery => {
+                execute_detached("python3 \"$HOME/user_scripts/bluetooth/bluetooth_recovery.py\"");
                 return iced_runtime::exit();
             }
             Message::VolumeControl => {
@@ -1245,23 +1250,28 @@ impl TrayApp {
                 "off"
             }
         );
+        let icon_button = button(Self::icon_label(
+            glyph,
+            16.0,
+            Some(if on { theme.accent } else { theme.muted }),
+        ))
+        .padding(0)
+        .on_press(if wifi {
+            Message::WifiManager
+        } else {
+            Message::BluetoothManager
+        })
+        .style(move |_, status| Self::flat(theme, status));
+        let mut icon_area = mouse_area(icon_button);
+        if !wifi {
+            icon_area = icon_area.on_right_press(Message::BluetoothRecovery);
+        }
         let icon = Self::hint(
-            button(Self::icon_label(
-                glyph,
-                16.0,
-                Some(if on { theme.accent } else { theme.muted }),
-            ))
-            .padding(0)
-            .on_press(if wifi {
-                Message::WifiManager
-            } else {
-                Message::BluetoothManager
-            })
-            .style(move |_, status| Self::flat(theme, status)),
+            icon_area,
             if wifi {
                 "Wi-Fi\nLMB: Open Network Manager"
             } else {
-                "Bluetooth\nLMB: Open Blueman"
+                "Bluetooth\nLMB: Open Blueman\nRMB: Recover Bluetooth"
             }
             .into(),
             theme,
@@ -1913,6 +1923,76 @@ mod tests {
         assert!(visible_y >= viewport.y);
         assert!(visible_y + last.height <= viewport.y + viewport.height);
         assert_eq!(node.bounds().position(), Point::ORIGIN);
+    }
+
+    #[test]
+    #[ignore = "requires a working Vulkan or Wayland EGL adapter"]
+    fn bluetooth_icon_mouse_buttons_remain_independent_under_repeated_clicks() {
+        use iced_core::renderer::Headless as _;
+        use iced_core::{Layout, Point, Rectangle, Size, layout, widget};
+        let renderer = iced_futures::futures::executor::block_on(crate::renderer::Renderer::new(
+            Font::DEFAULT,
+            iced_core::Pixels(16.0),
+            None,
+        ))
+        .expect("a render adapter is required");
+        let app = app();
+        for wifi in [false, true] {
+            let mut view = app.radio(wifi);
+            let mut tree = widget::Tree::new(&view);
+            let node = view.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, Size::new(100.0, 40.0)),
+            );
+            let mut messages = Vec::new();
+            for _ in 0..1000 {
+                for button in [
+                    iced_core::mouse::Button::Right,
+                    iced_core::mouse::Button::Left,
+                ] {
+                    for event in [
+                        iced_core::mouse::Event::ButtonPressed(button),
+                        iced_core::mouse::Event::ButtonReleased(button),
+                    ] {
+                        let mut shell = iced_core::Shell::new(&mut messages);
+                        view.as_widget_mut().update(
+                            &mut tree,
+                            &Event::Mouse(event),
+                            Layout::new(&node),
+                            iced_core::mouse::Cursor::Available(Point::new(
+                                8.0,
+                                node.size().height / 2.0,
+                            )),
+                            &renderer,
+                            &mut iced_core::clipboard::Null,
+                            &mut shell,
+                            &Rectangle::with_size(node.size()),
+                        );
+                    }
+                }
+            }
+            if wifi {
+                assert_eq!(messages.len(), 1000);
+                assert!(messages.iter().all(|m| matches!(m, Message::WifiManager)));
+            } else {
+                assert_eq!(messages.len(), 2000);
+                assert_eq!(
+                    messages
+                        .iter()
+                        .filter(|m| matches!(m, Message::BluetoothRecovery))
+                        .count(),
+                    1000
+                );
+                assert_eq!(
+                    messages
+                        .iter()
+                        .filter(|m| matches!(m, Message::BluetoothManager))
+                        .count(),
+                    1000
+                );
+            }
+        }
     }
 
     #[test]

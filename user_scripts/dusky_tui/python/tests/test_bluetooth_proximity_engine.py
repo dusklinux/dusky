@@ -64,6 +64,7 @@ class BluetoothProximityTests(unittest.TestCase):
     def test_first_setup_defaults_and_later_edits_preserve_locking(self):
         defaults = self.data()
         self.assertTrue(defaults['proximity_enabled'])
+        self.assertEqual(defaults['proximity_source'], 'connection')
         self.assertTrue(defaults['direct_hyprlock_signal'])
         self.assertTrue(defaults['wake_display'])
         self.assertFalse(defaults['devices'][0]['enabled'])
@@ -83,6 +84,26 @@ class BluetoothProximityTests(unittest.TestCase):
         self.assertEqual(saved['proximity_level'], 6)
         self.assertEqual(saved['far_hold_secs'], 9)
         self.assertEqual(saved['devices'][0]['signal_timeout_secs'], 180)
+
+    def test_sensing_modes_sampling_and_reconnection_round_trip(self):
+        self.save(('proximity_source', 'DEFAULT', 'advertisement', 'string'),
+                  ('poll_interval_ms', 'DEFAULT', '500', 'int'),
+                  ('auto_connect', 'DEFAULT', 'false', 'bool'),
+                  ('reconnect_interval_secs', 'DEFAULT', '30', 'int'))
+        self.engine.load_state()
+        self.assertEqual(self.engine.cache['proximity_source'], 'advertisement')
+        self.assertEqual(self.engine.cache['poll_interval_ms'], 500)
+        self.assertFalse(self.engine.cache['auto_connect'])
+        self.save(('proximity_source', 'DEFAULT', 'connected', 'string'))
+        self.assertEqual(self.data()['proximity_source'], 'connected')
+        self.save(('proximity_source', 'DEFAULT', 'connection', 'string'))
+        self.assertEqual(self.data()['proximity_source'], 'connection')
+        before = self.path.read_bytes()
+        for change in [('proximity_source', 'DEFAULT', 'unknown', 'string'),
+                       ('poll_interval_ms', 'DEFAULT', '499', 'int'),
+                       ('reconnect_interval_secs', 'DEFAULT', '4', 'int')]:
+            self.assertFalse(self.engine.write_batch([change])[0])
+            self.assertEqual(self.path.read_bytes(), before)
 
     def test_default_lock_command_uses_wrapper_and_plain_hyprlock(self):
         import subprocess
@@ -166,6 +187,24 @@ class BluetoothProximityTests(unittest.TestCase):
         self.assertEqual(run.call_args.args[0], ['systemctl', '--user', 'restart', 'dusky_proximity.service'])
         self.assertEqual(self.path.read_bytes(), before)
 
+    def test_recovery_uses_shared_helper_without_configuration_validation_or_rewrite(self):
+        from subprocess import CompletedProcess
+        before = self.path.read_bytes()
+        with patch.object(self.engine, 'validate_text') as validate, patch('subprocess.run', return_value=CompletedProcess([], 0, 'Bluetooth recovered.', '')) as run:
+            result = self.engine.write_value('recover', 'controls', 'true', 'bool')
+        self.assertTrue(result[0], result)
+        self.assertIn('Bluetooth recovered.', result[1])
+        validate.assert_not_called()
+        self.assertEqual(Path(run.call_args.args[0][1]).name, 'bluetooth_recovery.py')
+        self.assertEqual(self.path.read_bytes(), before)
+        with patch('subprocess.run', return_value=CompletedProcess([], 1, '', 'restart fixture failure')):
+            result = self.engine.write_value('recover', 'controls', 'true', 'bool')
+        self.assertFalse(result[0])
+        self.assertIn('restart fixture failure', result[1])
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertFalse(self.engine.write_batch([
+            ('recover', 'controls', 'true', 'bool'), ('notifications', 'DEFAULT', 'false', 'bool')])[0])
+
     def test_external_edit_and_failed_replacement_are_preserved(self):
         self.path.write_text(self.path.read_text(encoding='utf-8') + '\n# external\n', encoding='utf-8')
         before = self.path.read_bytes()
@@ -218,6 +257,9 @@ class BluetoothProximityTests(unittest.TestCase):
             self.assertTrue(i.extended_help)
             if i.parent_ref:
                 self.assertIn(i.parent_ref, uids)
+        source_control = next(i for i in items if i.key == 'proximity_source')
+        self.assertEqual(source_control.options, ['connection', 'connected', 'advertisement'])
+        self.assertTrue({'far_rssi', 'near_rssi', 'rssi_window', 'far_hold_secs', 'near_hold_secs'} <= uids)
         self.assertEqual(schema.DEFAULT_MODE, 'batch')
         engine = BluetoothProximityEngine(schema.TARGET_FILE)
         engine.load_state()

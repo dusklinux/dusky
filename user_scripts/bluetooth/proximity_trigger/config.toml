@@ -3,9 +3,14 @@
 
 # false = connection hooks only, without scanning, proximity actions or auto-unlock.
 proximity_enabled = true
+proximity_source = "connection"  # connection state / connected LE RSSI / advertisement
+poll_interval_ms = 1000         # connected RSSI polling, 500..10000 ms
+auto_connect = false            # opt-in retries can compete with input reconnection
+reconnect_interval_secs = 15    # retry interval, 5..86400 seconds
 transport = "le"                # le / bredr / auto; only used for proximity scans
 adapter_path = ""               # empty: select adapter automatically
 
+# RSSI options below are ignored in connection-state mode.
 # Signal presets, not metres: 1 closest -> 10 weakest. Level 8 = -80/-70 dBm.
 # Remove proximity_level to use the explicit thresholds below instead.
 proximity_level = 8
@@ -18,7 +23,8 @@ near_hold_secs = 2
 sample_max_gap_secs = 10         # longer RSSI gaps reset strength hold evidence
 
 # far = run on_far after silence timeout + lock hold; hold = keep last proximity.
-# A silent nearby device can still trigger far. Connected wearables may go silent.
+# Advertisement silence can happen nearby. Connected mode reads the link instead.
+# Missing/unavailable connected RSSI uses this timeout too; disconnection uses its own hold.
 signal_loss_action = "far"       # far / hold
 signal_timeout_secs = 120
 startup_grace_secs = 10
@@ -26,8 +32,8 @@ return_cooldown_secs = 3
 
 # Connection hooks track an actual Bluetooth link TO THIS COMPUTER.
 # They do not infer a phone's presence from its connection to a watch or another host.
-connect_hold_secs = 0            # delay before reporting a stable connection
-disconnect_hold_secs = 2        # reconnect within this delay cancels departure hook
+connect_hold_secs = 2            # stable link before return action and connection hooks
+disconnect_hold_secs = 5        # reconnect within this delay cancels departure hook
 run_initial_connection_hooks = false # true: also run hook for startup link state
 
 # Shell command or array; empty [] disables a hook. Commands within an event run

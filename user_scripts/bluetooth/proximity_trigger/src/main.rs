@@ -3,6 +3,7 @@ use std::{path::PathBuf, time::Duration};
 use tokio::signal::unix::{SignalKind, signal};
 mod bluetooth;
 mod config;
+mod connected;
 mod hypr;
 mod notify;
 mod state;
@@ -56,6 +57,9 @@ struct Args {
     timeout: Option<u64>,
     #[arg(long,value_parser=["auto","le","bredr"])]
     transport: Option<String>,
+    /// Presence evidence: connection (default), connected LE RSSI, or advertisements
+    #[arg(long, value_parser=["connection", "connected", "advertisement"])]
+    source: Option<String>,
     /// Adapter object path; otherwise select a powered adapter automatically
     #[arg(long)]
     adapter: Option<String>,
@@ -97,8 +101,11 @@ fn action(action: ActionRequired, c: &Config, dry_run: bool, notifier: &Notifica
             "near",
             mac,
             device_name,
-            Some(rssi),
-            format!("signal returned ({rssi} dBm)"),
+            rssi,
+            rssi.map_or_else(
+                || "Bluetooth connection returned".to_owned(),
+                |rssi| format!("signal returned ({rssi} dBm)"),
+            ),
         ),
     };
     println!("[ACTION] {event}: {name}: {body}");
@@ -106,6 +113,7 @@ fn action(action: ActionRequired, c: &Config, dry_run: bool, notifier: &Notifica
         println!("[TEST] No actions executed");
         return;
     }
+    let notification_name = name.clone();
     // Keep hooks out of the observation loop. Display/notification I/O is also asynchronous.
     if event == "far" {
         execute_script_series(c.get_far_commands(), event, mac, name, rssi);
@@ -123,7 +131,26 @@ fn action(action: ActionRequired, c: &Config, dry_run: bool, notifier: &Notifica
         }
     }
     if c.notifications {
-        notifier.notify("Dusky Proximity", &body, "bluetooth");
+        let (summary, icon) = if event == "near" {
+            (
+                if c.uses_connection_state() {
+                    "Device connected"
+                } else {
+                    "Device nearby"
+                },
+                "bluetooth-active",
+            )
+        } else {
+            (
+                if c.uses_connection_state() {
+                    "Device disconnected"
+                } else {
+                    "Device away"
+                },
+                "bluetooth-disabled",
+            )
+        };
+        notifier.notify(summary, &notification_name, icon);
     }
 }
 #[tokio::main(flavor = "current_thread")]
@@ -171,6 +198,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(transport) = args.transport {
         c.transport = transport;
     }
+    if let Some(source) = args.source {
+        c.proximity_source = match source.as_str() {
+            "connection" => config::ProximitySource::Connection,
+            "connected" => config::ProximitySource::Connected,
+            _ => config::ProximitySource::Advertisement,
+        };
+    }
     if let Some(adapter) = args.adapter {
         c.adapter_path = adapter;
     }
@@ -181,6 +215,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         c.devices.clear();
         c.device_mac.clear();
         c.proximity_enabled = true;
+        c.proximity_source = config::ProximitySource::Advertisement;
         if let Err(e) = c.validate() {
             eprintln!("[config] {e}");
             std::process::exit(2);
@@ -216,11 +251,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if args.check_config {
         println!(
-            "Configuration valid: {} enabled device(s), far < {} dBm, near >= {} dBm",
+            "Configuration valid: {} enabled device(s), source {:?}",
             c.active_devices().len(),
-            c.lock_rssi,
-            c.unlock_rssi
+            c.proximity_source
         );
+        if c.uses_connection_state() {
+            println!(
+                "Link debounce: connect {}s, disconnect {}s; RSSI settings inactive",
+                c.connect_hold_secs, c.disconnect_hold_secs
+            );
+        } else {
+            println!(
+                "Signal thresholds: far < {} dBm, near >= {} dBm",
+                c.lock_rssi, c.unlock_rssi
+            );
+        }
         return Ok(());
     }
     if c.active_devices().is_empty() {
@@ -233,6 +278,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         return Ok(());
     }
+    if c.uses_connected_rssi()
+        && let Err(e) = connected::Reader::open()
+    {
+        eprintln!("[connected] {e}");
+        std::process::exit(2);
+    }
     let watcher = BluetoothWatcher::new(&c).await?;
     observe(watcher, &c, args.test).await
 }
@@ -241,17 +292,24 @@ async fn observe(
     c: &Config,
     dry_run: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    println!(
-        "[daemon] Adapter {}; far < {} dBm held {}s, near >= {} dBm held {}s; loss {}s + hold {}s; median {}",
-        watcher.adapter_path,
-        c.lock_rssi,
-        c.lock_hold_secs,
-        c.unlock_rssi,
-        c.unlock_hold_secs,
-        c.signal_timeout_secs,
-        c.lock_hold_secs,
-        c.rssi_window
-    );
+    if c.uses_connection_state() {
+        println!(
+            "[daemon] Adapter {}; connection presence: disconnect hold {}s, connect hold {}s",
+            watcher.adapter_path, c.disconnect_hold_secs, c.connect_hold_secs
+        );
+    } else {
+        println!(
+            "[daemon] Adapter {}; far < {} dBm held {}s, near >= {} dBm held {}s; loss {}s + hold {}s; median {}",
+            watcher.adapter_path,
+            c.lock_rssi,
+            c.lock_hold_secs,
+            c.unlock_rssi,
+            c.unlock_hold_secs,
+            c.signal_timeout_secs,
+            c.lock_hold_secs,
+            c.rssi_window
+        );
+    }
     let notifier = NotificationClient::new(c.notifications && !dry_run).await;
     let mut tracker = StateTracker::new(&c.active_devices());
     tracker.seed_connections(&watcher.initial_connections, c);
@@ -260,6 +318,17 @@ async fn observe(
     }
     let adapter_prefix = format!("{}/", watcher.adapter_path);
     let proximity_active = c.has_proximity_devices();
+    println!(
+        "[daemon] Proximity source: {:?}; connected dry runs never attempt reconnection",
+        c.proximity_source
+    );
+    let mut sampling = tokio::task::JoinSet::new();
+    let index = connected::adapter_index(&watcher.adapter_path)?;
+    let mut sample_tick = tokio::time::interval(Duration::from_millis(c.poll_interval_ms));
+    sample_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut link_retry = tokio::time::interval(Duration::from_secs(c.reconnect_interval_secs));
+    link_retry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut connecting: Option<tokio::task::JoinHandle<()>> = None;
     let mut tick = tokio::time::interval(Duration::from_millis(500));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut health = tokio::time::interval(Duration::from_secs(5));
@@ -282,6 +351,11 @@ async fn observe(
                             let was_powered = watcher.powered;
                             if watcher.ensure_discovery().await? { tracker.reset_observations(); }
                             if was_powered != watcher.powered {
+                                if c.uses_connected_rssi() { tracker.reset_observations(); }
+                                if !watcher.powered && c.uses_connection_state() {
+                                    let keys: Vec<_> = tracker.devices.keys().cloned().collect();
+                                    for key in keys { tracker.observe_connection(&key, false, c); }
+                                }
                                 scan_pause = None;
                                 if watcher.powered { reconnect.reset_immediately(); }
                             }
@@ -300,10 +374,10 @@ async fn observe(
                     if !tracker.devices.contains_key(key) { continue; }
                     // Connection state is independent of RSSI reception or proximity policy.
                     if let Some(connected) = props.get("Connected").and_then(|v| bool::try_from(v).ok()) {
-                        tracker.observe_connection(key, connected);
+                        tracker.observe_connection(key, connected, c);
                         connection_actions(&mut tracker, c, dry_run, &notifier);
                     }
-                    if scan_pause.is_some() || !watcher.powered || !c.proximity_enabled || !tracker.devices[key].config.proximity { continue; }
+                    if scan_pause.is_some() || !watcher.powered || !c.uses_advertisements() || !tracker.devices[key].config.proximity { continue; }
                     if props.contains_key("ManufacturerData") || props.contains_key("ServiceData") {
                         tracker.heartbeat(key);
                         if dry_run { println!("[TEST] {} advertisement heartbeat", tracker.devices[key].config.name); }
@@ -323,10 +397,10 @@ async fn observe(
                         action(a, c, dry_run, &notifier);
                     }
                 }
-                _ = tick.tick(), if (watcher.powered && proximity_active) || tracker.has_pending_connections() => {
+                _ = tick.tick(), if (proximity_active && (watcher.powered || c.uses_connection_state())) || tracker.has_pending_connections() => {
                     refresh_observation_clock(&mut tracker, &mut previous_tick);
                     connection_actions(&mut tracker, c, dry_run, &notifier);
-                    if !watcher.powered || scan_pause.is_some() { continue; }
+                    if (!watcher.powered && !c.uses_connection_state()) || scan_pause.is_some() { continue; }
                     let previous_state = tracker.current_state;
                     let a = tracker.check_timeouts(c);
                     if matches!(a, ActionRequired::Far { .. }) && watcher.ensure_discovery().await? {
@@ -339,13 +413,47 @@ async fn observe(
                 _ = health.tick(), if watcher.powered && scan_pause.is_none() => {
                     if watcher.ensure_discovery().await? { tracker.reset_observations(); }
                 }
-                _ = reconnect.tick(), if watcher.powered && proximity_active && scan_pause.is_none() => {
+                _ = reconnect.tick(), if watcher.powered && c.uses_advertisements() && scan_pause.is_none() => {
                     if watcher.input_needs_reconnection().await? {
                         let started = std::time::Instant::now();
                         watcher.stop_discovery().await;
                         scan_pause = Some((started, tokio::time::Instant::now() + Duration::from_secs(20)));
                         eprintln!("[bluetooth] Yielding discovery for 20s to reconnect paired input devices");
                     }
+                }
+                _ = sample_tick.tick(), if watcher.powered && c.uses_connected_rssi() && sampling.is_empty() => {
+                    let targets = tracker.devices.iter().filter(|(_, d)| d.config.proximity && d.connected)
+                        .map(|(key, d)| Ok(connected::Target { key: key.clone(), address: connected::address(&d.config.mac)?, epoch: d.connection_epoch }))
+                        .collect::<std::io::Result<Vec<_>>>()?;
+                    if !targets.is_empty() {
+                        sampling.spawn(async move { connected::Reader::open()?.sample(index, &targets).await });
+                    }
+                }
+                result = sampling.join_next(), if !sampling.is_empty() => {
+                    let result = result.expect("pending sample task");
+                    refresh_observation_clock(&mut tracker, &mut previous_tick);
+                    if !watcher.powered { continue; }
+                    let readings = match result? {
+                        Ok(readings) => readings,
+                        Err(error) if matches!(error.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock) => {
+                            eprintln!("[connected] Measurement unavailable: {error}; retrying next sample");
+                            continue;
+                        }
+                        Err(error) => return Err(error.into()),
+                    };
+                    for reading in readings {
+                        if dry_run { println!("[TEST] {} connected RSSI={:?}", tracker.devices[&reading.key].config.name, reading.rssi); }
+                        let a = tracker.handle_connected_reading(reading, c);
+                        action(a, c, dry_run, &notifier);
+                    }
+                }
+                _ = link_retry.tick(), if watcher.powered && c.uses_links() && c.auto_connect && !dry_run
+                    && tracker.devices.values().any(|d| d.config.proximity && !d.connected)
+                    && connecting.as_ref().is_none_or(|task| task.is_finished()) => {
+                    connecting = Some(watcher.reconnect_targets(c));
+                    // Start a full retry period now, rather than catching up to an old
+                    // interval phase after the device spent a long time connected.
+                    link_retry.reset();
                 }
                 _ = async {
                     if let Some((_, deadline)) = scan_pause {
@@ -365,6 +473,15 @@ async fn observe(
         }
         Ok(())
     }.await;
+    sampling.abort_all();
+    if let Some(task) = connecting {
+        // Dropping/aborting the future leaves BlueZ's controller operation running.
+        // Let the bounded attempt finish its timeout and explicit cancellation.
+        if !task.is_finished() {
+            eprintln!("[bluetooth] Finishing connection attempt before stopping");
+        }
+        let _ = task.await;
+    }
     watcher.stop_discovery().await;
     result
 }
@@ -389,11 +506,21 @@ fn connection_actions(
             d.name.clone(),
             None,
         );
-        if c.notifications {
+        // Participating targets report the debounced aggregate presence event above.
+        // Connection-only devices still get their own link notification.
+        if c.notifications && !(c.proximity_enabled && d.proximity) {
             notifier.notify(
-                "Dusky Bluetooth",
-                &format!("{}: {event}", d.name),
-                "bluetooth",
+                if connected {
+                    "Device connected"
+                } else {
+                    "Device disconnected"
+                },
+                &d.name,
+                if connected {
+                    "bluetooth-active"
+                } else {
+                    "bluetooth-disabled"
+                },
             );
         }
     }
@@ -434,6 +561,7 @@ mod tests {
         );
         let c = Config {
             proximity_enabled: false,
+            connect_hold_secs: 0,
             notifications: false,
             disconnect_hold_secs: 0,
             on_connect: config::CommandList::Single(cmd.clone()),
@@ -444,11 +572,11 @@ mod tests {
         let mut tracker = StateTracker::new(&c.active_devices());
         tracker.seed_connections(&std::collections::HashMap::new(), &c);
         let notifier = NotificationClient::new(false).await;
-        tracker.observe_connection("dev_AA_BB_CC_DD_EE_FF", true);
+        tracker.observe_connection("dev_AA_BB_CC_DD_EE_FF", true, &c);
         connection_actions(&mut tracker, &c, false, &notifier);
         let first = "connect|UNKNOWN|AA:BB:CC:DD:EE:FF|N/A\n";
         wait_content(&path, first).await;
-        tracker.observe_connection("dev_AA_BB_CC_DD_EE_FF", false);
+        tracker.observe_connection("dev_AA_BB_CC_DD_EE_FF", false, &c);
         connection_actions(&mut tracker, &c, false, &notifier);
         wait_content(
             &path,
