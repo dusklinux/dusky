@@ -18,14 +18,27 @@ Theme:
 History:
     ~/.config/dusky/settings/scripts_fzf/state.json
 
+Preview layout (orientation, percentage, visibility):
+    ~/.config/dusky/settings/scripts_fzf/preview_layout
+
 Browser:
     Enter          Open action menu
     Ctrl-P         Toggle preview
-    Alt-I          File information + source
-    Alt-S          Source only
+    Alt-F          Show the full script
+    Alt-Arrows     Resize preview by 5% along its current axis
+    Alt-H/J/K/L    Move preview left / down / up / right
+    Mouse drag     Resize the preview using its left border
     Page Up/Down   Scroll preview
     Shift-Up/Down  Scroll preview one line
     Esc            Cancel
+
+Descriptions:
+    Write the description as the first comment block after the shebang.
+    A blank line or blank comment ends the block. Description: is optional.
+    Python encoding declarations are skipped; module docstrings also work.
+    An explicit # Description: header takes priority over other header comments.
+    The preview shows the description, total line count, and highlighted source.
+    Source rendering starts with 500 lines; load the full script on demand.
 
 Actions:
     Enter          Perform selected action
@@ -40,9 +53,11 @@ Actions:
 
 from __future__ import annotations
 
-import argparse
-from datetime import datetime
-import fcntl
+lazy import argparse
+lazy import ast
+lazy import fcntl
+lazy import io
+lazy from inspect import cleandoc
 import json
 import os
 from pathlib import Path
@@ -52,7 +67,8 @@ import shutil
 import stat
 import subprocess
 import sys
-import tempfile
+lazy import tempfile
+lazy import tokenize
 
 
 HOME = Path.home()
@@ -63,6 +79,7 @@ STATE_DIR = HOME / ".config/dusky/settings/scripts_fzf"
 STATE_FILE = STATE_DIR / "state.json"
 LEGACY_STATE = STATE_DIR / "state"
 LOCK_FILE = STATE_DIR / "state.lock"
+LAYOUT_FILE = STATE_DIR / "preview_layout"
 
 THEME_KEYS = ("bg", "fg", "accent", "error", "warning", "success", "muted")
 
@@ -75,9 +92,59 @@ ACTION_KEYS = {
     "alt-y": 6,
 }
 
+DESCRIPTION_BYTES = 64 * 1024
 PREVIEW_LINES = 500
+# Same directory-group palette as the Git file browser.
+DIR_PALETTE = (111, 176, 215, 114, 221, 116, 211, 147, 180, 152, 182, 186)
 RESET = "\033[0m"
 BOLD = "\033[1m"
+
+
+# fzf runs this in its existing Bash transform process: no extra interpreter.
+# State is private to one picker; synchronous transforms preserve key order.
+PREVIEW_LAYOUT_TRANSFORM = r"""
+IFS=' ' read -r edge percent visibility < "$DUSKY_SCRIPTS_LAYOUT" || { printf bell; exit; }
+case $edge in
+    left|right) pane=${FZF_PREVIEW_COLUMNS:-0}; span=${FZF_COLUMNS:-0}; chrome=4 ;;
+    up|down)    pane=${FZF_PREVIEW_LINES:-0}; span=${FZF_LINES:-0}; chrome=2 ;;
+esac
+if (( pane > 0 && span > 0 )); then
+    # Rounded preview borders occupy four columns or two rows. FZF_COLUMNS
+    # and FZF_LINES already exclude the outer frame. Allow one rounding cell;
+    # a larger difference means the mouse or terminal constraints changed it.
+    actual=$((pane + chrome))
+    expected=$((span * percent / 100))
+    if (( actual < expected || actual > expected + 1 )); then
+        percent=$(((actual * 100 + span / 2) / span))
+    fi
+fi
+current_percent=$percent
+if [[ $layout_action == move ]]; then
+    edge=$layout_direction
+    visibility=visible
+elif [[ $layout_action == resize ]]; then
+    (( pane > 0 )) || exit 0
+    case "$edge:$layout_direction" in
+        right:left|left:right|up:down|down:up) delta=5 ;;
+        right:right|left:left|up:up|down:down) delta=-5 ;;
+        *) exit 0 ;;
+    esac
+    percent=$((percent + delta))
+fi
+(( percent < 10 )) && percent=10
+(( percent > 90 )) && percent=90
+[[ $layout_action == resize && $percent == "$current_percent" ]] && exit 0
+case $layout_action in
+    toggle) [[ $visibility == hidden ]] && visibility=visible || visibility=hidden ;;
+    full) visibility=visible ;;
+esac
+printf '%s %s %s\n' "$edge" "$percent" "$visibility" > "$DUSKY_SCRIPTS_LAYOUT" || { printf bell; exit; }
+case $layout_action in
+    capture|toggle) printf '%s' "$layout_result" ;;
+    full) printf '%s' "$DUSKY_SCRIPTS_EXPAND" ;;
+    *) printf 'show-preview+change-preview-window(%s,%s%%,border-rounded,wrap)+refresh-preview' "$edge" "$percent" ;;
+esac
+"""
 
 
 class FinderError(Exception):
@@ -270,11 +337,47 @@ def record_use(path: str) -> None:
                 pass
 
 
+def read_preview_layout(path: Path) -> tuple[str, int, str]:
+    edge, percentage, visibility = path.read_text(encoding="ascii").split()
+    percent = int(percentage)
+    if (
+        edge not in {"left", "right", "up", "down"}
+        or not 10 <= percent <= 90
+        or visibility not in {"visible", "hidden"}
+    ):
+        raise ValueError("expected: left/right/up/down, 10–90, visible/hidden")
+    return edge, percent, visibility
+
+
+def save_preview_layout(session_layout: Path) -> None:
+    temporary: str | None = None
+    try:
+        edge, percent, visibility = read_preview_layout(session_layout)
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="ascii", dir=STATE_DIR,
+            prefix=".preview-layout-", delete=False,
+        ) as output:
+            temporary = output.name
+            output.write(f"{edge} {percent} {visibility}\n")
+        # Concurrent pickers use private session state. The last closed picker
+        # wins, and readers always see one complete preference record.
+        os.replace(temporary, LAYOUT_FILE)
+        temporary = None
+    except (OSError, ValueError) as exc:
+        warn(f"Could not save preview layout: {exc}")
+    finally:
+        if temporary is not None:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+
+
 def discover(root: Path) -> list[str]:
     if not root.is_dir():
         raise FinderError(f"Scripts directory does not exist: {root}")
 
-    helper_path = os.path.realpath(__file__)
     files: list[str] = []
 
     def walk_error(error: OSError) -> None:
@@ -296,8 +399,6 @@ def discover(root: Path) -> list[str]:
                 path = os.path.join(directory, name)
 
                 if not os.path.isfile(path):
-                    continue
-                if os.path.realpath(path) == helper_path:
                     continue
 
                 files.append(path)
@@ -341,7 +442,6 @@ def choose(
     options: list[str],
     theme: dict[str, str],
     *,
-    rank_matches: bool = False,
     extra_environment: dict[str, str] | None = None,
     shortcuts: dict[str, int] | None = None,
 ) -> int | None:
@@ -358,13 +458,14 @@ def choose(
         "--print0",
         "--ansi",
         "--no-multi",
-        "--sort" if rank_matches else "--no-sort",
-        "--exact",
+        "--sort",
+        "--algo=v2",
         "--cycle",
         "--layout=reverse",
         "--border=rounded",
         "--delimiter=\t",
         "--with-nth=2..",
+        "--ellipsis=",
         "--prompt=❯ ",
         "--pointer=❯ ",
         "--color=" + fzf_colors(theme),
@@ -420,26 +521,38 @@ def select_script(
     weights: dict[str, int],
     theme: dict[str, str],
 ) -> str | None:
+    relative_paths = {path: os.path.relpath(path, root) for path in files}
     files.sort(
         key=lambda path: (
             -weights.get(path, 0),
-            os.path.relpath(path, root).casefold(),
+            relative_paths[path].casefold(),
             path,
         )
     )
 
     accent = ansi(theme["accent"])
-    foreground = ansi(theme["fg"])
+    groups = sorted({
+        os.sep.join(relative.split(os.sep)[:-1][:2])
+        for relative in relative_paths.values()
+    })
+    directory_colors = {
+        group: f"\033[38;5;{DIR_PALETTE[index % len(DIR_PALETTE)]}m"
+        for index, group in enumerate(groups)
+    }
     warning = ansi(theme["warning"])
     rows: list[str] = []
 
     for index, path in enumerate(files):
-        relative = os.path.relpath(path, root)
+        relative = relative_paths[path]
         directory, filename = os.path.split(relative)
-        prefix = visible(directory) + "/" if directory else ""
+        parts = directory.split(os.sep) if directory else []
+        group = os.sep.join(parts[:2])
+        prefix = visible(group) + "/" if group else ""
+        if len(parts) > 2:
+            prefix += "\033[2m" + visible(os.sep.join(parts[2:])) + "/"
 
         label = (
-            f"{foreground}{prefix}{RESET}"
+            f"{directory_colors[group]}{prefix}{RESET}"
             f"{BOLD}{accent}{visible(filename)}{RESET}"
         )
 
@@ -459,65 +572,109 @@ def select_script(
                 {
                     "files": files,
                     "theme": theme,
-                    "weights": weights,
                 },
                 ensure_ascii=True,
             ),
             encoding="utf-8",
         )
 
+        try:
+            edge, percent, visibility = read_preview_layout(LAYOUT_FILE)
+        except FileNotFoundError:
+            edge, percent, visibility = "right", 50, "visible"
+        except (OSError, ValueError) as exc:
+            warn(f"Cannot read preview layout {LAYOUT_FILE}: {exc}; using defaults")
+            edge, percent, visibility = "right", 50, "visible"
+        layout = Path(temporary) / "layout"
+        layout.write_text(f"{edge} {percent} {visibility}\n", encoding="ascii")
+        preview_window = f"{edge},{percent}%,border-rounded,wrap"
+        if visibility == "hidden":
+            preview_window += ",hidden"
         preview_environment = {
             "DUSKY_SCRIPTS_PYTHON": sys.executable,
             "DUSKY_SCRIPTS_HELPER": os.path.abspath(__file__),
             "DUSKY_SCRIPTS_SNAPSHOT": str(snapshot),
+            "DUSKY_SCRIPTS_LAYOUT": str(layout),
         }
 
         preview_base = (
             '"$DUSKY_SCRIPTS_PYTHON" '
             '"$DUSKY_SCRIPTS_HELPER" '
         )
-        source_preview = (
+        preview = (
             preview_base
             + '--preview "$DUSKY_SCRIPTS_SNAPSHOT" {1}'
         )
-        details_preview = (
+
+        full_preview = (
             preview_base
-            + '--preview-details "$DUSKY_SCRIPTS_SNAPSHOT" {1}'
+            + '--preview-full "$DUSKY_SCRIPTS_SNAPSHOT" {1}'
         )
 
-        index = choose(
-            rows,
-            [
-                "--with-shell=bash -c",
-                "--style=full",
-                "--height=100%",
-                "--highlight-line",
-                "--border=rounded",
-                "--border-label= 󰟆 dusky scripts ",
-                "--border-label-pos=center",
-                "--input-border=rounded",
-                "--list-border=rounded",
-                "--ghost=Search user scripts…",
-                "--info=inline-right",
-                "--no-hscroll",
-                "--tabstop=4",
-                "--preview=" + source_preview,
-                "--preview-window=right,50%,border-rounded,wrap",
-                "--preview-label= Alt-I: details · Alt-S: source ",
-                "--bind=ctrl-p:toggle-preview",
-                "--bind=pgup:preview-page-up",
-                "--bind=pgdn:preview-page-down",
-                "--bind=shift-up:preview-up",
-                "--bind=shift-down:preview-down",
-                "--bind=alt-i:change-preview(" + details_preview + ")",
-                "--bind=alt-s:change-preview(" + source_preview + ")",
-                "--bind=esc:abort",
-                "--bind=enter:accept",
-            ],
-            theme,
-            rank_matches=False,
-            extra_environment=preview_environment,
+        preview_environment["DUSKY_SCRIPTS_EXPAND"] = (
+            "show-preview+change-preview(" + full_preview + ")"
         )
+        layout_bindings = [
+            f"--bind={key}:transform:layout_action={action} "
+            f"layout_direction={direction}\n{PREVIEW_LAYOUT_TRANSFORM}"
+            for key, action, direction in (
+                ("alt-h", "move", "left"),
+                ("alt-j", "move", "down"),
+                ("alt-k", "move", "up"),
+                ("alt-l", "move", "right"),
+                ("alt-left", "resize", "left"),
+                ("alt-right", "resize", "right"),
+                ("alt-up", "resize", "up"),
+                ("alt-down", "resize", "down"),
+            )
+        ]
+
+        layout_bindings.extend(
+            f"--bind={key}:transform:layout_action={action} "
+            f"layout_result={result}\n{PREVIEW_LAYOUT_TRANSFORM}"
+            for key, action, result in (
+                ("ctrl-p", "toggle", "toggle-preview"),
+                ("alt-f", "full", ""),
+                ("enter", "capture", "accept"),
+                ("esc,ctrl-c,ctrl-g", "capture", "abort"),
+            )
+        )
+
+        try:
+            index = choose(
+                rows,
+                [
+                    "--with-shell=bash -c",
+                    "--style=full",
+                    "--height=100%",
+                    "--highlight-line",
+                    "--border=rounded",
+                    "--border-label= 󰟆 dusky scripts ",
+                    "--border-label-pos=center",
+                    "--input-border=rounded",
+                    "--list-border=none",
+                    "--marker=",
+                    "--ghost=Search user scripts…",
+                    "--info=inline-right",
+                    "--no-hscroll",
+                    "--tabstop=4",
+                    "--scheme=path",
+                    "--tiebreak=pathname,length,index",
+                    "--preview=" + preview,
+                    "--preview-window=" + preview_window,
+                    "--preview-label= Description + source · Alt-F: full ",
+                    "--bind=focus:change-preview(" + preview + ")",
+                    "--bind=pgup:preview-page-up",
+                    "--bind=pgdn:preview-page-down",
+                    "--bind=shift-up:preview-up",
+                    "--bind=shift-down:preview-down",
+                    *layout_bindings,
+                ],
+                theme,
+                extra_environment=preview_environment,
+            )
+        finally:
+            save_preview_layout(layout)
 
     if index is None:
         return None
@@ -527,21 +684,79 @@ def select_script(
     return files[index]
 
 
-def human_size(size: int) -> str:
-    value = float(size)
+def read_description(path: str) -> str:
+    """Read a header description without executing or parsing the whole script."""
+    with open(path, "rb") as source:
+        header = source.read(DESCRIPTION_BYTES).decode(
+            "utf-8-sig", errors="replace"
+        )
 
-    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
-        if value < 1024 or unit == "TiB":
-            return f"{size} B" if unit == "B" else f"{value:.2f} {unit}"
-        value /= 1024
+    description: list[str] = []
+    first_comments: list[str] = []
+    first_block_ended = False
+    for number, line in enumerate(header.splitlines()):
+        stripped = line.strip()
+        if not stripped or stripped == "#":
+            if description:
+                break
+            if first_comments:
+                first_block_ended = True
+            continue
+        if not stripped.startswith("#"):
+            break
+        if number == 0 and stripped.startswith("#!"):
+            continue
+        if number < 2 and path.endswith(".py") and re.prefixmatch(
+            r"#.*?coding[:=]\s*[-\w.]+", stripped
+        ):
+            continue
+        comment = stripped[1:].removeprefix(" ")
+        if description:
+            description.append(comment)
+        else:
+            match = re.fullmatch(
+                r"#\s*Description:\s*(.*)", stripped, re.IGNORECASE
+            )
+            if match:
+                # An empty marker can introduce a multiline description.
+                description.append(match[1])
+        if not first_block_ended:
+            first_comments.append(comment)
 
-    raise AssertionError("unreachable")
+    if description:
+        return cleandoc("\n".join(description)).strip()
+    if first_comments:
+        return cleandoc("\n".join(first_comments)).strip()
+
+    if path.endswith(".py"):
+        try:
+            for token in tokenize.generate_tokens(io.StringIO(header).readline):
+                if token.type in {tokenize.COMMENT, tokenize.NL, tokenize.NEWLINE}:
+                    continue
+                if token.type == tokenize.STRING:
+                    value = ast.literal_eval(token.string)
+                    if isinstance(value, str):
+                        return cleandoc(value).strip()
+                break
+        except (SyntaxError, ValueError, tokenize.TokenError):
+            pass
+
+    return ""
+
+
+def count_lines(path: str) -> int:
+    """Count newline-delimited source lines, including an unterminated last line."""
+    total = 0
+    last = b""
+    with open(path, "rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            total += chunk.count(b"\n")
+            last = chunk[-1:]
+    return total + bool(last and last != b"\n")
 
 
 def preview_file(
-    snapshot: str,
-    identifier: str,
-    show_details: bool = False,
+    snapshot: str, identifier: str, *, full_source: bool = False,
 ) -> int:
     try:
         data = json.loads(Path(snapshot).read_text(encoding="utf-8"))
@@ -553,7 +768,6 @@ def preview_file(
 
         path = files[index]
         theme = data["theme"]
-        weight = data["weights"].get(path, 0)
         metadata = os.stat(path)
 
         if not stat.S_ISREG(metadata.st_mode):
@@ -561,66 +775,25 @@ def preview_file(
 
         foreground = ansi(theme["fg"])
 
-        if show_details:
-            accent = ansi(theme["accent"])
-            warning = ansi(theme["warning"])
+        accent = ansi(theme["accent"])
+        description = read_description(path)
+        total_lines = count_lines(path)
+        print(f"{BOLD}{accent}Description{RESET}")
+        if description:
+            for line in description.splitlines():
+                print(f"{accent}{visible(line.expandtabs(4))}{RESET}")
+        else:
+            print(f"{foreground}No description provided.{RESET}")
+        unit = "line" if total_lines == 1 else "lines"
+        source_label = f"Source · {total_lines:,} {unit}"
+        limited = not full_source and total_lines > PREVIEW_LINES
+        if limited:
+            source_label += f" · first {PREVIEW_LINES} shown"
+        print(f"\n{BOLD}{accent}{source_label}{RESET}\n", flush=True)
 
-            modified = datetime.fromtimestamp(
-                metadata.st_mtime
-            ).astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
-
-            if os.access(path, os.X_OK):
-                runner = "Direct execution / file shebang"
-            elif path.endswith(".py"):
-                runner = "python"
-            else:
-                runner = "bash"
-
-            with open(path, "rb") as source:
-                first_line = source.readline(4096)
-
-            shebang = ""
-            if first_line.startswith(b"#!"):
-                shebang = first_line.rstrip(b"\r\n").decode(
-                    "utf-8", errors="replace"
-                )
-
-            print(
-                f"{BOLD}{accent}"
-                f"{visible(os.path.basename(path))}{RESET}"
-            )
-            print(
-                f"{foreground}{visible(home_path(path))}{RESET}\n"
-            )
-
-            fields = [
-                ("Size", human_size(metadata.st_size)),
-                ("Modified", modified),
-                ("Permissions", stat.filemode(metadata.st_mode)),
-                ("Run with", runner),
-                ("Recorded uses", str(weight)),
-            ]
-
-            if shebang:
-                fields.append(("Shebang", visible(shebang)))
-            if os.path.islink(path):
-                fields.append(
-                    ("Link target", visible(os.path.realpath(path)))
-                )
-
-            for key, value in fields:
-                print(
-                    f"{accent}{key:<14}{RESET}"
-                    f"{foreground}{value}{RESET}"
-                )
-
-            print(
-                f"\n{BOLD}{warning}"
-                f"Source · first {PREVIEW_LINES} lines"
-                f"{RESET}\n",
-                flush=True,
-            )
-
+        more_hint = (
+            f"\n{accent}More source available. Press Alt-F for full script.{RESET}"
+        )
         bat = shutil.which("bat")
 
         if bat:
@@ -629,8 +802,10 @@ def preview_file(
                 "--paging=never",
                 "--color=always",
                 "--style=numbers",
-                f"--line-range=1:{PREVIEW_LINES}",
             ]
+
+            if not full_source:
+                command.append(f"--line-range=1:{PREVIEW_LINES}")
 
             columns = os.environ.get("FZF_PREVIEW_COLUMNS", "")
             if columns.isdecimal() and int(columns) > 0:
@@ -640,22 +815,26 @@ def preview_file(
             result = subprocess.run(command, check=False)
 
             if result.returncode == 0:
+                if limited:
+                    print(more_hint)
                 return 0
             if result.returncode < 0:
                 return 128 - result.returncode
 
-        # Fallback remains bounded and uses Matugen's foreground.
+        # The plain-text fallback follows the same source limit.
         print(foreground, end="")
         try:
             with open(path, encoding="utf-8", errors="replace") as source:
                 for number, line in enumerate(source, 1):
-                    if number > PREVIEW_LINES:
+                    if not full_source and number > PREVIEW_LINES:
                         break
                     text = line.rstrip("\n").expandtabs(4)
                     print(f"{number:4}  {visible(text)}")
         finally:
             print(RESET, end="")
 
+        if limited:
+            print(more_hint)
         return 0
 
     except (
@@ -794,8 +973,6 @@ def select_action(
             "--bind=enter:accept",
         ],
         theme,
-        # Unlike the browser, actions must rerank when searched.
-        rank_matches=True,
         shortcuts=ACTION_KEYS,
     )
 
@@ -871,14 +1048,9 @@ def perform_action(
 
 
 def main() -> int:
-    if len(sys.argv) == 4 and sys.argv[1] in {
-        "--preview",
-        "--preview-details",
-    }:
+    if len(sys.argv) == 4 and sys.argv[1] in {"--preview", "--preview-full"}:
         return preview_file(
-            sys.argv[2],
-            sys.argv[3],
-            show_details=sys.argv[1] == "--preview-details",
+            sys.argv[2], sys.argv[3], full_source=sys.argv[1] == "--preview-full",
         )
 
     parser = argparse.ArgumentParser(
