@@ -66,10 +66,9 @@ STATE_TARGETS = (
     StateTarget("secrets_var", Path("/var/lib/libvirt/secrets")),
     StateTarget("secrets_etc", Path("/etc/libvirt/secrets")),
     StateTarget("hooks", Path("/etc/libvirt/hooks")),
-    StateTarget("hooks_qemu_d", Path("/etc/libvirt/hooks.qemu.d")),
     StateTarget("daemon_configs", Path("/etc/libvirt"), (
         "libvirt/qemu", "libvirt/secrets", "libvirt/nwfilter", "libvirt/storage",
-        "libvirt/hooks", "libvirt/hooks.qemu.d", "libvirt/lxc")),
+        "libvirt/hooks", "libvirt/lxc")),
 )
 
 
@@ -413,55 +412,6 @@ def execute_backup(dest_dir_arg: str | None = None, non_interactive: bool = Fals
     return target
 
 
-def upgrade_manifest(data: dict[str, Any]) -> dict[str, Any]:
-    """Read existing v2 backups without trusting their directory contents."""
-    data = dict(data)
-    archives = data.get("archives")
-    if not isinstance(archives, dict):
-        raise BackupError("Invalid version 2 archive inventory.")
-    for key in ("snapshots", "checkpoints", "current_snapshots"):
-        if not isinstance(data.get(key, {}), dict):
-            raise BackupError(f"Invalid version 2 {key} metadata.")
-    if not isinstance(data.get("file_hashes"), dict):
-        raise BackupError("Invalid version 2 checksum inventory.")
-    for category in ("domains", "networks", "pools", "nwfilters", "secrets"):
-        if not isinstance(data.get(category), list):
-            raise BackupError(f"Invalid version 2 {category} inventory.")
-    targets = {target.key: target for target in STATE_TARGETS}
-    data["archives"] = []
-    for key, filename in archives.items():
-        if key == "save":
-            # RAM images are deliberately outside this tool's recovery scope.
-            data["file_hashes"].pop(f"state_archives/{filename}", None)
-            continue
-        if key not in targets or not isinstance(filename, str):
-            raise BackupError(f"Unknown version 2 archive: {key}")
-        target = targets[key]
-        data["archives"].append({"key": key, "file": f"state_archives/{filename}",
-                                 "destination": str(target.path.parent), "member": target.path.name})
-    for category in ("domains", "networks", "pools", "nwfilters", "secrets"):
-        converted = []
-        for item in data[category]:
-            item = dict(item)
-            directory = "vms" if category == "domains" else category
-            filename = item["uuid"] if category == "secrets" else item["name"]
-            item["xml"] = f"{directory}/{filename}.xml"
-            converted.append(item)
-            if category == "domains":
-                item["autostart_once"] = None
-                for history in ("snapshots", "checkpoints"):
-                    entries = []
-                    for name in data.get(history, {}).get(item["name"], []):
-                        safe = name.replace("/", "_").replace("\\", "_").replace("..", "_")
-                        entries.append({"name": name, "xml": f"{history}/{item['name']}/{safe}.xml"})
-                    item[history] = entries
-                if current := data.get("current_snapshots", {}).get(item["name"]):
-                    item["current_snapshot"] = current
-        data[category] = converted
-    data.update(version=SCHEMA, uri=URI)
-    return data
-
-
 def validate_backup(source: Path, *, check_hashes: bool = True) -> dict[str, Any]:
     """Check payloads, archive decompression and restore metadata before host writes.
 
@@ -469,10 +419,8 @@ def validate_backup(source: Path, *, check_hashes: bool = True) -> dict[str, Any
     --restore always perform full checks.
     """
     data = json.loads((source / MANIFEST).read_text(encoding="utf-8"))
-    if isinstance(data, dict) and data.get("version") == "2.0.0":
-        data = upgrade_manifest(data)
     if not isinstance(data, dict) or data.get("version") != SCHEMA or data.get("uri") != URI:
-        raise BackupError(f"Expected a {SCHEMA} {URI} backup. Backups without a version 2/3 manifest need separate recovery.")
+        raise BackupError(f"Manifest must specify format {SCHEMA} and connection {URI}.")
     hashes = data.get("file_hashes")
     if not isinstance(hashes, dict):
         raise BackupError("Manifest is missing its file hash inventory.")
@@ -494,12 +442,6 @@ def validate_backup(source: Path, *, check_hashes: bool = True) -> dict[str, Any
             raise BackupError(f"Manifest is missing {category}.")
         seen = set()
         for item in items:
-            if isinstance(item, dict) and not item.get("uuid") and item.get("xml"):
-                path = backup_path(source, item["xml"])
-                expected = hashes.get(item["xml"])
-                if not expected or compute_sha256(path) != expected:
-                    raise BackupError(f"Missing or corrupted payload: {item['xml']}")
-                item["uuid"] = ET.parse(path).getroot().findtext("uuid")
             if (not isinstance(item, dict) or
                     not all(isinstance(item.get(key), str) and item[key] for key in ("name", "uuid", "xml"))):
                 raise BackupError(f"Invalid {category} entry.")
@@ -520,7 +462,7 @@ def validate_backup(source: Path, *, check_hashes: bool = True) -> dict[str, Any
                 if any(type(item.get(key)) is not bool for key in ("active", "autostart")):
                     raise BackupError(f"Missing active/autostart metadata: {item['name']}")
             if category == "domains":
-                if item.get("autostart_once") is not None and type(item["autostart_once"]) is not bool:
+                if type(item.get("autostart_once")) is not bool:
                     raise BackupError(f"Missing one-time autostart metadata: {item['name']}")
                 for history in ("snapshots", "checkpoints"):
                     entries = item.get(history)
@@ -531,6 +473,9 @@ def validate_backup(source: Path, *, check_hashes: bool = True) -> dict[str, Any
                         if not isinstance(entry, dict) or not isinstance(entry.get("name"), str) or not entry["name"]:
                             raise BackupError(f"Invalid {history} entry.")
                         tree = ET.parse(reference(entry["xml"])).getroot()
+                        expected_tag = "domainsnapshot" if history == "snapshots" else "domaincheckpoint"
+                        if tree.tag != expected_tag:
+                            raise BackupError(f"Wrong XML type for {history}: {entry['xml']}")
                         if tree.findtext("name") != entry["name"] or entry["name"] in history_names:
                             raise BackupError(f"Invalid {history} name: {entry['name']}")
                         embedded_uuid = tree.findtext("domain/uuid")
@@ -600,7 +545,7 @@ def restore_entities(source: Path, data: dict[str, Any]) -> None:
                 prefix = {"pools": "pool-", "networks": "net-", "domains": ""}[category]
                 virsh(f"{prefix}autostart", f"--{tag}", item["uuid"],
                       *([] if item["autostart"] else ["--disable"]))
-                if category == "domains" and item.get("autostart_once") is not None:
+                if category == "domains":
                     virsh("autostart", "--domain", item["uuid"], "--once",
                           *([] if item["autostart_once"] else ["--disable"]))
                 if category != "domains" and item["active"]:
@@ -652,8 +597,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     actions = parser.add_mutually_exclusive_group()
     actions.add_argument("--backup", metavar="DEST", help="Back up to a new or empty directory")
-    actions.add_argument("--restore", metavar="SRC", help="Restore a version 2/3 backup")
-    actions.add_argument("--verify", metavar="DIR", help="Verify a version 2/3 backup without libvirt/root")
+    actions.add_argument("--restore", metavar="SRC", help="Restore a current-format backup")
+    actions.add_argument("--verify", metavar="DIR", help="Verify a current-format backup without libvirt/root")
     parser.add_argument("--shutdown-running", action="store_true", help="Request ACPI shutdown and wait up to 60s")
     parser.add_argument("--non-interactive", "-y", action="store_true", help="Require explicit action and path; never prompt")
     args = parser.parse_args()

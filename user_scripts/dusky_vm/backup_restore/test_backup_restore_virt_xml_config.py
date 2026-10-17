@@ -44,7 +44,8 @@ class BackupTests(unittest.TestCase):
         return item
 
     def add_history(self, domain, category, name, parent=None):
-        xml = f"<history><name>{name}</name>" + (f"<parent><name>{parent}</name></parent>" if parent else "") + "</history>"
+        tag = "domainsnapshot" if category == "snapshots" else "domaincheckpoint"
+        xml = f"<{tag}><name>{name}</name>" + (f"<parent><name>{parent}</name></parent>" if parent else "") + f"</{tag}>"
         relative = app.write_payload(self.root, f"{category}/{len(domain[category])}.xml", xml, self.manifest)
         domain[category].append({"name": name, "xml": relative})
 
@@ -196,20 +197,6 @@ class BackupTests(unittest.TestCase):
         with self.assertRaises(app.BackupError):
             app.domain_state_paths(tree)
 
-    def test_v2_manifest_preserves_existing_backups(self):
-        domain = self.add_domain()
-        (self.root / "vms").mkdir()
-        (self.root / domain["xml"]).rename(self.root / "vms/guest with spaces.xml")
-        old_hash = self.manifest["file_hashes"].pop(domain["xml"])
-        self.manifest["file_hashes"]["vms/guest with spaces.xml"] = old_hash
-        self.manifest.update(version="2.0.0", archives={})
-        domain.pop("xml")
-        domain.pop("snapshots")
-        domain.pop("checkpoints")
-        self.save()
-        converted = app.validate_backup(self.root)
-        self.assertEqual(converted["domains"][0]["xml"], "vms/guest with spaces.xml")
-
     def test_real_tar_roundtrip_metadata_and_sparse_state(self):
         state = self.root / "state"
         state.mkdir(mode=0o710)
@@ -323,14 +310,6 @@ class BackupTests(unittest.TestCase):
         self.assertEqual(app.path_completer(str(self.root) + "/", 0), str(self.root / "child with spaces") + "/")
         self.assertIsNone(app.path_completer(str(self.root) + "/", 1))
 
-    def test_v2_pool_uuid_is_recovered_from_checksummed_xml(self):
-        xml = "<pool><name>pool</name><uuid>pool-id</uuid></pool>"
-        app.write_payload(self.root, "pools/pool.xml", xml, self.manifest)
-        self.manifest["pools"].append({"name": "pool", "uuid": "", "active": True, "autostart": False})
-        self.manifest.update(version="2.0.0", archives={})
-        self.save()
-        self.assertEqual(app.validate_backup(self.root)["pools"][0]["uuid"], "pool-id")
-
     def test_sigterm_unwinds_daemon_context(self):
         listing = "virtqemud.service loaded active running description\n"
         def command(cmd):
@@ -402,14 +381,6 @@ class BackupTests(unittest.TestCase):
         with self.assertRaises(app.BackupError):
             app.domain_state_paths(app.ET.fromstring(xml))
 
-    def test_v2_managed_save_is_omitted(self):
-        self.manifest.update(version="2.0.0", archives={"save":"save_state.tar.zst"})
-        self.manifest["file_hashes"]["state_archives/save_state.tar.zst"] = "a" * 64
-        self.save()
-        result = app.validate_backup(self.root)
-        self.assertEqual(result["archives"], [])
-        self.assertEqual(result["file_hashes"], {})
-
     def test_large_inventory_and_deep_history(self):
         # Reverse lexical history names expose accidental filename-based restore order.
         domain = self.add_domain()
@@ -471,17 +442,13 @@ class BackupTests(unittest.TestCase):
 
     def test_invalid_manifest_container_types_fail_cleanly(self):
         base = copy.deepcopy(self.manifest)
-        for version in (app.SCHEMA, "2.0.0"):
-            for field in ("domains", "networks", "pools", "nwfilters", "secrets", "file_hashes", "archives"):
-                for value in (None, 7, "invalid", True):
-                    with self.subTest(version=version, field=field, value=value):
-                        self.manifest = copy.deepcopy(base)
-                        self.manifest["version"] = version
-                        if version == "2.0.0":
-                            self.manifest["archives"] = {}
-                        self.manifest[field] = value
-                        self.save()
-                        self.assertFalse(app.execute_verify(str(self.root)))
+        for field in ("domains", "networks", "pools", "nwfilters", "secrets", "file_hashes", "archives"):
+            for value in (None, 7, "invalid", True):
+                with self.subTest(field=field, value=value):
+                    self.manifest = copy.deepcopy(base)
+                    self.manifest[field] = value
+                    self.save()
+                    self.assertFalse(app.execute_verify(str(self.root)))
 
     def test_real_sigterm_recovers_daemons(self):
         # Exercise the actual signal handler in a child, with daemon calls logged.
@@ -565,7 +532,7 @@ with a.offline_state():
         with patch.object(app, "STATE_TARGETS", (app.StateTarget("custom_fixture", host),)):
             app.archive_state(self.root, self.manifest, [])
         self.save()
-        encrypted.write_bytes(b"old destination-machine blob")
+        encrypted.write_bytes(b"destination-machine credential")
         real_run = app.run_cmd
         def command(cmd, **kwargs):
             if cmd[0] == "systemd-creds":
@@ -578,6 +545,58 @@ with a.offline_state():
             app.execute_restore(str(self.root), True)
         self.assertEqual(encrypted.read_bytes(), b"correct rewrapped credential")
         self.assertEqual(list(host.iterdir()), [encrypted])
+
+    def test_manifest_requires_format_and_connection(self):
+        for field, value in (("version", None), ("version", "invalid"), ("uri", None), ("uri", "invalid")):
+            with self.subTest(field=field, value=value):
+                self.manifest = copy.deepcopy(self.manifest)
+                self.manifest.update(version=app.SCHEMA, uri=app.URI)
+                self.manifest[field] = value
+                self.save()
+                with self.assertRaises(app.BackupError):
+                    app.validate_backup(self.root)
+
+    def test_current_format_requires_uuid_and_one_time_autostart(self):
+        domain = self.add_domain()
+        for field, invalid in (("uuid", ""), ("autostart_once", None)):
+            original = domain[field]
+            domain[field] = invalid
+            self.save()
+            with self.subTest(field=field), self.assertRaises(app.BackupError):
+                app.validate_backup(self.root)
+            domain[field] = original
+
+    def test_history_requires_correct_xml_document_type(self):
+        domain = self.add_domain()
+        for category in ("snapshots", "checkpoints"):
+            self.add_history(domain, category, "entry")
+            entry = domain[category][0]
+            app.write_payload(self.root, entry["xml"], "<domain><name>entry</name></domain>", self.manifest)
+            self.save()
+            with self.subTest(category=category), self.assertRaises(app.BackupError):
+                app.validate_backup(self.root)
+            domain[category].clear()
+            self.manifest["file_hashes"].pop(entry["xml"])
+
+    def test_hook_archive_contains_driver_scripts(self):
+        hooks = self.root / "hooks"
+        driver_scripts = hooks / "qemu.d"
+        driver_scripts.mkdir(parents=True)
+        script = driver_scripts / "10-prepare"
+        script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        script.chmod(0o755)
+        backup = self.root / "backup"
+        backup.mkdir()
+        with patch.object(app, "STATE_TARGETS", (app.StateTarget("hooks", hooks),)):
+            app.archive_state(backup, self.manifest, [])
+        archive = backup / self.manifest["archives"][0]["file"]
+        restored = self.root / "restored"
+        restored.mkdir()
+        app.run_cmd(["tar", "--extract", "--zstd", *app.TAR_METADATA, "--same-permissions",
+                     "--file", str(archive), "--directory", str(restored)])
+        actual = restored / "hooks/qemu.d/10-prepare"
+        self.assertEqual(actual.read_bytes(), script.read_bytes())
+        self.assertEqual(actual.stat().st_mode, script.stat().st_mode)
 
 
 if __name__ == "__main__":
