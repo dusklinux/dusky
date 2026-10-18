@@ -248,8 +248,35 @@ def group_processes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         item["time"] = format_time(item["cpu_time"]) if item["cpu_time"] is not None else "—"
         item["search_commands"] = tuple(row["full_cmd"] for row in members)
         item["search_names"] = tuple(dict.fromkeys(row["short_cmd"] for row in members))
+        item["members"] = tuple((row["pid"], row["created"]) for row in members)
         item["status"] = f"{len(members)} processes" if len(members) > 1 else leader["status"]
         result.append(item)
+    return result
+
+
+def signal_processes(targets: tuple[tuple[int, float | None], ...], number: int) -> dict[str, int]:
+    """Signal captured identities through Linux pidfds, never a name/regex match."""
+    result = dict(sent=0, gone=0, denied=0, unknown=0, failed=0)
+    for pid, created in dict.fromkeys(targets):
+        if created is None:
+            result["unknown"] += 1
+            continue
+        try:
+            descriptor = os.pidfd_open(pid)
+            try:
+                if psutil.Process(pid).create_time() != created:
+                    result["gone"] += 1
+                    continue
+                signal.pidfd_send_signal(descriptor, number)
+                result["sent"] += 1
+            finally:
+                os.close(descriptor)
+        except (ProcessLookupError, psutil.NoSuchProcess):
+            result["gone"] += 1
+        except (PermissionError, psutil.AccessDenied):
+            result["denied"] += 1
+        except OSError:
+            result["failed"] += 1
     return result
 
 
@@ -430,6 +457,34 @@ class BrailleGraph(Label):
 # =============================================================================
 # MODALS & INTERFACE COMPONENTS
 # =============================================================================
+class SignalScreen(ModalScreen[int | None]):
+    def __init__(self, command: str, targets: tuple[tuple[int, float | None], ...]) -> None:
+        super().__init__()
+        self.command = command
+        self.targets = targets
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="signal-dialog"):
+            count = len(self.targets)
+            yield Label(f"Signal selected row · {count} {'process' if count == 1 else 'processes'}", id="modal-title")
+            with VerticalScroll(id="signal-targets"):
+                yield Label(self.command, markup=False)
+                yield Label("PIDs: " + ", ".join(str(pid) for pid, _ in self.targets), markup=False)
+            yield OptionList(
+                Option("Terminate · SIGTERM (15)", id="term"),
+                Option("Force kill · SIGKILL (9)", id="kill"),
+                id="signal-options",
+            )
+            yield Label("Enter sends selected signal · Esc cancels", id="signal-hint")
+
+    def on_mount(self) -> None:
+        self.query_one(OptionList).focus()
+
+    @on(OptionList.OptionSelected, "#signal-options")
+    def on_signal_selected(self, event: OptionList.OptionSelected) -> None:
+        self.dismiss(signal.SIGTERM if event.option.id == "term" else signal.SIGKILL)
+
+
 class SetThresholdScreen(ModalScreen[float | None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="threshold-dialog"):
@@ -472,6 +527,7 @@ class ShortcutsInfoScreen(ModalScreen[None]):
             ("s / 1, 2, 3", "Cycle sort / Select RAM, CPU, disk"),
             ("4, 5", "Sort by disk reads / writes"),
             ("c", "Toggle full command"),
+            ("F9 / Delete", "Terminate or force kill selected row (all group members)"),
             ("/", "Search commands"),
             ("Escape", "Clear search / Close dialog"),
             ("left / right", "Scroll wide tables horizontally"),
@@ -524,6 +580,7 @@ class AppFooter(Horizontal):
         yield Shortcut("Space", "Cursor", "toggle_highlight")
         yield Shortcut("Enter", "Track", "select_row")
         yield Shortcut("t", "Alert", "set_threshold")
+        yield Shortcut("F9", "Kill", "signal_menu")
         yield Shortcut("c", "Args", "toggle_cmd")
         yield Shortcut("s", "Sort", "toggle_sort")
         yield Shortcut("?", "Help", "show_shortcuts")
@@ -617,8 +674,12 @@ class DuskyMonitorApp(App):
     .footer-shortcut { padding: 0 1; background: transparent; }
     .footer-shortcut:hover { text-style: bold; color: $foreground; background: $primary 25%; }
 
-    ShortcutsInfoScreen, SetThresholdScreen { align: center middle; background: rgba(0, 0, 0, 0.75); }
-    #shortcuts-dialog, #threshold-dialog { width: 70; height: auto; max-height: 80%; background: $background; border: solid $primary; padding: 1 2; }
+    ShortcutsInfoScreen, SetThresholdScreen, SignalScreen { align: center middle; background: rgba(0, 0, 0, 0.75); }
+    #shortcuts-dialog, #threshold-dialog, #signal-dialog { width: 70; height: auto; max-height: 80%; background: $background; border: solid $primary; padding: 1 2; }
+    #signal-targets { height: auto; max-height: 5; margin-bottom: 1; }
+    #signal-targets Label { width: 100%; height: auto; }
+    #signal-options { height: auto; max-height: 4; background: transparent; border: none; }
+    #signal-hint { margin-top: 1; color: $foreground; }
     #modal-title { color: $primary; margin-bottom: 1; text-style: bold; border-bottom: solid $secondary; content-align: center middle; width: 100%; }
     #threshold-input { margin-bottom: 1; }
 
@@ -643,6 +704,8 @@ class DuskyMonitorApp(App):
         Binding("5", "sort_metric('write')", "Write", show=False),
         Binding("c", "toggle_cmd", "Toggle Command Mode"),
         Binding("t", "set_threshold", "Set Threshold"),
+        Binding("f9", "signal_menu", "Kill"),
+        Binding("delete", "signal_menu", "Kill", show=False),
         Binding("/", "focus_search", "Search"),
         Binding("escape", "clear_search", "Clear Search", priority=True),
         Binding("?", "show_shortcuts", "Shortcuts"),
@@ -675,6 +738,7 @@ class DuskyMonitorApp(App):
         self.sampler = ProcessSampler(self.target_pids)
         self.rows: list[dict[str, Any]] = []
         self._sampling = False
+        self._signalling = False
         self.tracked_key: str | None = None
         self.view_rows: dict[str, dict[str, Any]] = {}
         self.theme_path = Path("~/.config/matugen/generated/dusky_tui.json").expanduser().resolve()
@@ -979,6 +1043,33 @@ class DuskyMonitorApp(App):
 
     def action_select_row(self) -> None:
         self.query_one(ProcessTable).action_select_cursor()
+
+    @work
+    async def action_signal_menu(self) -> None:
+        if self._signalling or isinstance(self.screen, ModalScreen):
+            return
+        table = self.query_one(ProcessTable)
+        if not table.has_focus or not table.row_count:
+            return
+        table.enable_highlight()
+        key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
+        row = self.view_rows.get(key)
+        if row is None:
+            return
+        targets = row.get("members", ((row["pid"], row["created"]),))
+        self._signalling = True
+        try:
+            number = await self.push_screen_wait(SignalScreen(row["full_cmd"], targets))
+            if number is None:
+                return
+            result = await asyncio.to_thread(signal_processes, targets, number)
+            if self.is_running:
+                details = ", ".join(f"{count} {status}" for status, count in result.items() if count)
+                self.notify(f"{signal.Signals(number).name}: {details}",
+                            severity="warning" if result["denied"] or result["failed"] or result["unknown"] else "information")
+                self.update_table()
+        finally:
+            self._signalling = False
 
     def action_toggle_grouping(self) -> None:
         self.grouped = not self.grouped
