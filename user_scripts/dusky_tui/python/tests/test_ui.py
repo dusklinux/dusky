@@ -149,6 +149,137 @@ class UITests(unittest.IsolatedAsyncioTestCase):
             await pilot.press('j', 'k')
             self.assertEqual(app.screen.query_one(Input).value, 'jk')
 
+    async def test_inline_search_repeats_wraps_and_preserves_item_actions(self):
+        rows = [item(key, type_='bool', default=False)
+                for key in ('needle_a', 'other', 'needle_b', 'needle_c')]
+        app = app_for({0: rows})
+        async with app.run_test() as pilot:
+            await self.boot(app, pilot)
+            await pilot.press('/')
+            await pilot.press(*'needle')
+            def selected():
+                ol = app.current_option_list
+                return ol.get_option_at_index(ol.highlighted).id
+            self.assertEqual(selected(), 'item_0_0')
+            await pilot.press('enter')
+            self.assertEqual(selected(), 'item_0_0')
+            self.assertFalse(app.query_one('#local-search', Input).display)
+            for key, index in [('enter', 2), ('n', 3), ('enter', 0), ('N', 3), ('n', 0)]:
+                await pilot.press(key)
+                self.assertEqual(selected(), f'item_0_{index}')
+            self.assertFalse(any(row.value for row in rows))
+            await pilot.press('space')
+            self.assertTrue(rows[0].value)
+            await pilot.press('escape', 'enter')
+            self.assertFalse(rows[0].value)
+            self.assertFalse(app._search_active)
+
+    async def test_inline_search_empty_missing_single_and_literal_n_keys(self):
+        app = app_for({0: [item('nN', type_='bool', default=False)]})
+        async with app.run_test() as pilot:
+            await self.boot(app, pilot)
+            await pilot.press('/', 'n', 'N')
+            self.assertEqual(app.query_one('#local-search', Input).value, 'nN')
+            await pilot.press('enter', 'enter', 'n', 'N')
+            self.assertFalse(app.schema[0][0].value)
+            await pilot.press('/', *'missing', 'enter', 'enter', 'n', 'N')
+            self.assertFalse(app.schema[0][0].value)
+            self.assertFalse(app._search_results)
+            await pilot.press('escape', '/', 'space', 'enter', 'enter')
+            self.assertTrue(app.schema[0][0].value)
+
+    async def test_fuzzy_search_accepts_selected_rank_and_repeats_across_tabs(self):
+        app = app_for({0: [item('needle_a'), item('needle_b')], 3: [item('needle_c')]})
+        async with app.run_test() as pilot:
+            await self.boot(app, pilot)
+            await pilot.press('ctrl+f', *'needle')
+            await pilot.pause(.1)
+            screen = app.screen
+            expected = screen.results.copy()
+            self.assertEqual(len(expected), 3)
+            await pilot.press('down')
+            self.assertEqual(screen.query_one(OptionList).highlighted, 1)
+            await pilot.press('enter')
+            def selected():
+                ol = app.current_option_list
+                parsed = app._get_item_from_id(ol.get_option_at_index(ol.highlighted).id)
+                return parsed[:2]
+            self.assertEqual(selected(), expected[1])
+            for key, position in [('enter', 2), ('n', 0), ('N', 2), ('N', 1)]:
+                await pilot.press(key)
+                self.assertEqual(selected(), expected[position])
+            self.assertFalse(app.pending_commits)
+            self.assertFalse(app._modal_active())
+            await pilot.press('escape', 'enter')
+            self.assertIsInstance(app.screen, ui.HybridInputScreen)
+
+    async def test_search_expands_nested_matches_and_skips_hidden_rows(self):
+        first = item('folder1', type_='menu', default=None, expanded=False)
+        second = item('folder2', type_='menu', default=None, parent_ref='folder1', expanded=False)
+        hidden = item('needle_missing')
+        a = item('needle_a', parent_ref='folder2')
+        b = item('needle_b', parent_ref='folder1')
+        empty_menu = item('needle_empty', type_='menu', default=None)
+        app = app_for({0: [hidden, first, second, a, b, empty_menu]}, hide_missing_items=True,
+                      engine=Engine({'needle_a': '1', 'needle_b': '2'}))
+        async with app.run_test() as pilot:
+            await self.boot(app, pilot)
+            await pilot.press('/', *'needle', 'enter')
+            self.assertTrue(first.expanded and second.expanded)
+            self.assertEqual(app.current_option_list.last_highlighted_id, 'item_0_3')
+            await pilot.press('n')
+            self.assertEqual(app.current_option_list.last_highlighted_id, 'item_0_4')
+            await pilot.press('ctrl+f', *'needle')
+            await pilot.pause(.1)
+            self.assertEqual(app.screen.results, [(0, 3), (0, 4)])
+
+    async def test_repeat_search_does_not_capture_modal_text_or_activation(self):
+        app = app_for({0: [item('needle_a'), item('needle_b')]})
+        async with app.run_test() as pilot:
+            await self.boot(app, pilot)
+            await pilot.press('/', *'needle', 'enter', 'space')
+            self.assertIsInstance(app.screen, ui.HybridInputScreen)
+            inp = app.screen.query_one(Input)
+            inp.value = ''
+            await pilot.press('n', 'N')
+            self.assertEqual(inp.value, 'nN')
+            await pilot.press('escape', 'n')
+            self.assertEqual(app.current_option_list.last_highlighted_id, 'item_0_1')
+
+    async def test_repeat_search_tracks_reordered_objects_and_skips_removed_results(self):
+        a, b, other = item('needle_a'), item('needle_b'), item('other')
+        app = app_for({0: [a, b, other]})
+        async with app.run_test() as pilot:
+            await self.boot(app, pilot)
+            await pilot.press('/', *'needle', 'enter')
+            app.schema[0] = [other, b, a]
+            app._rebuild_indexes()
+            app._tab_dirty.add(0)
+            await pilot.press('n')
+            self.assertEqual(app.current_option_list.last_highlighted_id, 'item_0_1')
+            app.schema[0] = [other]
+            app._rebuild_indexes()
+            app._populate_option_list(0)
+            await pilot.press('enter', 'n', 'N')
+            self.assertFalse(app._modal_active())
+            self.assertFalse(app.pending_commits)
+
+    async def test_fuzzy_search_excludes_rows_without_option_widgets(self):
+        app = app_for({0: [item('needle_a')], 1: [item('needle_b')],
+                       2: [item('needle_c', group='shown'), item('needle_d', group='hidden')]},
+                      custom_views={1: lambda: 'Body',
+                                    2: {'view': lambda: 'Body', 'show_options': True,
+                                        'option_groups': ['shown']}})
+        async with app.run_test() as pilot:
+            await self.boot(app, pilot)
+            await pilot.press('/', *'needle', 'ctrl+f', *'needle')
+            await pilot.pause(.1)
+            self.assertEqual(app.screen.results, [(0, 0), (2, 0)])
+            await pilot.press('enter', 'enter')
+            self.assertEqual(app._current_tab_index(), 2)
+            self.assertFalse(app.query_one('#local-search', Input).display)
+            self.assertEqual(app.current_option_list.last_highlighted_id, 'item_2_0')
+
     async def test_hybrid_preserves_custom_initial_value(self):
         app = app_for()
         async with app.run_test() as pilot:

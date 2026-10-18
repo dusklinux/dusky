@@ -930,6 +930,8 @@ class SearchScreen(ModalScreen[tuple[int, int] | None]):
         for tab_idx, tab_items in self.app.schema.items():
             tab_name = self.app.tabs.get(tab_idx, f"Tab {tab_idx}")
             for item_idx, item in enumerate(tab_items):
+                if not self.app._item_is_searchable(tab_idx, item):
+                    continue
                 label_norm = item.label.casefold()
                 haystack = f"{tab_name} {item.label} {item.key} {item.type_}".casefold()
                 haystack_compact = "".join(haystack.split())
@@ -953,9 +955,9 @@ class SearchScreen(ModalScreen[tuple[int, int] | None]):
             lambda query=event.value: self._populate_list(query),
         )
 
-    def _populate_list(self, query: str, *, force: bool = False) -> None:
+    def _populate_list(self, query: str) -> None:
         query_key = query.casefold().strip()
-        if not force and query_key == self._last_query:
+        if query_key == self._last_query:
             return
         self._last_query = query_key
         ol = self.query_one(OptionList)
@@ -1019,6 +1021,7 @@ class SearchScreen(ModalScreen[tuple[int, int] | None]):
             self.results.append((tab_idx, item_idx))
 
         ol.add_options(options_to_add)
+        ol.highlighted = 0 if self.results else None
 
     @on(OptionList.OptionSelected)
     def on_selected(self, event: OptionList.OptionSelected) -> None:
@@ -1032,7 +1035,7 @@ class SearchScreen(ModalScreen[tuple[int, int] | None]):
         if self._search_timer is not None:
             self._search_timer.stop()
             self._search_timer = None
-        self._populate_list(event.value, force=True)
+        self._populate_list(event.value)
 
         ol = self.query_one(OptionList)
         if ol.highlighted is not None and ol.highlighted < len(self.results):
@@ -1162,7 +1165,9 @@ class ShortcutsInfoScreen(ModalScreen[None]):
             ("?", "Toggle item documentation panel"),
             ("ctrl+f", "Fuzzy search all options"),
             ("/", "Inline search in current tab"),
-            ("escape", "Clear inline search / Close modals"),
+            ("n / N", "Next / previous search match (wraps)"),
+            ("enter", "Accept search / Next match until Esc"),
+            ("escape", "End search navigation / Close modals"),
             ("tab", "Switch to Next Tab"),
             ("shift+tab", "Switch to Previous Tab"),
             ("alt+1..7", "Jump directly to tab N"),
@@ -1213,7 +1218,10 @@ class ShortcutsInfoScreen(ModalScreen[None]):
 # =============================================================================
 class ConfigOptionList(OptionList):
     BINDINGS = [
-        Binding("enter,space", "app.submit_current", "Action"),
+        Binding("enter", "app.submit_or_repeat_search", "Action / Next Match"),
+        Binding("space", "app.submit_current", "Action"),
+        Binding("n", "app.repeat_search(1)", "Next Match", show=False),
+        Binding("N", "app.repeat_search(-1)", "Previous Match", show=False),
         Binding("e", "app.toggle_expand", "Expand/Collapse"),
         Binding("j,down", "cursor_down", "Down"),
         Binding("k,up", "cursor_up", "Up"),
@@ -2202,6 +2210,11 @@ Tooltip {
 
         self._status_timer: Timer | None = None
 
+        # Keep model objects, not row numbers: live schemas can reorder rows.
+        self._search_results: list[tuple[int, ConfigItem]] = []
+        self._search_position = -1
+        self._search_active = False
+
         self._cached_tab_bar: Horizontal | None = None
         self._cached_tabs_container: Horizontal | None = None
         self._cached_tab_left: Label | None = None
@@ -2468,7 +2481,7 @@ Tooltip {
                 yield Vertical(id="help-panel")
 
             with Vertical(id="bottom-dock"):
-                yield Input(id="local-search", placeholder=" Jump to option... (Enter/Esc to close)")
+                yield Input(id="local-search", placeholder=" Jump to option... (Enter: accept, n/N: next/previous, Esc: clear)")
                 yield AppFooter(id="footer")
 
     # =========================================================================
@@ -6120,8 +6133,83 @@ Tooltip {
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         if action == "clear_local_search":
-            return self._modal_active() or self._local_search_is_open()
+            return self._modal_active() or self._local_search_is_open() or self._search_active
         return True
+
+    def _item_is_searchable(self, tab_idx: int, item: ConfigItem) -> bool:
+        spec = self._custom_spec(tab_idx)
+        groups = None
+        if spec is not None:
+            if not isinstance(spec, dict) or not spec.get("show_options", False):
+                return False
+            groups = spec.get("option_groups")
+            if groups and item.group not in groups:
+                return False
+        if item.type_ == "menu" and self.hide_missing_items:
+            return any(
+                child.parent_ref in (item.uid, item.key)
+                and (not groups or child.group in groups)
+                and (child.type_ in ("menu", "action", "preset") or child.exists_in_target)
+                for child in self.schema.get(tab_idx, [])
+            )
+        return item.type_ in ("menu", "action", "preset") or not self.hide_missing_items or item.exists_in_target
+
+    def _remember_search(self, results: list[tuple[int, int]], position: int = -1) -> None:
+        self._search_results = [(tab, self.schema[tab][index]) for tab, index in results]
+        self._search_position = position
+        self._search_active = True
+
+    def _reveal_search_result(self, tab_idx: int, item_idx: int) -> None:
+        """Expand ancestors before locating a result, including lazy tab lists."""
+        items = self.schema[tab_idx]
+        current_pref = items[item_idx].parent_ref
+        seen_prefs = set()
+        expanded_any = False
+        while current_pref and current_pref not in seen_prefs:
+            seen_prefs.add(current_pref)
+            for parent in items:
+                if current_pref in (parent.uid, parent.key) and (parent.is_parent or parent.type_ == "menu"):
+                    expanded_any |= not parent.expanded
+                    parent.expanded = True
+                    current_pref = parent.parent_ref
+                    break
+            else:
+                break
+        if expanded_any:
+            self._tab_dirty.add(tab_idx)
+        if tab_idx not in self._tab_populated or tab_idx in self._tab_dirty:
+            self._populate_option_list(tab_idx, maintain_highlight_id=f"item_{tab_idx}_{item_idx}")
+
+    def _jump_to_search_result(self, tab_idx: int, item_idx: int) -> None:
+        inp = self._local_search_input()
+        inp.display = False
+        self.toggle_shortcut_active("slash", False)
+        self._reveal_search_result(tab_idx, item_idx)
+        self._pending_search_target = (tab_idx, item_idx)
+        self.action_switch_tab(tab_idx)
+        self.call_after_refresh(self._focus_search_target)
+
+    def action_submit_or_repeat_search(self) -> None:
+        if self._search_active:
+            self.action_repeat_search(1)
+        else:
+            self.action_submit_current()
+
+    def action_repeat_search(self, direction: int) -> None:
+        if self._modal_active() or not self._search_active:
+            return
+        total = len(self._search_results)
+        for step in range(1, total + 1):
+            position = (self._search_position + direction * step) % total
+            tab_idx, item = self._search_results[position]
+            ref = self._item_refs.get(id(item))
+            if ref is None or ref[0] != tab_idx or not self._item_is_searchable(tab_idx, item):
+                continue
+            self._search_position = position
+            self._jump_to_search_result(*ref)
+            self.notify_status(f"Search match {position + 1}/{total} · n/N: next/previous · Esc: clear")
+            return
+        self.notify_status("No available search matches. Search again or press Esc to clear.", level="warning")
 
     def _local_search_is_open(self) -> bool:
         try:
@@ -6139,6 +6227,11 @@ Tooltip {
             return
 
         inp = self._local_search_input()
+
+        self._search_results.clear()
+        self._search_position = -1
+        self._search_active = False
+        self._pending_search_target = None
 
         with inp.prevent(Input.Changed):
             inp.value = ""
@@ -6164,8 +6257,13 @@ Tooltip {
             return
 
         inp = self._local_search_input()
-        if not inp.display:
+        if not inp.display and not self._search_active:
             return
+
+        self._search_results.clear()
+        self._search_position = -1
+        self._search_active = False
+        self._pending_search_target = None
 
         with inp.prevent(Input.Changed):
             inp.value = ""
@@ -6178,10 +6276,13 @@ Tooltip {
 
     @on(Input.Changed, "#local-search")
     def handle_local_search(self, event: Input.Changed) -> None:
-        if not event.input.display:
+        if not event.input.display or event.value != event.input.value:
             return
 
         query = event.value.lower().replace(" ", "")
+        self._search_results.clear()
+        self._search_position = -1
+        self._search_active = bool(query)
         if not query:
             return
 
@@ -6189,53 +6290,29 @@ Tooltip {
         if ol is None:
             return
 
-        try:
-            tab_idx = int(ol.id.split("-")[1])
-            items = self.schema.get(tab_idx, [])
-
-            for item_idx, item in enumerate(items):
-                label = item.label.lower().replace(" ", "")
-                if query not in label:
-                    continue
-
-                opt_id = f"item_{tab_idx}_{item_idx}"
-
-                pref = item.parent_ref
-                if pref:
-                    current_pref = pref
-                    expanded_any = False
-                    seen_prefs = set()
-
-                    while current_pref and current_pref not in seen_prefs:
-                        seen_prefs.add(current_pref)
-
-                        for p_item in items:
-                            if current_pref in (p_item.uid, p_item.key) and (p_item.is_parent or p_item.type_ == "menu"):
-                                if not p_item.expanded:
-                                    p_item.expanded = True
-                                    expanded_any = True
-
-                                current_pref = p_item.parent_ref
-                                break
-                        else:
-                            current_pref = None
-
-                    if expanded_any:
-                        self._populate_option_list(tab_idx, maintain_highlight_id=opt_id)
-
-                idx = ol.get_option_index(opt_id)
-                ol.highlighted = idx
-                scroll = getattr(ol, "scroll_to_highlight", None)
-                if callable(scroll):
-                    scroll()
-                break
-        except Exception:
-            pass
+        tab_idx = int(ol.id.split("-")[1])
+        results = [(tab_idx, index) for index, item in enumerate(self.schema.get(tab_idx, []))
+                   if query in item.label.lower().replace(" ", "") and self._item_is_searchable(tab_idx, item)]
+        self._remember_search(results)
+        for position, (_, item_idx) in enumerate(results):
+            self._reveal_search_result(tab_idx, item_idx)
+            try:
+                ol.highlighted = ol.get_option_index(f"item_{tab_idx}_{item_idx}")
+            except OptionDoesNotExist:
+                continue
+            self._search_position = position
+            ol.scroll_to_highlight()
+            break
 
     @on(Input.Submitted, "#local-search")
     def submit_local_search(self, event: Input.Submitted) -> None:
         event.stop()
-        self.action_clear_local_search()
+        event.input.display = False
+        self.toggle_shortcut_active("slash", False)
+        if ol := self.current_option_list:
+            ol.focus()
+        if self._search_active:
+            self.notify_status("Enter/n: next match · N: previous match · Esc: clear")
 
     def _focus_search_target(self) -> None:
         target = self._pending_search_target
@@ -6262,38 +6339,19 @@ Tooltip {
             return
 
         self.toggle_shortcut_active("ctrl-f", True)
+        search_screen = SearchScreen()
 
         def check_reply(result: tuple[int, int] | None) -> None:
             self.toggle_shortcut_active("ctrl-f", False)
 
             if result is not None:
-                tab_idx, item_idx = result
-                target_item = self.schema[tab_idx][item_idx]
+                results = search_screen.results
+                self._remember_search(results, results.index(result))
+                # Modal callbacks run before the screen is popped.
+                self.call_later(self._jump_to_search_result, *result)
+                self.call_later(self.notify_status, "Enter/n: next match · N: previous match · Esc: clear")
 
-                pref = target_item.parent_ref
-                if pref:
-                    current_pref = pref
-                    seen_prefs = set()
-
-                    while current_pref and current_pref not in seen_prefs:
-                        seen_prefs.add(current_pref)
-
-                        for p_item in self.schema[tab_idx]:
-                            if current_pref in (p_item.uid, p_item.key) and (p_item.is_parent or p_item.type_ == "menu"):
-                                p_item.expanded = True
-                                current_pref = p_item.parent_ref
-                                break
-                        else:
-                            break
-
-                self._pending_search_target = (tab_idx, item_idx)
-                self._populate_option_list(tab_idx, maintain_highlight_id=f"item_{tab_idx}_{item_idx}")
-                self.action_switch_tab(tab_idx)
-                # Same-tab searches need no activation event. Other searches
-                # are focused by handle_tab_activated after lazy mount completes.
-                self.call_after_refresh(self._focus_search_target)
-
-        self.push_screen(SearchScreen(), check_reply)
+        self.push_screen(search_screen, check_reply)
 
     def action_next_tab(self) -> None:
         if self._modal_active():
