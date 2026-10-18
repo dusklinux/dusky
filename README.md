@@ -2,7 +2,7 @@
 
 # DUSKY
 
-**Arch Linux & Hyprland, engineered from the ground up to stay out of your way.**
+**The most performent while using the least amount of ram, like it should have always been**
 
 [**Watch the Full System Walkthrough**](https://youtu.be/JmgvSdEIK8c) • [**Download Offline ISO (3.5 GB)**](https://drive.google.com/drive/folders/1P368khN1p-IfzWoaDnPyQNEcpkKBsOte?usp=sharing) • [**1,050+ Wallpapers**](https://github.com/dusklinux/images) • [**Community Discord**](https://discord.gg/gmyAxpAQYK)
 
@@ -14,13 +14,13 @@
 
 ## Why Dusky Exists
 
-Unfortunately, Linux is heading in the exact same direction as Windows, and I wanted something that used the absolute *least* amount of resources possible. It is easy to bloat an operating system, dress up heavy background services as "must-have features," and ship them to everyone. What is actually difficult—what takes thousands of hours of obsessive engineering—is making sure not a single background process uses a megabyte more than it strictly has to. That is why I spent 3 days studying Polkit to break it down to its first principles just to debloat a service that constantly used 20 MB of RAM—and that is just one among a countless list of examples.
+Unfortunately, Linux is heading in the exact same direction as Windows, and I wanted something that used the absolute *least* amount of resources possible. It is easy to bloat an operating system, dress up heavy background services as "must have features," and ship them to everyone. It takes thousands of hours of obsessive engineering to make sure not a single background process uses a megabyte more than it strictly has to.
 
-The honest truth is that the majority of bundled features in modern distros are never touched by the vast majority of users. They just sit there, eating resources and taking control out of your hands because a distro maintainer assumed they knew better than you. An OS shouldn't gobble up GIGABYTES of your RAM at idle or burn CPU cycles on mystery tasks in the background.
+The honest truth is that the majority of bundled features in modern distros are never touched by the vast majority of users. They just sit there, eating resources and taking control out of your hands because a distro maintainer assumed they knew better than you. An OS shouldn't gobble up GIGABYTES of your RAM at idle or burn CPU cycles on mystery tasks in the background particularly when you dont need them.
 
 At the same time, there is a fine line between minimalism and misery.
 
-I used to think a minimal Arch Linux ISO with a few applications on top was all you needed for a proper setup. I was wrong. Over the last year, I learned the hard way that system configuration has no bottom. A stock minimal install might boot, but under the hood it is completely unconfigured—just waiting for you to hit a wall with PAM, sudoers, firewall rules, swap, memory tuning, filesystem compression, or backups among an exhaustive list of things. You shouldn't have to spend weeks debugging low-level plumbing, and you shouldn't have to wonder why a background daemon is eating your RAM. That burden belongs on the developer, not the user.
+I used to think a minimal Arch Linux ISO with a few applications on top was all you needed for a proper setup. I was wrong. Over the last year, I learned the hard way that system configuration has no bottom. A stock minimal install might boot, but under the hood it is completely unconfigured..just waiting for you to hit a wall. You shouldn't have to spend hours debugging low level plumbing, and you shouldn't have to wonder why a background daemon is eating your RAM. That burden belongs on the developer, not the user.
 
 Finding that exact balance is what I have spent the last year obsessing over. Across more than **7,000 commits** and thousands of iterations, I studied what other distributions and projects did well, borrowed their best ideas, stripped away their overhead, and rebuilt them to be faster and cleaner.
 
@@ -31,21 +31,21 @@ Finding that exact balance is what I have spent the last year obsessing over. Ac
 ### 22 Megabytes of Instructions—Nothing Installed at Root
 Dusky has more built-in capabilities than almost any distribution out there, yet none of them weigh down your system. Why? Because **they aren't "installed."**
 
-Everything lives inside a **~22 MB folder** in your user directory containing thousands of lines of modular scripts. A script is nothing more than a sequence of instructions waiting for your computer to run it. Until you actually call a feature, it uses **zero** RAM and **zero** CPU. Nothing is permanently wired into your operating system at the root level. If you delete that one folder, all of it is gone.
+Almost Everything lives inside a **~22 MB 'user_scripts' folder** in your user directory containing thousands of modular scripts. A script is nothing more than a sequence of instructions waiting for your computer to run it. Until you actually call a feature, it uses **zero** RAM and **zero** CPU. Nothing is permanently wired into your operating system at the root level. If you delete that one folder, all of it is gone.
 
-### One Shared TUI Engine for Every Config
-I didn't want myself, or anyone else, to have to dig through raw text files every time a setting needed changing. At the same time, I refused to build a bloated GUI with a mountain of heavy dependencies when every Linux system already has a terminal.
+### dusky TUI
+I didn't want myself, or anyone else, to have to dig through raw config files every time a setting needed changing. At the same time, I refused to build a bloated GUI with a mountain of heavy dependencies when every Linux system already has a terminal.
 
-Instead, **every single configuration file on the system has its own Terminal User Interface (TUI)**. You launch the TUI for what you want to tweak, navigate it cleanly, and close it. Most importantly, every TUI runs on the **exact same shared engine**. Nothing is copied, nothing is repetitive, and the entire engine sits right inside that same user directory as a script!
+And this is where I created a TUI Engine, this engine allows you to attach ALL files/configs to it and it opens those configs in a user friendly manner for you to easily change settings without knowing how to configure any linux config with unfamiliar syntax. You launch the TUI for what you want to tweak. Most importantly, every TUI runs on the **exact same shared engine**. Nothing is copied, nothing is repetitive, and the entire engine sits right inside that same user directory as a set of scripts!
 
 ### Rust vs. Quickshell
-I made a deliberate, stubborn decision: **nothing in Dusky stays resident in RAM if it doesn't have to.** While Quickshell is easy to configure and write new UIs for, it is unbelievably resource-heavy—Omarchy, for example, uses 2 GB of RAM with *nothing* open. That should be a crime. 
+I made a deliberate, stubborn decision: **nothing in Dusky stays resident in RAM if it doesn't have to.** While Quickshell is easy to configure and write new UIs for, it is unacceptability ram hungry! Omarchy, for example uses 2 GB of RAM with *nothing* open and at that point you might as well use a stripped down windows iso.
 
-I’ve written everything—no, **EVERYTHING**—in **Rust**. And since Rust is such a fast language, it doesn’t need a background service constantly running just to keep libraries loaded in memory for fast invocation. Instead, its **cold start beats Quickshell even when Quickshell has a background service running!**
+I’ve written **EVERYTHING** in **Rust**. And since Rust is such a fast language, it doesn’t need a background service constantly running just to keep libraries loaded in memory for fast invocation. Instead, its **cold start beats Quickshell even when Quickshell has a background service running!**
 
-* **Our Control Center (Settings App), Notification Panel, and Wallpaper Selector** are all written in Rust.
-* **The Control Center** simply organizes all of Dusky's underlying **700+ scripts** into an intuitive visual interface for times when you don't want to browse scripts manually. You open it, it runs the script with the right flags, and when you close it, it is completely out of memory.
-* **FZF-based TUI Clipboard** with image preview support and syntax highlighting for supported text.
+* **Our dusky center(Settings App), dusky tray (quick panel), dusky paper (wallpaper switcher)** among other things are all written in Rust.
+* **The dusky center** simply organizes all of dusky's underlying **700+ scripts** into an intuitive visual interface for times when you don't want to browse scripts manually.
+* **FZF-based TUI Clipboard** with image preview support, optional vim keys navigation, and syntax highlighting for supported text.
 
 We do not play around here. Every megabyte of baseline RAM we save is another megabyte you can put toward the heavy workloads you actually care about.
 
