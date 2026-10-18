@@ -950,7 +950,7 @@ hl.window_rule({
     name = "kitty",
     match = { class = "^(dusky_window_rules.sh)$" },
     float = true,
-    size = {1000, 750},
+    size = {"monitor_w * 0.68", "monitor_h * 0.94"},
     center = true
 })
 

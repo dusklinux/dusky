@@ -6,6 +6,7 @@ initially, as in the original generator. Other essentials are editable comments;
 optional properties are absent until selected with o. No third-party Python UI.
 Preset choices are shown below the selected setting; p opens the full picker.
 Number keys apply a preset directly; e accepts custom Lua expressions.
+Vim navigation is active outside text entry; F1 or ? shows all keybindings.
 The window list refreshes automatically; options freeze the list while editing.
 
 Rule reference: https://wiki.hypr.land/Configuring/Basics/Window-Rules/
@@ -222,6 +223,25 @@ def captured_ratio(value: int, total: int) -> str:
     rounded = f'{ratio:.2f}'
     # A small window or offset must not become zero just for formatting.
     return f'{ratio:.2e}' if ratio and float(rounded) == 0 else rounded
+
+
+def navigation_index(ch, index: int, total: int, page: int) -> int | None:
+    """Shared list movement; text editors handle their own control keys."""
+    if ch in ('g', curses.KEY_HOME):
+        return 0
+    if ch in ('G', curses.KEY_END):
+        return max(0, total - 1)
+    if ch in ('j', curses.KEY_DOWN):
+        delta = 1
+    elif ch in ('k', curses.KEY_UP):
+        delta = -1
+    elif ch in ('\x04', '\x15'):
+        delta = max(1, page // 2) * (1 if ch == '\x04' else -1)
+    elif ch in ('\x06', '\x02', curses.KEY_NPAGE, curses.KEY_PPAGE):
+        delta = max(1, page) * (1 if ch in ('\x06', curses.KEY_NPAGE) else -1)
+    else:
+        return None
+    return min(max(0, total - 1), max(0, index + delta))
 
 
 def lua_tokens(text: str) -> list[str | bytes]:
@@ -605,6 +625,55 @@ class DuskyTUI:
         validate_rule(generate_lua_rule(self.current, candidate))
         self.selections[self.current.address] = candidate
 
+    def show_help(self) -> None:
+        # Main-list refresh uses a timed read; help must stay open until input.
+        # The main loop restores its normal timeout after this modal returns.
+        self.screen.timeout(-1)
+        lines = (
+            'Lists: windows, options and preset picker',
+            '  j/k or arrows       Down/up',
+            '  g/G or Home/End     First/last',
+            '  Ctrl-D/U           Half page down/up',
+            '  Ctrl-F/B, PgDn/Up   Full page down/up',
+            '',
+            'Window screen',
+            '  Enter              Append rule',
+            '  c/C                Copy rule',
+            '  o                  Open options',
+            '  r or Ctrl-R        Refresh windows',
+            '  [/], Shift-Up/Down Scroll rule preview',
+            '  q/Q or Esc         Quit',
+            '',
+            'Options',
+            '  Space or v/V       Toggle selected option',
+            '  J/K                Toggle, then move down/up',
+            '  e                  Edit Lua value',
+            '  p or 1-9           Choose/apply preset',
+            '  /                  Search options',
+            '  Enter, Esc or o    Return to window screen',
+            '  q/Q                Quit',
+            '',
+            'Preset picker: Enter applies; Esc or q cancels',
+            'Text entry: arrows move; Ctrl-U clears; Esc cancels',
+        )
+        offset = 0
+        while True:
+            self.screen.erase()
+            height, _ = self.screen.getmaxyx()
+            count = max(1, height - 4)
+            offset = min(offset, max(0, len(lines) - count))
+            self.put(0, 1, 'Keybindings', self.accent)
+            for y, line in enumerate(lines[offset:offset + count], 2):
+                self.put(y, 1, line)
+            self.put(height - 1, 1, 'j/k scroll   Ctrl-D/U half page   Esc / F1 / ? close', curses.A_DIM)
+            self.screen.refresh()
+            ch = self.screen.get_wch()
+            if ch in ('\x1b', 'q', 'Q', '\n', '\r', curses.KEY_ENTER, curses.KEY_F1, '?'):
+                return
+            index = navigation_index(ch, offset, max(1, len(lines) - count + 1), count)
+            if index is not None:
+                offset = index
+
     def choose_preset(self, key: str, choices: list[tuple[str, str]]) -> tuple[str, str] | None:
         current = self.selection.value(self.current, key)
         index = next((i for i, (_, value) in enumerate(choices) if value == current), 0)
@@ -619,7 +688,7 @@ class DuskyTUI:
                 if self.screen.get_wch() in ('\x1b', 'q', 'Q'):
                     return None
                 continue
-            self.put(1, 1, 'Up/Down choose   Enter apply   1-9 quick pick   Esc cancel')
+            self.put(1, 1, 'j/k choose   Ctrl-D/U half page   Enter apply   Esc cancel   F1 help')
             count = max(1, height - 9)
             offset = max(0, min(offset, index))
             if index >= offset + count:
@@ -642,20 +711,16 @@ class DuskyTUI:
                 ch = curses.KEY_UP if buttons & curses.BUTTON4_PRESSED else curses.KEY_DOWN if buttons & curses.BUTTON5_PRESSED else None
             if ch in ('\x1b', 'q', 'Q'):
                 return None
+            if ch in (curses.KEY_F1, '?'):
+                self.show_help()
+                continue
             if ch in ('\n', '\r', curses.KEY_ENTER):
                 return choices[index]
             if isinstance(ch, str) and ch in '123456789' and int(ch) <= len(choices):
                 return choices[int(ch) - 1]
-            if ch in ('j', curses.KEY_DOWN):
-                index = min(len(choices) - 1, index + 1)
-            elif ch in ('k', curses.KEY_UP):
-                index = max(0, index - 1)
-            elif ch in ('g', curses.KEY_HOME):
-                index = 0
-            elif ch in ('G', curses.KEY_END):
-                index = len(choices) - 1
-            elif ch in (curses.KEY_NPAGE, curses.KEY_PPAGE):
-                index = min(len(choices) - 1, max(0, index + (count if ch == curses.KEY_NPAGE else -count)))
+            moved = navigation_index(ch, index, len(choices), count)
+            if moved is not None:
+                index = moved
 
     def refresh(self, *, automatic: bool = False) -> None:
         self.next_refresh = monotonic() + 1
@@ -687,7 +752,7 @@ class DuskyTUI:
         if self.options and self.current:
             rows = self.option_rows()
             self.put(1, 1, 'Options  [x] enabled  [.] commented  [ ] omitted', self.accent)
-            self.put(2, 1, 'Space toggle   e custom Lua   p choose preset   / search   Esc back')
+            self.put(2, 1, 'Space/v toggle   e edit   p presets   / search   Esc back   F1 help')
             self.option_index = min(self.option_index, max(0, len(rows) - 1))
             choices = []
             if rows and rows[self.option_index].key in VALUE_PRESETS:
@@ -729,7 +794,7 @@ class DuskyTUI:
             self.put(height - 2, 1, f'Search: {self.query}' if self.query else 'Enter returns to preview; save from the window screen')
             self.screen.refresh()
             return count
-        self.put(1, 1, 'Enter append   c copy   o options   r refresh   q quit')
+        self.put(1, 1, 'Enter append   c copy   o options   r refresh   q quit   F1 help')
         count = min(max(2, (height - 8) // 3), max(2, len(self.windows)))
         self.offset = max(0, min(self.offset, self.index))
         if self.index >= self.offset + count:
@@ -761,6 +826,9 @@ class DuskyTUI:
                 return True
         if ch in ('q', 'Q'):
             return False
+        if ch in (curses.KEY_F1, '?'):
+            self.show_help()
+            return True
         if count == 0:
             if ch == '\x1b':
                 if not self.options:
@@ -769,23 +837,16 @@ class DuskyTUI:
             return True
         if self.options and self.current:
             rows = self.option_rows()
+            moved = navigation_index(ch, self.option_index, len(rows), count)
             if ch in ('\x1b', '\n', '\r', 'o', curses.KEY_ENTER):
                 self.options = False
-            elif ch in ('j', curses.KEY_DOWN):
-                self.option_index = min(max(0, len(rows) - 1), self.option_index + 1)
-            elif ch in ('k', curses.KEY_UP):
-                self.option_index = max(0, self.option_index - 1)
-            elif ch in ('g', curses.KEY_HOME):
-                self.option_index = 0
-            elif ch in ('G', curses.KEY_END):
-                self.option_index = max(0, len(rows) - 1)
-            elif ch in (curses.KEY_NPAGE, curses.KEY_PPAGE):
-                self.option_index = min(max(0, len(rows) - 1), max(0, self.option_index + (count if ch == curses.KEY_NPAGE else -count)))
+            elif moved is not None:
+                self.option_index = moved
             elif ch == '/':
                 query = self.prompt('Search', self.query)
                 if query is not None:
                     self.query, self.option_index, self.option_offset = query, 0, 0
-            elif (ch in (' ', 'e', 'p') or isinstance(ch, str) and ch in '123456789') and rows:
+            elif (ch in (' ', 'v', 'V', 'J', 'K', 'e', 'p') or isinstance(ch, str) and ch in '123456789') and rows:
                 p = rows[self.option_index]
                 if ch == 'p' or isinstance(ch, str) and ch in '123456789':
                     if p.key not in VALUE_PRESETS:
@@ -820,18 +881,20 @@ class DuskyTUI:
                         self.selection.active.remove(p.key)
                 else:
                     self.selection.enable(p.key)
+                if ch in ('J', 'K'):
+                    self.option_index = min(len(rows) - 1, max(0, self.option_index + (1 if ch == 'J' else -1)))
             return True
         if ch == '\x1b':
             return False
-        if ch == 'r':
+        if ch in ('r', '\x12'):
             self.refresh()
         elif self.current:
-            if ch in ('j', curses.KEY_DOWN, 'k', curses.KEY_UP, curses.KEY_NPAGE, curses.KEY_PPAGE, 'g', 'G'):
-                delta = count if ch == curses.KEY_NPAGE else -count if ch == curses.KEY_PPAGE else 1 if ch in ('j', curses.KEY_DOWN) else -1
-                self.index = 0 if ch == 'g' else len(self.windows) - 1 if ch == 'G' else min(len(self.windows) - 1, max(0, self.index + delta))
+            moved = navigation_index(ch, self.index, len(self.windows), count)
+            if moved is not None:
+                self.index = moved
                 self.preview_offset = 0
-            elif ch in ('[', ']'):
-                self.preview_offset = max(0, self.preview_offset + (1 if ch == ']' else -1))
+            elif ch in ('[', ']', curses.KEY_SR, curses.KEY_SF):
+                self.preview_offset = max(0, self.preview_offset + (1 if ch in (']', curses.KEY_SF) else -1))
             elif ch == 'o':
                 self.options = True
             elif ch in ('c', 'C', '\n', '\r', curses.KEY_ENTER):
