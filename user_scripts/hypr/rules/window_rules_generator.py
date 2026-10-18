@@ -15,6 +15,7 @@ import argparse
 lazy import curses
 lazy import fcntl
 import json
+from math import gcd
 import os
 from pathlib import Path
 import re
@@ -45,8 +46,8 @@ PROPERTIES = (
     Property("match.class", '""', "Exact current class; static effects match the class at opening", True),
     Property("match.title", '""', "Exact current title; static effects match the title at opening", True),
     Property("float", "true", "Float the window", True),
-    Property("size", "{800, 600}", "Pixels / proportions / 95%: choose below or p; e edits custom math", True),
-    Property("move", "{0, 0}", "Placement presets below or p; e edits custom position math", True),
+    Property("size", "{800, 600}", "2: captured screen percentages; 3: captured aspect ratio; e: custom math", True),
+    Property("move", "{0, 0}", "2: captured position as screen percentages; p: placements; e: custom math", True),
     Property("pin", "true", "Show on all workspaces (requires floating)", True),
     Property("center", "true", "Center floating window; use instead of move", True),
     Property("workspace", '"unset"', 'Workspace selector, optionally silent; "unset" removes assignment', True),
@@ -125,9 +126,7 @@ DEFAULT_ACTIVE = frozenset({"name", "match.class", "float", "size", "move"})
 # requested window size for move expressions. Borders/reserved bars are not
 # subtracted from monitor_w/monitor_h. Keep all expressions quoted Lua strings.
 VALUE_PRESETS = frozendict({
-    'size': (
-        ('95% of monitor', '{"monitor_w * 0.95", "monitor_h * 0.95"}'),
-    ),
+    'size': (),  # Size choices come entirely from the captured window.
     'move': (
         ('Centered on monitor', '{"(monitor_w - window_w) / 2", "(monitor_h - window_h) / 2"}'),
         ('Bottom-center, 20px gap', '{"(monitor_w - window_w) / 2", "monitor_h - window_h - 20"}'),
@@ -166,6 +165,7 @@ class Window:
     values: dict[str, str]
     monitor_id: int | None = None
     geometry: tuple[int, int, int, int] | None = None  # logical w, h, local x, y
+    monitor_size: tuple[int, int] | None = None  # cached logical capture dimensions
 
 
 @dataclass(slots=True)
@@ -214,6 +214,14 @@ def literal_regex(value: str) -> str:
 
 def display_text(value: str) -> str:
     return ''.join(c if c.isprintable() else ' ' for c in value)
+
+
+def captured_ratio(value: int, total: int) -> str:
+    """Use two decimals in actual rules, retaining tiny nonzero proportions."""
+    ratio = value / total
+    rounded = f'{ratio:.2f}'
+    # A small window or offset must not become zero just for formatting.
+    return f'{ratio:.2e}' if ratio and float(rounded) == 0 else rounded
 
 
 def lua_tokens(text: str) -> list[str | bytes]:
@@ -330,22 +338,36 @@ def hyprctl_json(command: str, *args: str) -> list:
 def preset_choices(window: Window, key: str) -> list[tuple[str, str]]:
     choices = [('Captured/default value', window.values.get(key, PROPERTY_MAP[key].value))]
     if key in ('size', 'move'):
-        if 'relative_size' not in window.values:
-            if window.monitor_id is None or window.geometry is None:
-                raise ValueError('Refresh windows before capturing monitor proportions')
+        if window.monitor_id is None or window.geometry is None:
+            raise ValueError('Refresh windows before capturing monitor proportions')
+        if window.monitor_size is None:
             dimensions = hyprctl_json('repl', MONITOR_DIMENSIONS_QUERY)
             monitor = next((row for row in dimensions if row[0] == window.monitor_id), None)
             if monitor is None or monitor[1] <= 0 or monitor[2] <= 0:
                 raise ValueError('Monitor is unavailable; refresh windows')
             # Query actual logical dimensions: IPC scale is rounded, and
             # physical/scale division also misses Hyprland's size rounding.
-            width, height = monitor[1:]
-            w, h, x, y = window.geometry
-            for prop, a, b in (('size', w, h), ('move', x, y)):
-                window.values['relative_' + prop] = (
-                    f'{{"monitor_w * ({a} / {width})", "monitor_h * ({b} / {height})"}}')
-        choices[0] = ('Captured pixels', choices[0][1])
-        choices.append(('Captured monitor proportions', window.values['relative_' + key]))
+            window.monitor_size = tuple(monitor[1:])
+        width, height = window.monitor_size
+        w, h, x, y = window.geometry
+        a, b = (w, h) if key == 'size' else (x, y)
+        # Format the actual stored expressions, shared by the UI, clipboard,
+        # file appends and command-line output.
+        x_ratio, y_ratio = captured_ratio(a, width), captured_ratio(b, height)
+        relative = f'{{"monitor_w * {x_ratio}", "monitor_h * {y_ratio}"}}'
+        label = 'Captured screen percentages' if key == 'size' else 'Captured position'
+        choices[0] = ('Captured pixels (fixed)', choices[0][1])
+        choices.append((f'{label} ({float(x_ratio):.2%} x {float(y_ratio):.2%})', relative))
+        if key == 'size':
+            # Keep the captured shape as a reduced integer ratio. Derive both
+            # dimensions from the same width, so rounding screen proportions
+            # cannot stretch the window. No source resolution is embedded.
+            divisor = gcd(w, h)
+            aspect_w, aspect_h = w // divisor, h // divisor
+            fitted_width = (f'min(monitor_w * {x_ratio}, '
+                            f'monitor_h * {y_ratio} * {aspect_w} / {aspect_h})')
+            shape = f'{{"{fitted_width}", "{fitted_width} * {aspect_h} / {aspect_w}"}}'
+            choices.append(('Captured aspect ratio (uniform scale)', shape))
     seen = {value for _, value in choices}
     for label, value in VALUE_PRESETS[key]:
         if value not in seen:
@@ -682,7 +704,8 @@ class DuskyTUI:
             for y, p in enumerate(rows[self.option_offset:self.option_offset + count], 4):
                 state = 'x' if p.key in self.selection.active else '.' if p.essential else ' '
                 attr = curses.A_REVERSE if y - 4 + self.option_offset == self.option_index else 0
-                self.put(y, 1, f'[{state}] {p.key:<32} {self.selection.value(self.current, p.key)}', attr)
+                value = self.selection.value(self.current, p.key)
+                self.put(y, 1, f'[{state}] {p.key:<32} {value}', attr)
             if choices and panel_height >= 4:
                 key = rows[self.option_index].key
                 current = self.selection.value(self.current, key)
