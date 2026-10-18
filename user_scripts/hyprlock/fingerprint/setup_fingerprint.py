@@ -78,9 +78,12 @@ def ensure_sudo() -> bool:
         return True
 
     # Fast path: already validated in credential cache
-    res = subprocess.run(["sudo", "-n", "true"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-    if res.returncode == 0:
-        return True
+    try:
+        res = subprocess.run(["sudo", "-n", "true"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        if res.returncode == 0:
+            return True
+    except OSError:
+        return False
 
     if not sys.stdin.isatty():
         try:
@@ -196,7 +199,7 @@ class IdentityResolver:
             raise ValueError(f"Unsafe dot username: {username!r}")
         if "/" in username or "\\" in username:
             raise ValueError(f"Username cannot contain path separators: {username!r}")
-        if not cls.SAFE_USERNAME_RE.match(username):
+        if not cls.SAFE_USERNAME_RE.fullmatch(username):
             raise ValueError(f"Username contains disallowed characters: {username!r}")
         return username
 
@@ -426,6 +429,8 @@ class ClamshellGate:
                 if not words:
                     continue
                 last_word = words[-1]
+                if not re.fullmatch(r"[0-9a-fA-F]+", last_word):
+                    continue
                 word_val = int(last_word, 16)
                 if (word_val & 1) != 0:
                     return True
@@ -522,13 +527,15 @@ shopt -s nullglob
 acpi_states=("$acpi_lid"/*/state)
 shopt -u nullglob
 
-if (( ${#acpi_states[@]} )); then
-  for state in "${acpi_states[@]}"; do
-    [[ -r "$state" ]] || continue
-    [[ $(<"$state") == *"closed"* ]] && exit 0
-  done
-  exit 1
-fi
+found_open=false
+for state in "${acpi_states[@]}"; do
+  [[ -r "$state" ]] || continue
+  content=$(<"$state")
+  content=${content,,}
+  [[ $content == *"closed"* ]] && exit 0
+  [[ $content == *"open"* ]] && found_open=true
+done
+$found_open && exit 1
 
 # 2. Input switch bitmap check for SW_LID (bit 0 of last word)
 for sw in "$input_class"/*/capabilities/sw; do
@@ -627,18 +634,27 @@ class PrivilegedRunner:
                 if tmp_path.exists():
                     tmp_path.unlink(missing_ok=True)
         else:
-            # Stage in user /tmp and install with sudo
-            tmp_path = Path(f"/tmp/.stage_{target.name}_{os.getpid()}_{time.time_ns()}")
+            # Install beside the destination, then rename: failed copies must
+            # never leave a truncated live PAM or lock configuration.
+            suffix = f"{os.getpid()}_{time.time_ns()}"
+            tmp_path = Path(f"/tmp/.stage_{target.name}_{suffix}")
+            installed_tmp = target_dir / f".tmp_{target.name}_{suffix}"
+            published = False
             try:
                 tmp_path.write_text(content, encoding="utf-8")
                 tmp_path.chmod(mode)
                 install_cmd = ["install", f"-Dm{mode:o}"]
                 if owner:
                     install_cmd.extend(["-o", owner])
-                install_cmd.extend([str(tmp_path), str(target)])
+                install_cmd.extend([str(tmp_path), str(installed_tmp)])
                 PrivilegedRunner.run_cmd(install_cmd, check=True)
+                PrivilegedRunner.run_cmd(["mv", "-fT", "--", str(installed_tmp), str(target)], check=True)
+                published = True
             finally:
-                if tmp_path.exists():
+                try:
+                    if not published:
+                        PrivilegedRunner.run_cmd(["rm", "-f", "--", str(installed_tmp)], check=False)
+                finally:
                     tmp_path.unlink(missing_ok=True)
 
     @staticmethod
@@ -784,7 +800,7 @@ class PackageManager:
             is_interactive = sys.stdin.isatty() and sys.stdout.isatty()
             proc = PrivilegedRunner.run_cmd(cmd, check=False, capture_output=not is_interactive)
             if proc.returncode != 0:
-                err_text = proc.stderr.strip() if proc.stderr else proc.stdout.strip()
+                err_text = (proc.stderr or proc.stdout or f"Exit code {proc.returncode}").strip()
                 return False, f"Package installation failed: {err_text}"
             return True, f"Successfully verified/installed {', '.join(pkgs_to_install)}."
         except (subprocess.SubprocessError, OSError) as err:
@@ -832,25 +848,37 @@ class PamConfigurator:
 
     def is_sudo_configured(self) -> bool:
         """Checks if both pam_fprintd and the clamshell gate are active in sudo."""
-        path = self._get_sudo_path()
-        if not path.is_file():
-            return False
-        try:
-            text = path.read_text(encoding="utf-8")
-            return "pam_fprintd.so" in text and "dusky-hw-laptop-closed" in text
-        except OSError:
-            return False
+        return self._is_configured(self._get_sudo_path())
 
     def is_polkit_configured(self) -> bool:
         """Checks if both pam_fprintd and the clamshell gate are active in polkit."""
-        path = self._get_polkit_path()
+        return self._is_configured(self._get_polkit_path())
+
+    @staticmethod
+    def _is_configured(path: Path) -> bool:
+        """Require adjacent active rules: success=1 must skip exactly pam_fprintd."""
         if not path.is_file():
             return False
         try:
             text = path.read_text(encoding="utf-8")
-            return "pam_fprintd.so" in text and "dusky-hw-laptop-closed" in text
+            rules = [line.split("#", 1)[0].split() for line in text.splitlines()]
+            rules = [rule for rule in rules if rule]
+            expected = [get_pam_gate_rule().split(), PAM_FPRINT_RULE.split()]
+            return any(rules[i:i + 2] == expected for i in range(len(rules) - 1))
         except OSError:
             return False
+
+    @staticmethod
+    def _is_fingerprint_rule(line: str) -> bool:
+        fields = line.split("#", 1)[0].split()
+        if not fields or fields[0] not in {"auth", "-auth"}:
+            return False
+        return "pam_fprintd.so" in fields or (
+            "pam_exec.so" in fields and any(
+                Path(field).name in {"dusky-hw-laptop-closed", "omarchy-hw-laptop-closed"}
+                for field in fields
+            )
+        )
 
     def configure_sudo(self) -> tuple[bool, str]:
         """
@@ -869,8 +897,7 @@ class PamConfigurator:
         # Clean existing legacy or misordered fprint lines first to guarantee order
         cleaned: list[str] = []
         for line in lines:
-            stripped = line.strip()
-            if "pam_fprintd.so" in stripped or "dusky-hw-laptop-closed" in stripped or "omarchy-hw-laptop-closed" in stripped:
+            if self._is_fingerprint_rule(line):
                 continue
             cleaned.append(line)
 
@@ -906,7 +933,7 @@ class PamConfigurator:
 
             cleaned = [
                 l for l in lines
-                if "pam_fprintd.so" not in l and "dusky-hw-laptop-closed" not in l and "omarchy-hw-laptop-closed" not in l
+                if not self._is_fingerprint_rule(l)
             ]
             insert_idx = 0
             for i, line in enumerate(cleaned):
@@ -945,7 +972,7 @@ class PamConfigurator:
                 lines = sudo_path.read_text(encoding="utf-8").splitlines(keepends=True)
                 filtered = [
                     l for l in lines
-                    if "pam_fprintd.so" not in l and "dusky-hw-laptop-closed" not in l and "omarchy-hw-laptop-closed" not in l
+                    if not self._is_fingerprint_rule(l)
                 ]
                 if len(filtered) != len(lines):
                     PrivilegedRunner.write_file(sudo_path, "".join(filtered), mode=0o644)
@@ -957,12 +984,13 @@ class PamConfigurator:
                 lines = polkit_path.read_text(encoding="utf-8").splitlines(keepends=True)
                 filtered = [
                     l for l in lines
-                    if "pam_fprintd.so" not in l and "dusky-hw-laptop-closed" not in l and "omarchy-hw-laptop-closed" not in l
+                    if not self._is_fingerprint_rule(l)
                 ]
                 # If polkit-1 only has comments and includes that we wrote, remove or clean it
                 non_empty = [l.strip() for l in filtered if l.strip() and not l.strip().startswith("#")]
                 if not non_empty:
-                    PrivilegedRunner.remove_file(polkit_path)
+                    if not PrivilegedRunner.remove_file(polkit_path):
+                        errors.append(f"Failed to remove {polkit_path}")
                 elif len(filtered) != len(lines):
                     PrivilegedRunner.write_file(polkit_path, "".join(filtered), mode=0o644)
             except Exception as err:
@@ -1029,7 +1057,7 @@ class SystemdRecoveryManager:
             PrivilegedRunner.write_file(self._get_resume_hook_path(), resume_content, mode=0o755)
             PrivilegedRunner.write_file(self._get_dropin_path(), stop_timeout_content, mode=0o644)
             if os.environ.get("DUSKY_MOCK_SYSTEMD") != "1":
-                PrivilegedRunner.run_cmd(["systemctl", "daemon-reload"], check=False)
+                PrivilegedRunner.run_cmd(["systemctl", "daemon-reload"], check=True)
             return True, "Installed fprintd resume recovery hook and 3s stop timeout."
         except Exception as err:
             return False, f"Failed to install systemd recovery hooks: {err}"
@@ -1039,13 +1067,15 @@ class SystemdRecoveryManager:
         hook_path = self._get_resume_hook_path()
         dropin_path = self._get_dropin_path()
 
-        PrivilegedRunner.remove_file(hook_path)
-        if dropin_path.is_file():
-            PrivilegedRunner.remove_file(dropin_path)
+        try:
+            for path in (hook_path, dropin_path):
+                if path.exists() and not PrivilegedRunner.remove_file(path):
+                    return False, f"Failed to remove {path}"
             PrivilegedRunner.remove_dir_if_empty(dropin_path.parent)
-
-        if os.environ.get("DUSKY_MOCK_SYSTEMD") != "1":
-            PrivilegedRunner.run_cmd(["systemctl", "daemon-reload"], check=False)
+            if os.environ.get("DUSKY_MOCK_SYSTEMD") != "1":
+                PrivilegedRunner.run_cmd(["systemctl", "daemon-reload"], check=True)
+        except (subprocess.SubprocessError, OSError) as err:
+            return False, f"Failed to remove systemd recovery hooks: {err}"
         return True, "Removed systemd resume hooks and service overrides."
 
 
@@ -1056,8 +1086,7 @@ class SystemdRecoveryManager:
 class HyprlockConfigurator:
     """
     Manages native Hyprlock fingerprint configuration.
-    Injects an auth { fingerprint { ... } } configuration block into hyprlock.conf
-    and generates ~/.config/hypr/fingerprint.conf.
+    Injects an auth { fingerprint { ... } } configuration block into hyprlock.conf.
     Preserves theme sources and is 100% compatible with Dusky TUI theme switching.
     """
 
@@ -1106,26 +1135,44 @@ class HyprlockConfigurator:
             return False
         try:
             content = conf.read_text(encoding="utf-8")
-            return self.FPRINT_BLOCK_START in content and "enabled = true" in content
-        except OSError:
+            self._strip_managed_blocks(content.splitlines(keepends=True))
+            for block in content.split(self.FPRINT_BLOCK_START)[1:]:
+                managed = block.split(self.FPRINT_BLOCK_END, 1)[0]
+                if re.search(r"(?m)^\s*enabled\s*=\s*true\s*(?:#.*)?$", managed):
+                    return True
             return False
+        except (OSError, ValueError):
+            return False
+
+    @classmethod
+    def _strip_managed_blocks(cls, lines: list[str]) -> list[str]:
+        """Remove complete managed blocks, refusing to discard an unfinished tail."""
+        cleaned: list[str] = []
+        inside = False
+        for line in lines:
+            marker = line.strip()
+            if marker == cls.FPRINT_BLOCK_START:
+                if inside:
+                    raise ValueError("Nested Hyprlock fingerprint markers; repair the managed block first.")
+                inside = True
+            elif marker == cls.FPRINT_BLOCK_END:
+                if not inside:
+                    raise ValueError("Unmatched Hyprlock fingerprint end marker; repair the managed block first.")
+                inside = False
+            elif not inside:
+                cleaned.append(line)
+        if inside:
+            raise ValueError("Unfinished Hyprlock fingerprint block; repair the managed block first.")
+        return cleaned
 
     def configure(self, enabled: bool = True) -> tuple[bool, str]:
         """Applies or updates the native fingerprint configuration."""
-        self.hypr_dir.mkdir(parents=True, exist_ok=True)
         conf = self._get_hyprlock_conf()
-        fprint_file = self._get_fingerprint_conf()
         target_user = self.user or IdentityResolver.resolve_target_user()
 
         auth_block = self.generate_auth_block(enabled=enabled)
 
-        # 1. Write standalone fingerprint.conf
-        try:
-            PrivilegedRunner.write_file(fprint_file, auth_block, mode=0o644, owner=target_user)
-        except Exception as err:
-            return False, f"Failed to write {fprint_file}: {err}"
-
-        # 2. Safely merge block into hyprlock.conf
+        # Merge directly into the active config; no separate include is needed.
         existing_lines: list[str] = []
         if conf.is_file():
             try:
@@ -1133,18 +1180,10 @@ class HyprlockConfigurator:
             except OSError as err:
                 return False, f"Failed to read {conf}: {err}"
 
-        # Strip any existing auto-managed block
-        cleaned_lines: list[str] = []
-        inside_block = False
-        for line in existing_lines:
-            if self.FPRINT_BLOCK_START in line:
-                inside_block = True
-                continue
-            if self.FPRINT_BLOCK_END in line:
-                inside_block = False
-                continue
-            if not inside_block:
-                cleaned_lines.append(line)
+        try:
+            cleaned_lines = self._strip_managed_blocks(existing_lines)
+        except ValueError as err:
+            return False, str(err)
 
         # Append fresh auth block
         final_text = "".join(cleaned_lines).rstrip() + "\n\n" + auth_block
@@ -1160,24 +1199,15 @@ class HyprlockConfigurator:
         fprint_file = self._get_fingerprint_conf()
         target_user = self.user or IdentityResolver.resolve_target_user()
 
-        PrivilegedRunner.remove_file(fprint_file)
+        if fprint_file.exists() and not PrivilegedRunner.remove_file(fprint_file):
+            return False, f"Failed to remove {fprint_file}"
 
         if not conf.is_file():
             return True, "Hyprlock configuration already absent."
 
         try:
             lines = conf.read_text(encoding="utf-8").splitlines(keepends=True)
-            cleaned_lines: list[str] = []
-            inside_block = False
-            for line in lines:
-                if self.FPRINT_BLOCK_START in line:
-                    inside_block = True
-                    continue
-                if self.FPRINT_BLOCK_END in line:
-                    inside_block = False
-                    continue
-                if not inside_block:
-                    cleaned_lines.append(line)
+            cleaned_lines = self._strip_managed_blocks(lines)
 
             final_text = "".join(cleaned_lines).rstrip() + "\n"
             PrivilegedRunner.write_file(conf, final_text, mode=0o644, owner=target_user)
@@ -1222,7 +1252,7 @@ class ProbeClassifier:
         """Extracts list of enrolled finger identifiers from fprintd-list."""
         fingers: list[str] = []
         for line in output.splitlines():
-            m = re.match(r"^\s*-\s*#\d+:\s*([a-zA-Z0-9_-]+)", line)
+            m = re.prefixmatch(r"\s*-\s*#\d+:\s*([a-zA-Z0-9_-]+)", line)
             if m:
                 fingers.append(m.group(1))
         return fingers
@@ -1253,6 +1283,8 @@ class EnrollmentManager:
                 timeout=5,
                 check=False,
             )
+            if res.returncode != 0:
+                return "unknown", []
             combined_output = (res.stdout + "\n" + res.stderr).strip()
             cls_result = ProbeClassifier.classify(combined_output)
             fingers = ProbeClassifier.extract_enrolled_fingers(combined_output)
@@ -1273,10 +1305,7 @@ class EnrollmentManager:
 
         cmd = [fprintd_enroll_bin, "-f", finger, user]
         try:
-            is_tty = sys.stdin.isatty() and sys.stdout.isatty()
-            should_stream = interactive and is_tty
-
-            proc = PrivilegedRunner.run_cmd(cmd, check=False, capture_output=not should_stream)
+            proc = PrivilegedRunner.run_cmd(cmd, check=False, capture_output=not interactive)
             if proc.returncode == 0:
                 return True, f"Fingerprint enrolled successfully for {user} ({finger})."
             err_msg = proc.stderr.strip() if proc.stderr else f"Exit code {proc.returncode}"
@@ -1301,10 +1330,7 @@ class EnrollmentManager:
         cmd.append(user)
 
         try:
-            is_tty = sys.stdin.isatty() and sys.stdout.isatty()
-            should_stream = interactive and is_tty
-
-            proc = PrivilegedRunner.run_cmd(cmd, check=False, capture_output=not should_stream, timeout=20)
+            proc = PrivilegedRunner.run_cmd(cmd, check=False, capture_output=not interactive, timeout=20)
             if proc.returncode == 0:
                 return True, f"Fingerprint verification passed for {user}."
             err_msg = proc.stderr.strip() if proc.stderr else f"Exit code {proc.returncode}"
@@ -1328,98 +1354,7 @@ class EnrollmentManager:
 
 
 # =============================================================================
-# 11. LOCK SCREEN RETRY & BACKOFF MODEL (RELIABILITY CORE)
-# =============================================================================
-
-class FingerprintRetryModel:
-    """
-    Mathematical backoff and retry policy modeled after upstream fprintd constraints:
-    - Fast retry on reached attempt (streak 0)
-    - Exponential backoff on unreached attempts up to cap
-    - Gated presence nudges to prevent cursor loops from spinning
-    - Resume grace window to outlast daemon restart
-    """
-
-    MATCH_RETRY_MS: Final = 250
-    FAST_ERROR_MS: Final = 2000
-    NUDGE_COOLDOWN_MS: Final = 2000
-    IDLE_CLEAR_MS: Final = 32000
-    ERROR_RETRY_BASE_MS: Final = 1000
-    FPRINTD_IDLE_EXIT_MS: Final = 30000
-    ERROR_RETRY_CAP_MS: Final = 40000
-    UNAVAILABLE_AFTER: Final = 3
-    REACH_TIMEOUT_MS: Final = 20000
-    SLEEP_GAP_MS: Final = 2000
-    RESUME_GRACE_MS: Final = 5000
-
-    @classmethod
-    def retry_delay_ms(cls, streak: int) -> int:
-        """Calculates milliseconds to delay next attempt based on consecutive failure streak."""
-        if streak <= 0:
-            return cls.MATCH_RETRY_MS
-        delay = cls.ERROR_RETRY_BASE_MS * (2 ** (streak - 1))
-        return min(delay, cls.ERROR_RETRY_CAP_MS)
-
-    @classmethod
-    def next_streak(cls, current_streak: int, reached: bool, in_grace: bool = False) -> int:
-        """Computes next failure streak. Reaching reader clears streak; misses accumulate."""
-        if reached:
-            return 0
-        if in_grace:
-            return 1
-        return current_streak + 1
-
-    @classmethod
-    def is_unavailable(cls, streak: int) -> bool:
-        """Determines if the sensor should be flagged as unavailable."""
-        return streak >= cls.UNAVAILABLE_AFTER
-
-    @classmethod
-    def should_nudge(
-        cls,
-        now: int,
-        last_nudge: int,
-        last_settle: int,
-        current_delay: int,
-    ) -> bool:
-        """
-        Determines whether user activity should collapse a backed-off retry wait.
-        Preserves the daemon idle window even under continuous user activity.
-        """
-        if current_delay <= cls.MATCH_RETRY_MS:
-            return False
-
-        since_nudge = now - last_nudge
-        since_settle = now - last_settle
-
-        # A backward clock step cannot count as a completed idle window.
-        if 0 <= since_nudge < max(cls.NUDGE_COOLDOWN_MS, current_delay):
-            return False
-
-        if since_settle < 0:
-            since_settle = 0
-
-        if current_delay >= cls.ERROR_RETRY_CAP_MS and since_settle < cls.IDLE_CLEAR_MS:
-            return False
-
-        return True
-
-    @classmethod
-    def in_resume_grace(cls, now: int, resumed_at: int) -> bool:
-        """Returns True if within the grace window following a system resume."""
-        if resumed_at <= 0:
-            return False
-        elapsed = now - resumed_at
-        return 0 <= elapsed < cls.RESUME_GRACE_MS
-
-    @classmethod
-    def spanned_sleep(cls, elapsed_ms: int, timeout_ms: int) -> bool:
-        """Detects whether wall clock progression indicates a system suspend occurred."""
-        return elapsed_ms > (timeout_ms + cls.SLEEP_GAP_MS)
-
-
-# =============================================================================
-# 12. FULL SYSTEM ORCHESTRATOR
+# 11. FULL SYSTEM ORCHESTRATOR
 # =============================================================================
 
 class FingerprintOrchestrator:
@@ -1493,21 +1428,17 @@ class FingerprintOrchestrator:
     ) -> tuple[bool, str]:
         """
         Orchestrates full setup workflow:
-        0. Ensure sudo authorization upfront
+        0. Hardware/mode checks, then sudo authorization
         1. Hardware probe (or simulation)
         2. Package installation
-        3. Clamshell gate & systemd recovery installation
-        4. Enrollment & verification
+        3. Enrollment & verification
+        4. Clamshell gate & systemd recovery installation
         5. PAM and Hyprlock configuration
         """
         target_user = IdentityResolver.validate_username(user or self.user) if (user or self.user) else IdentityResolver.resolve_target_user()
         if self.hyprlock.user != target_user:
             self.hyprlock = HyprlockConfigurator(user=target_user)
         print(f"\033[1;34m[::]\033[0m Initiating Fingerprint Setup for user: \033[1m{target_user}\033[0m")
-
-        # Step 0: Sudo validation upfront
-        if not ensure_sudo():
-            return False, "Sudo authorization failed or was refused. Administrative privileges are required."
 
         # Step 1: Hardware Detection
         is_sim = simulate or self.simulate
@@ -1525,6 +1456,11 @@ class FingerprintOrchestrator:
         else:
             print("\033[1;33m[!]\033[0m Forcing setup without physical reader attached.")
 
+        if not is_sim and not skip_enroll and not interactive:
+            return False, "Interactive terminal required for fingerprint enrollment."
+        if not ensure_sudo():
+            return False, "Sudo authorization failed or was refused. Administrative privileges are required."
+
         # Step 2: Ensure Packages
         print("\033[1;34m[::]\033[0m Verifying prerequisite packages...")
         pkg_ok, pkg_msg = PackageManager.install_required()
@@ -1538,9 +1474,6 @@ class FingerprintOrchestrator:
                 print(f"\n\033[1;32m[✓]\033[0m Simulation Mode: Simulated successful enrollment of '{finger}' for '{target_user}'.")
                 print("\033[1;32m[✓]\033[0m Simulation Mode: Verified simulated fingerprint.")
             else:
-                if not interactive:
-                    return False, "Interactive terminal required for fingerprint enrollment."
-
                 print(f"\n\033[1;32m[::]\033[0m Enrolling '{finger}' for user '{target_user}'.")
                 print("Keep swiping or touching the sensor until the process completes...\n")
                 enroll_ok, enroll_msg = self.enrollment.enroll(target_user, finger=finger, interactive=interactive)
@@ -1549,7 +1482,7 @@ class FingerprintOrchestrator:
                 print(f"\033[1;32m[✓]\033[0m {enroll_msg}")
 
                 print("\n\033[1;34m[::]\033[0m Verifying enrolled fingerprint...")
-                verify_ok, verify_msg = self.enrollment.verify(target_user, finger=finger)
+                verify_ok, verify_msg = self.enrollment.verify(target_user, finger=finger, interactive=interactive)
                 if not verify_ok:
                     return False, f"Verification failed: {verify_msg}"
                 print(f"\033[1;32m[✓]\033[0m {verify_msg}")
@@ -1611,8 +1544,11 @@ class FingerprintOrchestrator:
         sysd_ok, sysd_msg = self.systemd.remove()
         print(f"[{'✓' if sysd_ok else '!'}] {sysd_msg}")
 
-        # 4. Remove Gate Helper
-        PrivilegedRunner.remove_file(Path(get_clamshell_gate_bin()))
+        # 4. Keep the helper available if a PAM cleanup failed.
+        gate_ok = True
+        gate_path = Path(get_clamshell_gate_bin())
+        if pam_ok and gate_path.exists():
+            gate_ok = PrivilegedRunner.remove_file(gate_path)
 
         # 5. Purge local saved prints
         del_ok, del_msg = self.enrollment.delete_user_prints(target_user)
@@ -1621,6 +1557,9 @@ class FingerprintOrchestrator:
             return False, f"Failed to delete fingerprints for {target_user}: {del_msg}"
 
         # 6. Optional package purge
+        if not all((pam_ok, hypr_ok, sysd_ok, gate_ok)):
+            return False, "Fingerprint cleanup incomplete; review the reported errors and retry."
+
         if purge_packages:
             print("\033[1;34m[::]\033[0m Purging fingerprint packages...")
             pkg_ok, pkg_msg = PackageManager.drop_packages()
@@ -1667,22 +1606,12 @@ class InvitationManager:
         if not force and not cls.should_invite(orchestrator, user=target_user):
             return False
 
-        marker = cls.get_marker_file(target_user)
-        try:
-            PrivilegedRunner.write_file(marker, "", mode=0o644, owner=target_user)
-        except Exception:
-            try:
-                marker.parent.mkdir(parents=True, exist_ok=True)
-                marker.touch()
-            except OSError:
-                pass
-
         notify_bin = shutil.which("notify-send")
         if not notify_bin:
             return False
 
         try:
-            subprocess.run(
+            result = subprocess.run(
                 [
                     notify_bin,
                     "-u", "normal",
@@ -1692,13 +1621,17 @@ class InvitationManager:
                 ],
                 check=False,
             )
+            if result.returncode != 0:
+                return False
+            marker = cls.get_marker_file(target_user)
+            PrivilegedRunner.write_file(marker, "", mode=0o644, owner=target_user)
             return True
         except OSError:
             return False
 
 
 # =============================================================================
-# 13. CLI INTERFACE
+# 12. CLI INTERFACE
 # =============================================================================
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1707,8 +1640,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog="setup_fingerprint.py",
         description="Dusky Hyprlock Fingerprint Authentication Engine",
     )
-    parser.add_argument("--simulate", action="store_true", help="Simulate presence of fingerprint reader")
-    parser.add_argument("--user", default=None, help="Target system user (default: current logged in user)")
+    parser.add_argument("--simulate", action="store_true", default=argparse.SUPPRESS, help="Simulate presence of fingerprint reader")
+    parser.add_argument("--user", default=argparse.SUPPRESS, help="Target system user (default: current logged in user)")
 
     subparsers = parser.add_subparsers(dest="subcommand", help="Operational subcommands")
 
@@ -1718,13 +1651,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_setup.add_argument("--force", action="store_true", help="Force configuration even if hardware is not detected")
     p_setup.add_argument("--skip-enroll", action="store_true", help="Skip enrollment and only configure software/PAM stacks")
     p_setup.add_argument("--non-interactive", action="store_true", help="Non-interactive mode (requires --skip-enroll)")
-    p_setup.add_argument("--simulate", action="store_true", help="Simulate fingerprint reader and enrollment")
-    p_setup.add_argument("--user", default=None, help="Target system user")
+    p_setup.add_argument("--simulate", action="store_true", default=argparse.SUPPRESS, help="Simulate fingerprint reader and enrollment")
+    p_setup.add_argument("--user", default=argparse.SUPPRESS, help="Target system user")
 
     # detect
     p_detect = subparsers.add_parser("detect", help="Scan USB sysfs for fingerprint readers")
     p_detect.add_argument("--json", action="store_true", help="Output results in JSON format")
-    p_detect.add_argument("--simulate", action="store_true", help="Simulate detection of a fingerprint reader")
+    p_detect.add_argument("--simulate", action="store_true", default=argparse.SUPPRESS, help="Simulate detection of a fingerprint reader")
 
     # clamshell
     p_clamshell = subparsers.add_parser("clamshell", help="Check laptop lid state (exit 0=closed, 1=open)")
@@ -1734,31 +1667,31 @@ def build_parser() -> argparse.ArgumentParser:
     # status
     p_status = subparsers.add_parser("status", help="Display full fingerprint system status")
     p_status.add_argument("--json", action="store_true", help="Output full report in JSON format")
-    p_status.add_argument("--user", default=None, help="Target system user")
-    p_status.add_argument("--simulate", action="store_true", help="Simulate reader presence in status check")
+    p_status.add_argument("--user", default=argparse.SUPPRESS, help="Target system user")
+    p_status.add_argument("--simulate", action="store_true", default=argparse.SUPPRESS, help="Simulate reader presence in status check")
 
     # enroll
     p_enroll = subparsers.add_parser("enroll", help="Enroll a fingerprint for the target user")
     p_enroll.add_argument("--finger", default="right-index-finger", help="Target finger name")
-    p_enroll.add_argument("--user", default=None, help="Target system user")
+    p_enroll.add_argument("--user", default=argparse.SUPPRESS, help="Target system user")
 
     # verify
     p_verify = subparsers.add_parser("verify", help="Verify enrolled fingerprint")
     p_verify.add_argument("--finger", default=None, help="Target finger name (optional)")
-    p_verify.add_argument("--user", default=None, help="Target system user")
+    p_verify.add_argument("--user", default=argparse.SUPPRESS, help="Target system user")
 
     # remove
     p_remove = subparsers.add_parser("remove", help="Remove fingerprint configuration and roll back PAM")
     p_remove.add_argument("--purge", action="store_true", help="Also drop fprintd and libfprint packages")
-    p_remove.add_argument("--user", default=None, help="Target system user")
+    p_remove.add_argument("--user", default=argparse.SUPPRESS, help="Target system user")
 
     # should-invite
     p_invite_check = subparsers.add_parser("should-invite", help="Check if setup invitation notification should be displayed")
-    p_invite_check.add_argument("--simulate", action="store_true", help="Simulate fingerprint reader")
+    p_invite_check.add_argument("--simulate", action="store_true", default=argparse.SUPPRESS, help="Simulate fingerprint reader")
 
     # invite
     p_invite = subparsers.add_parser("invite", help="Send desktop notification inviting user to setup fingerprint")
-    p_invite.add_argument("--simulate", action="store_true", help="Simulate fingerprint reader")
+    p_invite.add_argument("--simulate", action="store_true", default=argparse.SUPPRESS, help="Simulate fingerprint reader")
     p_invite.add_argument("--force", action="store_true", help="Bypass invited check marker")
 
     # install-gate
