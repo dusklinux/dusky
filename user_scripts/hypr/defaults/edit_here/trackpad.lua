@@ -6,7 +6,7 @@
 -- TRACKPAD GESTURES
 -- -------------------------------------------------------------------------------------------------
 -- NOTE: Gestures fire once per recognized swipe, not continuously.
---       Volume/brightness step is 5% per swipe — do multiple quick swipes for larger changes.
+--       Volume/brightness step is 10% per swipe — do multiple quick swipes for larger changes.
 --       Tap gestures are not supported by Hyprland natively (as of 0.55).
 --       For your 3-finger tap Dusky Tray: use ALT+V (already bound in keybinds).
 
@@ -38,7 +38,7 @@ hl.gesture({
 
 -- ── 4-Finger Gestures ────────────────────────────────────────────────────────────────────────────
 
--- up/down : Volume control (5% per swipe, capped at 150% to prevent distortion)
+-- up/down : Volume control (10% per swipe, capped at 100%)
 hl.gesture({
     fingers   = 4,
     direction = "down",

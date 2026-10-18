@@ -218,7 +218,7 @@ hl.gesture({
 
 -- ── 4-Finger Gestures ────────────────────────────────────────────────────────────────────────────
 
--- Left/Right: Volume control (5% per swipe, capped at 150% to prevent distortion)
+-- Left/Right: Volume control (10% per swipe, capped at 100%)
 hl.gesture({
     fingers   = 4,
     direction = "left",

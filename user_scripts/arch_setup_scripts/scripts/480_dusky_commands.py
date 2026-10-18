@@ -154,7 +154,7 @@ AFTER_COMMANDS: list[FleetCommand] = [
         "Recompile Wayland Click-Away Shared Library"
     ),
     FleetCommand(Mode.USER, 'systemctl --user daemon-reload || true', "Reload Systemd User Daemon"),
-    FleetCommand(Mode.USER, 'systemctl --user restart osd_lock.service || true', "Restart OSD Lock Service"),
+    FleetCommand(Mode.USER, 'systemctl --user try-restart osd_lock.service || true', "Restart Running OSD Lock Service"),
     FleetCommand(Mode.USER, 'update-desktop-database "$HOME/.local/share/applications" || true', "Update Desktop Entry Database Cache"),
 ]
 

@@ -1,337 +1,242 @@
 #!/usr/bin/env bash
-# Hyprland Native OSD Router - Stateless IPC Edition
-# Optimized for Bash 5.3.9+ and Wayland/UWSM environments
+# Hyprland/Wayland OSD router. Hardware updates serialize per control;
+# one asynchronous notifier per control coalesces rapid updates.
+set -euo pipefail
+export LC_ALL=C
+SYNC_ID=sys-osd
+RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$UID}
 
-SYNC_ID="sys-osd"
-
-# Core notification wrapper
 notify() {
-    local icon="$1"
-    local title="$2"
-    local val="$3"
-    
-    if [[ -n "$val" ]]; then
-        notify-send -a "OSD" -h string:x-canonical-private-synchronous:"$SYNC_ID" -h int:value:"$val" -i "$icon" "$title"
-    else
-        notify-send -a "OSD" -h string:x-canonical-private-synchronous:"$SYNC_ID" -i "$icon" "$title"
+    local icon=$1 title=$2 value=${3:-}
+    local -a args=(-a OSD -h "string:x-canonical-private-synchronous:$SYNC_ID" -i "$icon")
+    if [[ -n $value ]]; then
+        # Notification progress is 0–100 even if external tools enabled amplification.
+        (( value > 100 )) && value=100
+        args+=(-h "int:value:$value")
     fi
+    notify-send "${args[@]}" -- "$title"
 }
 
-# Atomic write to entirely eliminate torn reads by the async worker
-atomic_write() {
-    local file="$1"
-    local data="$2"
-    echo "$data" > "${file}.tmp"
-    mv "${file}.tmp" "$file"
+lock_control() {
+    exec {lock_fd}> "$RUNTIME_DIR/osd_$1.lock"
+    flock -x "$lock_fd"
+    state_file=$RUNTIME_DIR/osd_$1_state.txt
+}
+
+ui_worker() (
+    local group=$1 snapshot latest worker_icon worker_title worker_value
+    exec 9> "$RUNTIME_DIR/osd_${group}_ui.lock"
+    flock -n 9 || exit 0
+    exec {worker_fd}> "$RUNTIME_DIR/osd_$group.lock"
+    while true; do
+        flock -x "$worker_fd"
+        snapshot=$(< "$state_file")
+        flock -u "$worker_fd"
+        IFS='|' read -r worker_icon worker_title worker_value <<< "$snapshot"
+        notify "$worker_icon" "$worker_title" "$worker_value" || exit "$?"
+        flock -x "$worker_fd"
+        latest=$(< "$state_file")
+        if [[ $snapshot == "$latest" ]]; then
+            # Release the UI lock BEFORE allowing another writer to publish.
+            # A writer can then always acquire a worker for its final update.
+            exec 9>&-
+            exit 0
+        fi
+        flock -u "$worker_fd"
+    done
+)
+
+publish() {
+    local group=$1
+    # All readers and writers use the control lock: no temporary file or mv needed.
+    printf '%s|%s|%s\n' "$icon" "$title" "$value" > "$state_file"
+    exec {lock_fd}>&-
+    ui_worker "$group" </dev/null >/dev/null &
+}
+
+# Parse brightnessctl's machine format, using raw values for consistent rounding.
+parse_brightness() {
+    local row=$1 _class _percent
+    IFS=, read -r device _class current _percent maximum <<< "$row"
+    [[ $current =~ ^[0-9]+$ && $maximum =~ ^[1-9][0-9]*$ ]] || {
+        printf 'Invalid brightnessctl output: %s\n' "$row" >&2
+        return 1
+    }
+    value=$(( (current * 100 + maximum / 2) / maximum ))
+}
+
+keyboard_device() {
+    local devices
+    devices=$(brightnessctl -m -l -c leds)
+    while IFS= read -r row; do
+        if [[ ${row%%,*} == *kbd_backlight* ]]; then
+            parse_brightness "$row"
+            return
+        fi
+    done <<< "$devices"
+    return 1
+}
+
+get_dpms() {
+    local monitors
+    monitors=$(hyprctl monitors) || return
+    # Active outputs only: disabled connectors must not trigger wake/off handling.
+    dpms_off=0
+    if [[ $monitors =~ dpmsStatus:[[:space:]]*(0|false) ]]; then dpms_off=1; fi
+}
+
+set_dpms() {
+    local result
+    result=$(hyprctl eval "hl.dispatch(hl.dsp.dpms({ action = \"$1\" }))")
+    [[ $result == ok ]] || { printf 'DPMS failed: %s\n' "$result" >&2; return 1; }
+}
+
+media() {
+    local action=$1 players player command old status metadata track old_track i
+    local format=$'{{status}}\n{{mpris:trackid}}\n{{artist}} - {{title}}'
+    players=$(playerctl -l) || { notify dialog-error 'No Active Player'; return 1; }
+    player=${players%%$'\n'*}
+    local -a ctl=(playerctl --player="$player")
+    old=$("${ctl[@]}" metadata --format "$format")
+    old_track=${old#*$'\n'}
+    case $action in
+        --prev) command=previous ;;
+        *) command=${action#--} ;;
+    esac
+    "${ctl[@]}" "$command"
+    for ((i=0; i<40; i++)); do
+        if ! metadata=$("${ctl[@]}" metadata --format "$format"); then
+            notify dialog-error 'Player Unavailable'
+            return 1
+        fi
+        status=${metadata%%$'\n'*}
+        track=${metadata#*$'\n'}
+        metadata=${track#*$'\n'}
+        case $action in
+            --play-pause) [[ $status != "${old%%$'\n'*}" ]] && break ;;
+            --next|--prev) [[ $track != "$old_track" ]] && break ;;
+            --stop) [[ $status == Stopped ]] && break ;;
+        esac
+        (( i == 39 )) || sleep 0.025
+    done
+    [[ -n $metadata && $metadata != ' - ' ]] || metadata='Unknown Track'
+    case $status in
+        Playing) notify media-playback-start "$metadata" ;;
+        Paused) notify media-playback-pause "Paused: $metadata" ;;
+        Stopped) notify media-playback-stop Stopped ;;
+        *) notify dialog-error 'Unknown Player State'; return 1 ;;
+    esac
 }
 
 main() {
-    local action="$1"
-    local step="${2:-5}"
-
-    case "$action" in
-        --vol-up|--vol-down)
-            exec {lock_fd}> "${XDG_RUNTIME_DIR:-/tmp}/osd_audio.lock"
-            flock -x "$lock_fd"
-
-            local icon title vol
-            if [[ "$action" == "--vol-up" ]]; then
-                wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ "${step}%+"
-                icon="audio-volume-high"
-            else
-                wpctl set-volume @DEFAULT_AUDIO_SINK@ "${step}%-"
-                icon="audio-volume-low"
+    local action=${1:-} step=${2:-5}
+    if (( $# > 2 )) || [[ ! $step =~ ^[0-9]{1,3}$ ]] || (( 10#$step < 1 || 10#$step > 100 )); then
+        printf 'Step must be an integer from 1 to 100; at most two arguments are accepted.\n' >&2
+        return 1
+    fi
+    step=$((10#$step))
+    local icon title value='' lock_fd state_file device current maximum row volume
+    case $action in
+        --vol-up|--vol-down|--vol-mute|--mic-mute)
+            local group=audio sink=@DEFAULT_AUDIO_SINK@
+            if [[ $action == --mic-mute ]]; then
+                group=mic
+                sink=@DEFAULT_AUDIO_SOURCE@
             fi
-            
-            vol=$(wpctl get-volume @DEFAULT_AUDIO_SINK@ | awk '{print int($2 * 100 + 0.5)}')
-            title="Volume: ${vol}%"
-            
-            # Write target state atomically while holding hardware lock
-            atomic_write "${XDG_RUNTIME_DIR:-/tmp}/osd_audio_state.txt" "$icon|$title|$vol"
-            exec {lock_fd}>&-
-            
-            # Asynchronous Single Worker Loop
-            (
-                flock -n 9 || exit 0
-                while true; do
-                    IFS='|' read -r c_icon c_title c_vol < "${XDG_RUNTIME_DIR:-/tmp}/osd_audio_state.txt"
-                    [[ -z "$c_title" ]] && break 
-                    
-                    notify "$c_icon" "$c_title" "$c_vol"
-                    
-                    IFS='|' read -r n_icon n_title n_vol < "${XDG_RUNTIME_DIR:-/tmp}/osd_audio_state.txt"
-                    if [[ "$c_vol" == "$n_vol" && "$c_icon" == "$n_icon" && "$c_title" == "$n_title" ]]; then
-                        break # State caught up, exit worker cleanly
-                    fi
-                done
-            ) 9>> "${XDG_RUNTIME_DIR:-/tmp}/osd_audio_ui.lock" &
-            ;;
-
-        --vol-mute)
-            exec {lock_fd}> "${XDG_RUNTIME_DIR:-/tmp}/osd_audio.lock"
-            flock -x "$lock_fd"
-
-            wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle
-            
-            local icon title vol
-            if wpctl get-volume @DEFAULT_AUDIO_SINK@ | grep -q "MUTED"; then
-                icon="audio-volume-muted"
-                title="Audio Muted"
-                vol=""
-            else
-                icon="audio-volume-high"
-                vol=$(wpctl get-volume @DEFAULT_AUDIO_SINK@ | awk '{print int($2 * 100 + 0.5)}')
-                title="Audio Unmuted"
-            fi
-            
-            atomic_write "${XDG_RUNTIME_DIR:-/tmp}/osd_audio_state.txt" "$icon|$title|$vol"
-            exec {lock_fd}>&-
-
-            (
-                flock -n 9 || exit 0
-                while true; do
-                    IFS='|' read -r c_icon c_title c_vol < "${XDG_RUNTIME_DIR:-/tmp}/osd_audio_state.txt"
-                    [[ -z "$c_title" ]] && break
-                    
-                    notify "$c_icon" "$c_title" "$c_vol"
-                    
-                    IFS='|' read -r n_icon n_title n_vol < "${XDG_RUNTIME_DIR:-/tmp}/osd_audio_state.txt"
-                    if [[ "$c_vol" == "$n_vol" && "$c_icon" == "$n_icon" && "$c_title" == "$n_title" ]]; then
-                        break
-                    fi
-                done
-            ) 9>> "${XDG_RUNTIME_DIR:-/tmp}/osd_audio_ui.lock" &
-            ;;
-
-        --mic-mute)
-            wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle
-            if wpctl get-volume @DEFAULT_AUDIO_SOURCE@ | grep -q "MUTED"; then
-                notify "microphone-sensitivity-muted" "Microphone Muted" ""
-            else
-                notify "audio-input-microphone" "Microphone Live" ""
-            fi
-            ;;
-
-        --bright-up|--bright-down)
-            exec {lock_fd}> "${XDG_RUNTIME_DIR:-/tmp}/osd_display.lock"
-            flock -x "$lock_fd"
-
-            local icon="gpm-brightness-lcd" title bright
-            local WARN_MSG="Swipe again to turn off"
-            local SCREEN_OFF_MSG="Screen Off"
-
-            # Safely read the last known UI state
-            local last_title=""
-            if [[ -f "${XDG_RUNTIME_DIR:-/tmp}/osd_display_state.txt" ]]; then
-                last_title=$(awk -F'|' '{print $2}' "${XDG_RUNTIME_DIR:-/tmp}/osd_display_state.txt")
-            fi
-
-            local current_bright
-            current_bright=$(brightnessctl -m 2>/dev/null | awk -F, '{print int($4 + 0.5)}')
-            [[ -z "$current_bright" ]] && current_bright=0
-
-            if [[ "$action" == "--bright-down" ]]; then
-                local dpms_off=0
-                
-                # Fix IPC spam: ONLY query Hyprland when at the absolute bottom threshold
-                if [[ "$current_bright" -le 1 ]]; then
-                    if hyprctl monitors all | grep -Eiq "dpmsstatus:\s*(0|false)"; then
-                        dpms_off=1
-                    fi
-                fi
-
-                if [[ "$dpms_off" -eq 1 ]]; then
-                    icon="display-brightness-off"
-                    title="$SCREEN_OFF_MSG"
-                    bright=0
-                elif [[ "$current_bright" -le 1 ]]; then
-                    # At 1% or 0% with DPMS still ON
-                    if [[ "$last_title" == "$WARN_MSG" ]]; then
-                        # Execute screen off (Hyprland v0.45+ Lua syntax)
-                        hyprctl eval 'hl.dispatch(hl.dsp.dpms({ action = "disable" }))' &>/dev/null
-                        icon="display-brightness-off"
-                        title="$SCREEN_OFF_MSG"
-                        bright=0
-                    else
-                        # First time hitting bottom: issue the warning
-                        brightnessctl set 1% -q
-                        icon="display-brightness-warning"
-                        title="$WARN_MSG"
-                        bright=1
-                    fi
-                else
-                    # Normal brightness down execution
-                    local target=$((current_bright - step))
-                    if [[ "$target" -le 1 ]]; then
-                        brightnessctl set 1% -q
-                        bright=1
-                        title="Brightness: 1%"
-                    else
-                        brightnessctl set "${step}%-" -q
-                        bright=$(brightnessctl -m | awk -F, '{print int($4 + 0.5)}')
-                        title="Brightness: ${bright}%"
-                    fi
-                fi
-
-            else
-                # --bright-up
-                local dpms_needs_wake=0
-                
-                # Only assess wake requirements if we are at bottom bounds
-                if [[ "$current_bright" -le 1 || "$last_title" == "$SCREEN_OFF_MSG" || "$last_title" == "$WARN_MSG" ]]; then
-                    if hyprctl monitors all | grep -Eiq "dpmsstatus:\s*(0|false)"; then
-                        dpms_needs_wake=1
-                    fi
-                fi
-
-                if [[ "$dpms_needs_wake" -eq 1 ]]; then
-                    hyprctl eval 'hl.dispatch(hl.dsp.dpms({ action = "enable" }))' &>/dev/null
-                    # Sleep ONLY executes when DPMS physically wakes, preventing queue locks
-                    sleep 0.15 
-                fi
-
-                brightnessctl set "${step}%+" -q
-                bright=$(brightnessctl -m | awk -F, '{print int($4 + 0.5)}')
-                
-                if [[ "$dpms_needs_wake" -eq 1 || "$last_title" == "$SCREEN_OFF_MSG" ]]; then
-                    title="Screen On: ${bright}%"
-                else
-                    title="Brightness: ${bright}%"
-                fi
-            fi
-            
-            atomic_write "${XDG_RUNTIME_DIR:-/tmp}/osd_display_state.txt" "$icon|$title|$bright"
-            exec {lock_fd}>&-
-            
-            # Asynchronous UI worker
-            (
-                flock -n 9 || exit 0
-                while true; do
-                    IFS='|' read -r c_icon c_title c_bright < "${XDG_RUNTIME_DIR:-/tmp}/osd_display_state.txt"
-                    [[ -z "$c_title" ]] && break
-                    
-                    notify "$c_icon" "$c_title" "$c_bright"
-                    
-                    IFS='|' read -r n_icon n_title n_bright < "${XDG_RUNTIME_DIR:-/tmp}/osd_display_state.txt"
-                    if [[ "$c_bright" == "$n_bright" && "$c_icon" == "$n_icon" && "$c_title" == "$n_title" ]]; then
-                        break
-                    fi
-                done
-            ) 9>> "${XDG_RUNTIME_DIR:-/tmp}/osd_display_ui.lock" &
-            ;;
-
-        --kbd-bright-up|--kbd-bright-down)
-            exec {lock_fd}> "${XDG_RUNTIME_DIR:-/tmp}/osd_kbd.lock"
-            flock -x "$lock_fd"
-
-            local kbd_dev
-            kbd_dev=$(brightnessctl -l | awk -F"'" '/kbd_backlight/ {print $2; exit}')
-
-            if [[ -z "$kbd_dev" ]]; then
-                notify "dialog-error" "No Kbd Backlight Found" ""
-                exec {lock_fd}>&-
-                exit 1
-            fi
-
-            if [[ "$action" == "--kbd-bright-up" ]]; then
-                brightnessctl --device="$kbd_dev" set "${step}%+" -q
-            else
-                brightnessctl --device="$kbd_dev" set "${step}%-" -q
-            fi
-
-            local icon="keyboard-brightness" title kbd_bright
-            kbd_bright=$(brightnessctl --device="$kbd_dev" -m 2>/dev/null | awk -F, '{print int($4 + 0.5)}')
-            [[ -z "$kbd_bright" ]] && kbd_bright=0
-            title="Kbd Brightness: ${kbd_bright}%"
-
-            atomic_write "${XDG_RUNTIME_DIR:-/tmp}/osd_kbd_state.txt" "$icon|$title|$kbd_bright"
-            exec {lock_fd}>&-
-
-            (
-                flock -n 9 || exit 0
-                while true; do
-                    IFS='|' read -r c_icon c_title c_bright < "${XDG_RUNTIME_DIR:-/tmp}/osd_kbd_state.txt"
-                    [[ -z "$c_title" ]] && break
-                    
-                    notify "$c_icon" "$c_title" "$c_bright"
-                    
-                    IFS='|' read -r n_icon n_title n_bright < "${XDG_RUNTIME_DIR:-/tmp}/osd_kbd_state.txt"
-                    if [[ "$c_bright" == "$n_bright" && "$c_icon" == "$n_icon" && "$c_title" == "$n_title" ]]; then
-                        break
-                    fi
-                done
-            ) 9>> "${XDG_RUNTIME_DIR:-/tmp}/osd_kbd_ui.lock" &
-            ;;
-
-        --kbd-bright-show)
-            local kbd_dev
-            kbd_dev=$(brightnessctl -l | awk -F"'" '/kbd_backlight/ {print $2; exit}')
-            
-            if [[ -z "$kbd_dev" ]]; then
-                exit 0
-            fi
-
-            local kbd_bright
-            kbd_bright=$(brightnessctl --device="$kbd_dev" -m 2>/dev/null | awk -F, '{print int($4 + 0.5)}')
-            [[ -z "$kbd_bright" ]] && kbd_bright=0
-
-            notify "keyboard-brightness" "Kbd Brightness: ${kbd_bright}%" "$kbd_bright"
-            ;;
-
-        --play-pause|--next|--prev|--stop)
-            local old_meta old_status
-            old_meta=$(playerctl metadata --format "{{ artist }} - {{ title }}" 2>/dev/null)
-            old_status=$(playerctl status 2>/dev/null)
-
-            case "$action" in
-                --play-pause) playerctl play-pause ;;
-                --next)       playerctl next ;;
-                --prev)       playerctl previous ;;
-                --stop)       playerctl stop ;;
+            lock_control "$group"
+            case $action in
+                --vol-up) wpctl set-volume -l 1.0 "$sink" "${step}%+" ;;
+                --vol-down) wpctl set-volume "$sink" "${step}%-" ;;
+                *) wpctl set-mute "$sink" toggle ;;
             esac
-            
-            local status metadata
-            for ((i=0; i<100; i++)); do
-                status=$(playerctl status 2>/dev/null)
-                metadata=$(playerctl metadata --format "{{ artist }} - {{ title }}" 2>/dev/null)
-                
-                case "$action" in
-                    --play-pause)
-                        [[ "$status" != "$old_status" && -n "$status" ]] && break
-                        ;;
-                    --next|--prev)
-                        [[ "$metadata" != "$old_meta" ]] && break
-                        ;;
-                    --stop)
-                        [[ "$status" == "Stopped" || -z "$status" ]] && break
-                        ;;
-                esac
-                
-                read -r -t 0.01 <> <(:)
-            done
-            
-            [[ -z "$metadata" || "$metadata" == " - " ]] && metadata="Unknown Track"
-
-            if [[ "$status" == "Playing" ]]; then
-                icon="media-playback-start"
-                title="$metadata"
-            elif [[ "$status" == "Paused" ]]; then
-                icon="media-playback-pause"
-                title="Paused: $metadata"
-            elif [[ "$status" == "Stopped" || -z "$status" ]]; then
-                icon="media-playback-stop"
-                title="Stopped"
-            else
-                icon="dialog-error"
-                title="No Active Player"
+            volume=$(wpctl get-volume "$sink")
+            [[ $volume =~ ^Volume:[[:space:]]+([0-9]+)[.]([0-9]{2})([[:space:]]|$) ]] || return 1
+            value=$(( 10#${BASH_REMATCH[1]} * 100 + 10#${BASH_REMATCH[2]} ))
+            icon=audio-volume-high
+            title="Volume: $value%"
+            if [[ $volume == *'[MUTED]'* ]]; then
+                icon=audio-volume-muted title='Audio Muted' value=''
+            elif [[ $action == --vol-mute ]]; then
+                title='Audio Unmuted'
             fi
-            
-            notify "$icon" "$title" ""
+            if [[ $action == --mic-mute ]]; then
+                value=''
+                if [[ $volume == *'[MUTED]'* ]]; then
+                    icon=microphone-sensitivity-muted title='Microphone Muted'
+                else
+                    icon=audio-input-microphone title='Microphone Live'
+                fi
+            fi
+            publish "$group"
             ;;
-
+        --bright-up|--bright-down)
+            lock_control display
+            local last_title='' _ignored floor woke=0 dpms_off
+            if [[ -f $state_file ]]; then
+                IFS='|' read -r _ignored last_title _ignored < "$state_file"
+            fi
+            row=$(brightnessctl -m -c backlight)
+            parse_brightness "$row"
+            floor=$(( (maximum + 99) / 100 ))
+            icon=gpm-brightness-lcd
+            if [[ $action == --bright-down ]]; then
+                if (( current <= floor )); then
+                    get_dpms
+                    if (( dpms_off )); then
+                        icon=display-brightness-off title='Screen Off' value=0
+                    elif [[ $last_title == 'Swipe again to turn off' ]]; then
+                        set_dpms disable
+                        icon=display-brightness-off title='Screen Off' value=0
+                    else
+                        row=$(brightnessctl -m -c backlight -d "$device" set "$floor")
+                        parse_brightness "$row"
+                        icon=display-brightness-warning title='Swipe again to turn off'
+                    fi
+                else
+                    row=$(brightnessctl -m -c backlight -d "$device" --min-value="$floor" set "${step}%-")
+                    parse_brightness "$row"
+                    title="Brightness: $value%"
+                fi
+            else
+                # Query on every upward action: idle DPMS can turn off at any brightness.
+                get_dpms
+                if (( dpms_off )); then
+                    set_dpms enable
+                    sleep 0.15
+                    woke=1
+                fi
+                row=$(brightnessctl -m -c backlight -d "$device" set "+${step}%")
+                parse_brightness "$row"
+                title="Brightness: $value%"
+                if (( woke )); then title="Screen On: $value%"; fi
+            fi
+            publish display
+            ;;
+        --kbd-bright-up|--kbd-bright-down|--kbd-bright-show|--kbd-bright-toggle)
+            lock_control kbd
+            if ! keyboard_device; then
+                if [[ $action == --kbd-bright-show ]]; then return 0; fi
+                notify dialog-error 'No Kbd Backlight Found'
+                return 1
+            fi
+            case $action in
+                --kbd-bright-up) row=$(brightnessctl -m -c leds -d "$device" set "+${step}%") ;;
+                --kbd-bright-down) row=$(brightnessctl -m -c leds -d "$device" --min-value=0 set "${step}%-") ;;
+                --kbd-bright-toggle)
+                    if (( current )); then value=0; else value=100; fi
+                    row=$(brightnessctl -m -c leds -d "$device" set "$value%") ;;
+            esac
+            parse_brightness "$row"
+            icon=keyboard-brightness title="Kbd Brightness: $value%"
+            publish kbd
+            ;;
+        --play-pause|--next|--prev|--stop)
+            lock_control media
+            media "$action"
+            ;;
         *)
-            echo "Usage: $0 {--vol-up|--vol-down|--vol-mute|--mic-mute|--bright-up|--bright-down|--kbd-bright-up|--kbd-bright-down|--kbd-bright-show|--play-pause|--next|--prev|--stop} [step_value]"
-            exit 1
+            printf 'Usage: %s {--vol-up|--vol-down|--vol-mute|--mic-mute|--bright-up|--bright-down|--kbd-bright-up|--kbd-bright-down|--kbd-bright-toggle|--kbd-bright-show|--play-pause|--next|--prev|--stop} [step: 1–100]\n' "$0" >&2
+            return 1
             ;;
     esac
 }

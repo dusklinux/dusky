@@ -1286,6 +1286,12 @@ hl.bind(
     { description = "Keyboard Brightness down", locked = true, repeating = true }
 )
 
+hl.bind(
+    "XF86KbdLightOnOff",
+    hl.dsp.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --kbd-bright-toggle"),
+    { description = "Toggle keyboard backlight", locked = true }
+)
+
 -- Player Controls (Routed through script for OSD feedback)
 
 hl.bind(
