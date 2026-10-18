@@ -4,6 +4,8 @@
 Enter appends the essential template. Only float, size and move are enabled
 initially, as in the original generator. Other essentials are editable comments;
 optional properties are absent until selected with o. No third-party Python UI.
+On size/move, p cycles pixel/relative presets; e accepts custom Lua expressions.
+The window list refreshes automatically; options freeze the list while editing.
 
 Rule reference: https://wiki.hypr.land/Configuring/Basics/Window-Rules/
 """
@@ -18,6 +20,7 @@ import re
 import subprocess
 import sys
 lazy import tempfile
+from time import monotonic
 lazy import unicodedata
 from dataclasses import dataclass, field
 
@@ -40,8 +43,8 @@ PROPERTIES = (
     Property("match.class", '""', "Exact current class; static effects match the class at opening", True),
     Property("match.title", '""', "Exact current title; static effects match the title at opening", True),
     Property("float", "true", "Float the window", True),
-    Property("size", "{800, 600}", "Logical width, height; numbers or quoted monitor_w/monitor_h expressions", True),
-    Property("move", "{0, 0}", "Monitor-local logical x, y; numbers or quoted expressions", True),
+    Property("size", "{800, 600}", "p: pixels / 95% of monitor; e: custom dimensions or monitor expressions", True),
+    Property("move", "{0, 0}", "p: pixels / centered / bottom-center; e: custom position expressions", True),
     Property("pin", "true", "Show on all workspaces (requires floating)", True),
     Property("center", "true", "Center floating window; use instead of move", True),
     Property("workspace", '"unset"', 'Workspace selector, optionally silent; "unset" removes assignment', True),
@@ -50,7 +53,7 @@ PROPERTIES = (
     Property("no_focus", "true", "Prevent focus", True),
     Property("no_dim", "true", "Disable inactive dimming", True),
     Property("border_size", "2", "Border thickness in logical pixels", True),
-    Property("animation", '"popin 87%"', "Animation style, e.g. popin 80% or slide left", True),
+    Property("animation", '"popin 87%"', "p: animation styles; e: custom style (fade-only uses popin 100%)", True),
     Property("focus_on_activate", "false", "Focus when the app requests activation", True),
     Property("xray", "true", "Blur through to wallpaper", True),
     Property("enabled", "true", "Enable this named rule"),
@@ -71,7 +74,7 @@ PROPERTIES = (
     Property("content", '"game"', "Set content type: none, photo, video, game"),
     Property("fullscreen", "true", "Fullscreen on opening"),
     Property("fullscreen_state", '"0 0"', "Internal and client fullscreen states, each 0..3"),
-    Property("group", '"set"', "set, new, lock, barred, deny, invade, override, unset; space-separated"),
+    Property("group", '"set"', "p: presets; e: set, new, lock, barred, deny, invade, override, unset"),
     Property("maximize", "true", "Maximize on opening"),
     Property("monitor", '""', "Output name, optionally followed by silent"),
     Property("no_close_for", "500", "Ignore killactive for this many ms after opening"),
@@ -80,7 +83,7 @@ PROPERTIES = (
     Property("scrolling_width", "1.0", "Initial column width in the scrolling layout"),
     Property("suppress_event", '"maximize"', "Block events: fullscreen, maximize, activate, activatefocus, fullscreenoutput"),
     Property("tile", "true", "Force tiling; use instead of float"),
-    Property("border_color", '"rgb(33ccff)"', 'Color or {colors={"rgba(33ccffee)","rgba(00ff99ee)"}, angle=45}'),
+    Property("border_color", '"rgb(33ccff)"', 'p: colors/gradient; e: color or {colors={"rgb(33ccff)","rgb(00ff99)"},angle=45}'),
     Property("confine_pointer", "true", "Confine cursor to the window"),
     Property("dim_around", "true", "Dim other windows around a floating window"),
     Property("decorate", "false", "Draw window decorations"),
@@ -101,7 +104,7 @@ PROPERTIES = (
     Property("no_vrr", "true", "Disable per-window VRR (misc.vrr=2 or 3)"),
     Property("no_wobble", "true", "Disable wobble"),
     Property("no_xdg_drags", "true", "Disable XDG-driven window drags"),
-    Property("opacity", '"0.95 override 0.85 override"', "Active/inactive/fullscreen opacity; override sets absolute values"),
+    Property("opacity", '"0.95 override 0.85 override"', "p: presets; e: active/inactive/fullscreen opacity; override sets absolute values"),
     Property("force_rgbx", "true", "Disable the app's own transparency"),
     Property("persistent_size", "true", "Remember floating size for the same class and title"),
     Property("render_unfocused", "true", "Render even when not visible"),
@@ -116,6 +119,41 @@ PROPERTIES = (
 )
 PROPERTY_MAP = frozendict((p.key, p) for p in PROPERTIES)
 DEFAULT_ACTIVE = frozenset({"name", "match.class", "float", "size", "move"})
+# Hyprland evaluates these in logical monitor-local coordinates, using the
+# requested window size for move expressions. Borders/reserved bars are not
+# subtracted from monitor_w/monitor_h. Keep all expressions quoted Lua strings.
+VALUE_PRESETS = frozendict({
+    'size': (
+        ('95% of monitor', '{"monitor_w * 0.95", "monitor_h * 0.95"}'),
+    ),
+    'move': (
+        ('Centered on monitor', '{"(monitor_w - window_w) / 2", "(monitor_h - window_h) / 2"}'),
+        ('Bottom-center, 20px gap', '{"(monitor_w - window_w) / 2", "monitor_h - window_h - 20"}'),
+        ('Bottom-right, 20px gaps', '{"monitor_w - window_w - 20", "monitor_h - window_h - 20"}'),
+        ('Centered on cursor', '{"cursor_x - window_w / 2", "cursor_y - window_h / 2"}'),
+    ),
+    'animation': tuple(('Fade only' if style == 'popin 100%' else style, f'"{style}"') for style in (
+        'popin', 'popin 60%', 'popin 70%', 'popin 80%', 'popin 87%',
+        'popin 90%', 'popin 95%', 'slide', 'slide top', 'slide bottom',
+        'slide left', 'slide right', 'gnomed', 'popin 100%',
+    )),
+    'opacity': (
+        ('Active/inactive 90%', '"0.9 override 0.9 override"'),
+        ('Active 100%, inactive 85%', '"1.0 override 0.85 override"'),
+        ('Multiply opacity by 95%', '"0.95"'),
+    ),
+    'border_color': (
+        ('Red', '"rgb(ff0000)"'),
+        ('Cyan with alpha', '"rgba(33ccffee)"'),
+        ('Cyan/green gradient', '{colors = {"rgba(33ccffee)", "rgba(00ff99ee)"}, angle = 45}'),
+    ),
+    'group': tuple((style, f'"{style}"') for style in ('set', 'set lock', 'barred', 'deny')),
+})
+MONITOR_DIMENSIONS_QUERY = '''local rows = {}
+for _, m in ipairs(hl.get_monitors()) do
+    rows[#rows+1] = string.format("[%d,%d,%d]", m.id, m.mode.width, m.mode.height)
+end
+return "[" .. table.concat(rows, ",") .. "]"'''
 
 
 @dataclass(slots=True)
@@ -124,6 +162,8 @@ class Window:
     app_class: str
     title: str
     values: dict[str, str]
+    monitor_id: int | None = None
+    geometry: tuple[int, int, int, int] | None = None  # logical w, h, local x, y
 
 
 @dataclass(slots=True)
@@ -276,13 +316,40 @@ def literal_rule_names(tokens: list[str | bytes]) -> list[bytes]:
     return names
 
 
-def hyprctl_json(command: str) -> list:
-    result = subprocess.run(["hyprctl", "-j", command], capture_output=True,
+def hyprctl_json(command: str, *args: str) -> list:
+    result = subprocess.run(["hyprctl", "-j", command, *args], capture_output=True,
                             text=True, check=True, timeout=3)
     data = json.loads(result.stdout)
     if not isinstance(data, list):
         raise ValueError(f"hyprctl {command}: expected a JSON list")
     return data
+
+
+def preset_choices(window: Window, key: str) -> list[tuple[str, str]]:
+    choices = [('Captured/default value', window.values.get(key, PROPERTY_MAP[key].value))]
+    if key in ('size', 'move'):
+        if 'relative_size' not in window.values:
+            if window.monitor_id is None or window.geometry is None:
+                raise ValueError('Refresh windows before capturing monitor proportions')
+            dimensions = hyprctl_json('repl', MONITOR_DIMENSIONS_QUERY)
+            monitor = next((row for row in dimensions if row[0] == window.monitor_id), None)
+            if monitor is None or monitor[1] <= 0 or monitor[2] <= 0:
+                raise ValueError('Monitor is unavailable; refresh windows')
+            # Query actual logical dimensions: IPC scale is rounded, and
+            # physical/scale division also misses Hyprland's size rounding.
+            width, height = monitor[1:]
+            w, h, x, y = window.geometry
+            for prop, a, b in (('size', w, h), ('move', x, y)):
+                window.values['relative_' + prop] = (
+                    f'{{"monitor_w * ({a} / {width})", "monitor_h * ({b} / {height})"}}')
+        choices[0] = ('Captured pixels', choices[0][1])
+        choices.append(('Captured monitor proportions', window.values['relative_' + key]))
+    seen = {value for _, value in choices}
+    for label, value in VALUE_PRESETS[key]:
+        if value not in seen:
+            choices.append((label, value))
+            seen.add(value)
+    return choices
 
 
 def scan_windows() -> list[Window]:
@@ -316,7 +383,8 @@ def scan_windows() -> list[Window]:
                 'workspace': lua_string(ws_name or 'unset'),
                 'match.workspace': lua_string(ws_name or '1'), 'monitor': lua_string(m['name']),
             }
-            windows.append(Window(c['address'], app_class, title, values))
+            windows.append(Window(c['address'], app_class, title, values,
+                                  c['monitor'], (w, h, x - m['x'], y - m['y'])))
         return windows
     except (KeyError, TypeError, AttributeError, ValueError) as exc:
         raise ValueError(f"Invalid Hyprland IPC data: {exc}") from exc
@@ -404,6 +472,8 @@ class DuskyTUI:
         self.options = False
         self.query = ''
         self.status = ''
+        self.next_refresh = monotonic() + 1
+        self.refresh_error = None
         self.selections: dict[str, Selection] = {}
         try:
             curses.curs_set(0)
@@ -419,7 +489,7 @@ class DuskyTUI:
             except curses.error:
                 pass  # Color is optional; navigation and rendering still work.
         screen.keypad(True)
-        screen.timeout(-1)  # Idle means zero IPC/polling; r explicitly refreshes.
+        curses.mousemask(curses.BUTTON4_PRESSED | curses.BUTTON5_PRESSED)
 
     @property
     def current(self) -> Window | None:
@@ -500,17 +570,27 @@ class DuskyTUI:
                 cursor += 1
 
     def option_rows(self) -> list[Property]:
-        needle = self.query.casefold()
-        return [p for p in PROPERTIES if needle in (p.key + ' ' + p.description).casefold()]
+        needle = self.query.casefold().strip()
+        rows = [p for p in PROPERTIES if needle in (p.key + ' ' + p.description).casefold()]
+        return sorted(rows, key=lambda p: (p.key != needle, needle not in p.key)) if needle else rows
 
-    def refresh(self) -> None:
+    def refresh(self, *, automatic: bool = False) -> None:
+        self.next_refresh = monotonic() + 1
         old = self.current.address if self.current else None
-        windows = scan_windows()  # Keep previous snapshot if IPC fails.
+        try:
+            windows = scan_windows()  # Keep previous snapshot if IPC fails.
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            self.refresh_error = display_text(str(exc))
+            raise
         self.windows = windows
         self.selections = {w.address: self.selections[w.address] for w in windows if w.address in self.selections}
         self.index = next((i for i, w in enumerate(windows) if w.address == old), min(self.index, max(0, len(windows) - 1)))
-        self.offset = self.preview_offset = 0
-        self.status = f'Refreshed: {len(windows)} native windows'
+        if not automatic:
+            self.offset = self.preview_offset = 0
+            self.status = f'Refreshed: {len(windows)} native windows'
+        elif self.status == self.refresh_error:
+            self.status = ''
+        self.refresh_error = None
 
     def draw(self) -> int:
         self.screen.erase()
@@ -524,7 +604,7 @@ class DuskyTUI:
         if self.options and self.current:
             rows = self.option_rows()
             self.put(1, 1, 'Options  [x] enabled  [.] commented  [ ] omitted', self.accent)
-            self.put(2, 1, 'Space toggle   e edit Lua value   / search   Esc back')
+            self.put(2, 1, 'Space toggle   e edit Lua   p presets   / search   Esc back')
             count = height - 7
             self.option_index = min(self.option_index, max(0, len(rows) - 1))
             self.option_offset = max(0, min(self.option_offset, self.option_index))
@@ -561,6 +641,14 @@ class DuskyTUI:
         return count
 
     def handle_key(self, ch, count: int) -> bool:
+        if ch == curses.KEY_MOUSE:
+            _, _, _, _, buttons = curses.getmouse()
+            if buttons & curses.BUTTON4_PRESSED:
+                ch = curses.KEY_UP
+            elif buttons & curses.BUTTON5_PRESSED:
+                ch = curses.KEY_DOWN
+            else:
+                return True
         if ch in ('q', 'Q'):
             return False
         if count == 0:
@@ -587,9 +675,23 @@ class DuskyTUI:
                 query = self.prompt('Search', self.query)
                 if query is not None:
                     self.query, self.option_index, self.option_offset = query, 0, 0
-            elif ch in (' ', 'e') and rows:
+            elif ch in (' ', 'e', 'p') and rows:
                 p = rows[self.option_index]
-                if ch == 'e':
+                if ch == 'p':
+                    if p.key not in VALUE_PRESETS:
+                        self.status = 'Use e for a custom value; this property has no presets'
+                        return True
+                    choices = preset_choices(self.current, p.key)
+                    current = self.selection.value(self.current, p.key)
+                    index = next((i for i, (_, value) in enumerate(choices) if value == current), -1)
+                    label, value = choices[(index + 1) % len(choices)]
+                    candidate = Selection(set(self.selection.active), dict(self.selection.edits))
+                    candidate.edits[p.key] = value
+                    candidate.enable(p.key)
+                    validate_rule(generate_lua_rule(self.current, candidate))
+                    self.selections[self.current.address] = candidate
+                    self.status = f'{p.key}: {label}. p cycles; e edits the value'
+                elif ch == 'e':
                     value = self.prompt(p.key + ' (Lua)', self.selection.value(self.current, p.key))
                     if value is None:
                         return True
@@ -624,9 +726,9 @@ class DuskyTUI:
                 self.preview_offset = max(0, self.preview_offset + (1 if ch == ']' else -1))
             elif ch == 'o':
                 self.options = True
-            elif ch in ('c', '\n', '\r', curses.KEY_ENTER):
+            elif ch in ('c', 'C', '\n', '\r', curses.KEY_ENTER):
                 text = generate_lua_rule(self.current, self.selection)
-                if ch == 'c':
+                if ch in ('c', 'C'):
                     subprocess.run(['wl-copy', '--type', 'text/plain;charset=utf-8'], input=text,
                                    text=True, check=True, capture_output=True, timeout=3)
                     self.status = 'Copied rule'
@@ -638,7 +740,12 @@ class DuskyTUI:
     def run(self) -> None:
         while True:
             try:
+                if not self.options and monotonic() >= self.next_refresh:
+                    self.refresh(automatic=True)
                 count = self.draw()
+                # Refresh at most once per second, regardless of key repeat.
+                # Freeze the snapshot while options or an editor are open.
+                self.screen.timeout(-1 if self.options else max(1, int((self.next_refresh - monotonic()) * 1000)))
                 if not self.handle_key(self.screen.get_wch(), count):
                     return
             except curses.error:
