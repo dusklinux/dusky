@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Live Linux process monitor. Requires Python 3.15+, psutil, RapidFuzz and Textual.
+"""Live Linux process monitor. Requires Python 3.15+, psutil, Textual and fzf.
 
 Accounting follows htop's LinuxProcessTable.c (RSS, CPU time and saturating
 I/O deltas) and btop's linux/btop_collect.cpp (RSS and interval CPU usage).
@@ -12,12 +12,15 @@ import asyncio
 import json
 import math
 import os
+import re
+import shlex
 import sys
 import time
 lazy import subprocess
 lazy import signal
 from collections import deque
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -37,7 +40,7 @@ def parse_cli_args(args: list[str] | None = None) -> dict[str, Any]:
                        help="group by executable and user (default)")
     parser.set_defaults(grouped=True)
     parser.add_argument("-p", "--pid", help="comma-separated positive PIDs")
-    parser.add_argument("-n", "--name", default="", help="fuzzy command filter")
+    parser.add_argument("-n", "--name", default="", help="fzf name filter (full: include arguments)")
     parser.add_argument("terms", nargs="*", metavar="MODE/NUMBER",
                         help="ram|cpu|disk|read|write, full|short, interval (1.5s), count (20); "
                              "legacy two-number form uses the smaller as interval")
@@ -46,7 +49,7 @@ def parse_cli_args(args: list[str] | None = None) -> dict[str, Any]:
         parser.print_help()
         parser.exit()
     ns = parser.parse_intermixed_args(args)
-    config = dict(sort_metric="ram", show_full=False, interval=2.0,
+    config = dict(sort_metric="ram", show_full=True, interval=2.0,
                   count=None, pids=[], name=ns.name, grouped=ns.grouped)
     if ns.pid is not None:
         try:
@@ -104,12 +107,11 @@ if __name__ == "__main__":
 
 try:
     import psutil
-    from rapidfuzz import fuzz
     from textual import on, events, work
     from textual.app import App, ComposeResult
     from textual.coordinate import Coordinate
     from textual.binding import Binding
-    from textual.containers import Vertical, Horizontal, Container
+    from textual.containers import Vertical, Horizontal, Container, VerticalScroll
     from textual.widgets import Input, DataTable, Label, OptionList
     from textual.widgets.option_list import Option
     from textual.screen import ModalScreen
@@ -119,8 +121,8 @@ try:
     from rich.text import Text
 except ImportError as error:
     raise SystemExit(
-        f"Dusky Monitor dependency error: {error}. Provision psutil, rapidfuzz "
-        "and textual for the Python interpreter launching this script."
+        f"Dusky Monitor dependency error: {error}. Provision psutil "
+        "and textual for the Python interpreter launching this script; search requires fzf."
     ) from error
 
 
@@ -191,7 +193,7 @@ class ProcessSampler:
                     read=read, write=write,
                     disk=read + write if read is not None and write is not None else None,
                     time=format_time(cpu_time) if cpu_time is not None else "—",
-                    full_cmd=" ".join(cmdline) if cmdline else f"[{name}]",
+                    full_cmd=shlex.join(cmdline) if cmdline else f"[{name}]",
                     short_cmd=Path(cmdline[0]).name if cmdline else f"[{name}]",
                 ))
             except psutil.NoSuchProcess:
@@ -200,17 +202,26 @@ class ProcessSampler:
         return rows
 
 
+INTERPRETER_NAME = re.compile(
+    r"(?:python(?:\d+(?:\.\d+)*)?[dt]?|pypy(?:\d+(?:\.\d+)*)?|"
+    r"(?:ba|da|z|k|fi|c|tc)?sh|node(?:js)?|perl(?:\d+(?:\.\d+)*)?|"
+    r"ruby(?:\d+(?:\.\d+)*)?|lua(?:jit|\d+(?:\.\d+)*)?|java|php(?:\d+(?:\.\d+)*)?)"
+)
+
+
 def group_processes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Aggregate executable/user groups; incomplete readings remain lower bounds.
 
     RSS/CPU summation follows btop's collapsed-process aggregation. Grouping by
     executable keeps browser content processes together without app name rules.
-    Unknown executable/user identities remain separate PID rows.
+    Interpreter processes and unknown executable/user identities stay separate.
     """
     groups: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
         executable, uid = row["executable"], row["uid"]
-        key = f"exe:{uid}:{executable}" if executable and uid is not None else row["key"]
+        shared_runtime = executable and INTERPRETER_NAME.fullmatch(Path(executable).name)
+        key = (f"exe:{uid}:{executable}" if executable and uid is not None and not shared_runtime
+               else row["key"])
         groups.setdefault(key, []).append(row)
     result = []
     fields = ("cpu", "rss", "mem_perc", "read", "write", "cpu_time")
@@ -236,9 +247,57 @@ def group_processes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         item["partial"] = frozenset(partial)
         item["time"] = format_time(item["cpu_time"]) if item["cpu_time"] is not None else "—"
         item["search_commands"] = tuple(row["full_cmd"] for row in members)
+        item["search_names"] = tuple(dict.fromkeys(row["short_cmd"] for row in members))
         item["status"] = f"{len(members)} processes" if len(members) > 1 else leader["status"]
         result.append(item)
     return result
+
+
+def search_entries(rows: list[dict[str, Any]], full: bool) -> tuple[tuple[str, str], ...]:
+    """Search displayed names, or every member's arguments in full-command mode."""
+    field, fallback = ("search_commands", "full_cmd") if full else ("search_names", "short_cmd")
+    return tuple((row["key"], command) for row in rows
+                 for command in row.get(field, (row[fallback],)))
+
+
+async def fzf_match(entries: tuple[tuple[str, str], ...], query: str) -> set[str]:
+    """Use fzf's documented filter mode, without occupying or blocking the terminal."""
+    if not entries:
+        return set()
+    environment = {key: value for key, value in os.environ.items()
+                   if key not in {"FZF_DEFAULT_OPTS", "FZF_DEFAULT_OPTS_FILE"}}
+    process = await asyncio.create_subprocess_exec(
+        "fzf", "--filter=" + query, "--no-sort", "--extended", "--smart-case",
+        "--scheme=default", "--read0", "--print0", "--delimiter=\t", "--nth=2..",
+        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE, env=environment,
+    )
+    # NUL records preserve tabs/newlines in commands. Only the text after the
+    # first tab is searchable; numeric record IDs are never mistaken for PIDs.
+    payload = b"".join(f"{index}\t{command}\0".encode("utf-8", errors="replace")
+                       for index, (_, command) in enumerate(entries))
+    try:
+        output, error = await process.communicate(payload)
+    finally:
+        if process.returncode is None:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+            cleanup = asyncio.create_task(process.communicate())
+            # Another keystroke or shutdown may cancel this worker again while
+            # it is reaping the child. Finish closing its pipes before exiting.
+            while not cleanup.done():
+                try:
+                    await asyncio.shield(cleanup)
+                except asyncio.CancelledError:
+                    pass
+            cleanup.result()
+    if process.returncode not in (0, 1):
+        raise RuntimeError(error.decode("utf-8", errors="replace").strip() or
+                           f"fzf exited with status {process.returncode}")
+    return {entries[int(record.split(b"\t", 1)[0])][0]
+            for record in output.split(b"\0") if record}
 
 
 class ProcessTable(DataTable):
@@ -480,6 +539,9 @@ class ProcessPanopticon(Container):
             yield Label("Uptime: 00:00:00", id="panopticon-uptime")
             yield Label("Threshold: None", id="panopticon-threshold")
 
+        with VerticalScroll(id="panopticon-command-scroll", can_focus=True):
+            yield Label("", id="panopticon-command", markup=False)
+
         with Horizontal(id="panopticon-io-row"):
             yield Label("↓ Read: 0 B/s", id="panopticon-io-read")
             yield Label("↑ Write: 0 B/s", id="panopticon-io-write")
@@ -510,6 +572,8 @@ class DuskyMonitorApp(App):
     #panopticon-header { height: 1; align: left middle; }
     #panopticon-header > Label { width: 1fr; color: $foreground; text-style: bold; }
     #panopticon-title { color: $primary; }
+    #panopticon-command-scroll { height: 3; margin-top: 1; scrollbar-size: 1 0; }
+    #panopticon-command { width: 100%; height: auto; color: $foreground; }
 
     #panopticon-io-row { height: 1; align: left middle; margin-top: 1; }
     #panopticon-io-row > Label { width: 1fr; color: $secondary; }
@@ -532,13 +596,18 @@ class DuskyMonitorApp(App):
 
     DataTable { height: 1fr; border: none; background: transparent; scrollbar-size: 0 0; }
 
-    #search_input {
-        dock: bottom; border: none; border-top: solid $primary 50%;
-        background: $primary 10%; color: $foreground;
-        display: none; height: 3; margin: 0;
+    #search-bar {
+        dock: bottom; display: none; height: 2; margin: 0; padding: 0 1;
+        border-top: solid $primary 30%; background: transparent;
     }
-    #search_input.-active { display: block; }
-    #search_input:focus { border-top: solid $primary; }
+    #search-bar.-active { display: block; }
+    #search-prompt { width: auto; height: 1; margin-right: 1; color: $primary; text-style: bold; }
+    #search-hint { width: auto; height: 1; margin-left: 2; color: $text-muted; }
+    #search_input {
+        width: 1fr; min-width: 1; height: 1; margin: 0; padding: 0;
+        border: none; background: transparent; color: $foreground;
+    }
+    #search_input:focus { border: none; background-tint: transparent; }
 
     #footer {
         height: auto; min-height: 2; dock: bottom;
@@ -619,6 +688,10 @@ class DuskyMonitorApp(App):
         self.last_alert_time: float = float("-inf")
 
         self._search_task: asyncio.Task | None = None
+        self._filter_worker = None
+        self._filter_signature = None
+        self._filter_keys: set[str] | None = None
+        self._filter_reset_position = False
 
         self.theme_colors = {
             "bg": "#0d141b", "fg": "#dce3ee", "accent": "#9acbff",
@@ -629,7 +702,10 @@ class DuskyMonitorApp(App):
         yield ProcessPanopticon(id="panopticon")
         with Vertical(id="main-box"):
             yield ProcessTable(id="process_table", cursor_type="row", show_cursor=False)
-            yield Input(id="search_input", placeholder="Search commands (Enter keeps filter; Esc clears)")
+            with Horizontal(id="search-bar"):
+                yield Label("Search ›", id="search-prompt")
+                yield Input(id="search_input", placeholder="Filter processes…", compact=True)
+                yield Label("Enter keep · Esc clear", id="search-hint")
         yield AppFooter(id="footer")
 
     def apply_theme_to_engine(self) -> None:
@@ -702,7 +778,7 @@ class DuskyMonitorApp(App):
         table.focus()
 
         if self.search_query:
-            self.query_one("#search_input", Input).add_class("-active")
+            self.query_one("#search-bar").add_class("-active")
             self.query_one("#search_input", Input).value = self.search_query
 
         try:
@@ -716,13 +792,8 @@ class DuskyMonitorApp(App):
         self.set_interval(2.0, self.watch_theme_file)
 
     def sort_data(self, data: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        query = self.search_query.casefold()
-        if query:
-            data = [item for item in data
-                    if any(fuzz.partial_ratio(query, command.casefold()) >= 40
-                           for command in item.get("search_commands", (item["full_cmd"],)))]
         field = "rss" if self.sort_by == "ram" else self.sort_by
-        # Filter by fuzzy match, then rank by the selected resource, not similarity.
+        # Apply resource ordering and the row limit after fzf filtering.
         ordered = sorted(data, key=lambda item: (
             item[field] if item[field] is not None else -1, -item["pid"]
         ), reverse=True)
@@ -754,7 +825,37 @@ class DuskyMonitorApp(App):
     def refresh_rows(self, *, reset_position: bool = False) -> None:
         view = group_processes(self.rows) if self.grouped else self.rows
         self.view_rows = {row["key"]: row for row in view}
-        self._refresh_dom_matrix(self.sort_data(view), reset_position=reset_position)
+        self._filter_reset_position |= reset_position
+        if not self.search_query.strip():
+            if self._filter_worker is not None:
+                self._filter_worker.cancel()
+            self._filter_signature = None
+            self._filter_keys = None
+        else:
+            signature = (self.search_query, search_entries(view, self.show_full_cmd))
+            if signature != self._filter_signature:
+                self._filter_signature = signature
+                self._filter_keys = None
+                self._filter_worker = self.run_worker(
+                    partial(self._filter_rows, signature), group="search", exclusive=True,
+                )
+            if self._filter_keys is None:
+                return
+            view = [row for row in view if row["key"] in self._filter_keys]
+        self._refresh_dom_matrix(self.sort_data(view), reset_position=self._filter_reset_position)
+        self._filter_reset_position = False
+
+    async def _filter_rows(self, signature: tuple[str, tuple[tuple[str, str], ...]]) -> None:
+        query, entries = signature
+        try:
+            keys = await fzf_match(entries, query)
+        except (OSError, RuntimeError) as error:
+            self.notify(f"Search failed: {error}. Search requires fzf.", severity="error")
+            keys = set()
+        if self.is_running and signature == self._filter_signature:
+            self._filter_keys = keys
+            # Render the newest sample and sort settings, not an old snapshot.
+            self.refresh_rows()
 
     def _clear_tracking(self) -> None:
         """Clear an explicit tracking target, independently of cursor position."""
@@ -783,6 +884,10 @@ class DuskyMonitorApp(App):
 
         label = f"{data['short_cmd']} · {data['count']} processes" if self.grouped else f"PID {data['pid']}"
         self.query_one("#panopticon-title", Label).update(Text(f"TRACKED: {label}"))
+        executable = data["executable"] or "unavailable"
+        self.query_one("#panopticon-command", Label).update(
+            f"Executable: {executable}\nCommand: {data['full_cmd']}"
+        )
         self.query_one("#panopticon-status", Label).update(f"Status: [bold {self.theme_colors.get('accent')}]{str(data['status']).upper()}[/]")
         self.query_one("#panopticon-uptime", Label).update(f"Uptime: [bold]{format_time(uptime_secs)}[/]")
 
@@ -845,7 +950,8 @@ class DuskyMonitorApp(App):
             table.set_reactive(DataTable.cursor_coordinate, Coordinate(min(rank, max(0, table.row_count - 1)), 0))
             table.scroll_to(x=x, y=y, animate=False)
             view = "Programs" if self.grouped else "PIDs"
-            mode = self.sort_by.upper() + (" | Filtered" if self.search_query else "")
+            scope = "commands + args" if self.show_full_cmd else "names"
+            mode = self.sort_by.upper() + (f" | Filter: {scope}" if self.search_query.strip() else "")
             self.query_one("#main-box").border_subtitle = (
                 f" {view} | Sort: {mode} | ≥ partial | Refresh: {self.refresh_interval}s "
             )
@@ -932,7 +1038,7 @@ class DuskyMonitorApp(App):
 
     def action_focus_search(self) -> None:
         search_input = self.query_one("#search_input", Input)
-        search_input.add_class("-active")
+        self.query_one("#search-bar").add_class("-active")
         search_input.focus()
 
     def action_clear_search(self) -> None:
@@ -940,10 +1046,11 @@ class DuskyMonitorApp(App):
             self.screen.dismiss(None)
             return
         search_input = self.query_one("#search_input", Input)
-        if search_input.has_class("-active"):
+        search_bar = self.query_one("#search-bar")
+        if search_bar.has_class("-active"):
             if self._search_task:
                 self._search_task.cancel()
-            search_input.remove_class("-active")
+            search_bar.remove_class("-active")
             search_input.value = ""
             self.search_query = ""
             self.query_one(DataTable).focus()
@@ -985,6 +1092,11 @@ class DuskyMonitorApp(App):
 
     @on(Input.Submitted, "#search_input")
     def on_input_submitted(self, event: Input.Submitted) -> None:
+        # Enter must commit the text even when pressed before the debounce fires.
+        if self._search_task:
+            self._search_task.cancel()
+        self.search_query = event.value
+        self.refresh_rows(reset_position=True)
         self.query_one(DataTable).focus()
 
 if __name__ == "__main__":
