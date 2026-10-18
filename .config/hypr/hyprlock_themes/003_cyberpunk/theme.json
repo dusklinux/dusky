@@ -1,4 +1,5 @@
 {
-    "name": "Cyberpunk 2077",
-    "author": "NightCity"
+  "name": "Cyberpunk 2077",
+  "author": "NightCity",
+  "description": "Angular terminal layout with dynamic primary/tertiary accents"
 }

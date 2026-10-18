@@ -11,9 +11,6 @@ This file serves a dual purpose:
 
 import sys
 import os
-import json
-import shlex
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -27,6 +24,7 @@ for _candidate in _DUSKY_TUI_CANDIDATES:
         sys.path.insert(0, str(_candidate))
 
 from python.frontend.core_types import ConfigItem
+from python.engines.hyprlock import HyprlockEngine, discover_themes
 
 # =============================================================================
 # 1. CORE APPLICATION ROUTING
@@ -47,49 +45,7 @@ TABS = ["Themes", "Actions"]
 # =============================================================================
 _THEMES_ROOT = Path("~/.config/hypr/hyprlock_themes").expanduser().resolve()
 
-def _clean_theme_name(raw_name: str, folder: str) -> str:
-    name = raw_name.strip()
-    if name.endswith("(Default)"):
-        name = name[:-9].strip()
-    if name.islower():
-        name = name.title()
-    if not name:
-        name = folder.replace("_", " ").title()
-    return name
-
-THEMES_META = []
-if _THEMES_ROOT.is_dir():
-    _dirs = sorted(
-        [d for d in _THEMES_ROOT.iterdir() if d.is_dir() and (d / "hyprlock.conf").is_file()],
-        key=lambda p: p.name.lower()
-    )
-    for d in _dirs:
-        folder = d.name
-        json_path = d / "theme.json"
-        display_name = folder
-        description = ""
-        author = ""
-        if json_path.is_file():
-            try:
-                data = json.loads(json_path.read_text(encoding="utf-8"))
-                if isinstance(data, dict):
-                    display_name = str(data.get("name") or folder).strip()
-                    description = str(data.get("description") or "").strip()
-                    author = str(data.get("author") or "").strip()
-            except (OSError, json.JSONDecodeError):
-                pass
-
-        clean_name = _clean_theme_name(display_name, folder)
-
-        THEMES_META.append({
-            "folder": folder,
-            "name": clean_name,
-            "raw_name": display_name,
-            "description": description,
-            "author": author,
-            "dir": d,
-            "conf": d / "hyprlock.conf"
-        })
+THEMES_META = discover_themes(_THEMES_ROOT)
 
 TOTAL_THEMES = len(THEMES_META)
 
@@ -339,12 +295,6 @@ if __name__ == "__main__":
             sys.exit(1)
 
     # Behavior 2: CLI scripting mutator
-    try:
-        from python.engines.hyprlock import HyprlockEngine
-    except ImportError:
-        print("[-] Error: Could not import HyprlockEngine. Ensure dusky_tui is installed correctly.", file=sys.stderr)
-        sys.exit(1)
-
     engine = HyprlockEngine()
     state = engine.load_state()
 
@@ -372,11 +322,10 @@ if __name__ == "__main__":
         sys.exit(0)
 
     if args.test_lock:
-        lock_bin = shutil.which("hyprlock") or "hyprlock"
+        lock_bin = str(Path(__file__).resolve().with_name("lock.sh"))
         print(f"[*] Launching {lock_bin}...")
         try:
-            subprocess.run([lock_bin])
-            sys.exit(0)
+            sys.exit(subprocess.run([lock_bin]).returncode)
         except Exception as e:
             print(f"[-] Error launching hyprlock: {e}", file=sys.stderr)
             sys.exit(1)

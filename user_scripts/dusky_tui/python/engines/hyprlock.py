@@ -27,26 +27,61 @@ following the canonical Dusky TUI state management pattern.
 
 import os
 lazy import json
-import re
 lazy import stat
 lazy import tempfile
 lazy import subprocess
-lazy import shutil
 lazy from pathlib import Path
 lazy from typing import Any
 
 from python.frontend.core_types import BaseEngine
 
 
+def discover_themes(themes_dir: Path) -> list[dict[str, Any]]:
+    """Discover the same ordered gallery for the engine and TUI schema."""
+    if not themes_dir.is_dir():
+        return []
+    candidates = sorted(
+        (d for d in themes_dir.iterdir() if d.is_dir() and (d / "hyprlock.conf").is_file()),
+        key=lambda p: (p.name.casefold(), p.name),
+    )
+    themes = []
+    for directory in candidates:
+        folder = directory.name
+        data = {}
+        metadata_path = directory / "theme.json"
+        if metadata_path.is_file():
+            try:
+                parsed = json.loads(metadata_path.read_text(encoding="utf-8"))
+                if isinstance(parsed, dict):
+                    data = parsed
+            except (OSError, ValueError):
+                pass
+        display_name = str(data.get("name") or folder).strip() or folder
+        clean_name = display_name.removesuffix("(Default)").strip() or folder
+        if clean_name.islower():
+            clean_name = clean_name.title()
+        themes.append({
+            "folder": folder,
+            "name": clean_name,
+            "raw_name": display_name,
+            "description": str(data.get("description") or "").strip(),
+            "author": str(data.get("author") or "").strip(),
+            "dir": directory,
+            "conf": directory / "hyprlock.conf",
+            "conf_path": directory / "hyprlock.conf",
+        })
+    return themes
+
+
 class HyprlockEngine(BaseEngine):
     """
-    Production-grade engine for managing Hyprlock themes in the Dusky ecosystem.
+    Theme management for the Dusky TUI and scripting CLI.
 
-    Guarantees:
+    Behavior:
     - Zero username hardcoding (purely uses dynamic Home / XDG paths).
     - Atomic file mutations via tempfile & os.replace to prevent corruption.
     - Preserves external comments and config structures in hyprlock.conf.
-    - Full bidirectional synchronization with state files.
+    - Active configuration takes precedence over saved theme state.
     - Native support for headless automation, CLI scripting, and TUI interactivity.
     """
 
@@ -74,61 +109,20 @@ class HyprlockEngine(BaseEngine):
         return str(self.config_path)
 
     def _refresh_themes(self) -> None:
-        """Discovers all valid theme subdirectories containing hyprlock.conf."""
-        self.theme_dirs = []
-        self.theme_folders = []
-        self.theme_names = []
-        self.theme_metadata = []
+        self.theme_metadata = discover_themes(self.themes_dir)
+        self.theme_dirs = [meta["dir"] for meta in self.theme_metadata]
+        self.theme_folders = [meta["folder"] for meta in self.theme_metadata]
+        self.theme_names = [meta["name"] for meta in self.theme_metadata]
 
-        if not self.themes_dir.is_dir():
-            return
+    def _resolve_source(self, source: str) -> Path:
+        path = Path(os.path.expandvars(source)).expanduser()
+        if not path.is_absolute():
+            path = self.config_path.parent / path
+        return path.resolve()
 
-        # Find all subdirectories that contain hyprlock.conf (sorted naturally)
-        candidates = sorted(
-            [d for d in self.themes_dir.iterdir() if d.is_dir() and (d / "hyprlock.conf").is_file()],
-            key=lambda p: p.name.lower()
-        )
-
-        for d in candidates:
-            folder = d.name
-            conf_path = d / "hyprlock.conf"
-            json_path = d / "theme.json"
-
-            display_name = folder
-            description = ""
-            author = ""
-
-            if json_path.is_file():
-                try:
-                    data = json.loads(json_path.read_text(encoding="utf-8"))
-                    if isinstance(data, dict):
-                        display_name = str(data.get("name") or folder).strip()
-                        description = str(data.get("description") or "").strip()
-                        author = str(data.get("author") or "").strip()
-                except (OSError, json.JSONDecodeError):
-                    pass
-
-            clean_name = display_name
-            if clean_name.endswith("(Default)"):
-                clean_name = clean_name[:-9].strip()
-            if clean_name.islower():
-                clean_name = clean_name.title()
-
-            meta = {
-                "folder": folder,
-                "name": clean_name,
-                "raw_name": display_name,
-                "description": description,
-                "author": author,
-                "dir": d,
-                "conf": conf_path,
-                "conf_path": conf_path
-            }
-
-            self.theme_dirs.append(d)
-            self.theme_folders.append(folder)
-            self.theme_names.append(clean_name)
-            self.theme_metadata.append(meta)
+    def _is_theme_source(self, source: str) -> bool:
+        path = self._resolve_source(source)
+        return path.name == "hyprlock.conf" and path.parent.parent == self.themes_dir
 
     def _extract_source_from_config(self) -> str | None:
         """Extracts the active source path from hyprlock.conf if present."""
@@ -146,7 +140,8 @@ class HyprlockEngine(BaseEngine):
                     key, val = stripped.split("=", 1)
                     if key.strip() == "source":
                         clean_val = val.split("#", 1)[0].strip()
-                        return clean_val
+                        if self._is_theme_source(clean_val):
+                            return clean_val
         except OSError:
             pass
         return None
@@ -165,7 +160,7 @@ class HyprlockEngine(BaseEngine):
         # 1. Attempt detection by parsing the source directive in hyprlock.conf
         raw_source = self._extract_source_from_config()
         if raw_source:
-            resolved_source = Path(raw_source).expanduser().resolve()
+            resolved_source = self._resolve_source(raw_source)
             for i, theme_dir in enumerate(self.theme_dirs):
                 theme_conf = (theme_dir / "hyprlock.conf").resolve()
                 if resolved_source == theme_conf:
@@ -178,6 +173,8 @@ class HyprlockEngine(BaseEngine):
         if active_idx == -1 and self.state_file.is_file():
             try:
                 state_data = json.loads(self.state_file.read_text(encoding="utf-8"))
+                if not isinstance(state_data, dict):
+                    state_data = {}
                 saved_folder = state_data.get("active_theme_folder")
                 saved_name = state_data.get("active_theme_name")
                 saved_idx = state_data.get("active_theme_index", -1)
@@ -186,7 +183,7 @@ class HyprlockEngine(BaseEngine):
                     active_idx = self.theme_folders.index(saved_folder)
                 elif saved_name and saved_name in self.theme_names:
                     active_idx = self.theme_names.index(saved_name)
-                elif 0 <= saved_idx < len(self.theme_folders):
+                elif type(saved_idx) is int and 0 <= saved_idx < len(self.theme_folders):
                     active_idx = saved_idx
 
                 if active_idx != -1:
@@ -202,7 +199,7 @@ class HyprlockEngine(BaseEngine):
             active_name = self.theme_names[0]
 
         active_number = active_idx + 1 if active_idx >= 0 else 1
-        source_repr = f"~/.config/hypr/hyprlock_themes/{active_folder}/hyprlock.conf" if active_folder else ""
+        source_repr = str(self.themes_dir / active_folder / "hyprlock.conf") if active_folder else ""
 
         self.cache = {
             "active_theme_index": active_idx,
@@ -255,13 +252,17 @@ class HyprlockEngine(BaseEngine):
                         stripped = line.strip()
                         if not stripped.startswith("#") and "=" in stripped:
                             k = stripped.split("=", 1)[0].strip()
-                            if k == "source":
+                            source = stripped.split("=", 1)[1].split("#", 1)[0].strip()
+                            if k == "source" and self._is_theme_source(source):
                                 # Extract any trailing comment
                                 comment = ""
                                 if "#" in line:
                                     hash_idx = line.index("#")
                                     comment = " " + line[hash_idx:].rstrip("\n")
-                                out_lines.append(f"source = {new_source_path}{comment}\n")
+                                if not replaced:
+                                    out_lines.append(f"source = {new_source_path}{comment}\n")
+                                elif comment:
+                                    out_lines.append(comment.lstrip() + "\n")
                                 replaced = True
                                 continue
                         out_lines.append(line)
@@ -305,6 +306,7 @@ class HyprlockEngine(BaseEngine):
 
     def _save_state_file(self, folder: str, name: str, index: int) -> None:
         """Atomically records the active theme in the persistent JSON state file."""
+        tmp_state: Path | None = None
         try:
             self.state_dir.mkdir(parents=True, exist_ok=True)
             data = {
@@ -312,11 +314,20 @@ class HyprlockEngine(BaseEngine):
                 "active_theme_name": name,
                 "active_theme_index": index
             }
-            tmp_state = self.state_file.with_suffix(".tmp")
-            tmp_state.write_text(json.dumps(data, indent=4), encoding="utf-8")
+            with tempfile.NamedTemporaryFile(
+                "w", dir=self.state_dir, delete=False, encoding="utf-8"
+            ) as tf:
+                tmp_state = Path(tf.name)
+                json.dump(data, tf, indent=4)
             os.replace(tmp_state, self.state_file)
         except OSError:
             pass
+        finally:
+            if tmp_state is not None:
+                try:
+                    tmp_state.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
     def _apply_theme_by_index(self, index: int) -> tuple[bool, str]:
         """Applies a theme by its zero-based index."""
@@ -328,7 +339,11 @@ class HyprlockEngine(BaseEngine):
 
         folder = self.theme_folders[index]
         display_name = self.theme_names[index]
-        source_directive = f"~/.config/hypr/hyprlock_themes/{folder}/hyprlock.conf"
+        theme_conf = self.themes_dir / folder / "hyprlock.conf"
+        source_directive = (
+            "~/" + str(theme_conf.relative_to(Path.home()))
+            if theme_conf.is_relative_to(Path.home()) else str(theme_conf)
+        )
 
         success = self._atomic_write_config(source_directive)
         if not success:
@@ -472,11 +487,13 @@ class HyprlockEngine(BaseEngine):
                     if self.state_file.is_file():
                         try:
                             state_data = json.loads(self.state_file.read_text(encoding="utf-8"))
+                            if not isinstance(state_data, dict):
+                                state_data = {}
                             saved_fld = state_data.get("active_theme_folder")
                             saved_idx = state_data.get("active_theme_index", -1)
                             if saved_fld and saved_fld in self.theme_folders:
                                 target_idx = self.theme_folders.index(saved_fld)
-                            elif 0 <= saved_idx < len(self.theme_folders):
+                            elif type(saved_idx) is int and 0 <= saved_idx < len(self.theme_folders):
                                 target_idx = saved_idx
                         except (OSError, json.JSONDecodeError):
                             pass
@@ -485,10 +502,10 @@ class HyprlockEngine(BaseEngine):
 
                 case "action_test_lock" if str_val in ("true", "1", "yes"):
                     # Launch hyprlock test in background
-                    lock_cmd = shutil.which("hyprlock") or "hyprlock"
+                    lock_cmd = str(Path.home() / "user_scripts/hyprlock/lock.sh")
                     try:
                         subprocess.Popen(
-                            [lock_cmd],
+                            [lock_cmd, "--config", str(self.config_path)],
                             start_new_session=True,
                             stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL,

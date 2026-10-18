@@ -1,40 +1,30 @@
 #!/usr/bin/env bash
 
-# 1. Find the battery path. 
-# We pick the first power_supply that starts with BAT or CW (Chromebooks).
-# We ensure it is actually present (-e).
-BAT_PATH=""
-for bat in /sys/class/power_supply/BAT* /sys/class/power_supply/CW201*; do
-    if [ -e "$bat/status" ]; then
-        BAT_PATH="$bat"
-        break
+# Discover system batteries by sysfs type, including devices not named BAT*.
+# Report each pack separately rather than inventing an unweighted aggregate.
+output=''
+for battery in /sys/class/power_supply/*; do
+    { IFS= read -r type < "$battery/type"; } 2>/dev/null || continue
+    [[ $type == Battery ]] || continue
+    if { IFS= read -r scope < "$battery/scope"; } 2>/dev/null; then
+        [[ $scope == Device ]] && continue
     fi
+    if { IFS= read -r present < "$battery/present"; } 2>/dev/null; then
+        [[ $present == 0 ]] && continue
+    fi
+    { IFS= read -r capacity < "$battery/capacity"; } 2>/dev/null || continue
+    [[ $capacity =~ ^[0-9]{1,3}$ ]] || continue
+    (( 10#$capacity <= 100 )) || continue
+    { IFS= read -r status < "$battery/status"; } 2>/dev/null || continue
+
+    case $status in
+        Charging)       text="⚡ $capacity%" ;;
+        Full)           text='Full' ;;
+        'Not charging') text=" $capacity%" ;;
+        *)              text="$capacity%" ;;
+    esac
+    output+="${output:+  ·  }$text"
 done
 
-# If no battery is found (desktop PC), exit silently.
-if [ -z "$BAT_PATH" ]; then
-    echo ""
-    exit 0
-fi
-
-# 2. Get the raw data from the specific battery found.
-STATUS=$(cat "$BAT_PATH/status")
-CAPACITY=$(cat "$BAT_PATH/capacity")
-
-# 3. Logic for Icons and Output
-# Using Nerd Fonts is highly recommended for Hyprlock.
-# Icons: Charging=⚡, Discharging=Removed, Full=Filled
-
-if [ "$STATUS" == "Charging" ]; then
-    echo "⚡ $CAPACITY%"
-elif [ "$STATUS" == "Discharging" ]; then
-    echo "$CAPACITY%"
-elif [ "$STATUS" == "Full" ]; then
-    echo "Full"
-elif [ "$STATUS" == "Not charging" ]; then
-    # Plugged in but threshold limit reached (common on ThinkPads/Asus)
-    echo " $CAPACITY%"
-else
-    # Fallback for unknown states
-    echo "$CAPACITY%"
-fi
+[[ -z $output ]] || printf '%s\n' "$output"
+exit 0

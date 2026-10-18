@@ -1,4 +1,5 @@
 {
-    "name": "Dracula",
-    "author": "Bram Stoker"
+  "name": "Dracula",
+  "author": "Bram Stoker",
+  "description": "Dracula-inspired layout with dynamic secondary/tertiary accents"
 }
