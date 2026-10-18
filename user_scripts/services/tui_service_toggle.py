@@ -108,7 +108,7 @@ CORE_USER_DEFS = {
     ),
     "osd_lock.service": (
         "Lock Key OSD",
-        "On-Screen Display service for hardware lock keys. Shows a visual pop-up when Caps Lock, Num Lock, or Scroll Lock is toggled.",
+        "Shows Caps Lock and Num Lock pop-ups and firmware-controlled keyboard-backlight changes. Volume and brightness keybinds work independently of this service.",
     ),
     "dusky_polkit.service": (
         "Dusky Polkit",
