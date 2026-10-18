@@ -56,7 +56,7 @@ pub struct Appearance {
 impl Default for Appearance {
     fn default() -> Self {
         Self {
-            opacity: 0.94,
+            opacity: 0.85,
             blur: true,
         }
     }
@@ -288,7 +288,7 @@ mod tests {
 
     #[test]
     fn appearance_defaults_and_edits_are_validated_as_one_snapshot() {
-        assert_eq!(Appearance::parse("blur=false").unwrap().opacity, 0.94);
+        assert_eq!(Appearance::parse("blur=false").unwrap().opacity, 0.85);
         assert_eq!(
             Appearance::parse("opacity=0.55\nblur=false").unwrap(),
             Appearance {

@@ -147,7 +147,7 @@ The notification timestamp daemon runs independently.
   Loading and empty notification labels share a fixed 56 px slot, so an empty
   result only changes the label. Sliders still appear only when available.
   The `dusky_tray_window` window rule in Hyprland's `window_rules.lua`
-  uses `slide bottom`, independently of the app's live blur rule. Panel
+  uses `slide bottom`, independently of the app's live blur preference. Panel
   height changes resize the compact window and keep its bottom edge anchored.
   Hyprland handles window animations; the application sends geometry changes
   only when the measured content size changes. No prewarm process or new service
@@ -155,22 +155,32 @@ The notification timestamp daemon runs independently.
 
 ## Opacity, blur, and live themes
 
-Edit `appearance.toml` next to this project's README:
+For an installed tray, edit `~/.local/share/dusky/dusky_tray/appearance.toml`:
 
 ```toml
-opacity = 0.94 # scales panel rendering; 0.0 = invisible, 1.0 = opaque
+opacity = 0.85 # scales panel rendering; 0.0 = invisible, 1.0 = opaque
 blur = true   # enables this panel's Hyprland window blur
 ```
 
 Both settings reload within two seconds while the panel is open. Tooltips
 always have opaque backgrounds and are drawn outside the panel-opacity wrapper.
+When Hyprland's global blur is off, the panel renders fully opaque. Turning
+blur on restores the configured opacity within the same two-second refresh.
+The app reads the actual compositor option over its request socket, independently
+of the quick-control layout and the shared Visuals indicator. Failed reads retain
+the last observed state; the panel starts opaque until the first successful read.
 For an installed binary, create `$XDG_CONFIG_HOME/dusky/tray/appearance.toml`
 (or `~/.config/dusky/tray/appearance.toml`). That file takes precedence
-over the project copy. Invalid or incomplete edits retain the last valid settings.
+over the installed defaults at `~/.local/share/dusky/dusky_tray/appearance.toml`.
+Source `appearance.toml` edits do not override installed defaults. Invalid edits
+retain the last valid settings; omitted keys use their defaults.
 
 The app uses the standard `iced_winit` Wayland backend, without a copied
 layer-shell library. Hyprland's `dusky_tray_window` rule makes the window
 floating, compact, transparent, borderless, and animated with `slide bottom`.
+The window is pinned on every launch. Its compositor rounding is 20 logical
+pixels with rounding power 2, matching the panel's circular corners so background
+blur is clipped to the same outline.
 The panel remains inset 20 logical pixels from the bottom right and follows its
 content height, capped to the monitor's available area. Dusky's shared
 `click_away_to_dismiss/dusky.c` helper uses Hyprland's focus-grab protocol:
@@ -179,13 +189,18 @@ The helper is compiled into the executable, so no separate `.so` is needed at
 runtime. Its native entry point borrows the window's Wayland display and surface;
 the event thread only enqueues dismissal, and joins before the window is released.
 This is a regular window (listed by `hyprctl clients`), not a fullscreen state
-or a layer surface. Normal workspace, focus, and fullscreen policies apply.
+or a layer surface. Normal focus and fullscreen policies apply.
 
-The app applies the named `dusky_tray_blur` window rule at launch and when
-appearance changes. It sets `no_blur` from the appearance setting; there is
-no background-effect protocol request. Hyprland's global
+After the window's first successful fit and when its blur preference changes,
+the app sets a locked `no_blur` window property through Hyprland's Lua
+`window.set_prop` dispatcher. This survives configuration reloads (including
+the Visuals toggle) and overrides workspace rules for this window only.
+There is no background-effect protocol request. Hyprland's global
 `decoration:blur:enabled` setting must also be enabled. The panel draws no
 outer shadow and leaves its surrounding desktop pixels transparent.
+At the old 0.94 opacity, the base covered 94% of the desktop and overlapping
+cards covered approximately 98.2%, making even working blur difficult to see.
+The 0.85 default leaves more of the blurred background visible.
 
 Matugen's template is `~/.config/matugen/templates/dusky_tray.json`,
 registered in `~/.config/matugen/config.toml`. It generates

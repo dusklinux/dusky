@@ -91,11 +91,12 @@ pub fn mako_blacklist_file() -> PathBuf {
     shared_runtime_dir().join("mako_rofi_blacklist")
 }
 
-/// Hyprland's named Lua rules replace themselves instead of accumulating.
-/// The tray window keeps its background transparent outside the panel.
+/// Lock this window's preference so config reloads cannot discard it or let
+/// workspace rules override it. Global blur.enabled still controls rendering.
+/// Call only after the panel has mapped (its first successful fit).
 pub fn configure_panel_blur(enabled: bool) {
     let rule = format!(
-        "hl.window_rule({{name=\"dusky_tray_blur\",match={{class=\"^dusky-tray$\"}},no_blur={}}})",
+        "hl.dispatch(hl.dsp.window.set_prop({{window=\"class:^dusky-tray$\",prop=\"no_blur\",value=\"{}\",lock=true}}))",
         !enabled
     );
     let reply = run_command(
@@ -104,8 +105,35 @@ pub fn configure_panel_blur(enabled: bool) {
         true,
     );
     if !reply.is_some_and(|reply| reply.status && reply.stdout.trim() == "ok") {
-        eprintln!("Could not apply the Hyprland tray blur rule");
+        eprintln!("Could not apply the Hyprland tray blur preference");
     }
+}
+
+/// Read the compositor's actual blur switch, rather than the shared Visuals
+/// indicator (which can stay true for shadows or other enabled effects).
+/// Use Hyprland's request socket to avoid spawning a process every refresh.
+pub fn global_blur_enabled() -> Option<bool> {
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixStream;
+
+    let signature = std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE")?;
+    let socket = shared_runtime_dir()
+        .join("hypr")
+        .join(signature)
+        .join(".socket.sock");
+    let mut stream = UnixStream::connect(socket).ok()?;
+    let timeout = Some(Duration::from_millis(800));
+    stream.set_read_timeout(timeout).ok()?;
+    stream.set_write_timeout(timeout).ok()?;
+    stream
+        .write_all(b"j/getoption decoration:blur:enabled")
+        .ok()?;
+    let mut response = String::new();
+    stream.read_to_string(&mut response).ok()?;
+    serde_json::from_str::<serde_json::Value>(&response)
+        .ok()?
+        .get("bool")?
+        .as_bool()
 }
 
 #[derive(Clone, Copy)]

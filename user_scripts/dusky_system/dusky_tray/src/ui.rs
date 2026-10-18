@@ -40,6 +40,7 @@ pub enum Message {
     PanelFitted(iced_core::Size, bool),
     WindowEvent(iced_core::window::Id, iced_core::window::Event),
     BlurConfigured,
+    GlobalBlurLoaded(Option<bool>),
     WeatherLoaded(Option<String>),
     MetricsLoaded((String, String, sys::NetState)),
     TogglesLoaded(u64, ToggleSnapshot),
@@ -104,6 +105,7 @@ pub struct ToggleSnapshot {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum RefreshKind {
+    GlobalBlur,
     Weather,
     Metrics,
     Toggles,
@@ -114,7 +116,8 @@ enum RefreshKind {
 }
 
 impl RefreshKind {
-    const ALL: [Self; 9] = [
+    const ALL: [Self; 10] = [
+        Self::GlobalBlur,
         Self::Weather,
         Self::Metrics,
         Self::Toggles,
@@ -129,6 +132,7 @@ impl RefreshKind {
 
     fn phase(self) -> &'static str {
         match self {
+            Self::GlobalBlur => "global-blur-ready",
             Self::Weather => "weather-ready",
             Self::Metrics => "metrics-ready",
             Self::Toggles => "toggles-ready",
@@ -149,6 +153,7 @@ impl RefreshKind {
 pub struct TrayApp {
     config: AppConfig,
     appearance: Appearance,
+    global_blur_enabled: bool,
     theme: AppTheme,
     time_text: String,
     date_text: String,
@@ -206,8 +211,7 @@ impl TrayApp {
             app.initial_refresh = false;
             crate::renderer::trace_phase("snapshot-ready");
         }
-        let boot = Task::batch([refresh, Self::configure_blur(app.appearance.blur)]);
-        (app, boot)
+        (app, refresh)
     }
 
     fn state(config: AppConfig) -> Self {
@@ -215,6 +219,9 @@ impl TrayApp {
         Self {
             config,
             appearance: Appearance::load().unwrap_or_default(),
+            // Start opaque until the compositor answers; a failed refresh
+            // retains the last observed state.
+            global_blur_enabled: false,
             theme: AppTheme::load(),
             time_text,
             date_text,
@@ -268,6 +275,7 @@ impl TrayApp {
             .into_iter()
             .filter(|kind| {
                 let enabled = match kind {
+                    RefreshKind::GlobalBlur => true,
                     RefreshKind::Weather => layout.show_weather,
                     RefreshKind::Metrics => layout.show_metrics,
                     RefreshKind::Toggles => {
@@ -289,6 +297,9 @@ impl TrayApp {
 
     fn refresh_task(&self, kind: RefreshKind) -> Task<Message> {
         match kind {
+            RefreshKind::GlobalBlur => {
+                worker::start(sys::global_blur_enabled).map(Message::GlobalBlurLoaded)
+            }
             RefreshKind::Weather => worker::start(sys::weather_text).map(Message::WeatherLoaded),
             RefreshKind::Metrics => worker::start(|| {
                 let (cpu, ram) = sys::cpu_ram();
@@ -359,6 +370,7 @@ impl TrayApp {
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         let phase = match &message {
+            Message::GlobalBlurLoaded(_) => Some(RefreshKind::GlobalBlur),
             Message::WeatherLoaded(_) => Some(RefreshKind::Weather),
             Message::MetricsLoaded(_) => Some(RefreshKind::Metrics),
             Message::TogglesLoaded(_, _) => Some(RefreshKind::Toggles),
@@ -380,12 +392,19 @@ impl TrayApp {
             }
             Message::PanelFitted(size, success) => {
                 self.panel_fit_busy = false;
+                let first_fit = success && self.panel_applied_size.is_none();
                 self.panel_applied_size = success.then_some(size);
                 // Follow an in-flight resize with only the latest measured size.
                 // A failed current size retries on Tick, avoiding a busy loop.
-                if self.panel_size != Some(size) {
-                    return self.fit_panel();
+                let refit = if self.panel_size != Some(size) {
+                    self.fit_panel()
+                } else {
+                    Task::none()
+                };
+                if first_fit {
+                    return Task::batch([Self::configure_blur(self.appearance.blur), refit]);
                 }
+                return refit;
             }
             Message::WindowEvent(id, event) => {
                 self.window_id = Some(id);
@@ -394,6 +413,11 @@ impl TrayApp {
                 }
             }
             Message::BlurConfigured => {}
+            Message::GlobalBlurLoaded(enabled) => {
+                if let Some(enabled) = enabled {
+                    self.global_blur_enabled = enabled;
+                }
+            }
             Message::Tick => {
                 // Local time is cheap to read and must not wait for slow DDC
                 // discovery or occupied hardware-query workers.
@@ -401,15 +425,13 @@ impl TrayApp {
                 let panel_fit = self.fit_panel();
                 let mut blur_change = Task::none();
                 if let Some(appearance) = Appearance::load() {
-                    if appearance.blur != self.appearance.blur {
+                    if appearance.blur != self.appearance.blur && self.panel_applied_size.is_some()
+                    {
                         blur_change = Self::configure_blur(appearance.blur);
                     }
                     self.appearance = appearance;
                 }
                 if let Some(theme) = AppTheme::load_generated() {
-                    if theme != self.theme {
-                        blur_change = Self::configure_blur(self.appearance.blur);
-                    }
                     self.theme = theme;
                 }
                 // Only skip the still-running categories. Slow DDC must not
@@ -1705,10 +1727,18 @@ impl TrayApp {
                 s
             });
         crate::appearance::fit_window(
-            crate::appearance::reveal(panel.into(), self.appearance.opacity),
+            crate::appearance::reveal(panel.into(), self.panel_opacity()),
             limit,
             Message::PanelSize,
         )
+    }
+
+    fn panel_opacity(&self) -> f32 {
+        if self.global_blur_enabled {
+            self.appearance.opacity
+        } else {
+            1.0
+        }
     }
 
     fn notification_button(theme: AppTheme, status: button::Status) -> button::Style {
@@ -1825,6 +1855,24 @@ mod tests {
         });
         app.window_id = Some(iced_core::window::Id::unique());
         app
+    }
+
+    #[test]
+    fn global_blur_switch_restores_opacity_and_failed_queries_retain_state() {
+        let mut app = app();
+        app.appearance.opacity = 0.42;
+        assert_eq!(app.panel_opacity(), 1.0);
+        let _ = app.update(Message::GlobalBlurLoaded(Some(true)));
+        assert_eq!(app.panel_opacity(), 0.42);
+        let _ = app.update(Message::GlobalBlurLoaded(None));
+        assert_eq!(app.panel_opacity(), 0.42);
+        let _ = app.update(Message::GlobalBlurLoaded(Some(false)));
+        assert_eq!(app.panel_opacity(), 1.0);
+        app.appearance.opacity = 0.61;
+        let _ = app.update(Message::GlobalBlurLoaded(None));
+        assert_eq!(app.panel_opacity(), 1.0);
+        let _ = app.update(Message::GlobalBlurLoaded(Some(true)));
+        assert_eq!(app.panel_opacity(), 0.61);
     }
 
     #[test]
@@ -2037,7 +2085,7 @@ mod tests {
         app.refresh_pending = RefreshKind::ALL.into_iter().collect();
         assert!(iced_runtime::task::into_stream(app.update(Message::Tick)).is_some());
         assert!(app.panel_fit_busy);
-        assert_eq!(app.refresh_pending.len(), 9);
+        assert_eq!(app.refresh_pending.len(), RefreshKind::ALL.len());
         let _ = app.update(Message::PanelFitted(size, true));
         let _ = app.update(Message::Tick);
         assert!(!app.panel_fit_busy);
@@ -2068,14 +2116,14 @@ mod tests {
         app.reserve_refresh();
         assert_ne!(app.time_text, "--:--");
         let _ = app.update(Message::Tick);
-        assert_eq!(app.refresh_pending.len(), 9);
+        assert_eq!(app.refresh_pending.len(), RefreshKind::ALL.len());
         assert!(!app.notifications_loaded);
         let view = app.view_at(iced_core::Size::new(1920.0, 1080.0));
         assert!(!view.as_widget().children().is_empty());
         drop(view);
         let _ = app.update(Message::NotifsRefreshed(0, (vec![], None)));
         assert!(app.notifications_loaded);
-        assert_eq!(app.refresh_pending.len(), 8);
+        assert_eq!(app.refresh_pending.len(), RefreshKind::ALL.len() - 1);
     }
 
     #[test]
@@ -2117,7 +2165,7 @@ mod tests {
         let _ = app.update(Message::Tick);
         assert_ne!(app.time_text, "stale");
         assert_ne!(app.date_text, "stale");
-        assert_eq!(app.refresh_pending.len(), 9);
+        assert_eq!(app.refresh_pending.len(), RefreshKind::ALL.len());
     }
 
     #[test]
@@ -2125,20 +2173,20 @@ mod tests {
         let mut app = app();
         app.reserve_refresh();
         let _ = app.update(Message::Tick);
-        assert_eq!(app.refresh_pending.len(), 9);
+        assert_eq!(app.refresh_pending.len(), RefreshKind::ALL.len());
         let _ = app.update(Message::Tick);
-        assert_eq!(app.refresh_pending.len(), 9);
+        assert_eq!(app.refresh_pending.len(), RefreshKind::ALL.len());
         let _ = app.update(Message::NotifsLoaded(0, (vec![], None)));
-        assert_eq!(app.refresh_pending.len(), 9);
+        assert_eq!(app.refresh_pending.len(), RefreshKind::ALL.len());
         let _ = app.update(Message::NotifsRefreshed(0, (vec![], None)));
-        assert_eq!(app.refresh_pending.len(), 8);
+        assert_eq!(app.refresh_pending.len(), RefreshKind::ALL.len() - 1);
     }
 
     #[test]
     fn slow_brightness_does_not_stop_other_refreshes_or_queue_duplicate_work() {
         let mut app = app();
         let first = app.reserve_refresh();
-        assert_eq!(first.len(), 9);
+        assert_eq!(first.len(), RefreshKind::ALL.len());
         app.initial_pending = app.refresh_pending.clone();
         let slow = RefreshKind::Slider(SliderKind::Brightness);
         for kind in first.into_iter().rev().filter(|kind| *kind != slow) {
@@ -2146,7 +2194,7 @@ mod tests {
         }
         for _ in 0..1000 {
             let next = app.reserve_refresh();
-            assert_eq!(next.len(), 8);
+            assert_eq!(next.len(), RefreshKind::ALL.len() - 1);
             assert!(!next.contains(&slow));
             assert!(app.reserve_refresh().is_empty());
             for kind in next {
@@ -2157,7 +2205,7 @@ mod tests {
         app.finish_refresh(slow);
         assert!(!app.initial_refresh);
         assert!(app.refresh_pending.is_empty());
-        assert_eq!(app.reserve_refresh().len(), 9);
+        assert_eq!(app.reserve_refresh().len(), RefreshKind::ALL.len());
     }
 
     #[test]
@@ -2167,7 +2215,7 @@ mod tests {
             "show_quick_toggles=false\nshow_power_profiles=false\n",
             "show_sliders=false\nshow_notifications=false\n",
         )));
-        assert!(app.reserve_refresh().is_empty());
+        assert_eq!(app.reserve_refresh(), vec![RefreshKind::GlobalBlur]);
         app.config.layout.show_sliders = true;
         let kinds = app.reserve_refresh();
         assert_eq!(kinds.len(), 3);
@@ -2250,13 +2298,18 @@ mod tests {
     }
 
     #[test]
-    fn hidden_boot_finishes_without_starting_queries() {
+    fn hidden_boot_only_queries_the_global_visual_state() {
         let config = AppConfig::parse(concat!(
             "toggles=[]\n[layout]\nshow_weather=false\nshow_metrics=false\n",
             "show_quick_toggles=false\nshow_power_profiles=false\n",
             "show_sliders=false\nshow_notifications=false\n",
         ));
-        let (app, _) = TrayApp::new(config);
+        let (mut app, _) = TrayApp::new(config);
+        assert_eq!(
+            app.refresh_pending,
+            HashSet::from([RefreshKind::GlobalBlur])
+        );
+        let _ = app.update(Message::GlobalBlurLoaded(Some(false)));
         assert!(app.refresh_pending.is_empty());
         assert!(!app.initial_refresh);
     }
