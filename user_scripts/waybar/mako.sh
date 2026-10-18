@@ -12,11 +12,22 @@ for arg in "$@"; do
             # 1. Wipe the Rofi blacklist to prevent infinite file growth
             rm -f "${XDG_RUNTIME_DIR:-/tmp}/mako_rofi_blacklist"
             # 2. Hard restart Mako to completely flush active and history memory buffers
-            if systemctl --user is-active --quiet mako.service; then
-                systemctl --user restart mako.service
-            else
-                pkill -x mako && dusky-run -- mako &
+            if ! systemctl --user is-active --quiet mako.service; then
+                # An unmanaged daemon may still own the notification bus name.
+                pkill -u "$UID" -x mako || [[ $? == 1 ]]
+                if timeout 5s pidwait -u "$UID" -x mako; then
+                    :
+                else
+                    status=$?
+                    if (( status != 1 )); then
+                        printf 'mako: shutdown wait failed (status %s); restart aborted\n' "$status" >&2
+                        exit "$status"
+                    fi
+                fi
             fi
+            # The Mako package ships this Type=dbus unit; restart also starts it
+            # when inactive and waits until the notification bus name is acquired.
+            systemctl --user restart mako.service
             exit 0
             ;;
     esac
