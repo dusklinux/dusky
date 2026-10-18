@@ -1,604 +1,708 @@
 #!/usr/bin/env python3
-# ==============================================================================
-# Purpose: Interactive TUI to generate, copy, and append Hyprland window rules.
-#          * Engine: Dusky TUI Engine v5.2.0 (Math-Perfected Lua Edition)
-#          * Core: Window Scanning & Lua Rule Generation Logic (Hyprland 0.55+)
-# ==============================================================================
+"""Generate compact Lua window rules from Hyprland's Wayland clients.
 
-import curses
+Enter appends the essential template. Only float, size and move are enabled
+initially, as in the original generator. Other essentials are editable comments;
+optional properties are absent until selected with o. No third-party Python UI.
+
+Rule reference: https://wiki.hypr.land/Configuring/Basics/Window-Rules/
+"""
+
+import argparse
+lazy import curses
+lazy import fcntl
 import json
 import os
+from pathlib import Path
 import re
 import subprocess
 import sys
-from dataclasses import dataclass
-from typing import List, Dict, Optional, Any
+lazy import tempfile
+lazy import unicodedata
+from dataclasses import dataclass, field
 
-# --- Configuration ---
-TARGET_FILE = os.path.expanduser("~/.config/hypr/edit_here/source/window_rules.lua")
-APP_TITLE = "Dusky Window Rule Generator"
-APP_VERSION = "v5.3.0"
+TARGET_FILE = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "hypr/edit_here/source/window_rules.lua"
+APP_TITLE = "Dusky Window Rules"
 
-@dataclass
-class MonitorData:
-    id: int
-    name: str
-    width: int
-    height: int
-    scale: float
-    x: int
-    y: int
-    transform: int
 
-    @property
-    def logical_width(self) -> float:
-        # Swap width/height if the monitor is rotated 90 or 270 degrees
-        w = self.height if self.transform % 2 != 0 else self.width
-        return w / self.scale if self.scale > 0 else w
+@dataclass(frozen=True, slots=True)
+class Property:
+    key: str
+    value: str
+    description: str
+    essential: bool = False
 
-    @property
-    def logical_height(self) -> float:
-        # Swap width/height if the monitor is rotated 90 or 270 degrees
-        h = self.width if self.transform % 2 != 0 else self.height
-        return h / self.scale if self.scale > 0 else h
 
-@dataclass
-class ClientData:
+# Values are Lua expressions, not Python/JSON. Dynamic examples use documented
+# types; hardware-specific choices (monitor/workspace) come from live IPC.
+PROPERTIES = (
+    Property("name", '"unnamed"', "Unique rule name", True),
+    Property("match.class", '""', "Exact current class; static effects match the class at opening", True),
+    Property("match.title", '""', "Exact current title; static effects match the title at opening", True),
+    Property("float", "true", "Float the window", True),
+    Property("size", "{800, 600}", "Logical width, height; numbers or quoted monitor_w/monitor_h expressions", True),
+    Property("move", "{0, 0}", "Monitor-local logical x, y; numbers or quoted expressions", True),
+    Property("pin", "true", "Show on all workspaces (requires floating)", True),
+    Property("center", "true", "Center floating window; use instead of move", True),
+    Property("workspace", '"unset"', 'Workspace selector, optionally silent; "unset" removes assignment', True),
+    Property("opaque", "true", "Set compositor opacity to 1; app transparency remains", True),
+    Property("no_blur", "true", "Disable background blur", True),
+    Property("no_focus", "true", "Prevent focus", True),
+    Property("no_dim", "true", "Disable inactive dimming", True),
+    Property("border_size", "2", "Border thickness in logical pixels", True),
+    Property("animation", '"popin 87%"', "Animation style, e.g. popin 80% or slide left", True),
+    Property("focus_on_activate", "false", "Focus when the app requests activation", True),
+    Property("xray", "true", "Blur through to wallpaper", True),
+    Property("enabled", "true", "Enable this named rule"),
+    Property("match.initial_class", '""', "Exact class at first map"),
+    Property("match.initial_title", '""', "Exact title at first map"),
+    Property("match.content", '"video"', "Content type: none, photo, video, game"),
+    Property("match.focus", "true", "Match focused windows"),
+    Property("match.fullscreen", "true", "Match fullscreen or maximized windows"),
+    Property("match.fullscreen_state_client", "2", "Client fullscreen state: 0 none, 1 maximize, 2 full, 3 both"),
+    Property("match.fullscreen_state_internal", "2", "Internal fullscreen state: 0, 1, 2, 3"),
+    Property("match.float", "true", "Match floating windows"),
+    Property("match.group", "true", "Match grouped windows"),
+    Property("match.modal", "true", "Match modal windows"),
+    Property("match.pin", "true", "Match pinned windows"),
+    Property("match.tag", '"gaming"', "Match a tag"),
+    Property("match.workspace", '"1"', "Match a workspace selector"),
+    Property("match.xdg_tag", '".*"', "Match an xdgTag using RE2"),
+    Property("content", '"game"', "Set content type: none, photo, video, game"),
+    Property("fullscreen", "true", "Fullscreen on opening"),
+    Property("fullscreen_state", '"0 0"', "Internal and client fullscreen states, each 0..3"),
+    Property("group", '"set"', "set, new, lock, barred, deny, invade, override, unset; space-separated"),
+    Property("maximize", "true", "Maximize on opening"),
+    Property("monitor", '""', "Output name, optionally followed by silent"),
+    Property("no_close_for", "500", "Ignore killactive for this many ms after opening"),
+    Property("no_initial_focus", "true", "Do not focus on opening"),
+    Property("pseudo", "true", "Pseudotile the window"),
+    Property("scrolling_width", "1.0", "Initial column width in the scrolling layout"),
+    Property("suppress_event", '"maximize"', "Block events: fullscreen, maximize, activate, activatefocus, fullscreenoutput"),
+    Property("tile", "true", "Force tiling; use instead of float"),
+    Property("border_color", '"rgb(33ccff)"', 'Color or {colors={"rgba(33ccffee)","rgba(00ff99ee)"}, angle=45}'),
+    Property("confine_pointer", "true", "Confine cursor to the window"),
+    Property("dim_around", "true", "Dim other windows around a floating window"),
+    Property("decorate", "false", "Draw window decorations"),
+    Property("idle_inhibit", '"fullscreen"', "Inhibit idle: none, always, focus, fullscreen"),
+    Property("immediate", "true", "Allow tearing (also requires compositor/output support)"),
+    Property("keep_aspect_ratio", "true", "Keep aspect ratio during mouse resizing"),
+    Property("max_size", "{1600, 1000}", "Maximum floating size; numbers or quoted expressions"),
+    Property("min_size", "{200, 100}", "Minimum floating size; numbers or quoted expressions"),
+    Property("nearest_neighbor", "true", "Use nearest-neighbor filtering"),
+    Property("no_anim", "true", "Disable animations"),
+    Property("no_auto_hdr", "true", "Disable AutoHDR"),
+    Property("no_follow_mouse", "true", "Do not focus on pointer entry with follow_mouse=1"),
+    Property("no_glow", "true", "Disable glow"),
+    Property("no_max_size", "true", "Remove application maximum size constraints"),
+    Property("no_screen_share", "true", "Render black in screen sharing"),
+    Property("no_shadow", "true", "Disable shadows"),
+    Property("no_shortcuts_inhibit", "true", "Prevent app shortcut inhibition"),
+    Property("no_vrr", "true", "Disable per-window VRR (misc.vrr=2 or 3)"),
+    Property("no_wobble", "true", "Disable wobble"),
+    Property("no_xdg_drags", "true", "Disable XDG-driven window drags"),
+    Property("opacity", '"0.95 override 0.85 override"', "Active/inactive/fullscreen opacity; override sets absolute values"),
+    Property("force_rgbx", "true", "Disable the app's own transparency"),
+    Property("persistent_size", "true", "Remember floating size for the same class and title"),
+    Property("render_unfocused", "true", "Render even when not visible"),
+    Property("rounding", "10", "Corner radius in logical pixels"),
+    Property("rounding_power", "2.0", "Corner curve power (2 is circular)"),
+    Property("scroll_mouse", "1.0", "Mouse scroll factor"),
+    Property("scroll_touchpad", "1.0", "Touchpad scroll factor"),
+    Property("stay_focused", "true", "Keep focus as long as visible"),
+    Property("sync_fullscreen", "true", "Synchronize internal and client fullscreen modes"),
+    Property("tag", '"+gaming"', "Add/remove a dynamic tag using +/-, or toggle without a prefix"),
+    Property("tonemap", '"off"', "Tonemapping: on, off, clamp, limited"),
+)
+PROPERTY_MAP = frozendict((p.key, p) for p in PROPERTIES)
+DEFAULT_ACTIVE = frozenset({"name", "match.class", "float", "size", "move"})
+
+
+@dataclass(slots=True)
+class Window:
     address: str
-    title: str
     app_class: str
-    mon_id: int
-    w: int
-    h: int
-    x: int
-    y: int
-    floating: bool
-    mapped: bool
-    workspace_name: str
-
-@dataclass
-class GeneratedRule:
-    address: str
     title: str
-    app_class: str
-    rule_text: str
+    values: dict[str, str]
 
-def check_dependencies() -> None:
-    """Verifies that required external CLI tools are installed."""
-    deps = ["hyprctl", "wl-copy"]
-    missing = []
-    for dep in deps:
-        if subprocess.call(["which", dep], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) != 0:
-            missing.append(dep)
-    
-    if missing:
-        print(f"\033[1;31m[ERROR]\033[0m Missing dependencies: {', '.join(missing)}", file=sys.stderr)
-        sys.exit(1)
 
-def escape_regex(s: str) -> str:
-    """Escapes strings specifically for Google's RE2 syntax via Lua strings."""
-    special_chars = r'\.[]*^$()+?{}|'
-    # Double backslashes assure Lua sends the raw escape token (like `\|`) to the RE2 regex parser.
-    escaped = "".join(f"\\\\{c}" if c in special_chars else c for c in s)
-    return escaped.replace('"', '\\"')
+@dataclass(slots=True)
+class Selection:
+    # No optional property is emitted until it is explicitly enabled.
+    active: set[str] = field(default_factory=lambda: set(DEFAULT_ACTIVE))
+    edits: dict[str, str] = field(default_factory=dict)
 
-def sanitize_name(s: str) -> str:
-    """Sanitizes application class for the named rule."""
-    cleaned = re.sub(r'[^a-zA-Z0-9_-]', '', s)
-    return cleaned if cleaned else "unnamed"
+    @classmethod
+    def for_window(cls, window: Window) -> Selection:
+        selection = cls()
+        if not window.app_class:
+            selection.active.remove('match.class')
+            selection.active.add('match.title')
+        return selection
 
-def fmt_float(v: float) -> str:
-    """Formats floats mathematically clean (e.g. 0.5000 -> 0.5, 1.0000 -> 1)."""
-    s = f"{v:.4f}"
-    if '.' in s:
-        s = s.rstrip('0').rstrip('.')
-    return s if s else "0"
+    def value(self, window: Window, key: str) -> str:
+        return self.edits.get(key, window.values.get(key, PROPERTY_MAP[key].value))
 
-def generate_lua_rule(client: ClientData, monitor: MonitorData) -> GeneratedRule:
-    """Generates the Lua syntax block based on window and monitor metrics."""
-    local_x = client.x - monitor.x
-    local_y = client.y - monitor.y
+    def enable(self, key: str) -> None:
+        self.active.add(key)
+        # Avoid ambiguous/conflicting geometry and layout examples.
+        if key in ('center', 'tile', 'float') and self.edits.get(key, PROPERTY_MAP[key].value).strip() != 'true':
+            return
+        for a, b in (("center", "move"), ("tile", "float")):
+            if key == a and self.edits.get(b, PROPERTY_MAP[b].value).strip() != 'false':
+                self.active.discard(b)
+            elif key == b and self.edits.get(a, PROPERTY_MAP[a].value).strip() == 'true':
+                self.active.discard(a)
 
-    log_m_w = monitor.logical_width
-    log_m_h = monitor.logical_height
 
-    r_w = client.w / log_m_w if log_m_w else 0
-    r_h = client.h / log_m_h if log_m_h else 0
-    r_x = local_x / log_m_w if log_m_w else 0
-    r_y = local_y / log_m_h if log_m_h else 0
+def lua_string(value: str) -> str:
+    """Quote Lua strings without changing titles, regex bytes or control chars."""
+    return '"' + ''.join(
+        '\\\\' if ch == '\\' else '\\"' if ch == '"' else
+        f'\\{ord(ch):03d}' if ord(ch) < 32 or ord(ch) == 127 else
+        f'\\u{{{ord(ch):x}}}' if not ch.isprintable() else ch
+        for ch in value
+    ) + '"'
 
-    r_w_str = fmt_float(r_w)
-    r_h_str = fmt_float(r_h)
-    r_x_str = fmt_float(r_x)
-    r_y_str = fmt_float(r_y)
 
-    safe_class = escape_regex(client.app_class)
-    safe_title = escape_regex(client.title)
-    safe_name = sanitize_name(client.app_class)
+def literal_regex(value: str) -> str:
+    # Escape RE2 metacharacters, then independently quote the Lua string.
+    return lua_string('^(' + ''.join('\\' + c if c in r'\.[]*^$()+?{}|' else c for c in value) + ')$')
 
-    rule_text = f"""-- -----------------------------------------------------
--- {client.title}
 
-hl.window_rule({{
-    name = "{safe_name}",
-    -- enabled = true,                   -- toggle rule activation (true/false)
+def display_text(value: str) -> str:
+    return ''.join(c if c.isprintable() else ' ' for c in value)
 
-    -- 1. IDENTITY & MATCHING (Conditions)
-    match = {{
-        class = "^({safe_class})$",
-        -- title = "^({safe_title})$",
-        -- xwayland = true,               -- match only XWayland windows (boolean)
-        -- float = true,                  -- match only floating windows (boolean)
-        -- fullscreen = false,            -- match only non-fullscreen windows (boolean)
-        -- pin = false,                   -- match only non-pinned windows (boolean)
-        -- tag = "gaming",                -- match window with specific dynamic tag
-    }},
 
-    -- 2. PLACEMENT & WORKSPACE (Where it goes)
-    -- workspace = "{client.workspace_name}",    -- force window to open on this specific workspace
-    -- workspace = "special:magic",              -- open window on the special scratchpad workspace
-    -- workspace = "name:gaming",                -- force window to open on a named workspace
-    -- monitor = "{monitor.name}",               -- force window to open on this specific monitor
+def lua_tokens(text: str) -> list[str | bytes]:
+    """Tokenize literal rule definitions, ignoring Lua comments and whitespace.
 
-    -- 3. LAYOUT STATE (What mode)
-    float = true,                     -- float window (floating state, bypasses tiling)
-    -- tile = true,                      -- force tiled layout (overrides floating state)
-    -- fullscreen = true,                -- open window in fullscreen mode on launch
+    Strings become their actual bytes, so quote style and equivalent Lua
+    escapes compare equally. This inspects direct calls with literal names;
+    computed names/aliases retain their normal Hyprland semantics.
+    """
+    pattern = re.compile(
+        r'(?P<comment>--\[(?P<ceq>=*)\[.*?\](?P=ceq)\]|--[^\r\n]*)'
+        r'|(?P<long>\[(?P<eq>=*)\[.*?\](?P=eq)\])'
+        r'''|(?P<short>"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')'''
+        r'|(?P<space>\s+)|[A-Za-z_][A-Za-z_0-9]*|.', re.DOTALL)
+    escapes = frozendict(zip('abfnrtv\\\'"', (b'\a', b'\b', b'\f', b'\n', b'\r', b'\t', b'\v', b'\\', b"'", b'"'), strict=True))
+    tokens = []
+    for match in pattern.finditer(text):
+        token = match.group()
+        if match.lastgroup in ('comment', 'space'):
+            continue
+        if match.lastgroup == 'long':
+            edge = len(match['eq']) + 2
+            body = re.sub(r'\r\n|\n\r|\r', '\n', token[edge:-edge])
+            if body.startswith('\n'):
+                body = body[1:]
+            tokens.append(body.encode('utf-8'))
+        elif match.lastgroup == 'short':
+            if '\\' not in token:
+                tokens.append(token[1:-1].encode('utf-8'))
+                continue
+            value = bytearray()
+            i = 1
+            while i < len(token) - 1:
+                ch = token[i]
+                i += 1
+                if ch != '\\':
+                    value.extend(ch.encode('utf-8'))
+                    continue
+                ch = token[i]
+                i += 1
+                if ch in escapes:
+                    value.extend(escapes[ch])
+                elif ch in '0123456789':
+                    start = i - 1
+                    while i < min(start + 3, len(token) - 1) and token[i] in '0123456789':
+                        i += 1
+                    value.append(int(token[start:i]))
+                elif ch == 'x':
+                    value.append(int(token[i:i + 2], 16))
+                    i += 2
+                elif ch == 'u' and token[i] == '{':
+                    end = token.index('}', i)
+                    point = int(token[i + 1:end], 16)
+                    if not 0 <= point <= 0x7fffffff:
+                        raise ValueError('Invalid Lua Unicode escape in rule file')
+                    # Lua permits UTF-8 escapes through 0x7fffffff, including
+                    # surrogate values and five/six-byte sequences.
+                    if point < 128:
+                        value.append(point)
+                    else:
+                        length = max(2, (point.bit_length() + 3) // 5)
+                        value.append(((0xff << (8 - length)) & 0xff) | (point >> (6 * (length - 1))))
+                        value.extend(0x80 | ((point >> shift) & 0x3f)
+                                     for shift in range(6 * (length - 2), -1, -6))
+                    i = end + 1
+                elif ch == 'z':
+                    while i < len(token) - 1 and token[i] in ' \t\r\n\v\f':
+                        i += 1
+                elif ch in '\r\n':
+                    if i < len(token) - 1 and token[i] in '\r\n' and token[i] != ch:
+                        i += 1
+                    value.extend(b'\n')
+                else:
+                    raise ValueError('Invalid Lua string escape in rule file')
+            tokens.append(value.take_bytes())
+        else:
+            tokens.append(token)
+    return tokens
 
-    -- [BEHAVIORAL MODES (Choose Option A or Option B)]
-    --
-    -- [OPTION A: STICKY/PINNED DIALOG]
-    -- pin = true,                       -- locks window to show on ALL workspaces
-    --
-    -- [OR]
-    --
-    -- [OPTION B: NATIVE ACTIVE-WORKSPACE ONLY DIALOG] (Requires initial_workspace_tracking = 2 in workspace_rules.lua)
-    -- workspace = "unset",              -- Spawns dynamically on the ACTIVE workspace only (won't follow you when switching)
-    -- focus_on_activate = true,         -- Automatically steal focus on spawn
-    -- stay_focused = true,              -- Keep focus locked on this window as long as it remains visible
 
-    -- 4. GEOMETRY (Window Bounds)
-    size = {{{client.w}, {client.h}}}, -- set absolute window size in pixels
-    -- size = {{"monitor_w * {r_w_str}", "monitor_h * {r_h_str}"}}, -- set relative size based on monitor dimensions
-    -- min_size = {{200, 100}},           -- clamp window size: minimum width and height in pixels
-    -- max_size = {{1920, 1080}},         -- clamp window size: maximum width and height in pixels
-    -- keep_aspect_ratio = true,         -- preserve aspect ratio when resizing window
-    --
-    move = {{{local_x}, {local_y}}}, -- move window to local coordinates relative to monitor origin
-    -- move = {{"monitor_w * {r_x_str}", "monitor_h * {r_y_str}"}}, -- move window to relative position on monitor
-    -- move = {{"monitor_w - window_w - 20", "monitor_h - window_h - 20"}}, -- anchor window (e.g. bottom-right with 20px gap)
-    -- move = {{"cursor_x - (window_w * 0.5)", "cursor_y - (window_h * 0.5)"}}, -- center window on active cursor position
-    -- center = true,                    -- center window on monitor (ignores size-based moves)
-    -- center = {1},                     -- center window taking into account reserved monitor spaces (e.g., waybar)
+def literal_rule_names(tokens: list[str | bytes]) -> list[bytes]:
+    """Find literal name fields at the root of direct hl.window_rule tables."""
+    names = []
+    depth = 0
+    for i, token in enumerate(tokens):
+        if not depth:
+            if token != '{':
+                continue
+            if tokens[max(0, i - 4):i] != ['hl', '.', 'window_rule', '('] and tokens[max(0, i - 3):i] != ['hl', '.', 'window_rule']:
+                continue
+            depth = 1
+        elif token == '{':
+            depth += 1
+        elif token == '}':
+            depth -= 1
+        elif depth == 1 and tokens[i - 1] in ('{', ',', ';'):
+            field = tokens[i:i + 4]
+            if tokens[i:i + 3] == ['[', b'name', ']']:
+                field = ['name', *tokens[i + 3:i + 6]]
+            if len(field) == 4 and field[:2] == ['name', '='] and isinstance(field[2], bytes) and field[3] in (',', ';', '}'):
+                names.append(field[2])
+    return names
 
-    -- 5. FOCUS, GROUPS & LIFECYCLE
-    -- no_initial_focus = true,          -- Do not focus when first opened
-    -- focus_on_activate = false,        -- Do not focus even if application requests focus (prevents focus stealing, e.g. for PiP)
-    -- stay_focused = true,              -- force focus on the window as long as visible
-    -- group = "set",                    -- insert window into a window group
-    -- group = "lock",                   -- lock group membership to prevent automatic grouping actions
-    -- group = "barred",                 -- hide window's tab label in the group title bar
-    -- group = "deny",                   -- prevent grouping actions for this window entirely
-    -- tag = "+gaming",                  -- add dynamic tag to matched window (e.g., "+name" to add, "-name" to remove)
 
-    -- 6. ANIMATION (Transitions)
-    -- Pick ONE style. Remove the "--" from the line you want.
-    --
-    -- animation = "popin",              -- scale zoom transition from center (auto start threshold)
-    -- animation = "popin 60%",          -- scale zoom transition starting from 60% size
-    -- animation = "popin 70%",          -- scale zoom transition starting from 70% size
-    -- animation = "popin 80%",          -- scale zoom transition starting from 80% size
-    -- animation = "popin 87%",          -- subtle zoom transition (Hyprland official default threshold)
-    -- animation = "popin 90%",          -- tight zoom transition, starting close to full size
-    -- animation = "popin 95%",          -- minimal zoom transition, almost unnoticeable
-    --
-    -- animation = "slide",              -- slide transition from the nearest monitor edge (auto-detected)
-    -- animation = "slide top",          -- slide transition: enter/exit from/to top edge
-    -- animation = "slide bottom",       -- slide transition: enter/exit from/to bottom edge
-    -- animation = "slide left",         -- slide transition: enter/exit from/to left edge
-    -- animation = "slide right",        -- slide transition: enter/exit from/to right edge
-    --
-    -- animation = "gnomed",             -- GNOME-style transition (combines scale zoom and opacity fade)
-    -- animation = "fade",               -- opacity fade transition only (no window movement)
-    --
-    -- no_anim = true,                   -- disable all transitions for this window entirely
+def hyprctl_json(command: str) -> list:
+    result = subprocess.run(["hyprctl", "-j", command], capture_output=True,
+                            text=True, check=True, timeout=3)
+    data = json.loads(result.stdout)
+    if not isinstance(data, list):
+        raise ValueError(f"hyprctl {command}: expected a JSON list")
+    return data
 
-    -- 7. VISUALS & DECORATION
-    -- opacity = "0.9 override 0.9 override",    -- set opacity: active window, inactive window (overrides global opacity)
-    -- opacity = "1.0 override 0.85 override",   -- set opacity: fully opaque active, dimmed inactive
-    -- opacity = "0.95",                          -- set constant opacity for both active and inactive states
-    -- opaque = true,                             -- force window to remain fully opaque (ignores opacity rules)
-    --
-    -- rounding = 10,                    -- set corner radius in pixels (overrides global rounding)
-    -- rounding = 0,                     -- force sharp corners (0px radius) for this window only
-    -- rounding_power = 2,               -- corner rounding curve power (2 = circular, higher = squircle)
-    --
-    -- border_size = 2,                  -- set border thickness in pixels (overrides global border size)
-    -- border_size = 0,                  -- disable border for this window entirely
-    -- border_color = "rgb(ff0000)",                 -- set solid color hex border (RGB)
-    -- border_color = "rgba(33ccffee)",              -- set solid color hex border with alpha (RGBA)
-    -- border_color = "rgba(33ccffee) rgba(00ff99ee) 45deg", -- set multi-color gradient border
 
-    -- 8. COMPOSITING & EFFECTS
-    -- no_blur = true,                   -- disable background blur behind this window
-    -- xray = true,                      -- allow background blur to see through directly to wallpaper (ignores windows underneath)
-    -- no_shadow = true,                 -- disable drop shadow under this window
-    -- no_dim = true,                    -- disable window dimming when inactive
-    -- dim_around = true,                -- dim all other windows when this window is focused
-    -- no_focus = true,                  -- prevent this window from ever receiving focus (unfocusable)
-
-    -- 9. PERFORMANCE & SUPPRESSION
-    -- immediate = true,                 -- force immediate page-flip presentation (bypasses Wayland VSync, useful for gaming)
-    -- suppress_event = "maximize",      -- block maximize window requests from the application
-    -- suppress_event = "fullscreen",    -- block fullscreen window requests from the application
-}})"""
-
-    return GeneratedRule(
-        address=client.address,
-        title=client.title[:60] if client.title else "Unknown",
-        app_class=client.app_class,
-        rule_text=rule_text
-    )
-
-def scan_windows() -> List[GeneratedRule]:
-    """Interrogates Hyprland for live monitors and clients to build rule models."""
+def scan_windows() -> list[Window]:
     try:
-        mon_output = subprocess.check_output(["hyprctl", "monitors", "-j"], text=True)
-        mon_json = json.loads(mon_output)
-    except Exception as e:
-        print(f"\033[1;31m[ERROR]\033[0m Failed to fetch monitors: {e}", file=sys.stderr)
-        sys.exit(1)
+        monitors = {m['id']: m for m in hyprctl_json("monitors")}
+        windows = []
+        for c in hyprctl_json("clients"):
+            if not c.get("mapped") or c.get("xwayland") or c.get("monitor") not in monitors:
+                continue
+            app_class = c.get("class") or c.get("initialClass") or ""
+            title = c.get("title") or ""
+            if not app_class and not title:
+                continue
+            m = monitors[c['monitor']]
+            w, h = c['size']
+            if w <= 0 or h <= 0:
+                continue  # No usable geometry; never fabricate a captured size.
+            x, y = c['at']
+            ws = c.get('workspace', {})
+            # Current IPC uses an empty name for numbered workspaces.
+            ws_name = ws.get('name') or str(ws.get('id', ''))
+            if ws_name and not ws_name.startswith(('special:', 'name:')) and not re.fullmatch(r'-?\d+', ws_name):
+                ws_name = 'name:' + ws_name
+            name = re.sub(r'[^A-Za-z0-9_-]+', '-', app_class or title).strip('-') or 'unnamed'
+            values = {
+                'name': lua_string(name), 'match.class': literal_regex(app_class),
+                'match.title': literal_regex(title),
+                'match.initial_class': literal_regex(c.get('initialClass') or app_class),
+                'match.initial_title': literal_regex(c.get('initialTitle') or title),
+                'size': f'{{{w}, {h}}}', 'move': f'{{{x - m["x"]}, {y - m["y"]}}}',
+                'workspace': lua_string(ws_name or 'unset'),
+                'match.workspace': lua_string(ws_name or '1'), 'monitor': lua_string(m['name']),
+            }
+            windows.append(Window(c['address'], app_class, title, values))
+        return windows
+    except (KeyError, TypeError, AttributeError, ValueError) as exc:
+        raise ValueError(f"Invalid Hyprland IPC data: {exc}") from exc
 
-    mon_map: Dict[int, MonitorData] = {}
-    for m in mon_json:
-        mon_map[m.get('id', 0)] = MonitorData(
-            id=m.get('id', 0),
-            name=m.get('name', 'unknown'),
-            width=m.get('width', 1920),
-            height=m.get('height', 1080),
-            scale=m.get('scale', 1.0),
-            x=m.get('x', 0),
-            y=m.get('y', 0),
-            transform=m.get('transform', 0)
-        )
 
-    if not mon_map:
-        print("\033[1;31m[ERROR]\033[0m No monitors found.", file=sys.stderr)
-        sys.exit(1)
+def generate_lua_rule(window: Window, selection: Selection | None = None) -> str:
+    selection = selection if selection is not None else Selection.for_window(window)
+    if not any(k.startswith('match.') for k in selection.active):
+        raise ValueError("Enable at least one match property")
+    lines = [f'-- {display_text(window.title or window.app_class)}', 'hl.window_rule({']
+    for p in PROPERTIES:
+        if p.key.startswith('match.') or not (p.essential or p.key in selection.active):
+            continue
+        prefix = '' if p.key in selection.active else '-- '
+        if p.key == 'name':
+            lines.append(f'    {prefix}name = {selection.value(window, p.key)},')
+            lines.append('    match = {')
+            for match in PROPERTIES:
+                if match.key.startswith('match.') and (match.essential or match.key in selection.active):
+                    comment = '' if match.key in selection.active else '-- '
+                    lines.append(f'        {comment}{match.key[6:]} = {selection.value(window, match.key)},')
+            lines.append('    },')
+        else:
+            lines.append(f'    {prefix}{p.key} = {selection.value(window, p.key)},')
+    lines.append('})')
+    return '\n'.join(lines) + '\n'
 
-    try:
-        clients_output = subprocess.check_output(["hyprctl", "clients", "-j"], text=True)
-        clients_json = json.loads(clients_output)
-    except Exception as e:
-        print(f"\033[1;31m[ERROR]\033[0m Failed to fetch clients: {e}", file=sys.stderr)
-        sys.exit(1)
 
-    generated_rules = []
-    for c in clients_json:
-        if not c.get('mapped', False): continue
-        app_class = c.get('class') or c.get('initialClass')
-        if not app_class: continue
-        
-        mon_id = c.get('monitor', -1)
-        if mon_id not in mon_map: continue
-        
-        at = c.get('at', [0, 0])
-        size = c.get('size', [0, 0])
-        workspace_info = c.get('workspace', {})
-        
-        client_data = ClientData(
-            address=c.get('address', ''),
-            title=c.get('title', ''),
-            app_class=app_class,
-            mon_id=mon_id,
-            w=size[0],
-            h=size[1],
-            x=at[0],
-            y=at[1],
-            floating=c.get('floating', False),
-            mapped=True,
-            workspace_name=workspace_info.get('name', 'unknown')
-        )
-        
-        generated_rules.append(generate_lua_rule(client_data, mon_map[mon_id]))
-        
-    return generated_rules
+def validate_rule(text: str) -> None:
+    """Use the real Hyprland parser in a separate process; never change live rules."""
+    with tempfile.TemporaryDirectory(prefix='dusky-rule-') as directory:
+        path = Path(directory) / 'rule.lua'
+        path.write_text(text, encoding='utf-8')
+        result = subprocess.run(['Hyprland', '--verify-config', '-c', str(path)],
+                                capture_output=True, text=True, timeout=10)
+    output = re.sub(r'\x1b\[[0-9;]*m', '', result.stdout + result.stderr)
+    if result.returncode:
+        detail = output.split('Config parsing result:')[-1].strip()
+        raise ValueError(detail.replace(str(path), 'rule.lua') or 'Hyprland rejected this rule')
+
+
+def append_rule(text: str, target: Path) -> bool:
+    validate_rule(text)
+    tokens = lua_tokens(text)
+    names = literal_rule_names(tokens)
+    if len(names) != len(set(names)):
+        raise ValueError('Selected windows have duplicate rule names; select an exact address from --list')
+    target.parent.mkdir(parents=True, exist_ok=True)
+    # Lock the actual target, preserve its inode/symlink, and serialize appends.
+    with target.open('a+b', buffering=0) as stream:
+        fcntl.flock(stream, fcntl.LOCK_EX)
+        stream.seek(0)
+        existing_bytes = stream.read()
+        existing = existing_bytes.decode('utf-8')
+        existing_tokens = lua_tokens(existing)
+        if any(existing_tokens[i:i + len(tokens)] == tokens for i, t in enumerate(existing_tokens) if t == 'hl'):
+            return False
+        # Named rules merge in Hyprland. Refuse accidental reuse rather than
+        # silently replacing another rule's match conditions/effects.
+        if set(names).intersection(literal_rule_names(existing_tokens)):
+            raise ValueError('Rule name already exists; edit name in options or use --option name=\'"another-name"\'')
+        stream.seek(0, os.SEEK_END)
+        separator = '' if not existing or existing.endswith('\n\n') else '\n' if existing.endswith('\n') else '\n\n'
+        payload = memoryview((separator + text).encode('utf-8'))
+        try:
+            while payload:
+                written = stream.write(payload)
+                if not written:
+                    raise OSError('Could not complete rule append')
+                payload = payload[written:]
+            os.fsync(stream.fileno())
+        except BaseException:
+            # A failed/short write must not leave half a Lua block behind.
+            stream.truncate(len(existing_bytes))
+            os.fsync(stream.fileno())
+            raise
+    return True
 
 
 class DuskyTUI:
-    def __init__(self, stdscr: curses.window, rules: List[GeneratedRule]):
-        self.stdscr = stdscr
-        self.rules = rules
-        self.item_count = len(rules)
-        self.selected_row = 0
-        self.scroll_offset = 0
-        self.status_msg = ""
-        
-        # --- Advanced Color Palette ---
-        curses.start_color()
-        curses.use_default_colors()
-        curses.init_pair(1, curses.COLOR_CYAN, -1)     # Keys / UI Accents
-        curses.init_pair(2, curses.COLOR_MAGENTA, -1)  # Booleans / UI Borders
-        curses.init_pair(3, curses.COLOR_WHITE, -1)    # General Text
-        curses.init_pair(4, curses.COLOR_GREEN, -1)    # Strings / Keywords
-        curses.init_pair(5, curses.COLOR_YELLOW, -1)   # Numbers / Arrays / Warnings
-        
-        if curses.COLORS >= 256:
-            curses.init_pair(6, 245, -1) # True grey for comments
-        else:
-            curses.init_pair(6, curses.COLOR_BLACK, -1) # Fallback
-
-        curses.curs_set(0)
-        curses.mousemask(curses.ALL_MOUSE_EVENTS | curses.REPORT_MOUSE_POSITION)
-
-    def draw_safe(self, y: int, x: int, text: str, attr: int = 0) -> None:
-        max_y, max_x = self.stdscr.getmaxyx()
-        if 0 <= y < max_y and 0 <= x < max_x:
-            safe_text = text[:max_x - x - 1]
-            self.stdscr.addstr(y, x, safe_text, attr)
-
-    def draw_highlighted_lua(self, y: int, x: int, line: str, max_x: int) -> None:
-        """Custom Tokenizer for intuitive Lua syntax highlighting."""
-        if x >= max_x: return
-        
-        comment_idx = line.find("--")
-        prefix = line
-        comment = ""
-        
-        if comment_idx != -1:
-            prefix = line[:comment_idx]
-            comment = line[comment_idx:]
-            
-        current_x = x
-        
-        def draw_part(text: str, attr: int):
-            nonlocal current_x
-            if current_x >= max_x or not text: return
-            safe_text = text[:max_x - current_x - 1]
+    def __init__(self, screen, windows: list[Window], target: Path):
+        self.screen, self.windows, self.target = screen, windows, target
+        self.index = self.offset = self.preview_offset = 0
+        self.option_index = self.option_offset = 0
+        self.options = False
+        self.query = ''
+        self.status = ''
+        self.selections: dict[str, Selection] = {}
+        try:
+            curses.curs_set(0)
+        except curses.error:
+            pass
+        self.accent = curses.A_BOLD
+        if curses.has_colors():
             try:
-                self.stdscr.addstr(y, current_x, safe_text, attr)
-                current_x += len(safe_text)
+                curses.start_color()
+                curses.use_default_colors()
+                curses.init_pair(1, curses.COLOR_CYAN, -1)
+                self.accent |= curses.color_pair(1)
             except curses.error:
-                pass
+                pass  # Color is optional; navigation and rendering still work.
+        screen.keypad(True)
+        screen.timeout(-1)  # Idle means zero IPC/polling; r explicitly refreshes.
 
-        if not prefix.strip():
-            draw_part(prefix, 0)
-            draw_part(comment, curses.color_pair(6))
+    @property
+    def current(self) -> Window | None:
+        return self.windows[self.index] if self.windows else None
+
+    @property
+    def selection(self) -> Selection:
+        address = self.current.address
+        if address not in self.selections:
+            self.selections[address] = Selection.for_window(self.current)
+        return self.selections[address]
+
+    def put(self, y: int, x: int, text: str, attr: int = 0) -> None:
+        height, width = self.screen.getmaxyx()
+        if not (0 <= y < height and 0 <= x < width - 1):
             return
-            
-        # Key = Value splitting
-        if "=" in prefix:
-            key, val = prefix.split("=", 1)
-            draw_part(key, curses.color_pair(1)) # Cyan keys
-            draw_part("=", curses.color_pair(3)) # White equals
-            
-            val_strip = val.strip()
-            # Determine Value type
-            if val_strip.startswith('"') or val_strip.startswith("'"):
-                attr = curses.color_pair(4) # Green Strings
-            elif val_strip.startswith("{") or any(char.isdigit() for char in val_strip):
-                attr = curses.color_pair(5) # Yellow Tables/Numbers
-            elif val_strip.startswith("true") or val_strip.startswith("false"):
-                attr = curses.color_pair(2) # Magenta Booleans
-            else:
-                attr = curses.color_pair(3)
-                
-            draw_part(val, attr)
-        elif "hl.window_rule" in prefix:
-            idx = prefix.find("hl.window_rule")
-            draw_part(prefix[:idx], 0)
-            draw_part("hl.window_rule", curses.color_pair(4) | curses.A_BOLD)
-            draw_part(prefix[idx+len("hl.window_rule"):], curses.color_pair(3))
-        else:
-            draw_part(prefix, curses.color_pair(3))
-            
-        if comment:
-            draw_part(comment, curses.color_pair(6))
-
-    def copy_clipboard(self) -> None:
-        rule_text = self.rules[self.selected_row].rule_text
+        # Clip by terminal cells, not code points (wide and combining titles).
+        room = width - x - 1
+        clipped = []
+        for ch in display_text(text):
+            cells = 0 if unicodedata.combining(ch) else 2 if unicodedata.east_asian_width(ch) in ('W', 'F') else 1
+            if cells > room:
+                break
+            clipped.append(ch)
+            room -= cells
         try:
-            subprocess.run(['wl-copy'], input=rule_text, text=True, check=True)
-            self.status_msg = "[SUCCESS] Copied to clipboard!"
-        except Exception:
-            self.status_msg = "[ERROR] Failed to copy (wl-copy missing or Wayland error?)"
+            self.screen.addstr(y, x, ''.join(clipped), attr)
+        except curses.error:
+            pass  # Terminal may resize between getmaxyx and addstr.
 
-    def append_selection(self) -> None:
-        rule_text = self.rules[self.selected_row].rule_text
-        try:
-            os.makedirs(os.path.dirname(TARGET_FILE), exist_ok=True)
-            
-            needs_newline = False
-            if os.path.exists(TARGET_FILE) and os.path.getsize(TARGET_FILE) > 0:
-                with open(TARGET_FILE, "rb") as f:
-                    f.seek(-1, 2)
-                    if f.read(1) != b'\n':
-                        needs_newline = True
-                        
-            with open(TARGET_FILE, "a", encoding="utf-8") as f:
-                if needs_newline:
-                    f.write("\n")
-                f.write(rule_text + "\n")
-                
-            self.status_msg = f"[SUCCESS] Rule appended to {os.path.basename(TARGET_FILE)}!"
-        except Exception as e:
-            self.status_msg = f"[ERROR] Failed to append: {str(e)}"
+    def prompt(self, label: str, initial: str = '') -> str | None:
+        value = initial
+        cursor = len(value)
+        while True:
+            height, width = self.screen.getmaxyx()
+            self.screen.move(max(0, height - 3), 0)
+            self.screen.clrtoeol()
+            self.put(height - 3, 0, 'Arrows move  Ctrl-U clear  Enter accept  Esc cancel', curses.A_DIM)
+            self.screen.move(max(0, height - 2), 0)
+            self.screen.clrtoeol()
+            self.put(height - 2, 0, label + ':', self.accent)
+            x = min(len(label) + 2, max(0, width // 2))
+            start = cursor
+            cells = 1  # Leave room for the visible insertion marker.
+            while start > 0:
+                ch = value[start - 1]
+                size = 0 if unicodedata.combining(ch) else 2 if unicodedata.east_asian_width(ch) in ('W', 'F') else 1
+                if cells + size >= width - x - 1:
+                    break
+                cells += size
+                start -= 1
+            self.put(height - 2, x, value[start:cursor] + '▏' + value[cursor:])
+            self.screen.refresh()
+            ch = self.screen.get_wch()
+            if ch in ('\n', '\r', curses.KEY_ENTER):
+                return value
+            if ch == '\x1b':
+                return None
+            if ch in ('\b', '\x7f', curses.KEY_BACKSPACE):
+                if cursor:
+                    value = value[:cursor - 1] + value[cursor:]
+                    cursor -= 1
+            elif ch == curses.KEY_DC:
+                value = value[:cursor] + value[cursor + 1:]
+            elif ch == curses.KEY_LEFT:
+                cursor = max(0, cursor - 1)
+            elif ch == curses.KEY_RIGHT:
+                cursor = min(len(value), cursor + 1)
+            elif ch == curses.KEY_HOME:
+                cursor = 0
+            elif ch == curses.KEY_END:
+                cursor = len(value)
+            elif ch == '\x15':
+                value = ''
+                cursor = 0
+            elif isinstance(ch, str) and ch.isprintable():
+                value = value[:cursor] + ch + value[cursor:]
+                cursor += 1
 
-    def handle_scroll(self, max_display: int) -> None:
-        if self.selected_row < self.scroll_offset:
-            self.scroll_offset = self.selected_row
-        elif self.selected_row >= self.scroll_offset + max_display:
-            self.scroll_offset = self.selected_row - max_display + 1
+    def option_rows(self) -> list[Property]:
+        needle = self.query.casefold()
+        return [p for p in PROPERTIES if needle in (p.key + ' ' + p.description).casefold()]
+
+    def refresh(self) -> None:
+        old = self.current.address if self.current else None
+        windows = scan_windows()  # Keep previous snapshot if IPC fails.
+        self.windows = windows
+        self.selections = {w.address: self.selections[w.address] for w in windows if w.address in self.selections}
+        self.index = next((i for i, w in enumerate(windows) if w.address == old), min(self.index, max(0, len(windows) - 1)))
+        self.offset = self.preview_offset = 0
+        self.status = f'Refreshed: {len(windows)} native windows'
+
+    def draw(self) -> int:
+        self.screen.erase()
+        height, width = self.screen.getmaxyx()
+        self.put(0, 1, APP_TITLE, self.accent)
+        if height < 12 or width < 40:
+            self.put(2, 0, 'Resize to 40 x 12 or larger. q quits.')
+            self.screen.refresh()
+            return 0
+        self.put(height - 1, 1, self.status or str(self.target), curses.A_DIM)
+        if self.options and self.current:
+            rows = self.option_rows()
+            self.put(1, 1, 'Options  [x] enabled  [.] commented  [ ] omitted', self.accent)
+            self.put(2, 1, 'Space toggle   e edit Lua value   / search   Esc back')
+            count = height - 7
+            self.option_index = min(self.option_index, max(0, len(rows) - 1))
+            self.option_offset = max(0, min(self.option_offset, self.option_index))
+            if self.option_index >= self.option_offset + count:
+                self.option_offset = self.option_index - count + 1
+            for y, p in enumerate(rows[self.option_offset:self.option_offset + count], 4):
+                state = 'x' if p.key in self.selection.active else '.' if p.essential else ' '
+                attr = curses.A_REVERSE if y - 4 + self.option_offset == self.option_index else 0
+                self.put(y, 1, f'[{state}] {p.key:<32} {self.selection.value(self.current, p.key)}', attr)
+            if rows:
+                self.put(height - 3, 1, rows[self.option_index].description, curses.A_DIM)
+            self.put(height - 2, 1, f'Search: {self.query}' if self.query else 'Enter returns to preview; save from the window screen')
+            self.screen.refresh()
+            return count
+        self.put(1, 1, 'Enter append   c copy   o options   r refresh   q quit')
+        count = min(max(2, (height - 8) // 3), max(2, len(self.windows)))
+        self.offset = max(0, min(self.offset, self.index))
+        if self.index >= self.offset + count:
+            self.offset = self.index - count + 1
+        for y, window in enumerate(self.windows[self.offset:self.offset + count], 3):
+            attr = curses.A_REVERSE if y - 3 + self.offset == self.index else 0
+            self.put(y, 1, f'{window.app_class or "(no class)"}  ·  {window.title}', attr)
+        if not self.current:
+            self.put(3, 1, 'No mapped native windows. Press r to refresh.')
+        top = count + 4
+        self.put(top, 1, 'Rule preview  ·  [ / ] scroll  ·  o to enable or edit properties', self.accent)
+        if self.current:
+            lines = generate_lua_rule(self.current, self.selection).splitlines()
+            visible = height - top - 3
+            self.preview_offset = min(self.preview_offset, max(0, len(lines) - visible))
+            for y, line in enumerate(lines[self.preview_offset:self.preview_offset + visible], top + 1):
+                self.put(y, 1, line, curses.A_DIM if line.lstrip().startswith('--') else 0)
+        self.screen.refresh()
+        return count
+
+    def handle_key(self, ch, count: int) -> bool:
+        if ch in ('q', 'Q'):
+            return False
+        if count == 0:
+            if ch == '\x1b':
+                if not self.options:
+                    return False
+                self.options = False
+            return True
+        if self.options and self.current:
+            rows = self.option_rows()
+            if ch in ('\x1b', '\n', '\r', 'o', curses.KEY_ENTER):
+                self.options = False
+            elif ch in ('j', curses.KEY_DOWN):
+                self.option_index = min(max(0, len(rows) - 1), self.option_index + 1)
+            elif ch in ('k', curses.KEY_UP):
+                self.option_index = max(0, self.option_index - 1)
+            elif ch in ('g', curses.KEY_HOME):
+                self.option_index = 0
+            elif ch in ('G', curses.KEY_END):
+                self.option_index = max(0, len(rows) - 1)
+            elif ch in (curses.KEY_NPAGE, curses.KEY_PPAGE):
+                self.option_index = min(max(0, len(rows) - 1), max(0, self.option_index + (count if ch == curses.KEY_NPAGE else -count)))
+            elif ch == '/':
+                query = self.prompt('Search', self.query)
+                if query is not None:
+                    self.query, self.option_index, self.option_offset = query, 0, 0
+            elif ch in (' ', 'e') and rows:
+                p = rows[self.option_index]
+                if ch == 'e':
+                    value = self.prompt(p.key + ' (Lua)', self.selection.value(self.current, p.key))
+                    if value is None:
+                        return True
+                    if not value.strip():
+                        self.status = 'Value cannot be empty'
+                        return True
+                    candidate = Selection(set(self.selection.active), dict(self.selection.edits))
+                    candidate.edits[p.key] = value
+                    candidate.enable(p.key)
+                    validate_rule(generate_lua_rule(self.current, candidate))
+                    self.selections[self.current.address] = candidate
+                elif p.key == 'name':
+                    self.status = 'Use e to change the rule name'
+                elif p.key in self.selection.active:
+                    if p.key.startswith('match.') and sum(k.startswith('match.') for k in self.selection.active) == 1:
+                        self.status = 'Enable another match before disabling this one'
+                    else:
+                        self.selection.active.remove(p.key)
+                else:
+                    self.selection.enable(p.key)
+            return True
+        if ch == '\x1b':
+            return False
+        if ch == 'r':
+            self.refresh()
+        elif self.current:
+            if ch in ('j', curses.KEY_DOWN, 'k', curses.KEY_UP, curses.KEY_NPAGE, curses.KEY_PPAGE, 'g', 'G'):
+                delta = count if ch == curses.KEY_NPAGE else -count if ch == curses.KEY_PPAGE else 1 if ch in ('j', curses.KEY_DOWN) else -1
+                self.index = 0 if ch == 'g' else len(self.windows) - 1 if ch == 'G' else min(len(self.windows) - 1, max(0, self.index + delta))
+                self.preview_offset = 0
+            elif ch in ('[', ']'):
+                self.preview_offset = max(0, self.preview_offset + (1 if ch == ']' else -1))
+            elif ch == 'o':
+                self.options = True
+            elif ch in ('c', '\n', '\r', curses.KEY_ENTER):
+                text = generate_lua_rule(self.current, self.selection)
+                if ch == 'c':
+                    subprocess.run(['wl-copy', '--type', 'text/plain;charset=utf-8'], input=text,
+                                   text=True, check=True, capture_output=True, timeout=3)
+                    self.status = 'Copied rule'
+                else:
+                    saved = append_rule(text, self.target)
+                    self.status = f'Appended to {self.target.name}' if saved else 'Identical rule already saved'
+        return True
 
     def run(self) -> None:
-        self.stdscr.timeout(1000) # 1000ms (1 second) non-blocking timeout
-
         while True:
-            # --- REAL-TIME SCANNING & CURSOR RETENTION ---
-            old_address = None
-            if self.rules and 0 <= self.selected_row < len(self.rules):
-                old_address = self.rules[self.selected_row].address
-
-            # Rescan windows from Hyprland
-            self.rules = scan_windows()
-            self.item_count = len(self.rules)
-
-            # Re-anchor the cursor so it doesn't bounce when the list updates
-            if self.item_count == 0:
-                self.selected_row = 0
-            elif old_address:
-                new_idx = next((i for i, r in enumerate(self.rules) if r.address == old_address), -1)
-                if new_idx != -1:
-                    self.selected_row = new_idx
-                else:
-                    self.selected_row = min(self.selected_row, self.item_count - 1)
-            else:
-                self.selected_row = min(self.selected_row, max(0, self.item_count - 1))
-
-            self.stdscr.erase()
-            max_y, max_x = self.stdscr.getmaxyx()
-            
-            if max_y < 12 or max_x < 30:
-                self.draw_safe(0, 0, "Terminal too small.", curses.color_pair(5))
-                self.stdscr.refresh()
-                if self.stdscr.getch() == ord('q'):
-                    break
-                continue
-
-            box_width = min(110, max_x - 2)
-            available_h = max_y - 6 
-            
-            list_h = max(3, int(available_h * 0.40))
-            preview_h = max(3, available_h - list_h)
-
-            self.handle_scroll(list_h)
-
-            border_line = "─" * (box_width - 2)
-            c_mag = curses.color_pair(2)
-            
-            # --- HEADER / TOP BORDER ---
-            self.draw_safe(0, 0, f"┌{border_line}┐", c_mag)
-            
-            # Embed Keybinds into the top border (0 wasted lines)
-            keybinds = " [↑/↓] Nav  [Enter] Append  [c] Copy  [q] Quit "
-            kb_x = box_width - len(keybinds) - 2
-            if kb_x > 2:
-                self.draw_safe(0, kb_x, keybinds, curses.color_pair(1) | curses.A_BOLD)
-            
-            title_str = f" {APP_TITLE} "
-            ver_str = f"{APP_VERSION} "
-            
-            self.draw_safe(1, 0, "│", c_mag)
-            self.draw_safe(1, 2, title_str, curses.color_pair(3) | curses.A_BOLD)
-            self.draw_safe(1, 2 + len(title_str), ver_str, curses.color_pair(1))
-            self.draw_safe(1, box_width - 1, "│", c_mag)
-            
-            self.draw_safe(2, 0, f"├{border_line}┤", c_mag)
-
-            # --- LIST ITEMS ---
-            for i in range(list_h):
-                row_y = 3 + i
-                item_idx = self.scroll_offset + i
-                
-                self.draw_safe(row_y, 0, "│", c_mag)
-                self.draw_safe(row_y, box_width - 1, "│", c_mag)
-                
-                if item_idx < self.item_count:
-                    rule = self.rules[item_idx]
-                    if item_idx == self.selected_row:
-                        self.draw_safe(row_y, 2, f"➤  {rule.app_class} ", curses.color_pair(1) | curses.A_REVERSE)
-                        self.draw_safe(row_y, 4 + len(rule.app_class) + 2, f":: {rule.title}", curses.color_pair(3))
-                    else:
-                        self.draw_safe(row_y, 3, f"{rule.app_class} ", curses.color_pair(1))
-                        self.draw_safe(row_y, 3 + len(rule.app_class) + 1, f":: {rule.title}", curses.color_pair(6))
-
-            mid_y = 3 + list_h
-            self.draw_safe(mid_y, 0, f"├{border_line}┤", c_mag)
-            self.draw_safe(mid_y + 1, 0, "│", c_mag)
-            self.draw_safe(mid_y + 1, 2, "LUA RULE PREVIEW:", curses.color_pair(3) | curses.A_BOLD)
-            self.draw_safe(mid_y + 1, box_width - 1, "│", c_mag)
-
-            # --- PREVIEW BOX ---
-            preview_start_y = mid_y + 2
-            rule_lines = self.rules[self.selected_row].rule_text.split('\n')
-            
-            for i in range(preview_h):
-                row_y = preview_start_y + i
-                self.draw_safe(row_y, 0, "│", c_mag)
-                self.draw_safe(row_y, box_width - 1, "│", c_mag)
-                
-                if i < len(rule_lines):
-                    # Route to our shiny new tokenizer for rendering
-                    self.draw_highlighted_lua(row_y, 2, rule_lines[i], box_width - 1)
-
-            # --- BOTTOM BORDER ---
-            bot_y = preview_start_y + preview_h
-            self.draw_safe(bot_y, 0, f"└{border_line}┘", c_mag)
-            
-            # Embed Target/Status into the bottom border (0 wasted lines)
-            status_text = f" {self.status_msg} " if self.status_msg else f" Target: {TARGET_FILE} "
-            status_color = curses.color_pair(5) | curses.A_BOLD if self.status_msg else curses.color_pair(3)
-            if box_width > len(status_text) + 4:
-                self.draw_safe(bot_y, 2, status_text, status_color)
-
-            self.stdscr.refresh()
-
-            # --- INPUT ROUTER ---
             try:
-                ch = self.stdscr.getch()
+                count = self.draw()
+                if not self.handle_key(self.screen.get_wch(), count):
+                    return
             except curses.error:
-                ch = -1
-
-            if ch == -1:
-                continue # Timeout hit, loop back to the top to rescan and redraw
-
-            self.status_msg = "" # Only clear the status message on an actual keypress
-
-            match ch:
-                case curses.KEY_UP | 107: # 107 = 'k'
-                    self.selected_row = max(0, self.selected_row - 1)
-                case curses.KEY_DOWN | 106: # 106 = 'j'
-                    self.selected_row = min(self.item_count - 1, self.selected_row + 1)
-                case curses.KEY_PPAGE:
-                    self.selected_row = max(0, self.selected_row - list_h)
-                case curses.KEY_NPAGE:
-                    self.selected_row = min(self.item_count - 1, self.selected_row + list_h)
-                case 103: # 'g'
-                    self.selected_row = 0
-                case 71: # 'G'
-                    self.selected_row = self.item_count - 1
-                case 99 | 67: # 'c' or 'C'
-                    self.copy_clipboard()
-                case 10 | 13: # Enter
-                    self.append_selection()
-                case 113 | 81 | 27: # 'q', 'Q', or ESC
-                    break
-                case curses.KEY_MOUSE:
-                    try:
-                        _, mx, my, _, bstate = curses.getmouse()
-                        if bstate & curses.BUTTON4_PRESSED: 
-                            self.selected_row = max(0, self.selected_row - 1)
-                        elif bstate & curses.BUTTON5_PRESSED: 
-                            self.selected_row = min(self.item_count - 1, self.selected_row + 1)
-                    except curses.error:
-                        pass
-                case curses.KEY_RESIZE:
-                    pass 
+                continue  # Redraw after a resize interrupts curses I/O.
+            except (OSError, ValueError, subprocess.SubprocessError) as exc:
+                self.status = display_text(str(exc))
 
 
-def main(stdscr: curses.window) -> None:
-    check_dependencies()
-    
-    rules = scan_windows()
-    if not rules:
-        print("No mapped, visible windows found on active monitors.")
-        return
-
-    tui = DuskyTUI(stdscr, rules)
-    tui.run()
-
-if __name__ == "__main__":
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--list', action='store_true', help='List mapped native windows')
+    mode.add_argument('--print', dest='pattern', help='Print rules matching a class/title regex or exact address')
+    parser.add_argument('--append', action='store_true', help='Append the rules selected with --print')
+    parser.add_argument('--option', action='append', default=[], metavar='KEY=LUA', help='Enable/edit one property; repeatable (e.g. --option no_shadow=true)')
+    parser.add_argument('--file', type=Path, default=TARGET_FILE, help='Destination Lua file')
+    args = parser.parse_args()
+    if args.append and args.pattern is None:
+        parser.error('--append requires --print')
+    if args.option and args.pattern is None:
+        parser.error('--option requires --print; interactive mode uses o')
+    options = []
+    for option in args.option:
+        key, sep, value = option.partition('=')
+        if not sep or key not in PROPERTY_MAP or not value.strip():
+            parser.error(f'Expected a known KEY=LUA, got {option!r}')
+        options.append((key, value))
     try:
-        curses.wrapper(main)
+        windows = scan_windows()
+        if args.list:
+            for window in windows:
+                print(f'{window.address}  {display_text(window.app_class)}  {display_text(window.title)}')
+        elif args.pattern is not None:
+            matches = [w for w in windows if w.address == args.pattern]
+            if not matches:
+                pattern = re.compile(args.pattern, re.IGNORECASE)
+                matches = [w for w in windows if pattern.search(w.app_class) or pattern.search(w.title)]
+            if not matches:
+                raise ValueError('No windows match this pattern')
+            chunks = []
+            for window in matches:
+                selection = Selection.for_window(window)
+                for key, value in options:
+                    selection.edits[key] = value
+                    selection.enable(key)
+                chunks.append(generate_lua_rule(window, selection))
+            text = '\n'.join(chunks)
+            if args.append:
+                saved = append_rule(text, args.file)
+                print(f'{"Appended to" if saved else "Already saved in"} {args.file}', file=sys.stderr)
+            else:
+                validate_rule(text)
+            print(text, end='')
+        else:
+            if not sys.stdin.isatty() or not sys.stdout.isatty():
+                raise ValueError('Interactive mode needs a terminal; use --list or --print')
+            curses.wrapper(lambda screen: DuskyTUI(screen, windows, args.file).run())
+        return 0
+    except (OSError, ValueError, re.PatternError, subprocess.SubprocessError) as exc:
+        print(f'Error: {exc}', file=sys.stderr)
+        return 1
     except KeyboardInterrupt:
-        sys.exit(130)
+        return 130
+
+
+if __name__ == '__main__':
+    sys.exit(main())
