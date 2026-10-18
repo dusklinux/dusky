@@ -1,12 +1,15 @@
 [Unit]
 Description=Disable NumLock on Virtual Consoles (TTYs)
 Documentation=man:setleds(1)
-After=multi-user.target
+After=systemd-vconsole-setup.service
+Before=getty.target
+ConditionPathExists=/dev/tty1
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/bin/sh -c 'for tty in /dev/tty[1-6]; do setleds -D -num < "$$tty" 2>/dev/null; done 2>/dev/null || true'
+# Let Bash expand $tty; ':' disables systemd's environment substitution.
+ExecStart=:/usr/bin/bash -c 'for tty in /dev/tty[1-6]; do /usr/bin/setleds --default -num < "$tty" || exit; done'
 
 [Install]
 WantedBy=multi-user.target
