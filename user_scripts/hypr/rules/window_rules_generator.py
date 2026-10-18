@@ -4,7 +4,8 @@
 Enter appends the essential template. Only float, size and move are enabled
 initially, as in the original generator. Other essentials are editable comments;
 optional properties are absent until selected with o. No third-party Python UI.
-On size/move, p cycles pixel/relative presets; e accepts custom Lua expressions.
+Preset choices are shown below the selected setting; p opens the full picker.
+Number keys apply a preset directly; e accepts custom Lua expressions.
 The window list refreshes automatically; options freeze the list while editing.
 
 Rule reference: https://wiki.hypr.land/Configuring/Basics/Window-Rules/
@@ -20,6 +21,7 @@ import re
 import subprocess
 import sys
 lazy import tempfile
+lazy import textwrap
 from time import monotonic
 lazy import unicodedata
 from dataclasses import dataclass, field
@@ -43,8 +45,8 @@ PROPERTIES = (
     Property("match.class", '""', "Exact current class; static effects match the class at opening", True),
     Property("match.title", '""', "Exact current title; static effects match the title at opening", True),
     Property("float", "true", "Float the window", True),
-    Property("size", "{800, 600}", "p: pixels / 95% of monitor; e: custom dimensions or monitor expressions", True),
-    Property("move", "{0, 0}", "p: pixels / centered / bottom-center; e: custom position expressions", True),
+    Property("size", "{800, 600}", "Pixels / proportions / 95%: choose below or p; e edits custom math", True),
+    Property("move", "{0, 0}", "Placement presets below or p; e edits custom position math", True),
     Property("pin", "true", "Show on all workspaces (requires floating)", True),
     Property("center", "true", "Center floating window; use instead of move", True),
     Property("workspace", '"unset"', 'Workspace selector, optionally silent; "unset" removes assignment', True),
@@ -574,6 +576,65 @@ class DuskyTUI:
         rows = [p for p in PROPERTIES if needle in (p.key + ' ' + p.description).casefold()]
         return sorted(rows, key=lambda p: (p.key != needle, needle not in p.key)) if needle else rows
 
+    def set_value(self, key: str, value: str) -> None:
+        candidate = Selection(set(self.selection.active), dict(self.selection.edits))
+        candidate.edits[key] = value
+        candidate.enable(key)
+        validate_rule(generate_lua_rule(self.current, candidate))
+        self.selections[self.current.address] = candidate
+
+    def choose_preset(self, key: str, choices: list[tuple[str, str]]) -> tuple[str, str] | None:
+        current = self.selection.value(self.current, key)
+        index = next((i for i, (_, value) in enumerate(choices) if value == current), 0)
+        offset = 0
+        while True:
+            self.screen.erase()
+            height, width = self.screen.getmaxyx()
+            self.put(0, 1, f'{key} presets', self.accent)
+            if height < 12 or width < 40:
+                self.put(2, 0, 'Resize to 40 x 12 or larger; Esc cancels.')
+                self.screen.refresh()
+                if self.screen.get_wch() in ('\x1b', 'q', 'Q'):
+                    return None
+                continue
+            self.put(1, 1, 'Up/Down choose   Enter apply   1-9 quick pick   Esc cancel')
+            count = max(1, height - 9)
+            offset = max(0, min(offset, index))
+            if index >= offset + count:
+                offset = index - count + 1
+            for i in range(offset, min(len(choices), offset + count)):
+                label, value = choices[i]
+                marker = '*' if value == current else ' '
+                attr = curses.A_REVERSE if i == index else 0
+                self.put(3 + i - offset, 1, f'{marker} {i + 1:2}. {label}', attr)
+            self.put(height - 5, 1, 'Value to apply:', self.accent)
+            for y, line in enumerate(textwrap.wrap(choices[index][1], max(1, width - 4)), height - 4):
+                if y >= height - 1:
+                    break
+                self.put(y, 2, line)
+            self.put(height - 1, 1, '* current value; changes apply only after choosing', curses.A_DIM)
+            self.screen.refresh()
+            ch = self.screen.get_wch()
+            if ch == curses.KEY_MOUSE:
+                _, _, _, _, buttons = curses.getmouse()
+                ch = curses.KEY_UP if buttons & curses.BUTTON4_PRESSED else curses.KEY_DOWN if buttons & curses.BUTTON5_PRESSED else None
+            if ch in ('\x1b', 'q', 'Q'):
+                return None
+            if ch in ('\n', '\r', curses.KEY_ENTER):
+                return choices[index]
+            if isinstance(ch, str) and ch in '123456789' and int(ch) <= len(choices):
+                return choices[int(ch) - 1]
+            if ch in ('j', curses.KEY_DOWN):
+                index = min(len(choices) - 1, index + 1)
+            elif ch in ('k', curses.KEY_UP):
+                index = max(0, index - 1)
+            elif ch in ('g', curses.KEY_HOME):
+                index = 0
+            elif ch in ('G', curses.KEY_END):
+                index = len(choices) - 1
+            elif ch in (curses.KEY_NPAGE, curses.KEY_PPAGE):
+                index = min(len(choices) - 1, max(0, index + (count if ch == curses.KEY_NPAGE else -count)))
+
     def refresh(self, *, automatic: bool = False) -> None:
         self.next_refresh = monotonic() + 1
         old = self.current.address if self.current else None
@@ -604,9 +665,17 @@ class DuskyTUI:
         if self.options and self.current:
             rows = self.option_rows()
             self.put(1, 1, 'Options  [x] enabled  [.] commented  [ ] omitted', self.accent)
-            self.put(2, 1, 'Space toggle   e edit Lua   p presets   / search   Esc back')
-            count = height - 7
+            self.put(2, 1, 'Space toggle   e custom Lua   p choose preset   / search   Esc back')
             self.option_index = min(self.option_index, max(0, len(rows) - 1))
+            choices = []
+            if rows and rows[self.option_index].key in VALUE_PRESETS:
+                try:
+                    choices = preset_choices(self.current, rows[self.option_index].key)
+                except (OSError, ValueError, subprocess.SubprocessError) as exc:
+                    self.status = display_text(str(exc))
+                    self.put(height - 1, 1, self.status.ljust(width - 2), curses.A_DIM)
+            panel_height = min(min(len(choices), 6) + 5, max(0, height - 12)) if choices else 0
+            count = height - 7 - panel_height
             self.option_offset = max(0, min(self.option_offset, self.option_index))
             if self.option_index >= self.option_offset + count:
                 self.option_offset = self.option_index - count + 1
@@ -614,6 +683,24 @@ class DuskyTUI:
                 state = 'x' if p.key in self.selection.active else '.' if p.essential else ' '
                 attr = curses.A_REVERSE if y - 4 + self.option_offset == self.option_index else 0
                 self.put(y, 1, f'[{state}] {p.key:<32} {self.selection.value(self.current, p.key)}', attr)
+            if choices and panel_height >= 4:
+                key = rows[self.option_index].key
+                current = self.selection.value(self.current, key)
+                selected = next((label for label, value in choices if value == current), 'Custom Lua')
+                top = 5 + min(count, len(rows) - self.option_offset)
+                self.put(top, 1, f'{key} presets — number to apply, p for full picker', self.accent)
+                visible = min(6, len(choices), panel_height - 1)
+                for i, (label, value) in enumerate(choices[:visible], 1):
+                    marker = '*' if value == current else ' '
+                    self.put(top + i, 2, f'{marker} {i}. {label}')
+                y = top + visible + 1
+                if y < min(height - 3, top + panel_height):
+                    self.put(y, 1, f'Current: {selected}', self.accent)
+                for line in textwrap.wrap(current, max(1, width - 4)):
+                    y += 1
+                    if y >= min(height - 3, top + panel_height):
+                        break
+                    self.put(y, 2, line, curses.A_DIM)
             if rows:
                 self.put(height - 3, 1, rows[self.option_index].description, curses.A_DIM)
             self.put(height - 2, 1, f'Search: {self.query}' if self.query else 'Enter returns to preview; save from the window screen')
@@ -675,22 +762,24 @@ class DuskyTUI:
                 query = self.prompt('Search', self.query)
                 if query is not None:
                     self.query, self.option_index, self.option_offset = query, 0, 0
-            elif ch in (' ', 'e', 'p') and rows:
+            elif (ch in (' ', 'e', 'p') or isinstance(ch, str) and ch in '123456789') and rows:
                 p = rows[self.option_index]
-                if ch == 'p':
+                if ch == 'p' or isinstance(ch, str) and ch in '123456789':
                     if p.key not in VALUE_PRESETS:
                         self.status = 'Use e for a custom value; this property has no presets'
                         return True
                     choices = preset_choices(self.current, p.key)
-                    current = self.selection.value(self.current, p.key)
-                    index = next((i for i, (_, value) in enumerate(choices) if value == current), -1)
-                    label, value = choices[(index + 1) % len(choices)]
-                    candidate = Selection(set(self.selection.active), dict(self.selection.edits))
-                    candidate.edits[p.key] = value
-                    candidate.enable(p.key)
-                    validate_rule(generate_lua_rule(self.current, candidate))
-                    self.selections[self.current.address] = candidate
-                    self.status = f'{p.key}: {label}. p cycles; e edits the value'
+                    if ch == 'p':
+                        choice = self.choose_preset(p.key, choices)
+                        if choice is None:
+                            return True
+                    elif int(ch) <= len(choices):
+                        choice = choices[int(ch) - 1]
+                    else:
+                        return True
+                    label, value = choice
+                    self.set_value(p.key, value)
+                    self.status = f'{p.key}: {label}. e edits the value'
                 elif ch == 'e':
                     value = self.prompt(p.key + ' (Lua)', self.selection.value(self.current, p.key))
                     if value is None:
@@ -698,11 +787,7 @@ class DuskyTUI:
                     if not value.strip():
                         self.status = 'Value cannot be empty'
                         return True
-                    candidate = Selection(set(self.selection.active), dict(self.selection.edits))
-                    candidate.edits[p.key] = value
-                    candidate.enable(p.key)
-                    validate_rule(generate_lua_rule(self.current, candidate))
-                    self.selections[self.current.address] = candidate
+                    self.set_value(p.key, value)
                 elif p.key == 'name':
                     self.status = 'Use e to change the rule name'
                 elif p.key in self.selection.active:
