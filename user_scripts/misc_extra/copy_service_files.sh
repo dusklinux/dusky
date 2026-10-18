@@ -41,8 +41,8 @@ readonly SERVICES_CONFIG=(
     "$HOME/user_scripts/update_dusky/update_checker/service/update_checker.timer | disable"
 
 
-    # dusky osd
-    "$HOME/user_scripts/mako_osd/osd_router/osd_lock.service | disable"
+    # Lock-key and firmware-controlled keyboard-backlight OSD
+    "$HOME/user_scripts/mako_osd/osd_router/osd_lock.service | enable"
     
     # dusky audio visualizer
     "$HOME/user_scripts/way_layers/visualizer/dusky_visualizer.service | disable"

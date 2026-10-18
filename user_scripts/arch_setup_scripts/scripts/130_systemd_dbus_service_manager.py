@@ -56,8 +56,8 @@ USER_SERVICES: list[ServiceConfig] = [
     # Dusky Update Checker (Default: Disable)
     ServiceConfig("$HOME/user_scripts/update_dusky/update_checker/service/update_checker.service", "disable"),
     ServiceConfig("$HOME/user_scripts/update_dusky/update_checker/service/update_checker.timer", "disable"),
-    # Dusky OSD Router (Default: Disable)
-    ServiceConfig("$HOME/user_scripts/mako_osd/osd_router/osd_lock.service", "disable"),
+    # Lock-key and firmware-controlled keyboard-backlight OSD (Default: Enable)
+    ServiceConfig("$HOME/user_scripts/mako_osd/osd_router/osd_lock.service", "enable"),
     # Dusky RAM Monitor (Default: Disable)
     ServiceConfig("$HOME/user_scripts/performance/swap_and_ram_monitor_service/dusky_ram_monitor.service", "disable"),
     # Dusky Audio Visualizer (Default: Disable)

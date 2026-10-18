@@ -89,6 +89,7 @@ pipewire-alsa
 alsa-utils
 wireplumber
 pipewire-pulse
+pamixer
 playerctl
 bluez
 bluez-utils

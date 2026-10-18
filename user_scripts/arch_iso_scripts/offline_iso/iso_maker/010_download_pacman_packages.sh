@@ -53,7 +53,7 @@ declare -ar pkgs_desktop=(
 )
 
 declare -ar pkgs_audio=(
-  "pipewire" "pipewire-alsa" "alsa-utils" "wireplumber" "pipewire-pulse" "playerctl" "bluez" "bluez-utils" "bluez-hid2hci" "bluez-libs" "bluez-obex" "blueman" "bluetui" "pavucontrol" "gst-plugins-base" "gst-libav" "gst-plugins-bad" "gst-plugins-good" "gst-plugins-ugly" "gst-plugin-pipewire" "libcanberra" "songrec" "sox" "rnnoise"
+  "pipewire" "pipewire-alsa" "alsa-utils" "wireplumber" "pipewire-pulse" "pamixer" "playerctl" "bluez" "bluez-utils" "bluez-hid2hci" "bluez-libs" "bluez-obex" "blueman" "bluetui" "pavucontrol" "gst-plugins-base" "gst-libav" "gst-plugins-bad" "gst-plugins-good" "gst-plugins-ugly" "gst-plugin-pipewire" "libcanberra" "songrec" "sox" "rnnoise"
 )
 
 declare -ar pkgs_filesystem=(

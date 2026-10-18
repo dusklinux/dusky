@@ -4,7 +4,7 @@
 import asyncio
 import errno
 import logging
-import re
+import select
 import signal
 from collections.abc import Coroutine
 from contextlib import suppress
@@ -84,6 +84,23 @@ class DebouncedNotifier:
             await asyncio.sleep(0.05)
             icon, title, value = self._pending
             self._pending = None
+            name = (
+                "input-keyboard-brightness" if icon == "keyboard-brightness" else icon
+            )
+            for size in ("32x32", "24x24"):
+                for category in ("status", "panel", "actions", "devices"):
+                    candidate = (
+                        Path("/usr/share/icons/Papirus")
+                        / size
+                        / category
+                        / f"{name}.svg"
+                    )
+                    if candidate.is_file():
+                        icon = str(candidate)
+                        break
+                else:
+                    continue
+                break
             # Never cancel an in-flight notification in favor of a newer one.
             args = [
                 "notify-send",
@@ -102,81 +119,81 @@ class DebouncedNotifier:
 _notifier = DebouncedNotifier()
 
 
-async def monitor_upower_dbus() -> None:
-    # Monitor the service, including per-device objects introduced by UPower 1.91.
-    # Use signal values directly: another device's brightness is not our state.
-    root = b"/org/freedesktop/UPower/KbdBacklight"
-    signal_marker = (
-        b": org.freedesktop.UPower.KbdBacklight.BrightnessChangedWithSource "
-    )
-    while True:
-        process = None
-        maxima: dict[bytes, int] = {}
-        try:
-            process = await asyncio.create_subprocess_exec(
-                "gdbus",
-                "monitor",
-                "--system",
-                "--dest",
-                "org.freedesktop.UPower",
-                stdout=asyncio.subprocess.PIPE,
-            )
-            assert process.stdout is not None
-            async for line in process.stdout:
-                if not line.startswith(b"/") or b".InterfacesRemoved " in line:
-                    maxima.clear()
-                path, separator, payload = line.strip().partition(signal_marker)
-                if not separator or not (path == root or path.startswith(root + b"/")):
-                    continue
-                # Software changes already have an OSD from the shell router.
-                match = re.fullmatch(rb"\(([0-9]+), 'internal'\)", payload)
-                if match is None:
-                    continue
-                current = int(match[1])
-                if path not in maxima:
-                    output = await run_command(
-                        "gdbus",
-                        "call",
-                        "--system",
-                        "--dest",
-                        "org.freedesktop.UPower",
-                        "--object-path",
-                        path.decode("ascii"),
-                        "--method",
-                        "org.freedesktop.UPower.KbdBacklight.GetMaxBrightness",
-                        capture=True,
+async def monitor_keyboard_backlight(path: Path) -> None:
+    """Watch the kernel's hardware-change notification without polling or D-Bus."""
+    loop = asyncio.get_running_loop()
+    try:
+        maximum = int((path / "max_brightness").read_text())
+        if maximum <= 0:
+            return
+        with (
+            (path / "brightness_hw_changed").open("rb", buffering=0) as changed,
+            select.epoll() as poller,
+        ):
+
+            def acknowledge_change() -> None:
+                changed.seek(0)
+                try:
+                    changed.read(32)
+                except OSError as error:
+                    # ENODATA also occurs after startup: ASUS can report -1
+                    # when lowering an already-off backlight. Keep listening.
+                    if error.errno != errno.ENODATA:
+                        raise
+
+            # Reading clears sysfs's pending notification. The initial state
+            # needs no OSD, even if no hardware change has happened yet.
+            acknowledge_change()
+            poller.register(changed.fileno(), select.EPOLLPRI)
+            failed = loop.create_future()
+
+            def receive_brightness() -> None:
+                try:
+                    if not poller.poll(0):
+                        return
+                    acknowledge_change()
+                    # ASUS can report an unclamped attempted level (e.g. 4/3)
+                    # through hw_changed. Read the actual applied brightness.
+                    current = int((path / "brightness").read_text())
+                    if not 0 <= current <= maximum:
+                        raise ValueError(
+                            f"Invalid keyboard brightness: {current}/{maximum}"
+                        )
+                    value = (current * 100 + maximum // 2) // maximum
+                    _notifier.dispatch(
+                        "keyboard-brightness", f"Kbd Brightness: {value}%", value
                     )
-                    maximum = re.fullmatch(rb"\(([0-9]+),\)\s*", output or b"")
-                    if maximum is None or int(maximum[1]) == 0:
-                        continue
-                    maxima[path] = int(maximum[1])
-                if current > maxima[path]:
-                    continue
-                value = (current * 100 + maxima[path] // 2) // maxima[path]
-                _notifier.dispatch(
-                    "keyboard-brightness", f"Kbd Brightness: {value}%", value
-                )
-            logging.warning(
-                "UPower monitor exited (%s); retrying", await process.wait()
-            )
-        except OSError as error:
-            logging.warning("UPower monitor failed: %s", error)
-        finally:
-            if process is not None:
-                await stop_process(process)
-        await asyncio.sleep(2)
+                except (OSError, ValueError) as error:
+                    loop.remove_reader(poller.fileno())
+                    if not failed.done():
+                        failed.set_exception(error)
+
+            # asyncio watches EPOLLIN only. The epoll descriptor becomes readable
+            # when sysfs signals EPOLLPRI, without a thread or a timer loop.
+            loop.add_reader(poller.fileno(), receive_brightness)
+            try:
+                await failed
+            finally:
+                loop.remove_reader(poller.fileno())
+    except (OSError, ValueError) as error:
+        if not isinstance(error, OSError) or error.errno not in (
+            errno.ENODEV,
+            errno.ENOENT,
+        ):
+            logging.warning("Cannot monitor keyboard backlight %s: %s", path, error)
 
 
 async def monitor_device(dev_path: str) -> None:
     device = None
     pending: dict[int, asyncio.Task[None]] = {}
+    last_shown: dict[int, bool] = {}
     try:
         device = InputDevice(dev_path)
         supported_leds = device.capabilities().get(ecodes.EV_LED, ())
 
         async def show_lock(led: int, label: str, icon: str) -> None:
-            # Query the kernel state after the compositor processes the key.
-            # This also works when an unchanged LED generates no EV_LED event.
+            # Lock deactivation may take effect on key release. Sample afterward,
+            # including when an unchanged LED generates no EV_LED event.
             await asyncio.sleep(0.05)
             try:
                 active_leds = device.leds()
@@ -184,7 +201,11 @@ async def monitor_device(dev_path: str) -> None:
                 if error.errno not in (errno.ENODEV, errno.ENOENT):
                     logging.warning("Cannot read LEDs on %s: %s", dev_path, error)
                 return
-            state = "ON" if led in active_leds else "OFF"
+            active = led in active_leds
+            if last_shown.get(led) == active:
+                return
+            last_shown[led] = active
+            state = "ON" if active else "OFF"
             _notifier.dispatch(f"{icon}-{state.lower()}", f"{label}: {state}")
 
         dropped = False
@@ -197,13 +218,24 @@ async def monitor_device(dev_path: str) -> None:
                 elif event.code == ecodes.SYN_REPORT:
                     dropped = False
                 continue
-            if dropped or event.type != ecodes.EV_KEY or event.value != 1:
+            if dropped:
+                continue
+            if event.type == ecodes.EV_LED:
+                if event.code == ecodes.LED_CAPSL:
+                    key = ecodes.KEY_CAPSLOCK
+                elif event.code == ecodes.LED_NUML:
+                    key = ecodes.KEY_NUMLOCK
+                else:
+                    continue
+            elif event.type == ecodes.EV_KEY and event.value == 0:
+                key = event.code
+            else:
                 continue
             # Hardware controls belong to Hyprland bindings; this daemon only
             # observes lock state and firmware-controlled backlight changes.
-            if event.code == ecodes.KEY_CAPSLOCK and not IGNORE_RAW_CAPSLOCK:
+            if key == ecodes.KEY_CAPSLOCK and not IGNORE_RAW_CAPSLOCK:
                 led, label, icon = ecodes.LED_CAPSL, "Caps Lock", "caps-lock"
-            elif event.code == ecodes.KEY_NUMLOCK:
+            elif key == ecodes.KEY_NUMLOCK:
                 led, label, icon = ecodes.LED_NUML, "Num Lock", "num-lock"
             else:
                 continue
@@ -224,22 +256,30 @@ async def monitor_device(dev_path: str) -> None:
 
 
 def watch_device(device: pyudev.Device) -> None:
-    node = device.device_node
-    if not node or not Path(node).name.startswith("event"):
-        return
-    # Skip mice and unrelated devices; firmware hotkey devices remain eligible.
-    if not any(
-        device.properties.get(key) == "1"
-        for key in (
-            "ID_INPUT_KEY",
-            "ID_INPUT_KEYBOARD",
-        )
-    ):
-        return
+    if device.subsystem == "leds":
+        node = device.sys_path
+        if (
+            "kbd_backlight" not in device.sys_name
+            or not (Path(node) / "brightness_hw_changed").is_file()
+        ):
+            return
+    else:
+        node = device.device_node
+        if not node or not Path(node).name.startswith("event"):
+            return
+        if not any(
+            device.properties.get(key) == "1"
+            for key in ("ID_INPUT_KEY", "ID_INPUT_KEYBOARD")
+        ):
+            return
     task = _device_tasks.get(node)
     if task is not None and not task.done():
         return
-    task = spawn(monitor_device(node))
+    task = spawn(
+        monitor_keyboard_backlight(Path(node))
+        if device.subsystem == "leds"
+        else monitor_device(node)
+    )
     _device_tasks[node] = task
 
     def forget(finished: asyncio.Task[None]) -> None:
@@ -253,6 +293,7 @@ async def main() -> None:
     context = pyudev.Context()
     monitor = pyudev.Monitor.from_netlink(context)
     monitor.filter_by(subsystem="input")
+    monitor.filter_by(subsystem="leds")
     monitor.start()
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue[pyudev.Device] = asyncio.Queue()
@@ -278,7 +319,7 @@ async def main() -> None:
         while True:
             device = await queue.get()
             if device.action == "remove":
-                task = _device_tasks.get(device.device_node)
+                task = _device_tasks.get(device.device_node or device.sys_path)
                 if task is not None:
                     task.cancel()
                     await asyncio.gather(task, return_exceptions=True)
@@ -287,10 +328,10 @@ async def main() -> None:
 
     try:
         async with asyncio.TaskGroup() as group:
-            spawn(monitor_upower_dbus())
             hotplug_task = group.create_task(hotplug())
-            for device in context.list_devices(subsystem="input"):
-                watch_device(device)
+            for subsystem in ("input", "leds"):
+                for device in context.list_devices(subsystem=subsystem):
+                    watch_device(device)
             await stopped.wait()
             hotplug_task.cancel()
             if reader_error is not None:

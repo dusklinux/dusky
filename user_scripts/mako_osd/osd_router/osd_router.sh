@@ -8,6 +8,16 @@ RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$UID}
 
 notify() {
     local icon=$1 title=$2 value=${3:-}
+    local name=$icon candidate
+    case $name in
+        gpm-brightness-lcd|display-brightness-*) name=xfpm-brightness-lcd ;;
+        keyboard-brightness) name=input-keyboard-brightness ;;
+    esac
+    # Direct files avoid an expensive theme lookup on every held-key repeat.
+    # Papirus is shipped with the ISO; retain named icons on other installations.
+    for candidate in /usr/share/icons/Papirus/{32x32,24x24}/{status,panel,actions,devices}/"$name.svg"; do
+        if [[ -f $candidate ]]; then icon=$candidate; break; fi
+    done
     local -a args=(-a OSD -h "string:x-canonical-private-synchronous:$SYNC_ID" -i "$icon")
     if [[ -n $value ]]; then
         # Notification progress is 0–100 even if external tools enabled amplification.
@@ -79,7 +89,9 @@ keyboard_device() {
 
 get_dpms() {
     local monitors
-    monitors=$(hyprctl monitors) || return
+    # The documented request socket avoids hyprctl's ~20 ms response wait on
+    # every repeat. The instance and runtime paths come from this session.
+    monitors=$(socat - "UNIX-CONNECT:$RUNTIME_DIR/hypr/${HYPRLAND_INSTANCE_SIGNATURE:?}/.socket.sock" <<< /monitors) || return
     # Active outputs only: disabled connectors must not trigger wake/off handling.
     dpms_off=0
     if [[ $monitors =~ dpmsStatus:[[:space:]]*(0|false) ]]; then dpms_off=1; fi
@@ -138,30 +150,37 @@ main() {
     local icon title value='' lock_fd state_file device current maximum row volume
     case $action in
         --vol-up|--vol-down|--vol-mute|--mic-mute)
-            local group=audio sink=@DEFAULT_AUDIO_SINK@
+            local group=audio
+            local -a mixer=(pamixer)
             if [[ $action == --mic-mute ]]; then
                 group=mic
-                sink=@DEFAULT_AUDIO_SOURCE@
+                mixer+=(--default-source)
             fi
             lock_control "$group"
             case $action in
-                --vol-up) wpctl set-volume -l 1.0 "$sink" "${step}%+" ;;
-                --vol-down) wpctl set-volume "$sink" "${step}%-" ;;
-                *) wpctl set-mute "$sink" toggle ;;
+                --vol-up) mixer+=(--increase "$step") ;;
+                --vol-down) mixer+=(--decrease "$step") ;;
+                *) mixer+=(--toggle-mute) ;;
             esac
-            volume=$(wpctl get-volume "$sink")
-            [[ $volume =~ ^Volume:[[:space:]]+([0-9]+)[.]([0-9]{2})([[:space:]]|$) ]] || return 1
-            value=$(( 10#${BASH_REMATCH[1]} * 100 + 10#${BASH_REMATCH[2]} ))
+            volume=$("${mixer[@]}" --get-volume-human)
+            if [[ $volume == muted ]]; then
+                value=0
+            elif [[ $volume =~ ^([0-9]+)%$ ]]; then
+                value=$((10#${BASH_REMATCH[1]}))
+            else
+                printf 'Invalid pamixer output: %s\n' "$volume" >&2
+                return 1
+            fi
             icon=audio-volume-high
             title="Volume: $value%"
-            if [[ $volume == *'[MUTED]'* ]]; then
+            if [[ $volume == muted ]]; then
                 icon=audio-volume-muted title='Audio Muted' value=''
             elif [[ $action == --vol-mute ]]; then
                 title='Audio Unmuted'
             fi
             if [[ $action == --mic-mute ]]; then
                 value=''
-                if [[ $volume == *'[MUTED]'* ]]; then
+                if [[ $volume == muted ]]; then
                     icon=microphone-sensitivity-muted title='Microphone Muted'
                 else
                     icon=audio-input-microphone title='Microphone Live'
