@@ -3,17 +3,15 @@
 
 Architecture : Arch Linux / Wayland / Hyprland
 Ecosystem    : PipeWire 1.4+ / WirePlumber
-Python       : 3.14+
+Python       : 3.15+
 
 Usage:
-    audio_router.py                     # GUI popup (control / start)
-    audio_router.py --daemon [APP]      # background routing daemon
-    audio_router.py --status            # print daemon status
-    audio_router.py --stop              # stop running daemon
-    audio_router.py --waybar            # output Waybar JSON status
+    audio_routing_output_to_mic.py                     # GUI popup (control / start)
+    audio_routing_output_to_mic.py --daemon [APP]      # foreground routing daemon
+    audio_routing_output_to_mic.py --status            # print daemon status
+    audio_routing_output_to_mic.py --stop              # stop running daemon
+    audio_routing_output_to_mic.py --waybar            # output Waybar JSON status
 """
-
-from __future__ import annotations
 
 import argparse
 import asyncio
@@ -31,6 +29,9 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+lazy import shlex
+lazy import shutil
+
 # ──────────────────────────────────────────────────────────────────
 # Constants
 # ──────────────────────────────────────────────────────────────────
@@ -44,7 +45,7 @@ PW_DUMP_TIMEOUT = 5.0
 LINK_TIMEOUT = 2.0
 POLL_INTERVAL = 0.5
 INIT_LINK_MAX_AGE = 3.0
-MAX_LINK_RETRIES = 3
+MAX_RETRY_DELAY = 5.0
 MAX_CONCURRENT_LINKS = 4
 MODULE_WAIT_TIMEOUT = 5.0
 MODULE_WAIT_STEP = 0.1
@@ -111,12 +112,12 @@ class DaemonState:
     target_app: str = DEFAULT_APP
     phase: DaemonPhase = DaemonPhase.STARTING
     virt_module_id: str | None = None
-    virt_node_id: int | None = None
-    virt_ports: ChannelMap = field(default_factory=dict)
     our_links: dict[PortPair, TrackedLink] = field(default_factory=dict)
-    prev_ports: dict[int, ChannelMap] = field(default_factory=dict)
-    failed_pairs: dict[PortPair, int] = field(default_factory=dict)
+    failed_pairs: dict[PortPair, float] = field(default_factory=dict)
+    graph: list[GraphObject] = field(default_factory=list)
     shutdown_event: asyncio.Event = field(default_factory=asyncio.Event)
+    stopped_event: asyncio.Event = field(default_factory=asyncio.Event)
+    cleanup_ok: bool = False
     lock_fd: int | None = None
     virt_missing_count: int = 0
 
@@ -124,7 +125,6 @@ class DaemonState:
 @dataclass(slots=True)
 class GraphSnapshot:
     streams: dict[int, StreamInfo]
-    running_ids: set[int]
     virt_node_id: int | None
     virt_ports: ChannelMap
     graph_links: dict[PortPair, str]
@@ -135,7 +135,7 @@ class GraphSnapshot:
 # ──────────────────────────────────────────────────────────────────
 
 def _runtime_dir() -> Path:
-    runtime = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
     return Path(runtime)
 
 
@@ -182,8 +182,8 @@ def _proc_error_message(result: ProcResult) -> str:
 async def run_command(
     *args: str,
     timeout: float,
-    stdout: int | None = asyncio.subprocess.PIPE,
-    stderr: int | None = asyncio.subprocess.PIPE,
+    stdout: int | None = subprocess.PIPE,
+    stderr: int | None = subprocess.PIPE,
 ) -> ProcResult:
     """Run a subprocess safely and kill it on timeout."""
     try:
@@ -203,11 +203,12 @@ async def run_command(
             stdout=out or b"",
             stderr=err or b"",
         )
-    except TimeoutError:
+    except (TimeoutError, asyncio.CancelledError) as exc:
         with contextlib.suppress(ProcessLookupError):
             proc.kill()
-        with contextlib.suppress(Exception):
-            await proc.communicate()
+        await proc.communicate()
+        if isinstance(exc, asyncio.CancelledError):
+            raise
         return ProcResult(returncode=proc.returncode, timed_out=True)
 
 
@@ -249,6 +250,7 @@ async def async_pw_dump() -> list[GraphObject]:
     """Capture the live PipeWire object graph asynchronously."""
     result = await run_command(
         "pw-dump",
+        "--no-colors",
         timeout=PW_DUMP_TIMEOUT,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,
@@ -262,7 +264,8 @@ async def async_pw_dump() -> list[GraphObject]:
         return []
 
     try:
-        return json.loads(_decode_output(result.stdout))
+        graph = json.loads(result.stdout)
+        return graph if isinstance(graph, list) else []
     except json.JSONDecodeError as exc:
         print(f"Warning: pw-dump returned invalid JSON: {exc}", file=sys.stderr)
         return []
@@ -272,7 +275,7 @@ def sync_pw_dump() -> list[GraphObject]:
     """Synchronous pw-dump for non-async contexts."""
     try:
         result = subprocess.run(
-            ["pw-dump"],
+            ["pw-dump", "--no-colors"],
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
@@ -281,7 +284,8 @@ def sync_pw_dump() -> list[GraphObject]:
         )
         if result.returncode != 0 or not result.stdout:
             return []
-        return json.loads(result.stdout)
+        graph = json.loads(result.stdout)
+        return graph if isinstance(graph, list) else []
     except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError):
         return []
 
@@ -293,11 +297,13 @@ def _extract_channel(props: GraphObject) -> str:
 
     name = props.get("port.name", "")
     if isinstance(name, str):
-        upper = name.upper()
-        if "FL" in upper:
+        upper = name.upper().rsplit("_", 1)[-1]
+        if upper == "FL":
             return "FL"
-        if "FR" in upper:
+        if upper == "FR":
             return "FR"
+        if upper == "MONO":
+            return "MONO"
     return ""
 
 
@@ -390,15 +396,8 @@ def build_snapshot(graph: list[GraphObject], target: str) -> GraphSnapshot:
         state = str(info.get("state", "unknown")).lower()
         graph_links[(out_port, in_port)] = state
 
-    running_ids = {
-        node_id
-        for node_id, stream in streams.items()
-        if stream.state == "running"
-    }
-
     return GraphSnapshot(
         streams=streams,
-        running_ids=running_ids,
         virt_node_id=virt_node_id,
         virt_ports=virt_ports,
         graph_links=graph_links,
@@ -450,34 +449,25 @@ async def create_link(out_port: int, in_port: int) -> str:
     return "" if result.returncode == 0 else stderr_text or _proc_error_message(result)
 
 
-async def destroy_link(out_port: int, in_port: int) -> None:
-    """Destroy a PipeWire link between two ports."""
-    await run_command(
-        "pw-link",
-        "-d",
-        str(out_port),
-        str(in_port),
-        timeout=LINK_TIMEOUT,
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.DEVNULL,
+async def destroy_link(out_port: int, in_port: int) -> str:
+    """Disconnect ports; retain ownership until success or graph disappearance."""
+    result = await run_command(
+        "pw-link", "--disconnect", str(out_port), str(in_port), timeout=LINK_TIMEOUT,
     )
+    return "" if result.returncode == 0 else _proc_error_message(result)
 
 
-def compute_desired_links(
-    snap: GraphSnapshot,
-    target_ids: set[int],
-) -> dict[PortPair, int]:
-    """Compute desired links for currently linkable stream nodes."""
+def compute_desired_links(snap: GraphSnapshot) -> dict[PortPair, int]:
+    """Map the snapshot's matching playback channels to the virtual source."""
     desired: dict[PortPair, int] = {}
     if not snap.virt_ports:
         return desired
 
-    for node_id in target_ids:
-        stream = snap.streams.get(node_id)
-        if stream is None or not stream.ports:
+    for node_id, stream in snap.streams.items():
+        if not stream.ports:
             continue
 
-        if len(stream.ports) == 1:
+        if len(stream.ports) == 1 and "MONO" in stream.ports:
             only_port = next(iter(stream.ports.values()))
             for virt_port in snap.virt_ports.values():
                 desired[(only_port, virt_port)] = node_id
@@ -493,40 +483,35 @@ def compute_desired_links(
 # Virtual mic setup / teardown
 # ──────────────────────────────────────────────────────────────────
 
-async def cleanup_stale_modules() -> bool:
-    """Remove orphaned Virtual_Mic_Tx modules from prior runs."""
-    result = await run_command(
-        "pactl",
-        "list",
-        "modules",
-        "short",
-        timeout=5.0,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL,
-    )
-    if result.timed_out or result.error or result.returncode != 0:
-        return False
+async def virtual_module_ids() -> set[str]:
+    """Find exact router modules using IDs from pactl's documented short format."""
+    result = await run_command("pactl", "list", "short", "modules", timeout=5.0)
+    if result.returncode != 0:
+        raise StartupError(f"Could not list virtual mic modules: {_proc_error_message(result)}")
 
-    removed = False
+    modules: set[str] = set()
     for line in _decode_output(result.stdout).splitlines():
-        fields = line.split("\t", 2)
-        if len(fields) < 3:
+        # The installed pactl's JSON module records omit IDs.
+        fields = line.split("\t")
+        if len(fields) < 3 or fields[1] != "module-null-sink":
             continue
+        module_id, _, arguments = fields[:3]
+        # A malformed unrelated module must not prevent routing.
+        with contextlib.suppress(ValueError):
+            if f"sink_name={VIRT_NODE_NAME}" in shlex.split(arguments):
+                modules.add(module_id)
+    return modules
 
-        module_id, module_name, args = fields
-        if module_name == "module-null-sink" and VIRT_NODE_NAME in args:
-            print(f":: Removing stale module (ID: {module_id})")
-            await run_command(
-                "pactl",
-                "unload-module",
-                module_id,
-                timeout=5.0,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            removed = True
 
-    return removed
+async def cleanup_stale_modules() -> bool:
+    """Remove orphaned router modules; surface failures so recovery can retry."""
+    modules = await virtual_module_ids()
+    for module_id in modules:
+        print(f":: Removing stale module (ID: {module_id})")
+        result = await run_command("pactl", "unload-module", module_id, timeout=5.0)
+        if result.returncode != 0:
+            raise StartupError(f"Could not remove stale module: {_proc_error_message(result)}")
+    return bool(modules)
 
 
 async def create_virtual_mic() -> str:
@@ -535,7 +520,7 @@ async def create_virtual_mic() -> str:
         "pactl",
         "load-module",
         "module-null-sink",
-        "media.class=Audio/Source/Virtual",
+        "sink_properties=media.class=Audio/Source/Virtual",
         f"sink_name={VIRT_NODE_NAME}",
         "channel_map=front-left,front-right",
         "format=float32le",
@@ -554,22 +539,31 @@ async def create_virtual_mic() -> str:
     return module_id
 
 
-async def destroy_virtual_mic(module_id: str | None, *, announce: bool = True) -> None:
-    """Unload the virtual mic module."""
-    if not module_id:
-        return
-
-    if announce:
-        print(f":: Tearing down virtual mic (Module ID: {module_id})")
-
-    await run_command(
-        "pactl",
-        "unload-module",
-        module_id,
-        timeout=5.0,
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.DEVNULL,
-    )
+async def destroy_virtual_mic(module_id: str | None, *, announce: bool = True) -> bool:
+    """Verify ownership and retry transient teardown failures within ten seconds."""
+    if module_id is None:
+        return True
+    error = "unknown error"
+    try:
+        async with asyncio.timeout(10.0):
+            for attempt in range(3):
+                try:
+                    if module_id not in await virtual_module_ids():
+                        return True
+                    if announce:
+                        print(f":: Tearing down virtual mic (Module ID: {module_id})")
+                    result = await run_command("pactl", "unload-module", module_id, timeout=5.0)
+                    if result.returncode == 0:
+                        return True
+                    error = _proc_error_message(result)
+                except StartupError as exc:
+                    error = str(exc)
+                if attempt < 2:
+                    await asyncio.sleep(0.1)
+    except TimeoutError:
+        error = "teardown exceeded ten seconds"
+    print(f"Warning: Could not unload virtual mic: {error}", file=sys.stderr)
+    return False
 
 
 async def wait_for_virtual_mic(
@@ -603,27 +597,21 @@ async def recover_virtual_mic(ds: DaemonState) -> None:
     ds.phase = DaemonPhase.RECOVERING
     ds.virt_missing_count = 0
 
-    for pair in list(ds.our_links):
-        await destroy_link(*pair)
+    # Removing the virtual module also removes all its links.
     ds.our_links.clear()
-    ds.prev_ports.clear()
     ds.failed_pairs.clear()
-    ds.virt_node_id = None
-    ds.virt_ports.clear()
-
-    if ds.virt_module_id is not None:
-        await destroy_virtual_mic(ds.virt_module_id, announce=False)
-        ds.virt_module_id = None
 
     attempt = 0
     backoff = 0.5
 
     while not ds.shutdown_event.is_set():
         attempt += 1
-        await cleanup_stale_modules()
-
         created_module_id: str | None = None
         try:
+            await cleanup_stale_modules()
+            ds.virt_module_id = None
+            if ds.shutdown_event.is_set():
+                return
             created_module_id = await create_virtual_mic()
             ds.virt_module_id = created_module_id
 
@@ -631,8 +619,8 @@ async def recover_virtual_mic(ds: DaemonState) -> None:
                 ds.target_app,
                 ds.shutdown_event,
             )
-            ds.virt_node_id = virt_node_id
-            ds.virt_ports = virt_ports
+            if ds.shutdown_event.is_set():
+                return
             ds.phase = DaemonPhase.READY
             print(
                 f":: Virtual mic recovered "
@@ -645,8 +633,8 @@ async def recover_virtual_mic(ds: DaemonState) -> None:
                 file=sys.stderr,
             )
             if created_module_id is not None:
-                await destroy_virtual_mic(created_module_id, announce=False)
-            ds.virt_module_id = None
+                if await destroy_virtual_mic(created_module_id, announce=False):
+                    ds.virt_module_id = None
 
         try:
             async with asyncio.timeout(backoff):
@@ -662,200 +650,100 @@ async def recover_virtual_mic(ds: DaemonState) -> None:
 # ──────────────────────────────────────────────────────────────────
 
 async def monitor_loop(ds: DaemonState) -> None:
-    """Main routing loop."""
+    """Reconcile links from one graph snapshot; only this task mutates links."""
     print(f":: Monitoring for '{ds.target_app}' streams. Ctrl+C to stop.\n")
-    prev_running: set[int] = set()
-    prev_all: set[int] = set()
 
     while not ds.shutdown_event.is_set():
+        target = ds.target_app
+        graph = await async_pw_dump()
+        ds.graph = graph
+        if not graph and not ds.shutdown_event.is_set():
+            ds.phase = DaemonPhase.RECOVERING
+            for tracked in ds.our_links.values():
+                tracked.last_state = "unknown"
+        if graph and target == ds.target_app and not ds.shutdown_event.is_set():
+            snap = build_snapshot(graph, target)
+            if snap.virt_node_id is None or len(snap.virt_ports) < 2:
+                ds.virt_missing_count += 1
+                if ds.virt_missing_count >= 2:
+                    await recover_virtual_mic(ds)
+            else:
+                ds.virt_missing_count = 0
+                ds.phase = DaemonPhase.READY
+                await reconcile_links(ds, snap, target)
+
         try:
             async with asyncio.timeout(POLL_INTERVAL):
                 await ds.shutdown_event.wait()
-            break
         except TimeoutError:
             pass
 
-        graph = await async_pw_dump()
-        if not graph:
-            continue
 
-        snap = build_snapshot(graph, ds.target_app)
-
-        # Virtual mic sanity / recovery
-        if snap.virt_node_id is None or len(snap.virt_ports) < 2:
-            ds.virt_missing_count += 1
-            if ds.virt_missing_count == 1:
-                print("Warning: Virtual mic missing from graph.", file=sys.stderr)
-            elif ds.virt_missing_count >= 2:
-                await recover_virtual_mic(ds)
-                prev_running.clear()
-                prev_all.clear()
-            continue
-
-        ds.virt_missing_count = 0
-        ds.phase = DaemonPhase.READY
-        ds.virt_node_id = snap.virt_node_id
-        ds.virt_ports = snap.virt_ports
-
-        all_ids = set(snap.streams)
-
-        # Log stream changes
-        for node_id in sorted(all_ids - prev_all):
-            stream = snap.streams[node_id]
-            label = f"'{stream.media_name}'" if stream.media_name else f"node {node_id}"
-            print(f":: Stream appeared: {stream.app_name} — {label} ({stream.state})")
-
-        for node_id in sorted(prev_all - all_ids):
-            print(f":: Stream gone: node {node_id}")
-
-        for node_id in sorted(snap.running_ids - prev_running):
-            if node_id in prev_all:
-                stream = snap.streams[node_id]
-                label = f"'{stream.media_name}'" if stream.media_name else f"node {node_id}"
-                print(f":: Stream activated: {stream.app_name} — {label}")
-
-        prev_all = all_ids
-        prev_running = snap.running_ids.copy()
-
-        # Detect port recycling
-        needs_relink: set[int] = set()
-
-        for node_id, stream in snap.streams.items():
-            old_ports = ds.prev_ports.get(node_id)
-            if old_ports is not None and old_ports != stream.ports:
-                stale_pairs = [
-                    pair
-                    for pair, tracked in ds.our_links.items()
-                    if tracked.node_id == node_id
-                ]
-                if stale_pairs:
-                    print(
-                        f":: Port recycled on node {node_id}: "
-                        f"destroying {len(stale_pairs)} stale link(s)"
-                    )
-                    for pair in stale_pairs:
-                        await destroy_link(*pair)
-                        ds.our_links.pop(pair, None)
-                        ds.failed_pairs.pop(pair, None)
-                needs_relink.add(node_id)
-
-            ds.prev_ports[node_id] = dict(stream.ports)
-
-        # Detect disappeared nodes
-        gone_nodes = set(ds.prev_ports) - all_ids
-        for node_id in gone_nodes:
-            stale_pairs = [
-                pair
-                for pair, tracked in ds.our_links.items()
-                if tracked.node_id == node_id
-            ]
-            for pair in stale_pairs:
-                await destroy_link(*pair)
-                ds.our_links.pop(pair, None)
-                ds.failed_pairs.pop(pair, None)
-            ds.prev_ports.pop(node_id, None)
-
-        # Cleanup zombie links
-        now = time.monotonic()
-        zombies: list[PortPair] = []
-
-        for pair, tracked in list(ds.our_links.items()):
-            graph_state = snap.graph_links.get(pair)
-            age = now - tracked.created_at
-
-            if graph_state is None:
-                if age > INIT_LINK_MAX_AGE:
-                    zombies.append(pair)
-                continue
-
-            if graph_state == "error":
-                zombies.append(pair)
-                continue
-
-            if graph_state == "init" and age > INIT_LINK_MAX_AGE:
-                zombies.append(pair)
-                continue
-
-            tracked.last_state = graph_state or "unknown"
-
-        for pair in zombies:
-            tracked = ds.our_links.pop(pair, None)
-            if tracked and snap.graph_links.get(pair) is not None:
-                await destroy_link(*pair)
-                needs_relink.add(tracked.node_id)
-
-        # Compute desired links for running nodes only
-        linkable = (snap.running_ids | needs_relink) & all_ids
-        linkable = {
-            node_id
-            for node_id in linkable
-            if snap.streams.get(node_id) is not None
-            and snap.streams[node_id].state == "running"
-        }
-
-        desired = compute_desired_links(snap, linkable)
-
-        # Determine missing links
-        existing_healthy = {
-            pair
-            for pair, tracked in ds.our_links.items()
-            if tracked.last_state in ("active", "paused")
-        }
-        missing = set(desired) - existing_healthy - set(ds.our_links)
-        missing = {
-            pair
-            for pair in missing
-            if ds.failed_pairs.get(pair, 0) < MAX_LINK_RETRIES
-        }
-
-        # Create missing links concurrently
-        if missing:
-            sem = asyncio.Semaphore(MAX_CONCURRENT_LINKS)
-
-            async def _do_link(pair: PortPair) -> tuple[PortPair, str]:
-                async with sem:
-                    return pair, await create_link(*pair)
-
-            results = await asyncio.gather(
-                *(_do_link(pair) for pair in missing),
-                return_exceptions=True,
-            )
-
-            created = 0
-            for result in results:
-                if isinstance(result, BaseException):
+async def reconcile_links(ds: DaemonState, snap: GraphSnapshot, target: str) -> None:
+    # Link idle streams too: a suspended stream may need a link before it runs.
+    desired = compute_desired_links(snap)
+    now = time.monotonic()
+    for pair, tracked in list(ds.our_links.items()):
+        state = snap.graph_links.get(pair)
+        stale = pair not in desired or tracked.node_id != desired.get(pair)
+        broken = state == "error" or (
+            state not in ("active", "paused")
+            and now - tracked.created_at > INIT_LINK_MAX_AGE
+        )
+        if stale or broken:
+            if state is not None:
+                error = await destroy_link(*pair)
+                if error:
+                    tracked.last_state = state
+                    print(f"Warning: Disconnect {pair[0]}->{pair[1]} failed; will retry: {error}", file=sys.stderr)
                     continue
+            ds.our_links.pop(pair, None)
+            if broken and not stale and state is not None:
+                ds.failed_pairs[pair] = now + MAX_RETRY_DELAY
+        else:
+            tracked.last_state = state or "unknown"
 
-                pair, err = result
-                node_id = desired.get(pair, 0)
+    ds.failed_pairs = {pair: retry for pair, retry in ds.failed_pairs.items() if pair in desired}
+    missing = {
+        pair for pair in desired
+        if pair not in ds.our_links and now >= ds.failed_pairs.get(pair, 0.0)
+    }
+    if not missing or target != ds.target_app or ds.shutdown_event.is_set():
+        return
 
-                if not err:
-                    ds.our_links[pair] = TrackedLink(
-                        out_port=pair[0],
-                        in_port=pair[1],
-                        node_id=node_id,
-                        created_at=time.monotonic(),
-                        last_state="init",
-                    )
-                    ds.failed_pairs.pop(pair, None)
-                    created += 1
-                else:
-                    count = ds.failed_pairs.get(pair, 0) + 1
-                    ds.failed_pairs[pair] = count
-                    if count >= MAX_LINK_RETRIES:
-                        stream = snap.streams.get(node_id)
-                        label = stream.media_name if stream else f"node {node_id}"
-                        print(
-                            f"Warning: Giving up on link {pair[0]}->{pair[1]} "
-                            f"({label}): {err}",
-                            file=sys.stderr,
-                        )
+    sem = asyncio.Semaphore(MAX_CONCURRENT_LINKS)
 
-            if created:
-                print(
-                    f":: Linked {created} port(s) across "
-                    f"{len(linkable)} running stream(s) → '{VIRT_NODE_NAME}'"
-                )
+    async def link(pair: PortPair) -> tuple[PortPair, str]:
+        async with sem:
+            if target != ds.target_app or ds.shutdown_event.is_set():
+                return pair, "Target changed or shutdown requested"
+            return pair, await create_link(*pair)
+
+    results = await asyncio.gather(*(link(pair) for pair in missing))
+    created = 0
+    for pair, error in results:
+        if error:
+            if target == ds.target_app and not ds.shutdown_event.is_set():
+                ds.failed_pairs[pair] = time.monotonic() + MAX_RETRY_DELAY
+                print(f"Warning: Link {pair[0]}->{pair[1]} failed; will retry: {error}", file=sys.stderr)
+            continue
+
+        # Track first: even a failed rollback must remain owned and retryable.
+        ds.our_links[pair] = TrackedLink(
+            out_port=pair[0], in_port=pair[1], node_id=desired[pair],
+            created_at=time.monotonic(), last_state="init",
+        )
+        ds.failed_pairs.pop(pair, None)
+        if target != ds.target_app or ds.shutdown_event.is_set():
+            error = await destroy_link(*pair)
+            if not error:
+                ds.our_links.pop(pair, None)
+            else:
+                print(f"Warning: Could not roll back link {pair}: {error}", file=sys.stderr)
+        else:
+            created += 1
+    if created:
+        print(f":: Linked {created} port(s) → '{VIRT_NODE_NAME}'")
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -866,7 +754,6 @@ async def ipc_handler(
     reader: asyncio.StreamReader,
     writer: asyncio.StreamWriter,
     ds: DaemonState,
-    graph_fn,
 ) -> None:
     """Handle a single IPC client connection."""
     try:
@@ -875,15 +762,17 @@ async def ipc_handler(
             return
 
         request = json.loads(raw.decode())
+        if not isinstance(request, dict):
+            return
         action = request.get("action")
         action = action if isinstance(action, str) else ""
 
         match action:
             case "ping":
-                response = {"ok": True, "phase": ds.phase.value}
+                response = {"ok": True, "phase": ds.phase.value, "target": ds.target_app, "pid": os.getpid()}
 
             case "status":
-                graph = await graph_fn()
+                graph = ds.graph
                 snap = build_snapshot(graph, ds.target_app) if graph else None
                 streams_info: list[dict[str, Any]] = []
 
@@ -914,6 +803,7 @@ async def ipc_handler(
                 response = {
                     "ok": True,
                     "data": {
+                        "pid": os.getpid(),
                         "target": ds.target_app,
                         "phase": ds.phase.value,
                         "virt_node": VIRT_NODE_NAME,
@@ -924,7 +814,7 @@ async def ipc_handler(
                 }
 
             case "list_apps":
-                graph = await graph_fn()
+                graph = ds.graph
                 apps = discover_audio_apps(graph) if graph else []
                 response = {"ok": True, "apps": apps}
 
@@ -932,31 +822,31 @@ async def ipc_handler(
                 raw_app = request.get("app")
                 new_target = raw_app.strip() if isinstance(raw_app, str) else ""
 
-                if not new_target:
+                if ds.shutdown_event.is_set():
+                    response = {"ok": False, "error": "Daemon is stopping"}
+                elif not new_target:
                     response = {"ok": False, "error": "No app specified"}
                 elif new_target.lower() == ds.target_app.lower():
                     response = {"ok": True}
                 else:
-                    for pair in list(ds.our_links):
-                        await destroy_link(*pair)
-                    ds.our_links.clear()
-                    ds.prev_ports.clear()
-                    ds.failed_pairs.clear()
                     ds.target_app = new_target
                     print(f":: Target changed to '{new_target}'")
                     response = {"ok": True}
 
             case "stop":
-                ds.phase = DaemonPhase.STOPPING
                 ds.shutdown_event.set()
-                response = {"ok": True}
+                ds.phase = DaemonPhase.STOPPING
+                await ds.stopped_event.wait()
+                response = {"ok": ds.cleanup_ok}
+                if not ds.cleanup_ok:
+                    response["error"] = "Virtual microphone cleanup failed"
 
             case _:
                 response = {"ok": False, "error": f"Unknown action: {action}"}
 
         writer.write(json.dumps(response).encode() + b"\n")
         await writer.drain()
-    except (asyncio.TimeoutError, json.JSONDecodeError, UnicodeDecodeError, OSError):
+    except (TimeoutError, ValueError, OSError):
         pass
     finally:
         writer.close()
@@ -978,8 +868,9 @@ async def start_ipc_server(ds: DaemonState) -> asyncio.Server:
 
     try:
         server = await asyncio.start_unix_server(
-            lambda reader, writer: ipc_handler(reader, writer, ds, async_pw_dump),
+            lambda reader, writer: ipc_handler(reader, writer, ds),
             path=str(sock_path),
+            cleanup_socket=True,
         )
     except OSError as exc:
         raise StartupError(f"Could not start IPC server: {exc}") from exc
@@ -1019,7 +910,8 @@ def ipc_send(request: dict[str, Any], timeout: float = 3.0) -> dict[str, Any] | 
             return None
 
         payload = data.split(b"\n", 1)[0]
-        return json.loads(payload.decode())
+        response = json.loads(payload)
+        return response if isinstance(response, dict) else None
     except (OSError, json.JSONDecodeError, UnicodeDecodeError):
         return None
 
@@ -1034,21 +926,30 @@ def request_set_target(app: str) -> bool:
     return resp is not None and resp.get("ok") is True
 
 
-def request_stop_daemon(timeout: float = 3.0) -> bool:
-    if not daemon_is_running(timeout=0.25):
-        return True
-
-    resp = ipc_send({"action": "stop"}, timeout=1.0)
-    if not resp or resp.get("ok") is not True:
-        return False
-
+def request_stop_daemon(timeout: float = 20.0) -> bool:
+    """Retry stop through startup, then wait for complete daemon cleanup."""
     deadline = time.monotonic() + timeout
+    acknowledged = False
     while time.monotonic() < deadline:
-        if not daemon_is_running(timeout=0.25):
+        if not acknowledged:
+            response = ipc_send({"action": "stop"}, timeout=max(0.01, deadline - time.monotonic()))
+            if response and response.get("ok") is False:
+                return False
+            acknowledged = bool(response and response.get("ok") is True)
+        try:
+            # Do not create a runtime directory or lock file merely to stop.
+            with _lock_path().open("r+") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             return True
+        except FileNotFoundError:
+            return True
+        except BlockingIOError:
+            pass
+        except OSError as exc:
+            print(f"Could not check daemon lock: {exc}", file=sys.stderr)
+            return False
         time.sleep(0.1)
-
-    return not daemon_is_running(timeout=0.25)
+    return False
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -1060,6 +961,7 @@ async def daemon_main(target_app: str) -> int:
     target_app = target_app.strip() or DEFAULT_APP
     ds = DaemonState(target_app=target_app)
     server: asyncio.Server | None = None
+    exit_code = 0
 
     print(f":: Initializing audio routing for [{target_app}]...")
 
@@ -1076,6 +978,8 @@ async def daemon_main(target_app: str) -> int:
         if await cleanup_stale_modules():
             await asyncio.sleep(0.5)
 
+        if ds.shutdown_event.is_set():
+            raise StartupError("Shutdown requested during startup")
         ds.virt_module_id = await create_virtual_mic()
         print(f":: Virtual mic created (Module ID: {ds.virt_module_id})")
 
@@ -1083,37 +987,44 @@ async def daemon_main(target_app: str) -> int:
             ds.target_app,
             ds.shutdown_event,
         )
-        ds.virt_node_id = virt_node_id
-        ds.virt_ports = virt_ports
-        ds.phase = DaemonPhase.READY
-        print(f":: Virtual mic ready (Node ID: {virt_node_id}, Ports: {virt_ports})")
-
-        await monitor_loop(ds)
-        return 0
+        ds.graph = await async_pw_dump()
+        if not ds.shutdown_event.is_set():
+            ds.phase = DaemonPhase.READY
+            print(f":: Virtual mic ready (Node ID: {virt_node_id}, Ports: {virt_ports})")
+            await monitor_loop(ds)
 
     except StartupError as exc:
-        print(f"Fatal: {exc}", file=sys.stderr)
-        return 1
+        if ds.shutdown_event.is_set():
+            print(":: Shutdown requested.")
+        else:
+            print(f"Fatal: {exc}", file=sys.stderr)
+            exit_code = 1
 
     finally:
         ds.phase = DaemonPhase.STOPPING
 
         if server is not None:
             server.close()
-            with contextlib.suppress(Exception):
-                await server.wait_closed()
 
-        for pair in list(ds.our_links):
-            await destroy_link(*pair)
-        ds.our_links.clear()
+        # Module removal destroys its links in one operation, regardless of stream count.
+        try:
+            if not await destroy_virtual_mic(ds.virt_module_id):
+                exit_code = 1
+        finally:
+            ds.our_links.clear()
+            ds.virt_module_id = None
+            ds.cleanup_ok = exit_code == 0
+            ds.stopped_event.set()
+            try:
+                # Let pending stop requests write the cleanup result before closing clients.
+                await asyncio.sleep(0)
+                if server is not None:
+                    server.close_clients()
+                    await server.wait_closed()
+            finally:
+                release_instance_lock(ds)
 
-        await destroy_virtual_mic(ds.virt_module_id, announce=ds.virt_module_id is not None)
-        ds.virt_module_id = None
-
-        with contextlib.suppress(OSError):
-            _sock_path().unlink()
-
-        release_instance_lock(ds)
+    return exit_code
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -1126,26 +1037,38 @@ def _spawn_daemon(target: str) -> bool:
     if not target:
         return False
 
-    proc = subprocess.Popen(
-        [sys.executable, str(_script_path()), "--daemon", target],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, str(_script_path()), "--daemon", target],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        print(f"Failed to launch daemon: {exc}", file=sys.stderr)
+        return False
 
-    deadline = time.monotonic() + 10.0
+    deadline = time.monotonic() + 20.0
     while time.monotonic() < deadline:
-        if proc.poll() is not None and not daemon_is_running(timeout=0.25):
+        if proc.poll() is not None:
             return False
 
-        resp = ipc_send({"action": "status"}, timeout=0.25)
-        if resp and resp.get("ok"):
-            phase = resp.get("data", {}).get("phase")
+        resp = ipc_send({"action": "ping"}, timeout=0.25)
+        if resp and resp.get("ok") and resp.get("pid") == proc.pid:
+            phase = resp.get("phase")
             if phase == DaemonPhase.READY.value:
                 return True
 
         time.sleep(0.1)
 
+    with contextlib.suppress(ProcessLookupError):
+        proc.terminate()
+    try:
+        proc.wait(timeout=20)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
     return False
 
 
@@ -1204,16 +1127,12 @@ def _try_libadwaita_popup(running: bool, status: dict[str, Any] | None, apps: li
             status_group = Adw.PreferencesGroup(title="Status")
             content.append(status_group)
 
-            row_target = Adw.ActionRow(
-                title="Target",
-                subtitle=str(data.get("target", "?")),
-            )
+            row_target = Adw.ActionRow(use_markup=False, title="Target")
+            row_target.set_subtitle(str(data.get("target", "?")))
             status_group.add(row_target)
 
-            row_phase = Adw.ActionRow(
-                title="Phase",
-                subtitle=str(data.get("phase", "unknown")),
-            )
+            row_phase = Adw.ActionRow(use_markup=False, title="Phase")
+            row_phase.set_subtitle(str(data.get("phase", "unknown")))
             status_group.add(row_phase)
 
             row_streams = Adw.ActionRow(
@@ -1234,12 +1153,10 @@ def _try_libadwaita_popup(running: bool, status: dict[str, Any] | None, apps: li
 
                 for stream in active:
                     name = stream.get("media_name") or f"Node {stream.get('node_id')}"
-                    row = Adw.ActionRow(
-                        title=str(name),
-                        subtitle=(
-                            f"Node {stream.get('node_id')} · "
-                            f"{stream.get('links', 0)} link(s)"
-                        ),
+                    row = Adw.ActionRow(use_markup=False)
+                    row.set_title(str(name))
+                    row.set_subtitle(
+                        f"Node {stream.get('node_id')} · {stream.get('links', 0)} link(s)"
                     )
                     row.add_prefix(
                         Gtk.Image.new_from_icon_name("audio-volume-high-symbolic")
@@ -1393,8 +1310,6 @@ def _try_libadwaita_popup(running: bool, status: dict[str, Any] | None, apps: li
 
 def _try_yad_popup(running: bool, status: dict[str, Any] | None, apps: list[str]) -> bool:
     """Fallback YAD popup."""
-    import shutil
-
     if not shutil.which("yad"):
         return False
 
@@ -1424,6 +1339,7 @@ def _try_yad_popup(running: bool, status: dict[str, Any] | None, apps: list[str]
                 [
                     "yad",
                     "--form",
+                    "--no-markup",
                     "--title=Audio Router",
                     "--width=400",
                     "--text",
@@ -1482,6 +1398,7 @@ def _try_yad_popup(running: bool, status: dict[str, Any] | None, apps: list[str]
             [
                 "yad",
                 "--form",
+                "--no-markup",
                 "--title=Audio Router — Start",
                 "--width=400",
                 "--text=No daemon running. Select target to start:",
@@ -1606,6 +1523,11 @@ def gui_main() -> int:
         graph = sync_pw_dump()
         apps = discover_audio_apps(graph) if graph else []
 
+    if running and status:
+        current_target = status.get("data", {}).get("target")
+        if current_target:
+            apps = [current_target, *(app for app in apps if app.lower() != current_target.lower())]
+
     if _try_libadwaita_popup(running, status, apps):
         return 0
     if _try_yad_popup(running, status, apps):
@@ -1633,6 +1555,7 @@ def cli_status() -> int:
     streams = data.get("streams", [])
     active = [stream for stream in streams if stream.get("state") == "running"]
 
+    print(f"PID      : {data['pid']}")
     print(f"Target   : {data['target']}")
     print(f"Phase    : {data['phase']}")
     print(f"Virtual  : {data['virt_node']}")
@@ -1653,10 +1576,6 @@ def cli_status() -> int:
 
 def cli_stop() -> int:
     """Tell the daemon to shut down."""
-    if not daemon_is_running():
-        print("Daemon is not running.")
-        return 0
-
     if request_stop_daemon():
         print(":: Daemon stopped.")
         return 0
@@ -1714,7 +1633,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         nargs="?",
         const=DEFAULT_APP,
         metavar="APP",
-        help="run the routing daemon in the background",
+        help="run the routing daemon in the foreground",
     )
     group.add_argument(
         "--status",
