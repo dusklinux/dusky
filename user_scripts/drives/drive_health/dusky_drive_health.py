@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
 """Read SMART telemetry, map partition gaps, sample content, and discard gaps.
 
-Linux 7.3+, Python 3.14.7+, util-linux 2.42+, nvme-cli 3.1+.
+Linux 7.3+, Python 3.15+, util-linux 2.42+, nvme-cli 3.1+.
 Sector samples describe readable bytes, not controller FTL allocation or lifespan.
 Live discard is explicit and limited to verified partition-table free ranges.
 """
 
 import argparse
-import json
-import math
+lazy import json
 import os
 import re
-import shlex
-import shutil
-import stat
-import subprocess
+lazy import shlex
+lazy import shutil
+lazy import stat
+lazy import subprocess
 import sys
-from concurrent.futures import ThreadPoolExecutor
+lazy from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from dataclasses import dataclass
+from math.integer import lcm
 from typing import Any, Final, TypedDict
 
 # --- Rich console (hard dependency) -------------------------------------------
@@ -37,7 +37,7 @@ except ImportError:
     )
     sys.exit(1)
 
-VERSION: Final[str] = "2.6.1"
+VERSION: Final[str] = "2.7.1"
 console: Final[Console] = Console()
 PANEL_WIDTH: Final[int] = min(console.width if console.is_terminal else 132, 132)
 
@@ -46,7 +46,7 @@ type SectorRange = tuple[int, int]
 type DeviceTree = dict[str, dict[str, Any]]
 
 
-class SmartData(TypedDict, total=False):
+class SmartData(TypedDict, total=False, closed=True):
     device: str
     model: str
     serial: str
@@ -76,7 +76,6 @@ class PartitionInfo:
     allow_discards: bool = False
     discard_mounted: bool = False
     crypto_type: str = ""
-    is_container: bool = False
 
     @property
     def is_encrypted(self) -> bool:
@@ -112,13 +111,13 @@ QLC_PATTERNS: Final[tuple[str, ...]] = (
     "QLC", "QVO", "660P", "670P",
 )
 
-FS_COLORS: Final[dict[str, str]] = {
+FS_COLORS: Final = frozendict({
     "btrfs": "green", "ext4": "cyan", "ext3": "cyan", "ext2": "cyan",
     "xfs": "blue", "f2fs": "magenta", "vfat": "yellow", "fat32": "yellow",
     "fat16": "yellow", "ntfs": "red", "exfat": "yellow", "bcachefs": "bright_green",
     "nilfs2": "bright_blue", "swap": "bright_red", "crypto_LUKS": "bright_magenta",
     "BitLocker": "bright_magenta", "bitlk": "bright_magenta", "zfs": "bright_cyan",
-}
+})
 
 # =============================================================================
 # Mock profiles (for --mock demonstration mode)
@@ -185,7 +184,9 @@ MOCK_SATA_LAYOUT = DiskLayout(
 def _run(args: list[str], timeout: float | None = 5.0) -> subprocess.CompletedProcess[str] | None:
     try:
         return subprocess.run(args, capture_output=True, text=True, encoding="utf-8",
-                              errors="replace", timeout=timeout, env={**os.environ, "LC_ALL": "C"})
+                              errors="replace", timeout=timeout,
+                              env={**os.environ, "LC_ALL": "C", "LIBSMARTCOLS_JSON": "compact",
+                                   "LIBSMARTCOLS_DEBUG_PADDING": "off"})
     except (subprocess.TimeoutExpired, OSError):
         return None
 
@@ -270,12 +271,17 @@ def _get_device_model(device: str) -> str:
 def detect_ssd_devices() -> list[str]:
     devices: list[str] = []
     data = _run_json(["lsblk", "-d", "-J", "-o", "NAME,ROTA,TYPE"])
-    if data is None or not isinstance(data, dict):
+    if data is None:
+        return devices
+    entries = data.get("blockdevices")
+    if not isinstance(entries, list):
         return devices
 
-    for d in data.get("blockdevices", []):
-        name = d.get("name", "")
-        if d.get("type") != "disk" or not (name.startswith("nvme") or name.startswith("sd")):
+    for d in entries:
+        if not isinstance(d, dict):
+            continue
+        name = d.get("name")
+        if not isinstance(name, str) or d.get("type") != "disk" or not name.startswith(("nvme", "sd")):
             continue
         rota = str(d.get("rota", 1)).lower()
         if rota not in ("0", "false"):
@@ -416,6 +422,15 @@ def _compute_gaps_from_json(pt_json: dict[str, Any], total_sectors: int, sector_
 
 
 def parse_partition_table(device: str) -> DiskLayout | None:
+    """Treat malformed command metadata as an unavailable layout, not a crash."""
+    try:
+        return _parse_partition_table(device)
+    except (KeyError, TypeError, ValueError, AttributeError, OverflowError) as error:
+        console.print(Text(f"Cannot parse device layout for {device}: {error}"))
+        return None
+
+
+def _parse_partition_table(device: str) -> DiskLayout | None:
     if not shutil.which("sfdisk"):
         console.print("[red]sfdisk not found. Please install util-linux.[/]")
         return None
@@ -516,9 +531,18 @@ def parse_partition_table(device: str) -> DiskLayout | None:
             name=name, start_sector=start, end_sector=start + size - 1, size_sectors=size,
             fs_type=fs_type, mountpoint=mp, is_luks=(crypto_type == "LUKS"),
             crypto_type=crypto_type,
-            is_container=pt.get("label") == "dos" and str(part.get("type", "")).lower().removeprefix("0x") in {"5", "05", "f", "0f", "85"},
             allow_discards=allow_discards, discard_mounted=discard_mounted,
         ))
+
+    # Reserve extended containers too: their free areas can contain EBR metadata,
+    # and the kernel exposes the whole container as an occupied partition range.
+    if pt.get("label") == "dos":
+        external_gaps = [(start, end) for start, end in gaps
+                         if not any(start <= part.end_sector and end >= part.start_sector
+                                    for part in partitions)]
+        if len(external_gaps) != len(gaps):
+            console.print("[dim]Free areas inside MBR extended containers are reserved; omitted from sampling and discard.[/]")
+        gaps = external_gaps
 
     return DiskLayout(
         device=device, model=model, total_sectors=total_sectors,
@@ -557,7 +581,9 @@ def _query_nvme_smart(device: str) -> SmartData | None:
     smart: SmartData = {"device": device, "interface": "NVMe"}
 
     if log.get("temperature") is not None:
-        smart["temp"] = round(int(log["temperature"]) - 273.15, 2)
+        kelvin = int(log["temperature"])
+        if kelvin > 0:
+            smart["temp"] = round(kelvin - 273.15, 2)
 
     if "percent_used" in log:
         smart["percentage_used"] = int(log["percent_used"])
@@ -663,8 +689,11 @@ def _query_block_smart(device: str) -> SmartData | None:
 
 def query_live_smart_data(device: str) -> SmartData | None:
     if re.fullmatch(r"nvme\d+(?:c\d+)?n\d+", os.path.basename(device)):
-        if smart := _query_nvme_smart(device):
-            return smart
+        try:
+            if smart := _query_nvme_smart(device):
+                return smart
+        except (KeyError, TypeError, ValueError, AttributeError, OverflowError) as error:
+            console.print(Text(f"NVMe telemetry parsing failed for {device}: {error}; trying smartctl."))
         return _query_block_smart(device)
     return _query_block_smart(device)
 
@@ -813,13 +842,15 @@ def align_gap_to_erase_blocks(gap: SectorRange, sector_size: int = 512, disc_gra
     """Inward alignment; 4 MiB is a policy margin, not a known erase size."""
     if sector_size <= 0 or gap[0] < 0 or gap[1] < gap[0]:
         return None
-    alignment = math.lcm(sector_size, max(1, disc_granularity), DISCARD_ALIGNMENT_BYTES)
+    alignment = lcm(sector_size, max(1, disc_granularity), DISCARD_ALIGNMENT_BYTES)
     start = (gap[0] * sector_size + alignment - 1) // alignment * alignment
     end = (gap[1] + 1) * sector_size // alignment * alignment
     return (start // sector_size, end // sector_size - 1) if end > start else None
 
 
 def _discard_plan(layout: DiskLayout, force: bool = False, is_mock: bool = False) -> list[list[str]]:
+    if layout.sector_size <= 0 or layout.total_sectors <= 0:
+        raise ValueError("Disk capacity and sector size must be positive")
     if is_rotational(layout.device, is_mock=is_mock) or layout.discard_max_bytes <= 0:
         return []
     # A bounded --step keeps a single process per extent; the kernel also splits I/O.
@@ -828,12 +859,16 @@ def _discard_plan(layout: DiskLayout, force: bool = False, is_mock: bool = False
     if step <= 0:
         return []
     commands = []
-    for gap in layout.unallocated_gaps:
+    previous_end = -1
+    for gap in sorted(layout.unallocated_gaps):
+        if not previous_end < gap[0] <= gap[1] < layout.total_sectors:
+            raise ValueError("Invalid, overlapping or out-of-bounds free extents")
+        previous_end = gap[1]
         aligned = align_gap_to_erase_blocks(gap, layout.sector_size, layout.discard_granularity)
         if aligned is None:
             continue
         start, end = aligned
-        if end >= layout.total_sectors or any(not part.is_container and start <= part.end_sector and end >= part.start_sector for part in layout.partitions):
+        if end >= layout.total_sectors or any(start <= part.end_sector and end >= part.start_sector for part in layout.partitions):
             raise ValueError("Discard extent overlaps a partition or exceeds the disk")
         args = ["blkdiscard"]
         if force:
@@ -895,6 +930,10 @@ def execute_discards(layout: DiskLayout) -> bool:
 def _health_text(smart: SmartData) -> str:
     if smart.get("health_passed") is False or smart.get("critical_warning", 0) or smart.get("smartctl_status", 0) & 24:
         return "[bold red]SMART warning/failure[/]"
+    if smart.get("smartctl_status", 0) & 4:
+        return "[yellow]SMART command/checksum error (partial telemetry)[/]"
+    if smart.get("smartctl_status", 0) & 224:
+        return "[yellow]SMART history / error / self-test log warning[/]"
     if smart.get("media_errors", 0) > 0:
         return "[yellow]Media error counters nonzero (warning)[/]"
     wear = smart.get("percentage_used")
@@ -1037,7 +1076,7 @@ def render_glossary_panel() -> None:
         ("Write Amplification (WAF):", "Ratio of physical data programmed to flash vs logical data written by the host. WAF 1.0 is optimal."),
         ("SMART Percentage Used:", "Firmware estimate of endurance consumed; this is not an overall health percentage."),
         ("LUKS Discard Passthrough:", "Encryption layers block block-deallocation by default. `allow_discards` permits TRIM to pass to the controller."),
-        ("FS Mount Discard Flag:", "Mount options `discard` or `discard=async` that instruct the controller to unmap deleted file sectors immediately."),
+        ("FS Mount Discard Flag:", "Mount options `discard` or `discard=async` request block deallocation; asynchronous discard batches requests."),
         ("Sector Samples:", "Readable bytes cannot establish controller allocation, write amplification, or remaining lifespan.")
     ]:
         table.add_row(k, v)
@@ -1092,7 +1131,7 @@ def _elevate_privileges(choice: int, args: argparse.Namespace) -> None:
         probe = _run(["sudo", "-n", "true"], timeout=3.0)
         if probe is None or probe.returncode != 0:
             console.print("[bold red][x] Error: Hardware diagnostics require root privileges, but session is non-interactive and sudo requires a password.[/]")
-            console.print(f"Please run this command directly from your interactive terminal:\n  sudo {sys.executable} {shlex.join(sys.argv)}\n")
+            console.print(f"Please run this command directly from your interactive terminal:\n  {shlex.join(['sudo', sys.executable, *sys.argv])}\n")
             sys.exit(1)
 
     console.print("[yellow][!] Hardware diagnostics require root privileges. Auto-elevating via sudo...[/]")
@@ -1118,6 +1157,10 @@ def _elevate_privileges(choice: int, args: argparse.Namespace) -> None:
 # Main
 # =============================================================================
 def main() -> None:
+    # Preserve the selected encoding, but do not crash on dashboard glyphs in ASCII logs.
+    with suppress(AttributeError):
+        sys.stdout.reconfigure(errors="replace")
+
     parser = argparse.ArgumentParser(description="Dusky Drive Health Diagnostic Suite", epilog="Arch Linux Kernel 7.3 Multi-Interface Storage Analyzer")
     parser.add_argument("-v", "--version", action="version", version=f"Dusky Drive Health v{VERSION}")
     parser.add_argument("--mock", action="store_true", help="Execute in safe isolation demonstration mode with mock profiles.")
@@ -1150,7 +1193,7 @@ def main() -> None:
 
     console.print(Align.center(Panel(
         "[bold cyan]DUSKY DRIVE HEALTH DIAGNOSTIC SUITE[/]\n"
-        "[dim]Linux Kernel 7.3+ & Python 3.14+ Modern Storage Engine Diagnostics[/]",
+        "[dim]Linux Kernel 7.3+ & Python 3.15+ Modern Storage Engine Diagnostics[/]",
         border_style="cyan",
         expand=False
     )))
@@ -1207,7 +1250,7 @@ def main() -> None:
 
         try:
             smart = query_live_smart_data(dev)
-        except (TypeError, ValueError, OverflowError) as error:
+        except (KeyError, TypeError, ValueError, AttributeError, OverflowError) as error:
             console.print(Text(f"SMART parsing failed for {dev}: {error}"))
             smart = None
         if not smart:
