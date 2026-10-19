@@ -317,9 +317,9 @@ prepare_environment() {
     if [[ ! -x $PYTHON_BIN ]]; then
         uv venv --python "$native_python" --no-python-downloads "$VENV_DIR"
     fi
-    if [[ ! -f $MARKER_FILE ]]; then
+    if [[ $RUN_MODE == setup || ! -f $MARKER_FILE ]]; then
         # Use portable compiler defaults, so cached extensions remain reusable.
-        uv pip install --python "$PYTHON_BIN" --link-mode=copy --compile-bytecode \
+        uv pip install --python "$PYTHON_BIN" --link-mode=copy --compile-bytecode --reinstall \
             'evdev>=2.0' 'dbus-fast>=5.2'
         runtime_ready || fail 'Python runtime validation failed after setup.'
     fi
@@ -422,7 +422,7 @@ def setting(section: dict, key: str, default):
     value = section.get(key, default)
     valid = type(value) is type(default)
     if type(default) is float:
-        valid = type(value) in (float, int) and math.isfinite(value)
+        valid = type(value) is int or type(value) is float and math.isfinite(value)
     if isinstance(value, str) and '\0' in value:
         valid = False
     if not valid:
@@ -460,7 +460,7 @@ SYM_ALT = get_sym("alt", "⌥", "Alt")
 SYM_SHIFT = get_sym("shift", "⇧", "Shift")
 SPACE_SYMBOL = get_sym('space', '␣', 'Space')
 
-MOD_MAP = {
+MOD_MAP = frozendict({
     ecodes.KEY_LEFTMETA: ("super", SYM_SUPER),
     ecodes.KEY_RIGHTMETA: ("super", SYM_SUPER),
     ecodes.KEY_LEFTCTRL: ("ctrl", SYM_CTRL),
@@ -469,9 +469,9 @@ MOD_MAP = {
     ecodes.KEY_RIGHTALT: ("alt", SYM_ALT),
     ecodes.KEY_LEFTSHIFT: ("shift", SYM_SHIFT),
     ecodes.KEY_RIGHTSHIFT: ("shift", SYM_SHIFT),
-}
+})
 
-KEYMAP = {
+KEYMAP = frozendict({
     ecodes.KEY_A: ('a', 'A'), ecodes.KEY_B: ('b', 'B'), ecodes.KEY_C: ('c', 'C'),
     ecodes.KEY_D: ('d', 'D'), ecodes.KEY_E: ('e', 'E'), ecodes.KEY_F: ('f', 'F'),
     ecodes.KEY_G: ('g', 'G'), ecodes.KEY_H: ('h', 'H'), ecodes.KEY_I: ('i', 'I'),
@@ -491,7 +491,7 @@ KEYMAP = {
     ecodes.KEY_APOSTROPHE: ("'", '"'), ecodes.KEY_GRAVE: ('`', '~'),
     ecodes.KEY_COMMA: (',', '<'), ecodes.KEY_DOT: ('.', '>'), ecodes.KEY_SLASH: ('/', '?'),
     ecodes.KEY_SPACE: (' ', ' '),
-}
+})
 
 SPECIAL_KEYS = {
     ecodes.KEY_TAB: get_sym("tab", "⇥", "Tab"),
@@ -516,16 +516,17 @@ for i in range(1, 13):
     fk_code = getattr(ecodes, f"KEY_F{i}", None)
     if fk_code:
         SPECIAL_KEYS[fk_code] = f"F{i}"
+SPECIAL_KEYS = frozendict(SPECIAL_KEYS)
 
-MOUSE_BUTTONS = {
+MOUSE_BUTTONS = frozendict({
     ecodes.BTN_LEFT: setting(CFG_MOUSE, "left_click", "LMB"),
     ecodes.BTN_RIGHT: setting(CFG_MOUSE, "right_click", "RMB"),
     ecodes.BTN_MIDDLE: setting(CFG_MOUSE, "middle_click", "MMB"),
     ecodes.BTN_SIDE: setting(CFG_MOUSE, "side_click", "Back"),
     ecodes.BTN_EXTRA: setting(CFG_MOUSE, "extra_click", "Fwd"),
-}
+})
 
-MOD_SYMBOLS = dict(super=SYM_SUPER, ctrl=SYM_CTRL, alt=SYM_ALT, shift=SYM_SHIFT)
+MOD_SYMBOLS = frozendict(super=SYM_SUPER, ctrl=SYM_CTRL, alt=SYM_ALT, shift=SYM_SHIFT)
 
 # Physical modifier identities avoid left/right and cross-keyboard release bugs.
 MOD_ORDER = ('super', 'ctrl', 'alt', 'shift')
@@ -622,8 +623,12 @@ class NotificationDisplay:
 
 def push_to_buffer(item: str) -> None:
     global _last_input
+    now = asyncio.get_running_loop().time()
+    # A slow notification reply must not carry expired items into new input.
+    if now - _last_input >= DISPLAY_TIMEOUT:
+        _key_buffer.clear()
     _key_buffer.append(item)
-    _last_input = asyncio.get_running_loop().time()
+    _last_input = now
     _display_changed.set()
 
 
@@ -657,8 +662,6 @@ def process_event(event, device: str = '') -> None:
         return
     if event.value != 1:
         return
-    if _held_mods:
-        _mod_used = True
     if event.code == ecodes.KEY_CAPSLOCK:
         _caps_active = not _caps_active
     modifiers = set(_held_mods.values())
@@ -688,6 +691,8 @@ def process_event(event, device: str = '') -> None:
             return
         char = name.removeprefix('KEY_')
         special = True
+    if _held_mods:
+        _mod_used = True
     if ENABLE_CHORDING and (modifiers & {'super', 'ctrl', 'alt'} or special and modifiers):
         symbols = [MOD_SYMBOLS[name] for name in MOD_ORDER if name in modifiers]
         char = char.upper() if is_alpha or len(char) == 1 else char
@@ -759,12 +764,12 @@ def scan_devices(tasks: dict[str, asyncio.Task[None]], skipped: dict[str, int]) 
             skipped.pop(path, None)
             dev = InputDevice(path, readonly=True)
             keys = dev.capabilities().get(ecodes.EV_KEY, [])
-            if ecodes.KEY_ENTER in keys or ENABLE_MOUSE and ecodes.BTN_LEFT in keys:
+            if any(code in ecodes.KEY for code in keys) or ENABLE_MOUSE and ecodes.BTN_LEFT in keys:
                 seed_device_state(dev)
                 tasks[path] = asyncio.create_task(read_device(dev))
                 dev = None  # The reader owns it now.
             else:
-                skipped[path] = inode
+                skipped[path] = os.fstat(dev.fd).st_ino
         except OSError:
             pass
         finally:
