@@ -197,6 +197,34 @@ class Behavior(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(asyncio.CancelledError):
                 await task
 
+    async def test_connection_probe_does_not_touch_clipboard(self):
+        self.sync.writer = Writer()
+        self.sync.last_text = "unchanged"
+        identifier = str(uuid.uuid4())
+        with patch.object(sync.asyncio, "create_subprocess_exec") as launch:
+            with self.assertRaises(asyncio.IncompleteReadError):
+                await self.sync.receive_copies(reader({"type": "ping", "id": identifier}))
+            launch.assert_not_called()
+        self.assertEqual(self.sync.last_text, "unchanged")
+        self.assertEqual(await sync.read_frame(reader_from_bytes(self.sync.writer.data)),
+                         {"type": "pong", "id": identifier})
+
+    async def test_5000_connection_probes(self):
+        self.sync.writer = Writer()
+        self.sync.last_text = "unchanged"
+        identifiers = [str(uuid.uuid4()) for _ in range(5000)]
+        with patch.object(sync.asyncio, "create_subprocess_exec") as launch:
+            with self.assertRaises(asyncio.IncompleteReadError):
+                await self.sync.receive_copies(reader(*({"type": "ping", "id": key} for key in identifiers)))
+            launch.assert_not_called()
+        replies = reader_from_bytes(self.sync.writer.data)
+        for key in identifiers:
+            self.assertEqual(await sync.read_frame(replies), {"type": "pong", "id": key})
+        self.assertTrue(replies.at_eof())
+        self.assertEqual(self.sync.last_text, "unchanged")
+        self.assertFalse(self.sync.pending)
+        self.assertTrue(self.sync.copies.empty())
+
 
 def reader_from_bytes(data):
     stream = asyncio.StreamReader()

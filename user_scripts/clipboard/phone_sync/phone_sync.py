@@ -175,6 +175,10 @@ class Sync:
             if not isinstance(identifier, str):
                 raise ValueError("Missing message identifier")
             uuid.UUID(identifier)
+            if message.get("type") == "ping":
+                self.writer.write(encode({"type": "pong", "id": identifier}))
+                await self.writer.drain()
+                continue
             if message.get("type") == "ack":
                 future = self.pending.get(identifier)
                 if future is not None and not future.done():

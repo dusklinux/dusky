@@ -82,6 +82,15 @@ host keys, refused connections and disabled phone sharing are visible in the jou
 
 ## Behavior
 
+Duskie 0.2.51 adds **Settings → Duskie → Phone clipboard sharing → Test connection**.
+It checks a fresh ping/reply over the active Wi-Fi or USB connection without
+changing clipboard contents. Success confirms that the Linux companion replied;
+it does not test pasting inside every app. Failure reminds you to run/update the
+Linux setup script and check reachability; disabled sharing also reminds you to
+enable Duskie and Phone clipboard sync. Update/install this companion along with
+the tweak to support the check. The check runs only when tapped, with a bounded
+timeout and no background polling.
+
 - New UTF-8 text copies, up to 16 KiB, are shared in both directions.
 - Images, empty selections, history deletions and pin changes are not shared.
 - Regular clipboard only; PRIMARY selection is separate.
@@ -140,6 +149,7 @@ big-endian length followed by UTF-8 JSON, with a 128-KiB frame limit:
 - `hello`: protocol `version: 1`, `maxBytes: 16384`.
 - `copy`: UUID `id` and nonempty `text`.
 - `ack`: the applied copy’s `id`.
+- `ping` / `pong`: matching UUID-tagged connection check and reply; no clipboard text.
 
 The clipboard API pattern was examined in ioscpy; this implementation uses
 Duskie’s existing copy hooks and an independent protocol. It does not import
