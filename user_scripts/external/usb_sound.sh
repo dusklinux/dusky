@@ -55,6 +55,11 @@ main() {
     local action="${1:-}"
     local target_user sound_file passwd_entry user_home
 
+    if (( $# != 1 )); then
+        printf 'Usage: %s <connect|disconnect>\n' "${0##*/}" >&2
+        return 1
+    fi
+
     case "$action" in
         connect|disconnect)
             ;;
@@ -68,11 +73,6 @@ main() {
             exit 1
             ;;
     esac
-
-    if (( $# != 1 )); then
-        printf 'Usage: %s <connect|disconnect>\n' "${0##*/}" >&2
-        return 1
-    fi
 
     if ! target_user=$(get_active_user); then
         return 0

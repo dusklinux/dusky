@@ -2,7 +2,7 @@
 """Toggle USB sound notifications on/off via a user-owned flag file.
 
 The flag file at ~/.config/dusky/settings/usb_udev_toggle is checked by
-usb_sound.sh (both copies) before playing any USB connect/disconnect sounds.
+the installed usb_sound.sh before dispatching USB connect/disconnect sounds.
 No root privileges needed — the udev rule always stays active.
 """
 
