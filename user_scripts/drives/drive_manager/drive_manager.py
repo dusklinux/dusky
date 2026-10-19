@@ -3,10 +3,11 @@
 ==============================================================================
  UNIVERSAL DRIVE MANAGER — PLATINUM HYBRID EDITION (2026.09 / ARCH BLEEDING-EDGE)
  ------------------------------------------------------------------------------
- Target stack : Arch Linux, Linux 7.3+, Python 3.14+, util-linux 2.42+,
-                cryptsetup 2.8+, systemd 258+, lsof 4.99+
+ Target stack : Arch Linux, Linux 7.3+, Python 3.15+, util-linux 2.42+,
+                cryptsetup 2.8+, systemd 262+, lsof 4.99+
  Runtime deps : python-keyring python-secretstorage python-rich
                 util-linux cryptsetup lsof sudo systemd (systemd-run, systemctl)
+ FTP deps     : rclone fuse3, user systemd manager and Secret Service
 
  Design:
   - Kernel-native truth sources: /proc/self/mountinfo (mount table, parent_id hierarchy,
@@ -32,6 +33,10 @@
   - Strict exit codes: 0 ok, 1 operational failure, 130 user cancel.
 ==============================================================================
 """
+
+import configparser
+from contextlib import nullcontext
+lazy import shutil
 
 import argparse
 import atexit
@@ -73,7 +78,7 @@ except ImportError as exc:
 # ------------------------------------------------------------------------------
 #  CONSTANTS
 # ------------------------------------------------------------------------------
-VERSION: Final = "2026.09.2"
+VERSION: Final = "2026.10.2"
 FILESYSTEM_TIMEOUT: Final = 15          # by-uuid poll per UUID (seconds, single deadline)
 CRYPTSETUP_TIMEOUT: Final = 180         # argon2id on a throttled laptop can take >30 s
 LOCK_MAX_RETRIES: Final = 5
@@ -130,6 +135,7 @@ def is_ntfs_fstype(fstype: str | None) -> bool:
 class DriveType(enum.StrEnum):
     PROTECTED = "PROTECTED"
     SIMPLE = "SIMPLE"
+    FTP = "FTP"
 
 
 class Outcome(enum.Enum):
@@ -143,7 +149,7 @@ class Drive:
     name: str
     type: DriveType
     mountpoint: Path
-    outer_uuid: str
+    outer_uuid: str | None
     inner_uuid: str | None
     hint: str | None
     fstype: str | None
@@ -153,8 +159,12 @@ class Drive:
     pre_lock: tuple[str, ...] = ()
     post_lock: tuple[str, ...] = ()
 
+    host: str | None = None
+    port: int = 21
+    remote: str | None = None
+
     @property
-    def fs_uuid(self) -> str:
+    def fs_uuid(self) -> str | None:
         """UUID of the mountable filesystem (inner for PROTECTED, outer for SIMPLE)."""
         return self.inner_uuid if self.type is DriveType.PROTECTED and self.inner_uuid else self.outer_uuid
 
@@ -360,7 +370,6 @@ def prevent_root_execution() -> None:
 
 
 def check_dependencies() -> None:
-    import shutil
     deps = ["sudo", "mount", "umount", "lsblk", "cryptsetup", "lsof", "blockdev", "fstrim", "systemd-run", "systemctl"]
     missing = [d for d in deps if shutil.which(d) is None]
     if missing:
@@ -478,7 +487,8 @@ def mounts_for_device(dev: Path | None, snapshot: list[MountEntry] | None = None
 
 def mount_entry_for(target: Path, snapshot: list[MountEntry] | None = None) -> MountEntry | None:
     """Topmost mount at target, resolved by mountinfo parent IDs (not line order)."""
-    t = target.resolve()
+    # Configured paths are canonical already; resolving a live FUSE target can hang.
+    t = target.absolute()
     if snapshot is None:
         snapshot = read_mountinfo()
     stack = [e for e in snapshot if e.target == t]
@@ -701,7 +711,11 @@ def _secret_service_collection():
     if not any(tag in module for tag in ("secretservice", "libsecret", "chainer")):
         return None
     conn = secretstorage.dbus_init()
-    return secretstorage.get_default_collection(conn)
+    try:
+        return secretstorage.get_default_collection(conn)
+    except BaseException:
+        conn.close()
+        raise
 
 
 def _call_with_timeout(fn, timeout: float):
@@ -724,27 +738,34 @@ def _call_with_timeout(fn, timeout: float):
 
 
 def ensure_keyring_unlocked() -> bool:
+    def probe() -> bool:
+        # All operations on this connection stay in one bounded worker. Close it
+        # on success/failure; repeated credential lookups must not leak D-Bus FDs.
+        coll = _secret_service_collection()
+        if coll is None:
+            return True
+        try:
+            if not coll.is_locked():
+                return True
+            if not is_gui_available():
+                log("Keyring is locked and no WAYLAND_DISPLAY is set. Using terminal prompt.")
+                return False
+            log("Keyring is locked. Requesting unlock through the desktop Secret Service prompt...")
+            dismissed = coll.unlock()
+            if dismissed or coll.is_locked():
+                log("Keyring unlock was dismissed.")
+                return False
+            success("Keyring unlocked.")
+            return True
+        finally:
+            coll.connection.close()
+
     try:
-        coll = _call_with_timeout(_secret_service_collection, KEYRING_GET_TIMEOUT)
-    except Exception as e:  # SecretServiceNotAvailableException, TimeoutError, ...
-        log(f"Secret Service unavailable ({escape(type(e).__name__)}); using terminal prompt.")
+        timeout = KEYRING_SET_TIMEOUT if is_gui_available() else KEYRING_GET_TIMEOUT
+        return bool(_call_with_timeout(probe, timeout))
+    except Exception as exc:
+        log(f"Secret Service unavailable ({escape(type(exc).__name__)}); using terminal prompt.")
         return False
-    if coll is None or not coll.is_locked():
-        return True
-    if not is_gui_available():
-        log("Keyring is locked and no WAYLAND_DISPLAY is set (TTY/headless). Using terminal prompt.")
-        return False
-    log("Keyring is locked. Requesting unlock through the desktop Secret Service prompt...")
-    try:
-        dismissed = coll.unlock()
-    except Exception as e:
-        log(f"Keyring unlock prompt unavailable ({escape(str(e))}). Using terminal prompt.")
-        return False
-    if dismissed or coll.is_locked():
-        log("Keyring unlock was dismissed.")
-        return False
-    success("Keyring unlocked.")
-    return True
 
 
 def keyring_get(name: str, timeout: float = KEYRING_GET_TIMEOUT) -> str | None:
@@ -1269,8 +1290,278 @@ def dispatch_trim(drive: Drive, dev: Path | None, fstype: str | None, rotational
 
 
 # ------------------------------------------------------------------------------
-#  CORE ENGINE
+#  FTP: user-service lifecycle, runtime credentials, persistent VFS write cache
 # ------------------------------------------------------------------------------
+def ftp_account(drive: Drive) -> str:
+    return f"ftp:{drive.name}"
+
+
+def ftp_credentials(secret: str) -> dict[str, str]:
+    value = json.loads(secret)
+    if (not isinstance(value, dict) or set(value) != {"username", "password"}
+            or not all(isinstance(v, str) and not any(c in v for c in "\r\n\0")
+                       for v in value.values()) or not value["username"]):
+        raise ValueError("FTP credentials must contain username and password strings")
+    # INI readers trim surrounding whitespace from usernames. Refuse rather than
+    # silently logging in as somebody else; passwords are obscured before writing.
+    if value["username"] != value["username"].strip():
+        raise ValueError("FTP username cannot start or end with whitespace")
+    return value
+
+
+def prompt_ftp_credentials(drive: Drive) -> str:
+    while True:
+        log(f"FTP credentials for '{drive.name}' (Enter username for anonymous login).")
+        if drive.hint:
+            hint_msg(escape(drive.hint))
+        username = getpass.getpass("FTP username [anonymous]: ") or "anonymous"
+        password = getpass.getpass("FTP password [empty allowed]: ")
+        secret = json.dumps({"username": username, "password": password})
+        try:
+            ftp_credentials(secret)
+        except ValueError as exc:
+            err(str(exc))
+            continue
+        return secret
+
+
+def ftp_paths(drive: Drive) -> tuple[Path, Path]:
+    runtime = get_runtime_dir()
+    return runtime / f"ftp-{drive.name}.conf", runtime / f"ftp-{drive.name}.sock"
+
+
+def ftp_unit(drive: Drive) -> str:
+    return f"drive-manager-ftp-{drive.name}.service"
+
+
+class FTPService(NamedTuple):
+    pid: int
+    state: str
+
+    @property
+    def running(self) -> bool:
+        return self.pid != 0 or self.state not in {"inactive", "failed"}
+
+
+def ftp_service(drive: Drive) -> FTPService:
+    res = run(["systemctl", "--user", "show", ftp_unit(drive),
+               "-p", "LoadState", "-p", "ActiveState", "-p", "MainPID"], timeout=5)
+    properties = dict(line.split("=", 1) for line in res.out.splitlines() if "=" in line)
+    if properties.get("LoadState") == "not-found":
+        return FTPService(0, "inactive")
+    if (not res.ok or not properties.get("MainPID", "").isdigit()
+            or not properties.get("ActiveState")):
+        raise ValueError("cannot query FTP user service; runtime files retained, check systemctl --user")
+    return FTPService(int(properties["MainPID"]), properties["ActiveState"])
+
+
+def ftp_remember(drive: Drive, entry: MountEntry) -> None:
+    """Record exact kernel mount identity for normal recovery after a process crash."""
+    config, _ = ftp_paths(drive)
+    record = config.with_suffix(".json")
+    temporary = config.with_suffix(".tmp")
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        json.dump({"mount_id": entry.mount_id, "majmin": entry.majmin}, stream)
+    os.replace(temporary, record)
+
+
+def ftp_matches(drive: Drive, entry: MountEntry | None, *, service: FTPService | None = None,
+                stopped: bool = False) -> bool:
+    """Endpoint/live command identity, plus kernel identity when mounted."""
+    if entry is not None and (entry.fstype != "fuse.rclone" or entry.source != f"{drive.remote}:" or entry.root != "/"
+            or f"user_id={os.getuid()}" not in entry.super_options.split(",")
+            or "rw" not in entry.options.split(",")):
+        return False
+    config, _ = ftp_paths(drive)
+    try:
+        service = service if service is not None else ftp_service(drive)
+        parser = configparser.ConfigParser(interpolation=None)
+        parser.read(config)
+        section = parser[drive.remote]
+        if not (section["type"] == "ftp" and section["host"] == drive.host
+                and section.getint("port") == drive.port):
+            return False
+        if not service.running:
+            if not stopped or entry is None:
+                return False
+            record = json.loads(config.with_suffix(".json").read_text(encoding="utf-8"))
+            return record == {"mount_id": entry.mount_id, "majmin": entry.majmin}
+        proc = Path(f"/proc/{service.pid}")
+        argv = (proc / "cmdline").read_bytes().decode().rstrip("\0").split("\0")
+        return (proc.stat().st_uid == os.getuid() and len(argv) >= 6
+                and Path(argv[0]).name == "rclone"
+                and argv[1:4] == ["mount", f"{drive.remote}:", str(drive.mountpoint)]
+                and argv[4:6] == ["--config", str(config)])
+    except (OSError, UnicodeError, KeyError, ValueError, configparser.Error):
+        return False
+
+
+def ftp_stats(drive: Drive) -> dict:
+    _, sock = ftp_paths(drive)
+    res = run(["rclone", "rc", "--unix-socket", str(sock), "vfs/stats"], timeout=5)
+    if not res.ok:
+        raise ValueError("VFS status unavailable; mount retained")
+    value = json.loads(res.out)
+    cache = value.get("diskCache") if isinstance(value, dict) else None
+    if (not isinstance(cache, dict) or value.get("fs") != f"{drive.remote}:"
+            or not all(type(cache.get(k)) is int and cache[k] >= 0 for k in
+                       ("uploadsQueued", "uploadsInProgress", "erroredFiles"))):
+        raise ValueError("VFS status incomplete or identity mismatch; mount retained")
+    return cache
+
+
+def ftp_cleanup(drive: Drive) -> None:
+    config, sock = ftp_paths(drive)
+    for path in (config, sock, config.with_suffix(".json"), config.with_suffix(".tmp")):
+        path.unlink(missing_ok=True)
+
+
+def ftp_detach(drive: Drive, entry: MountEntry) -> None:
+    if mount_entry_for(drive.mountpoint) != entry:
+        raise ValueError("mount changed during teardown; refusing to unmount it")
+    res = run(["fusermount3", "-u", str(drive.mountpoint)], timeout=10)
+    if not res.ok or mount_entry_for(drive.mountpoint) is not None:
+        raise ValueError("unmount failed (close open files and retry); service retained")
+
+
+def ftp_unlock(drive: Drive, secret: str | None) -> Outcome:
+    try:
+        service = ftp_service(drive)
+        occupant = mount_entry_for(drive.mountpoint)
+        if occupant is not None:
+            if ftp_matches(drive, occupant, service=service):
+                ftp_remember(drive, occupant)
+                success(f"'{drive.name}' is already mounted.")
+                return Outcome.OK if run_hooks(drive, "post_unlock", drive.post_unlock) else Outcome.FAILED
+            if not ftp_matches(drive, occupant, service=service, stopped=True):
+                raise ValueError("foreign or unverified mount; inspect before retrying")
+            log(f"'{drive.name}': recovering recorded mount after service exit; cache retained.")
+            ftp_detach(drive, occupant)
+        if service.running:
+            raise ValueError("service still running without the expected mount; lock it first")
+        if secret is None:
+            return Outcome.NEEDS_PASSPHRASE
+        credentials = ftp_credentials(secret)
+        target = drive.mountpoint
+        if target.is_symlink():
+            raise ValueError("mountpoint is a symlink")
+        target.mkdir(parents=True, exist_ok=True)
+        if any(target.iterdir()):
+            raise ValueError("mountpoint contains local files")
+        config, sock = ftp_paths(drive)
+        # Even anonymous/empty passwords need a valid rclone-obscured string.
+        obscured = run(["rclone", "obscure", "-"],
+                       stdin=(credentials["password"] + "\n").encode(), timeout=5)
+        if not obscured.ok or not obscured.out.strip():
+            raise ValueError("rclone password encoding failed")
+        parser = configparser.ConfigParser(interpolation=None)
+        parser[drive.remote] = {"type": "ftp", "host": drive.host, "port": str(drive.port),
+                                "user": credentials["username"], "pass": obscured.out.strip()}
+        fd = os.open(config, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            os.fchmod(stream.fileno(), 0o600)
+            parser.write(stream)
+        sock.unlink(missing_ok=True)
+        config.with_suffix(".json").unlink(missing_ok=True)
+        cache = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "rclone"
+        res = run(["systemd-run", "--user", "--collect", "--quiet",
+                   f"--unit={ftp_unit(drive)}", "--property=TimeoutStopSec=15s",
+                   "--property=SendSIGKILL=no", shutil.which("rclone"), "mount", f"{drive.remote}:",
+                   str(target), "--config", str(config), "--cache-dir", str(cache),
+                   "--vfs-cache-mode", "writes", "--vfs-read-chunk-size", "0",
+                   # Zero selects synchronous uploads and bypasses retry queuing.
+                   "--vfs-write-back", "1ms", "--dir-cache-time", "1s", "--poll-interval", "0",
+                   "--rc", "--rc-addr", f"unix://{sock}"], timeout=10)
+        if not res.ok:
+            raise ValueError(f"user-service start failed; inspect journalctl --user -u {ftp_unit(drive)}")
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            service = ftp_service(drive)
+            if not service.running:
+                raise ValueError(f"FTP service exited; check endpoint/login and journalctl --user -u {ftp_unit(drive)}")
+            entry = mount_entry_for(target)
+            if entry is not None and ftp_matches(drive, entry, service=service):
+                ftp_remember(drive, entry)
+                try:
+                    ftp_stats(drive)  # Socket/VFS initialization can lag behind FUSE.
+                except ValueError:
+                    time.sleep(0.2)
+                    continue
+                success(f"'{drive.name}' mounted at {target}.")
+                return Outcome.OK if run_hooks(drive, "post_unlock", drive.post_unlock) else Outcome.FAILED
+            time.sleep(0.2)
+        raise ValueError("mount startup timed out; inspect service and use lock before retrying")
+    except (OSError, ValueError, configparser.Error) as exc:
+        err(f"'{drive.name}': {escape(str(exc))}")
+        try:
+            if not ftp_service(drive).running and mount_entry_for(drive.mountpoint) is None:
+                ftp_cleanup(drive)
+        except (OSError, ValueError):
+            pass  # Unknown service state: retain runtime material until verified stopped.
+        return Outcome.FAILED
+
+
+def ftp_cache_dirty(drive: Drive) -> bool:
+    cache_home = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "rclone"
+    metadata = cache_home / "vfsMeta" / drive.remote
+    try:
+        if not stat.S_ISDIR(metadata.stat().st_mode):
+            raise ValueError("cache metadata path is not a directory")
+    except FileNotFoundError:
+        return False
+
+    def onerror(exc: OSError) -> None:
+        raise exc
+
+    for root, _, files in os.walk(metadata, onerror=onerror):
+        for name in files:
+            value = json.loads((Path(root) / name).read_text(encoding="utf-8"))
+            if not isinstance(value, dict) or type(value.get("Dirty")) is not bool:
+                raise ValueError("cannot verify retained cache metadata; inspect before retrying")
+            if value["Dirty"]:
+                return True
+    return False
+
+
+def ftp_lock(drive: Drive) -> Outcome:
+    try:
+        service = ftp_service(drive)
+        entry = mount_entry_for(drive.mountpoint)
+        if (entry is not None or service.running) and not ftp_matches(drive, entry, service=service, stopped=True):
+            raise ValueError("mount identity mismatch; refusing teardown")
+        if not run_hooks(drive, "pre_lock", drive.pre_lock):
+            return Outcome.FAILED
+        # No mount means no application can be writing through it. A verified
+        # service stuck before VFS initialization can be stopped without RC; disk
+        # cache is still checked and retained after it exits.
+        if service.running and entry is not None:
+            deadline = time.monotonic() + 30
+            while True:
+                cache = ftp_stats(drive)
+                if not any(cache[k] for k in ("uploadsQueued", "uploadsInProgress", "erroredFiles")):
+                    break
+                if time.monotonic() >= deadline:
+                    raise ValueError("pending/failed uploads; mount and cache retained, retry after upload completes")
+                time.sleep(0.5)
+        if service.running and entry is not None and ftp_cache_dirty(drive):
+            raise ValueError("unsent cache data remains; mount retained, wait for upload or recover before locking")
+        if entry is not None:
+            # Busy files leave a working mount/service. Never force or lazily detach.
+            ftp_detach(drive, entry)
+        run(["systemctl", "--user", "stop", ftp_unit(drive)], timeout=20)
+        if ftp_service(drive).running or mount_entry_for(drive.mountpoint) is not None:
+            raise ValueError("teardown incomplete; runtime config and cache retained")
+        if ftp_cache_dirty(drive):
+            raise ValueError("unmounted with unsent cache data; unlock to resume uploads")
+        ftp_cleanup(drive)
+        success(f"'{drive.name}' unmounted.")
+        return Outcome.OK if run_hooks(drive, "post_lock", drive.post_lock) else Outcome.FAILED
+    except (OSError, ValueError) as exc:
+        err(f"'{drive.name}': {escape(str(exc))}")
+        return Outcome.FAILED
+
+
 def show_status(drives: dict[str, Drive]) -> None:
     snapshot = read_mountinfo()  # one mount-table read for the whole fleet
     table = Table(show_header=True, header_style="bold white", border_style="bright_black")
@@ -1281,6 +1572,11 @@ def show_status(drives: dict[str, Drive]) -> None:
     table.add_column("STATUS", width=11)
     table.add_column("MOUNTPOINT")
     for name, drive in sorted(drives.items()):
+        if drive.type is DriveType.FTP:
+            entry = mount_entry_for(drive.mountpoint, snapshot)
+            state = "Unmounted" if entry is None else ("Mounted" if ftp_matches(drive, entry) else "Conflict")
+            table.add_row(name, drive.type, "ftp", "—", state, str(drive.mountpoint))
+            continue
         outer = resolve_device(drive.outer_uuid) if drive.type is DriveType.PROTECTED else None
         mapping = find_crypt_mapping(drive, outer) if drive.type is DriveType.PROTECTED else None
         fs_dev = resolve_device(drive.fs_uuid)
@@ -1314,6 +1610,14 @@ def show_status(drives: dict[str, Drive]) -> None:
 
 def do_unlock(drive: Drive, secret: str | None, *, interactive: bool, all_mountpoints: set[Path]) -> Outcome:
     """interactive=True only on the main thread. Workers get interactive=False and may return NEEDS_PASSPHRASE."""
+    if drive.type is DriveType.FTP:
+        outcome = ftp_unlock(drive, secret)
+        if outcome is Outcome.NEEDS_PASSPHRASE and interactive:
+            secret = prompt_ftp_credentials(drive)
+            outcome = ftp_unlock(drive, secret)
+            if outcome is Outcome.OK:
+                keyring_set(ftp_account(drive), secret)
+        return outcome
     log(f"Unlock sequence for '{drive.name}' started.")
     target = drive.mountpoint
 
@@ -1447,6 +1751,8 @@ def do_unlock(drive: Drive, secret: str | None, *, interactive: bool, all_mountp
 
 
 def do_lock(drive: Drive, *, interactive: bool, all_mountpoints: set[Path]) -> Outcome:
+    if drive.type is DriveType.FTP:
+        return ftp_lock(drive)
     log(f"Lock sequence for '{drive.name}' started.")
     if not run_hooks(drive, "pre_lock", drive.pre_lock):
         err(f"Aborting lock of '{drive.name}': pre_lock hook failed; filesystem remains mounted.")
@@ -1516,6 +1822,9 @@ def do_lock(drive: Drive, *, interactive: bool, all_mountpoints: set[Path]) -> O
 #  PIPELINES (prompts only on the main thread)
 # ------------------------------------------------------------------------------
 def _container_needs_secret(drive: Drive) -> bool:
+    if drive.type is DriveType.FTP:
+        entry = mount_entry_for(drive.mountpoint)
+        return entry is None or not ftp_matches(drive, entry)
     if drive.type is not DriveType.PROTECTED:
         return False
     if drive.mountpoint in mounts_for_device(resolve_device(drive.fs_uuid)):
@@ -1537,6 +1846,19 @@ def unlock_pipeline(drives: dict[str, Drive], targets: list[str]) -> int:
         drive = drives[name]
         secrets[name] = None
         if not _container_needs_secret(drive):
+            continue
+        if drive.type is DriveType.FTP:
+            secret = keyring_get(ftp_account(drive))
+            if secret is not None:
+                try:
+                    ftp_credentials(secret)
+                except ValueError:
+                    warn(f"'{name}': invalid saved FTP credentials; prompting again.")
+                    secret = None
+            if secret is None:
+                secret = prompt_ftp_credentials(drive)
+                prompted.add(name)
+            secrets[name] = secret
             continue
         secret = keyring_get(drive.name)
         if secret is None:
@@ -1567,10 +1889,11 @@ def unlock_pipeline(drives: dict[str, Drive], targets: list[str]) -> int:
                 log(f"'{n}' needs interactive input; continuing on the main thread...")
                 outcomes[n] = do_unlock(drives[n], None, interactive=True, all_mountpoints=all_mps)
 
-    # Persist passphrases that were typed in Phase 1 and proven correct
+    # Persist credentials typed in Phase 1 only after successful unlock.
     for n in prompted:
-        if outcomes.get(n) is Outcome.OK and secrets.get(n) and keyring_set(n, secrets[n] or ""):
-            success(f"Passphrase for '{n}' saved to the keyring.")
+        account = ftp_account(drives[n]) if drives[n].type is DriveType.FTP else n
+        if outcomes.get(n) is Outcome.OK and secrets.get(n) and keyring_set(account, secrets[n] or ""):
+            success(f"Credentials for '{n}' saved to the keyring.")
     secrets.clear()
 
     failed = [n for n, o in outcomes.items() if o is not Outcome.OK]
@@ -1597,7 +1920,7 @@ def lock_pipeline(drives: dict[str, Drive], targets: list[str]) -> int:
                     err(f"Internal error locking '{n}': {escape(repr(e))}")
                     outcomes[n] = Outcome.FAILED
         for n in targets:
-            if outcomes.get(n) is Outcome.FAILED and mounts_for_device(resolve_device(drives[n].fs_uuid)):
+            if drives[n].type is not DriveType.FTP and outcomes.get(n) is Outcome.FAILED and mounts_for_device(resolve_device(drives[n].fs_uuid)):
                 log(f"'{n}' still mounted after parallel pass; retrying interactively on the main thread...")
                 outcomes[n] = do_lock(drives[n], interactive=True, all_mountpoints=all_mps)
     failed = [n for n, o in outcomes.items() if o is not Outcome.OK]
@@ -1611,6 +1934,12 @@ def set_password(drives: dict[str, Drive], name: str) -> bool:
     drive = drives.get(name)
     if drive is None:
         err(f"Drive '{name}' is not in the configuration.")
+        return False
+    if drive.type is DriveType.FTP:
+        secret = prompt_ftp_credentials(drive)
+        if keyring_set(ftp_account(drive), secret):
+            success(f"FTP username and password stored for '{name}'.")
+            return True
         return False
     if drive.type is not DriveType.PROTECTED:
         err(f"'{name}' is a SIMPLE drive and has no passphrase.")
@@ -1648,7 +1977,7 @@ UUID_PATTERNS: Final = (
 ALLOWED_KEYS: Final = frozenset({
     "type", "mountpoint", "outer_uuid", "inner_uuid", "hint",
     "fstype", "mount_options", "symlinks",
-    "post_unlock", "pre_lock", "post_lock",
+    "post_unlock", "pre_lock", "post_lock", "host", "port", "remote",
 })
 NAME_RE: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 
@@ -1686,14 +2015,33 @@ def parse_drive(name: str, data: object) -> Drive:
     unknown = set(data) - ALLOWED_KEYS
     if unknown:
         raise ConfigError(f"unknown key(s): {', '.join(sorted(unknown))}")
-    for key in ("type", "mountpoint", "outer_uuid"):
+    for key in ("type", "mountpoint"):
         if key not in data:
             raise ConfigError(f"missing required key '{key}'")
     try:
         dtype = DriveType(str(data["type"]).upper())
     except ValueError:
-        raise ConfigError(f"type must be PROTECTED or SIMPLE, got '{data['type']}'") from None
-    outer = _validate_uuid("outer_uuid", data["outer_uuid"])
+        raise ConfigError(f"type must be PROTECTED, SIMPLE or FTP, got '{data['type']}'") from None
+    if dtype is DriveType.FTP:
+        forbidden = set(data) & {"outer_uuid", "inner_uuid", "fstype", "mount_options", "symlinks"}
+        if forbidden:
+            raise ConfigError(f"FTP does not accept: {', '.join(sorted(forbidden))}")
+        host = data.get("host")
+        if not isinstance(host, str) or not host or any(c.isspace() or c in "/@\\\0" for c in host):
+            raise ConfigError("FTP host must be a hostname/IP without URL, path or credentials")
+        port = data.get("port", 21)
+        if type(port) is not int or not 1 <= port <= 65535:
+            raise ConfigError("FTP port must be an integer from 1 to 65535")
+        remote = data.get("remote", name)
+        if not isinstance(remote, str) or not NAME_RE.fullmatch(remote):
+            raise ConfigError("FTP remote must use drive-name syntax")
+        outer = None
+    else:
+        if set(data) & {"host", "port", "remote"}:
+            raise ConfigError("host, port and remote are only valid for FTP")
+        if "outer_uuid" not in data:
+            raise ConfigError("missing required key 'outer_uuid'")
+        outer = _validate_uuid("outer_uuid", data["outer_uuid"])
     inner = data.get("inner_uuid")
     if dtype is DriveType.PROTECTED:
         if inner is None:
@@ -1720,7 +2068,10 @@ def parse_drive(name: str, data: object) -> Drive:
         raise ConfigError("symlinks must be a list of non-empty strings")
     if not isinstance(data["mountpoint"], str) or not data["mountpoint"]:
         raise ConfigError("mountpoint must be a non-empty string")
-    mountpoint = resolve_configured_path(data["mountpoint"], resolve_symlinks=True)
+    mountpoint = resolve_configured_path(data["mountpoint"], resolve_symlinks=dtype is not DriveType.FTP)
+    if dtype is DriveType.FTP:
+        mountpoint = Path(os.path.normpath(mountpoint))
+        mountpoint = mountpoint.parent.resolve() / mountpoint.name
     if mountpoint == Path("/") or mountpoint == Path.home():
         raise ConfigError("mountpoint may not be / or $HOME")
     symlinks = tuple(resolve_configured_path(s, resolve_symlinks=False) for s in links)
@@ -1740,6 +2091,7 @@ def parse_drive(name: str, data: object) -> Drive:
     return Drive(
         name, dtype, mountpoint, outer, inner, data.get("hint"), fstype, tuple(opts), symlinks,
         post_unlock=hooks["post_unlock"], pre_lock=hooks["pre_lock"], post_lock=hooks["post_lock"],
+        host=data.get("host"), port=data.get("port", 21), remote=data.get("remote", name),
     )
 
 
@@ -1784,7 +2136,13 @@ def load_config(override: Path | None) -> dict[str, Drive]:
     # cross-drive collisions (UUIDs across outer/inner, mountpoint overlaps, symlinks)
     seen: dict[str, str] = {}
     mountpoints: dict[Path, str] = {}
+    remotes: set[str] = set()
     for d in drives.values():
+        if d.type is DriveType.FTP:
+            if d.remote in remotes:
+                err("Config error: FTP remote/cache identity must be unique")
+                sys.exit(EXIT_FAIL)
+            remotes.add(d.remote)
         for label, key in (("outer_uuid", d.outer_uuid), ("inner_uuid", d.inner_uuid),
                            *((f"symlink {s}", str(s)) for s in d.symlinks)):
             if key is None:
@@ -1825,7 +2183,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("targets", nargs="+", metavar="DRIVE")
     p = sub.add_parser("lock", help="Unmount everywhere and close container(s)")
     p.add_argument("targets", nargs="+", metavar="DRIVE")
-    p = sub.add_parser("set-password", help="Store a passphrase in the Secret Service keyring")
+    p = sub.add_parser("set-password", help="Store local passphrase or FTP username/password in Secret Service")
     p.add_argument("targets", nargs="+", metavar="DRIVE")
     return parser
 
@@ -1833,7 +2191,6 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     prevent_root_execution()
     args = build_parser().parse_args()
-    check_dependencies()
     drives = load_config(args.config)
 
     match args.action:
@@ -1842,6 +2199,7 @@ def main() -> int:
             return EXIT_OK
 
         case "set-password":
+            acquire_lock()
             ok = True
             for i, name in enumerate(args.targets):
                 if i:
@@ -1857,13 +2215,22 @@ def main() -> int:
                 err(f"Unknown drive(s): {', '.join(unknown)}. Configured: {', '.join(sorted(drives))}")
                 return EXIT_FAIL
             targets = list(dict.fromkeys(args.targets))   # de-duplicate, keep order
-            Sudo.prime()
-            Sudo.start_keepalive()
+            local = any(drives[n].type is not DriveType.FTP for n in targets)
+            if local:
+                check_dependencies()
+                Sudo.prime()
+                Sudo.start_keepalive()
+            if any(drives[n].type is DriveType.FTP for n in targets):
+                missing = [c for c in ("rclone", "fusermount3", "systemctl", "systemd-run") if shutil.which(c) is None]
+                if missing:
+                    err(f"Missing FTP commands: {', '.join(missing)}")
+                    return EXIT_FAIL
             acquire_lock()
-            accel = CPUAccelerator()
+            accel = CPUAccelerator() if local else nullcontext()
 
             def _on_signal(signum: int, _frame) -> None:
-                accel.restore()
+                if local:
+                    accel.restore()
                 sys.exit(128 + signum)
 
             signal.signal(signal.SIGTERM, _on_signal)

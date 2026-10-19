@@ -2,9 +2,9 @@
 # UNIVERSAL DRIVE MANAGER — FLEET CONFIGURATION (schema enforced by drive_manager.py)
 # ==============================================================================
 # [drives.<name>]      name: [A-Za-z0-9][A-Za-z0-9_.-]{0,63}
-#   type          = "PROTECTED" | "SIMPLE"          REQUIRED
+#   type          = "PROTECTED" | "SIMPLE" | "FTP"          REQUIRED
 #   mountpoint    = "/mnt/x" | "~/.config/x"        REQUIRED  (~, $VARS, legacy /home/<olduser> rebased)
-#   outer_uuid    = "<blkid UUID>"                  REQUIRED  raw partition, seen while LOCKED  (lsblk -f)
+#   outer_uuid    = "<blkid UUID>"                  REQUIRED for local drives; forbidden for FTP. Raw partition, seen while LOCKED  (lsblk -f)
 #   inner_uuid    = "<blkid UUID>"                  REQUIRED for PROTECTED, FORBIDDEN for SIMPLE
 #   hint          = "<string>"                      OPTIONAL  shown before manual prompts (never a secret)
 #   fstype        = "ext4"|"btrfs"|"ntfs"|"exfat".. OPTIONAL  always the 7.1+ 'ntfs' driver (legacy ntfs3 rejected)
@@ -100,3 +100,16 @@ inner_uuid    = "5A428B8A428B6A19"
 hint          = "pass_p"
 fstype        = "ntfs"
 mount_options = ["noatime", "uid=1000", "gid=1000", "umask=002", "windows_names", "iocharset=utf8"]
+
+# ---------------------------------------------------------------- iPhone FTP --
+# FTP accepts host/port/remote plus mountpoint, hint and lifecycle hooks.
+# UUIDs, fstype, mount_options and symlinks are local-drive-only.
+# remote is a stable rclone cache identity: retain it while pending writes exist.
+# Credentials: drive_manager.py set-password duskie (Secret Service, ftp:duskie).
+# Writes-only cache, 1ms queued write-back with retries; lock checks uploads/dirty data.
+[drives.duskie]
+type       = "FTP"
+mountpoint = "/mnt/zram1/duskie"
+host       = "192.168.29.226" # update here when the phone's LAN address changes
+port       = 2121
+remote     = "duskie-iphone" # FTP root / maps to /var/mobile/Media/duskie

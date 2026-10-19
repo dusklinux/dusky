@@ -2,7 +2,8 @@
  UNIVERSAL DRIVE MANAGER & MOUNT ARCHITECTURE CHEAT SHEET (ARCH LINUX 2026.09)
 ================================================================================
 Runtime reference for Linux 7.3+, util-linux 2.42+, cryptsetup 2.8+, systemd 262.
-Planned ISO Python floor: 3.15.rc3; current machine: 3.14.7 (verify final ISO).
+Python floor: 3.15; current launcher: /usr/local/bin/python3 3.15.0rc3.
+Verify the final ISO interpreter and dependencies; /usr/bin/python3 here is 3.14.8.
 
 --------------------------------------------------------------------------------
  1. CLI USAGE & RUNTIME BEHAVIOUR
@@ -10,19 +11,19 @@ Planned ISO Python floor: 3.15.rc3; current machine: 3.14.7 (verify final ISO).
   $ unlock <drive1> [drive2 ...]   # open container (if needed) + mount + heal symlinks + TRIM
   $ lock   <drive1> [drive2 ...]   # unmount everywhere + close container
   $ drive_status                   # live fleet table (no sudo, no keyring access)
-  $ drive_manager.py set-password <drive...>   # store passphrase in the Secret Service keyring
+  $ drive_manager.py set-password <drive...>   # store local passphrase or FTP username/password in Secret Service
 
-  Shell aliases (~/.bashrc / ~/.zshrc):
-    alias unlock='python ~/.local/bin/drive_manager.py unlock'
-    alias lock='python ~/.local/bin/drive_manager.py lock'
-    alias drive_status='python ~/.local/bin/drive_manager.py status'
+  Active shell aliases (~/.zshrc; env python3 shebang):
+    alias unlock='$HOME/user_scripts/drives/drive_manager/drive_manager.py unlock'
+    alias lock='$HOME/user_scripts/drives/drive_manager/drive_manager.py lock'
+    alias drive_status='$HOME/user_scripts/drives/drive_manager/drive_manager.py status'
 
   Exit codes: 0 success | 1 any operational/config failure | 130 user cancelled (Ctrl-C / EOF)
   -> safe chaining:   unlock browser && unlock media && firefox
 
   Engine guarantees:
   * Never runs as root; every privileged step is an individual 'sudo -n <cmd>'. The only
-    interactive sudo call is 'sudo -v' at start; a daemon thread refreshes it every 60 s.
+    interactive sudo call is 'sudo -v' for local-drive operations; a daemon thread refreshes it every 60 s.
   * All prompts (passphrase, busy-process resolver) happen on the main thread. Parallel
     workers report NEEDS_PASSPHRASE and are finished sequentially afterwards.
   * One mutating instance at a time: flock on $XDG_RUNTIME_DIR/drive_manager/drive_manager.lock.
@@ -40,9 +41,9 @@ Search order: 1. $XDG_CONFIG_HOME/drive_manager/drives.toml (default ~/.config/.
               2. <script_dir>/drives.toml            (-c PATH overrides both)
 
   [drives.<name>]
-  type          = "PROTECTED" | "SIMPLE"   REQUIRED
+  type          = "PROTECTED" | "SIMPLE" | "FTP" REQUIRED
   mountpoint    = "/mnt/x" | "~/x"         REQUIRED, absolute after ~/$VAR expansion, not / or $HOME
-  outer_uuid    = "<UUID>"                 REQUIRED, blkid UUID of the raw partition (case-sensitive)
+  outer_uuid    = "<UUID>"                 REQUIRED for local drives, forbidden for FTP; blkid UUID (case-sensitive)
   inner_uuid    = "<UUID>"                 REQUIRED for PROTECTED, forbidden for SIMPLE
   hint          = "<string>"               OPTIONAL, displayed before manual prompts
   fstype        = "ext4"|"btrfs"|"ntfs"..  OPTIONAL, in-kernel ntfs driver
@@ -144,3 +145,117 @@ f2fs    | flash only    | atgc,gc_merge,lazytime,compress_algorithm=zstd:6 | nee
   -> forensics (lsof, sysfs holders, cryptsetup status).
 * Verify a mapping any time:  sudo cryptsetup status luks-<outer_uuid> ; lsblk --tree /dev/disk/by-uuid/<outer_uuid>
 ================================================================================
+
+--------------------------------------------------------------------------------
+ 6. DUSKIE FTP (unprivileged, session-only mount)
+--------------------------------------------------------------------------------
+Repository: /mnt/zram1/git/duskie (including .git, ignored build and recovery files).
+FTP root:   /mnt/zram1/duskie (read/write; no nested iphone/ repository mount).
+The server root / already maps to /var/mobile/Media/duskie; do not append that path.
+
+  unlock duskie
+  drive_status
+  lock duskie
+  ~/user_scripts/drives/drive_manager/drive_manager.py set-password duskie
+
+set-password prompts privately for BOTH FTP username and password, saved together
+as JSON in Secret Service service "drive_manager", account "ftp:duskie". Enter
+for username selects anonymous; an empty anonymous password is supported.
+Usernames cannot have surrounding whitespace; CR/LF/NUL are refused in either
+field. Password spaces and punctuation are preserved. Optional
+authenticated login uses the username/password YOU provide; no phone settings are
+changed and the SSH password is never assumed to be the FTP password. Unlock
+retrieves the saved credentials; if unavailable it prompts on the main thread and
+tries saving after a successful mount. FTP has no plaintext failed-attempt history.
+Changing saved credentials takes effect on the next mount.
+
+Dependencies: rclone, fuse3, systemd user manager, a Secret Service provider,
+python-keyring, python-secretstorage, python-rich installed for the actual shebang
+interpreter. This host's separately installed Python 3.15 needed keyring and its
+dependencies installed with `python3 -m pip install --user keyring secretstorage rich`;
+the ISO should package these for its Python 3.15 interpreter.
+
+Active config is the script-adjacent drives.toml; no XDG override or ~/.local/bin
+copy/link exists on this host. XDG precedence described above still applies.
+
+  [drives.duskie]
+  type = "FTP"
+  mountpoint = "/mnt/zram1/duskie"
+  host = "192.168.29.226"  # change to the phone's current LAN IP/hostname
+  port = 2121
+  remote = "duskie-iphone"
+
+FTP requires host; port defaults to 21, remote defaults to the entry name.
+remote must be unique across FTP entries. FTP accepts hint and lifecycle hooks;
+outer_uuid, inner_uuid, fstype, mount_options and symlinks are forbidden. Local
+entries reject FTP-only fields. Existing mountpoint overlap checks apply to both.
+Lock before editing the endpoint or mountpoint. Retain remote while cache data
+exists: this stable identity reuses ~/.cache/rclone/vfs/duskie-iphone and vfsMeta
+(or the equivalent under XDG_CACHE_HOME). Cache is never deleted during lock.
+
+Mount service: drive-manager-ftp-duskie.service (transient USER unit).
+  journalctl --user -u drive-manager-ftp-duskie.service
+  systemctl --user status drive-manager-ftp-duskie.service
+No boot automount is installed. The service survives the short-lived CLI; session
+shutdown still ends it. Use lock to drain writes before logout or disconnection.
+The previous duskie-iphone-mount.service and persistent ftp-mount.conf are retired.
+
+Username and rclone-obscured password are supplied only through a mode-0600 file
+$XDG_RUNTIME_DIR/drive_manager/ftp-duskie.conf, retained while the service needs it
+and removed after successful lock. A matching ftp-duskie.json records the kernel
+mount ID/device number atomically for crash recovery; it contains no credentials and is also
+removed on lock. Obscuring is reversible, not keyring storage.
+Control uses a Unix socket in the user's mode-0700 runtime directory. No secrets
+are passed in argv, URLs or unit environment properties. Status uses mountinfo
+plus live service/config identity; it uses neither keyring nor sudo, and Mounted
+means locally mounted, not a promise that the phone is currently reachable.
+
+FTP-only unlock/lock uses no sudo, CPU changes, UUID probing, cryptsetup or TRIM.
+Mixed FTP/local requests keep normal parallel local behavior. On lock, pending or
+failed uploads are given up to 30 seconds; failure retains the mount and cache.
+Dirty cache metadata is checked too: some failures in older 0s-writeback sessions
+are absent from rclone's upload queue. Unknown service state never counts as stopped.
+Normal fusermount3 -u runs before service stop: busy open files cause failure and
+keep the service alive. Close files/editors and retry. No normal lazy/force detach
+or editor killing. Any unsent metadata discovered after teardown returns failure;
+unlock with the same endpoint/remote to resume. Do not run a second mount using
+the same remote/cache concurrently or stop the service directly for routine lock.
+If rclone crashes, unlock/lock can recover a recorded mount using a normal unmount
+when it is no longer busy. Recovery checks the exact kernel mount identity, FUSE
+owner, remote source and endpoint; unrelated/unverified mounts remain untouched.
+Unlock resumes pending writes from the same cache. A busy disconnected mount
+still requires its holders to close; recovery never silently force/lazily detaches.
+A rejected login/service exit is detected promptly with the journal command shown;
+use set-password to correct saved credentials before retrying. A verified service
+stuck in login before mounting can be cancelled with lock without a VFS socket;
+any unsent cache bytes are retained and reported as incomplete.
+
+Settings: writes-only VFS cache, write-back 1ms, directory cache 1s.
+Write-back changed from 0s after failure injection showed synchronous uploads could
+leave dirty bytes outside the retry queue. A positive 1ms delay selects rclone's
+asynchronous queue and automatic retry path while keeping upload scheduling fast.
+Closing a file therefore confirms local caching, not completed remote upload;
+lock verifies uploads before releasing the mount. This is not an offline filesystem:
+new opens or metadata queries may fail while the server is unreachable.
+Other settings retained: chunked reads disabled (server has no REST), kernel attribute timeout default 1s.
+Save/close/flush files before expecting upload. Refresh/list the containing
+directory after cache expiry to discover external edits, then reload/reopen the
+file. A repeated read of a known filename alone can keep showing cached data. FTP has
+no push notifications, automatic buffer synchronization or conflict merging;
+avoid simultaneous edits to the same file. The server's atomic replacement fix
+remains intact. Never delete user .partial files or recovery copies as cleanup.
+
+Regression tests (Python 3.15):
+  cd ~/user_scripts/drives/drive_manager
+  python3 test_ftp.py -v
+The default suite uses fixtures and does not mount anything or access credentials.
+Opt-in integration uses temporary localhost FTP servers, disposable files, isolated
+caches and temporary keyring accounts, with real rclone/FUSE/user-service lifecycles:
+  DRIVE_MANAGER_FTP_INTEGRATION=1 python3 test_ftp.py -v
+Install pyftpdlib only for this optional test suite (or expose a test-only install
+through PYTHONPATH). It is not a drive-manager runtime dependency. Integration
+exercises anonymous empty/nonempty passwords, authenticated Unicode/punctuation
+credentials, concurrent repeated saves, rapid cycles, rejected login, blocked
+uploads, busy writers, server reconnection, crash recovery and instance locking.
+Protocol/cache references: https://rclone.org/commands/rclone_mount/#vfs-file-caching
+Synchronous-versus-queued behavior verified against rclone v1.75.2 vfscache/item.go.
