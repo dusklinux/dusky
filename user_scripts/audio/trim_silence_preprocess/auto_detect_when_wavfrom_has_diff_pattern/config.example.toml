@@ -1,0 +1,44 @@
+# Copy to $XDG_CONFIG_HOME/dusky/settings/audio_detection/config.toml
+# (normally ~/.config/dusky/settings/audio_detection/config.toml).
+# All keys are optional. Named profiles inherit [defaults]; CLI
+# --min-speech-minutes overrides the selected profile's confirmation window.
+
+[defaults]
+# Ten-minute sliding window: >=60% speech, >=70% speech or quiet, <=25% music.
+min_speech_minutes = 10.0
+min_speech_pct = 60.0
+min_speech_or_quiet_pct = 70.0
+max_music_pct = 25.0
+
+# Linear amplitude: 0.005 is approximately -46 dBFS.
+# Keep the 6% gate to reject dense music/drum transients.
+abs_silence_threshold = 0.005
+min_abs_silence_pct = 6.0
+speech_min_db = -44.0
+dead_air_silence_pct = 85.0
+dead_air_max_db = -50.0
+
+# Pause length must be a multiple of the fixed 25 ms analysis frame.
+# Pause counts apply to the fixed ten-second classification blocks.
+min_pause_ms = 175
+min_pauses = 2
+max_pauses = 18
+music_min_db = -40.0
+music_max_cadence_pct = 6.5
+music_max_pauses = 1
+
+boundary_quiet_sec = 20
+music_boundary_sec = 30
+# Keep enough room for the quiet boundary and following audio.
+refine_window_sec = 70
+
+# Examples; select explicitly with --profile NAME. These are starting points,
+# not validated presets for an unseen recording collection.
+[profiles.short_episodes]
+min_speech_minutes = 3.0
+min_speech_pct = 75.0
+max_music_pct = 10.0
+
+[profiles.speech_focused]
+min_speech_pct = 75.0
+max_music_pct = 10.0

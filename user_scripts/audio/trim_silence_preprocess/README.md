@@ -13,7 +13,7 @@ python3 user_scripts/audio/trim_silence_preprocess/preprocess.py recording.m4a /
 
 `--interactive` asks for a start time (Enter defaults to zero), optional source
 duration (Enter defaults to the end), and output WAV path. It suggests an output
-under a usable `XDG_RUNTIME_DIR`, otherwise `/dev/shm`; it never substitutes an
+under `/dev/shm`, otherwise `/mnt/zram1`; it never substitutes an
 SSD path. You can supply an output path and time flags as prompt defaults.
 Invalid interactive times can be entered again; EOF or Ctrl+C cancels.
 Times accept seconds, `MM:SS`, or `HH:MM:SS`, including fractional seconds.
@@ -34,7 +34,8 @@ fit. Free output space also limits the budget, reserving 128 MiB of headroom.
 On RAM-backed tmpfs/ramfs, the ceiling additionally uses at most one quarter of
 currently available RAM, including ancestor cgroup memory limits. This is a
 preparation-time check, not a reservation against other concurrent workloads.
-Output is restricted to tmpfs/ramfs, including temporary audio, reports and logs.
+Output is restricted to tmpfs/ramfs under `/dev/shm` or `/mnt/zram1`, including
+temporary audio, reports and logs.
 Disk output is rejected before creating output directories. Ordinary tmpfs is
 accepted only when there is no active disk-backed swap: active swap devices must
 be zram without backing storage. A `noswap` tmpfs or ramfs does not need that
@@ -65,6 +66,9 @@ full-recording comparison in the audit found a difference only at the initial
 seek boundary, despite identical output on already-decoded test excerpts.
 
 ## Verification
+
+For automated episode-start detection, named audio profiles and saved MPV
+verification results, see the [detector documentation](auto_detect_when_wavfrom_has_diff_pattern/README.md).
 
 ```sh
 python3 -B -m unittest discover -s user_scripts/audio/trim_silence_preprocess/tests -v

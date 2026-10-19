@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Experimental Max Plus PCM cache; does not change mpv configuration."""
 import argparse
+import ctypes
 import json
 import math
 import os
@@ -13,13 +14,26 @@ import time
 from pathlib import Path
 
 type Mount = tuple[Path, Path, str, frozenset[str]]
+_libc = ctypes.CDLL(None, use_errno=True)
+
+
+def child_setup():
+    """Install parent-death SIGKILL in our single-threaded command runner."""
+    parent_pid = os.getpid()
+
+    def setup() -> None:
+        if _libc.prctl(1, signal.SIGKILL, 0, 0, 0) != 0 or os.getppid() != parent_pid:
+            os._exit(127)
+
+    return setup
 
 
 def measure(command: list[str], log: Path) -> dict:
     """Measure one child, including its descendants, without RSS accumulation."""
     started = time.monotonic()
     with log.open('x', encoding='utf-8') as output:
-        process = subprocess.Popen(command, stdout=output, stderr=subprocess.STDOUT)
+        process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=output,
+                                   stderr=subprocess.STDOUT, preexec_fn=child_setup())
         try:
             _, status, usage = os.wait4(process.pid, 0)
             process.returncode = os.waitstatus_to_exitcode(status)
@@ -41,10 +55,10 @@ def measure(command: list[str], log: Path) -> dict:
 
 def probe(path: Path) -> dict:
     return json.loads(subprocess.check_output([
-        'ffprobe', '-v', 'error', '-select_streams', 'a:0',
+        'ffprobe', '-hide_banner', '-v', 'error', '-select_streams', 'a:0',
         '-show_entries', 'stream=sample_rate,channels,duration:format=duration,size',
         '-of', 'json', str(path),
-    ], text=True, encoding='utf-8'))
+    ], stdin=subprocess.DEVNULL, text=True, encoding='utf-8', timeout=30))
 
 
 def mounts() -> list[Mount]:
@@ -101,6 +115,9 @@ def swap_is_ram_only() -> bool:
 
 
 def cache_budget(directory: Path, requested: int) -> tuple[int, str]:
+    if not any(directory.is_relative_to(root.resolve())
+               for root in (Path('/dev/shm'), Path('/mnt/zram1'))):
+        raise ValueError('Output must be under /dev/shm or /mnt/zram1; disk output is disabled')
     entries = mounts()
     _, _, kind, options = max((entry for entry in entries if directory.is_relative_to(entry[1])),
                               key=lambda entry: len(entry[1].parts))
@@ -150,10 +167,7 @@ def ask_time(prompt: str, default: float | None, valid) -> float | None:
 
 
 def default_output(source: Path) -> Path | None:
-    candidates = []
-    if runtime := os.environ.get('XDG_RUNTIME_DIR'):
-        candidates.append(Path(runtime).expanduser())
-    candidates.append(Path('/dev/shm'))
+    candidates = (Path('/dev/shm'), Path('/mnt/zram1'))
     for candidate in candidates:
         if candidate.is_dir() and os.access(candidate, os.W_OK):
             try:
@@ -241,7 +255,8 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix='.preprocess-', dir=output.parent) as temporary:
         cache = Path(temporary) / 'cache.wav'
         command = ['ffmpeg', '-nostdin', '-hide_banner', '-nostats', '-n',
-                   '-filter_threads', '1', '-ss', str(args.start), '-t', str(duration),
+                   '-filter_threads', '1', '-threads', '2', '-accurate_seek',
+                   '-ss', str(args.start), '-t', str(duration),
                    '-i', str(source), '-map', '0:a:0', '-map_metadata', '-1',
                    '-af', graph, '-c:a', 'pcm_f32le', '-rf64', 'auto', str(cache)]
         measurement = measure(command, log_path)
@@ -284,7 +299,8 @@ def main() -> None:
             raise
     print(json.dumps(report, indent=2))
     if args.play:
-        subprocess.run(['mpv', '--script-opts-append=dusky_silence-enabled=no', str(output)], check=True)
+        subprocess.run(['mpv', '--cache-on-disk=no',
+                        '--script-opts-append=dusky_silence-enabled=no', str(output)], check=True)
 
 
 if __name__ == '__main__':
@@ -300,6 +316,6 @@ if __name__ == '__main__':
     except EOFError:
         print('Input ended; preprocessing cancelled.', file=sys.stderr)
         sys.exit(130)
-    except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
         print(f'Preprocessing failed: {error}', file=sys.stderr)
         sys.exit(1)

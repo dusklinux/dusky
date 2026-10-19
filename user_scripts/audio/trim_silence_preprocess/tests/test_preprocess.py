@@ -23,7 +23,7 @@ SPEC.loader.exec_module(PREPROCESS)
 
 class PreprocessTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory()
+        temporary = tempfile.TemporaryDirectory(dir='/dev/shm')
         self.addCleanup(temporary.cleanup)
         self.folder = Path(temporary.name)
         self.source = self.folder / 'source.wav'
