@@ -16,13 +16,13 @@
 # -----------------------------------------------------------------------------
 
 set -euo pipefail
-shopt -s extglob
+shopt -s extglob nullglob
 
 # =============================================================================
 # ▼ USER CONFIGURATION (EDIT THIS SECTION) ▼
 # =============================================================================
 
-declare -r CONFIG_FILE="${HOME}/user_scripts/wayclick/dusky_wayclick.sh"
+declare CONFIG_FILE="${HOME}/user_scripts/wayclick/dusky_wayclick.sh"
 declare -r APP_TITLE="Dusky WayClick Configurator"
 declare -r APP_VERSION="v1.0.0"
 
@@ -40,18 +40,19 @@ declare -ra TABS=("Audio" "Devices" "Advanced")
 
 # --- Dynamic Audio Pack Discovery ---
 # Scans ~/.config/wayclick/ for subdirectories to populate the Audio Pack
-# cycle list. Runs once at script start. Falls back to "audio_pack_1" if
-# no subdirectories are found.
+# cycle list. Only directories with readable config.json files are offered.
+# Falls back to "audio_pack_1" if no installed packs are found.
 discover_audio_packs() {
-    local config_dir="${HOME}/.config/wayclick"
     local -a packs=()
-    local dir_name
-
-    if [[ -d "$config_dir" ]]; then
-        while IFS= read -r dir_name; do
-            [[ -n "$dir_name" ]] && packs+=("$dir_name")
-        done < <(find "$config_dir" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort)
-    fi
+    local directory name
+    for directory in "$HOME"/.config/wayclick/*/; do
+        [[ -r ${directory}config.json ]] || continue
+        name=${directory%/}
+        name=${name##*/}
+        # These delimiters cannot be represented by the TUI item format.
+        [[ $name != *,* && $name != *'|'* && $name != *$'\n'* ]] || continue
+        packs+=("$name")
+    done
 
     if (( ${#packs[@]} == 0 )); then
         REPLY="audio_pack_1"
@@ -64,12 +65,16 @@ discover_audio_packs() {
 # Item Registration
 register_items() {
     # Discover audio packs before registration
-    local audio_pack_options
+    local audio_pack_options audio_pack_default
     discover_audio_packs
     audio_pack_options="$REPLY"
+    audio_pack_default=${audio_pack_options%%,*}
+    if [[ ,$audio_pack_options, == *,audio_pack_1,* ]]; then
+        audio_pack_default=audio_pack_1
+    fi
 
     # Tab 0: Audio
-    register 0 "Audio Pack"     "AUDIO_PACK|cycle||${audio_pack_options}||"           "audio_pack_1"
+    register 0 "Audio Pack"     "AUDIO_PACK|cycle||${audio_pack_options}||"           "$audio_pack_default"
     register 0 "Buffer Size"    'AUDIO_BUFFER_SIZE|cycle||128,256,512||'              "128"
     register 0 "Sample Rate"    'AUDIO_SAMPLE_RATE|cycle||44100,48000||'              "48000"
     register 0 "Mix Channels"   'AUDIO_MIX_CHANNELS|cycle||8,16,32,64||'             "16"
@@ -131,6 +136,7 @@ declare -ri TAB_COUNT=${#TABS[@]}
 declare -a TAB_ZONES=()
 declare -i TAB_SCROLL_START=0
 declare ORIGINAL_STTY=""
+declare UI_ACTIVE=false
 
 # View State
 declare -i CURRENT_VIEW=0      # 0=Main List, 1=Detail/Sub-Page
@@ -164,7 +170,9 @@ log_err() {
 }
 
 cleanup() {
-    printf '%s%s%s' "$MOUSE_OFF" "$CURSOR_SHOW" "$C_RESET" 2>/dev/null || :
+    if $UI_ACTIVE; then
+        printf '%s%s%s\n' "$MOUSE_OFF" "$CURSOR_SHOW" "$C_RESET" 2>/dev/null || :
+    fi
     if [[ -n "${ORIGINAL_STTY:-}" ]]; then
         stty "$ORIGINAL_STTY" 2>/dev/null || :
     fi
@@ -172,12 +180,12 @@ cleanup() {
     if [[ -n "${_TMPFILE:-}" && -f "$_TMPFILE" ]]; then
         rm -f "$_TMPFILE" 2>/dev/null || :
     fi
-    printf '\n' 2>/dev/null || :
 }
 
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+trap 'exit 129' HUP
 
 # --- String Helpers ---
 
@@ -233,274 +241,97 @@ register_child() {
     _child_ref+=("$label")
 }
 
-# =============================================================================
-# CONFIG PARSER — Adapted for bash `readonly VAR="value"` declarations
-# =============================================================================
-# Key differences from the template's Hyprland parser:
-#   1. No brace/block depth tracking (flat file, all items are global)
-#   2. Heredoc-aware: detects `<< 'DELIM'` / `<< DELIM` and skips until DELIM
-#   3. Strips `readonly ` prefix from variable names
-#   4. Strips surrounding double quotes from values
-#   5. Output format is identical: `key|=value` (empty block field)
-# =============================================================================
-populate_config_cache() {
-    CONFIG_CACHE=()
-    local key_part value_part key_name
-
-    while IFS='=' read -r key_part value_part || [[ -n "${key_part:-}" ]]; do
-        if [[ -z "${key_part:-}" ]]; then continue; fi
-        CONFIG_CACHE["$key_part"]="$value_part"
-        key_name="${key_part%%|*}"
-        if [[ -z "${CONFIG_CACHE["${key_name}|"]:-}" ]]; then
-            CONFIG_CACHE["${key_name}|"]="$value_part"
-        fi
-    done < <(LC_ALL=C awk '
-        BEGIN {
-            in_heredoc = 0
-            heredoc_delim = ""
-        }
-
-        # --- Heredoc tracking ---
-        # Detect heredoc start: matches << WORD or << '"'"'WORD'"'"' patterns
-        # This prevents the parser from seeing Python assignments inside the
-        # embedded runner script as bash variable declarations.
-        in_heredoc && $0 == heredoc_delim {
-            in_heredoc = 0
-            heredoc_delim = ""
-            next
-        }
-        in_heredoc { next }
-
-        /<<[[:space:]]*'"'"'?[A-Za-z_][A-Za-z_0-9]*'"'"'?[[:space:]]*$/ {
-            line = $0
-            # Extract delimiter: strip everything up to and including <<
-            sub(/.*<<[[:space:]]*/, "", line)
-            # Strip quotes around delimiter
-            gsub(/'"'"'/, "", line)
-            # Strip trailing whitespace
-            sub(/[[:space:]]+$/, "", line)
-            if (line != "") {
-                in_heredoc = 1
-                heredoc_delim = line
+# Parse only literal readonly scalars before the launcher's first heredoc.
+# One parser serves both reads and writes; shell expressions are left untouched.
+config_tool() {
+    CONFIG_OPERATION="$1" TARGET_KEY="${2:-}" NEW_VALUE="${3:-}" LC_ALL=C awk '
+    function literal(text,    quote, i, ch, next_ch) {
+        value = ""
+        quote = substr(text, 1, 1)
+        if (quote == "\047" || quote == "\"") {
+            for (i = 2; i <= length(text); i++) {
+                ch = substr(text, i, 1)
+                if (ch == quote) {
+                    suffix = substr(text, i + 1)
+                    return suffix ~ /^([[:space:]]+(#.*)?)?$/
+                }
+                if (quote == "\"" && ch == "\\") {
+                    next_ch = substr(text, ++i, 1)
+                    if (next_ch == "") return 0
+                    if (next_ch !~ /^[\\"$`]$/) value = value "\\"
+                    ch = next_ch
+                } else if (quote == "\"" && (ch == "$" || ch == "`")) {
+                    return 0
+                }
+                value = value ch
             }
+            return 0
         }
-        in_heredoc { next }
-
-        # --- Skip comments ---
-        /^[[:space:]]*#/ { next }
-
-        # --- Parse variable declarations ---
-        /=/ {
-            line = $0
-
-            # Strip inline comments (outside quotes — safe for our use case
-            # since all WayClick config values are simple quoted scalars)
-            clean = line
-            sub(/[[:space:]]+#.*$/, "", clean)
-
-            eq_pos = index(clean, "=")
-            if (eq_pos > 0) {
-                key = substr(clean, 1, eq_pos - 1)
-                val = substr(clean, eq_pos + 1)
-
-                # Strip leading/trailing whitespace from key
-                gsub(/^[[:space:]]+|[[:space:]]+$/, "", key)
-
-                # Strip "readonly " prefix (with optional whitespace variations)
-                sub(/^readonly[[:space:]]+/, "", key)
-
-                # Strip "declare " and variants (e.g., declare -r)
-                sub(/^declare[[:space:]]+-[a-zA-Z]*[[:space:]]+/, "", key)
-
-                # Strip "export " prefix
-                sub(/^export[[:space:]]+/, "", key)
-
-                # Strip leading/trailing whitespace from value
-                gsub(/^[[:space:]]+|[[:space:]]+$/, "", val)
-
-                # Strip surrounding double quotes from value
-                if (substr(val, 1, 1) == "\"" && substr(val, length(val), 1) == "\"") {
-                    val = substr(val, 2, length(val) - 2)
-                }
-
-                # Strip surrounding single quotes from value
-                if (substr(val, 1, 1) == "\047" && substr(val, length(val), 1) == "\047") {
-                    val = substr(val, 2, length(val) - 2)
-                }
-
-                # Only emit if key looks like a valid bash variable name
-                if (key ~ /^[A-Za-z_][A-Za-z_0-9]*$/ && key != "") {
-                    print key "|=" val
-                }
-            }
-        }
-    ' "$CONFIG_FILE")
-}
-
-# =============================================================================
-# CONFIG WRITER — Adapted for bash `readonly VAR="value"` declarations
-# =============================================================================
-# Key differences from the template's Hyprland writer:
-#   1. No block context matching (block parameter always empty)
-#   2. Matches `readonly VAR="value"` pattern specifically
-#   3. Preserves: leading whitespace, `readonly` prefix, quote style
-#   4. Heredoc-aware: will not modify lines inside heredoc blocks
-#   5. ENVIRON-based injection prevention: kept from template
-#   6. Temp file integrity + symlink preservation: kept from template
-# =============================================================================
-write_value_to_file() {
-    local key="$1" new_val="$2" block="${3:-}"
-    local current_val="${CONFIG_CACHE["$key|$block"]:-}"
-    if [[ "$current_val" == "$new_val" ]]; then return 0; fi
-
-    # Verify key exists in cache before attempting write
-    if [[ -z "${CONFIG_CACHE["$key|"]:-}" ]]; then
+        if (!match(text, /^([A-Za-z0-9_.+\/-]+)([[:space:]]+(#.*)?)?$/, scalar)) return 0
+        value = scalar[1]
+        suffix = scalar[2]
         return 1
-    fi
-
-    # Create temp file
-    if [[ -z "$_TMPFILE" ]]; then
-        _TMPFILE=$(mktemp "${CONFIG_FILE}.tmp.XXXXXXXXXX")
-    fi
-
-    # ENVIRON-based awk: prevents injection attacks via values
-    TARGET_KEY="$key" NEW_VALUE="$new_val" \
-    LC_ALL=C awk '
-    BEGIN {
-        replaced = 0
-        target_key = ENVIRON["TARGET_KEY"]
-        new_value = ENVIRON["NEW_VALUE"]
-        in_heredoc = 0
-        heredoc_delim = ""
     }
+    function shell_quote(text,    i, ch, result) {
+        result = "\""
+        for (i = 1; i <= length(text); i++) {
+            ch = substr(text, i, 1)
+            if (ch ~ /^[\\"$`]$/) result = result "\\"
+            result = result ch
+        }
+        return result "\""
+    }
+    BEGIN { writing = ENVIRON["CONFIG_OPERATION"] == "write" }
     {
         line = $0
-
-        # --- Heredoc tracking (safety: never modify inside heredocs) ---
-        if (in_heredoc) {
-            if ($0 == heredoc_delim) {
-                in_heredoc = 0
-                heredoc_delim = ""
-            }
-            print line
-            next
-        }
-
-        # Detect heredoc start
-        if (match(line, /<<[[:space:]]*'"'"'?[A-Za-z_][A-Za-z_0-9]*'"'"'?[[:space:]]*$/)) {
-            tmp = line
-            sub(/.*<<[[:space:]]*/, "", tmp)
-            gsub(/'"'"'/, "", tmp)
-            sub(/[[:space:]]+$/, "", tmp)
-            if (tmp != "") {
-                in_heredoc = 1
-                heredoc_delim = tmp
-            }
-            print line
-            next
-        }
-
-        # --- Skip comment-only lines ---
-        clean = line
-        sub(/^[[:space:]]*#.*/, "", clean)
-        if (clean == "") {
-            print line
-            next
-        }
-
-        # --- Attempt match on variable declaration ---
-        do_replace = 0
-        if (line ~ /=/) {
-            # Extract key: strip readonly/export prefix, get name before =
-            work = line
-            # Remove leading whitespace for analysis
-            sub(/^[[:space:]]+/, "", work)
-            # Remove readonly/export/declare prefix
-            sub(/^readonly[[:space:]]+/, "", work)
-            sub(/^declare[[:space:]]+-[a-zA-Z]*[[:space:]]+/, "", work)
-            sub(/^export[[:space:]]+/, "", work)
-
-            eq = index(work, "=")
-            if (eq > 0) {
-                k = substr(work, 1, eq - 1)
-                gsub(/^[[:space:]]+|[[:space:]]+$/, "", k)
-                if (k == target_key) {
-                    do_replace = 1
-                }
+        if (line !~ /^[[:space:]]*(#|readonly[[:space:]])/ && line ~ /<</) past_config = 1
+        if (!past_config && match(line, /^([[:space:]]*readonly[[:space:]]+)([A-Za-z_][A-Za-z_0-9]*)=([[:space:]]*)(.*)$/, parts) && literal(parts[4])) {
+            key = parts[2]
+            if (!writing) print key "|=" value
+            else if (key == ENVIRON["TARGET_KEY"]) {
+                line = parts[1] key "=" parts[3] shell_quote(ENVIRON["NEW_VALUE"]) suffix
+                replaced++
             }
         }
-
-        if (do_replace && !replaced) {
-            # Preserve everything before the = sign in the ORIGINAL line
-            eq_orig = index(line, "=")
-            before_eq = substr(line, 1, eq_orig)
-            after_eq = substr(line, eq_orig + 1)
-
-            # Determine quote style from original value
-            gsub(/^[[:space:]]+/, "", after_eq)
-
-            # Check for inline comment after closing quote
-            # Pattern: "value" # comment  OR  "value"  (no comment)
-            inline_comment = ""
-
-            if (substr(after_eq, 1, 1) == "\"") {
-                # Double-quoted value — find closing quote
-                rest = substr(after_eq, 2)
-                close_pos = index(rest, "\"")
-                if (close_pos > 0) {
-                    tail = substr(rest, close_pos + 1)
-                    if (match(tail, /[[:space:]]+#.*/)) {
-                        inline_comment = substr(tail, RSTART, RLENGTH)
-                    }
-                }
-                print before_eq "\"" new_value "\"" inline_comment
-            } else if (substr(after_eq, 1, 1) == "\047") {
-                # Single-quoted value — find closing quote
-                rest = substr(after_eq, 2)
-                close_pos = index(rest, "\047")
-                if (close_pos > 0) {
-                    tail = substr(rest, close_pos + 1)
-                    if (match(tail, /[[:space:]]+#.*/)) {
-                        inline_comment = substr(tail, RSTART, RLENGTH)
-                    }
-                }
-                print before_eq "\"" new_value "\"" inline_comment
-            } else {
-                # Unquoted value
-                if (match(after_eq, /[[:space:]]+#.*/)) {
-                    inline_comment = substr(after_eq, RSTART, RLENGTH)
-                }
-                print before_eq "\"" new_value "\"" inline_comment
-            }
-
-            replaced = 1
-        } else {
-            print line
-        }
+        if (writing) print line
     }
-    END { exit (replaced ? 0 : 1) }
-    ' "$CONFIG_FILE" > "$_TMPFILE" || {
-        rm -f "$_TMPFILE" 2>/dev/null || :
-        _TMPFILE=""
-        return 1
-    }
+    END { if (writing && replaced != 1) exit 1 }
+    ' "$CONFIG_FILE"
+}
 
-    # Verify temp file integrity before truncating config (Data Loss Prevention)
-    if [[ ! -s "$_TMPFILE" ]]; then
-        rm -f "$_TMPFILE" 2>/dev/null || :
-        _TMPFILE=""
-        return 1
+populate_config_cache() {
+    CONFIG_CACHE=()
+    local entries key value
+    entries=$(config_tool read) || return 1
+    while IFS='=' read -r key value; do
+        [[ -n $key ]] && CONFIG_CACHE["$key"]=$value
+    done <<< "$entries"
+}
+
+write_value_to_file() {
+    local key=$1 new_val=$2 block=${3:-} lock_fd
+    local -i status=1
+    [[ -v CONFIG_CACHE["$key|$block"] ]] || return 1
+
+    # Keep one stable lock inode across atomic replacements and TUI instances.
+    exec {lock_fd}> "${CONFIG_FILE}.lock" || return 1
+    if flock "$lock_fd" \
+        && _TMPFILE=$(mktemp "${CONFIG_FILE}.tmp.XXXXXXXXXX") \
+        && config_tool write "$key" "$new_val" > "$_TMPFILE" \
+        && [[ -s $_TMPFILE ]] \
+        && { cmp -s -- "$_TMPFILE" "$CONFIG_FILE" || {
+            bash -n -- "$_TMPFILE" \
+                && chmod --reference="$CONFIG_FILE" -- "$_TMPFILE" \
+                && mv -fT -- "$_TMPFILE" "$CONFIG_FILE"
+        }; }; then
+        status=0
+        CONFIG_CACHE["$key|$block"]=$new_val
     fi
-
-    # CRITICAL: Use cat > target to preserve symlinks/inodes.
-    # Do NOT use mv, as it breaks dotfile symlink chains.
-    cat "$_TMPFILE" > "$CONFIG_FILE"
-    rm -f "$_TMPFILE"
-    _TMPFILE=""
-
-    CONFIG_CACHE["$key|$block"]="$new_val"
-    if [[ -z "$block" ]]; then CONFIG_CACHE["$key|"]="$new_val"; fi
-    return 0
+    if [[ -n $_TMPFILE && -e $_TMPFILE ]]; then rm -f -- "$_TMPFILE"; fi
+    _TMPFILE=''
+    exec {lock_fd}>&-
+    if (( status != 0 )); then log_err "Could not update $key in $CONFIG_FILE"; fi
+    return "$status"
 }
 
 # --- Context Helpers ---
@@ -605,12 +436,16 @@ modify_value() {
         cycle)
             local -a opts
             IFS=',' read -r -a opts <<< "$min"
-            local -i count=${#opts[@]} idx=0 i
+            local -i count=${#opts[@]} idx=-1 i
             (( count == 0 )) && return 0
             for (( i = 0; i < count; i++ )); do
                 if [[ "${opts[i]}" == "$current" ]]; then idx=$i; break; fi
             done
-            idx=$(( (idx + direction + count) % count ))
+            if (( idx < 0 )); then
+                if (( direction > 0 )); then idx=0; else idx=$((count - 1)); fi
+            else
+                idx=$(( (idx + direction + count) % count ))
+            fi
             new_val="${opts[idx]}"
             ;;
         menu) return 0 ;;
@@ -760,7 +595,7 @@ render_item_list() {
 
 draw_main_view() {
     local buf="" pad_buf=""
-    local -i i current_col=3 zone_start len count pad_needed
+    local -i i current_col=3 zone_start count
     local -i left_pad right_pad vis_len
     local -i _vis_start _vis_end
 
@@ -1025,11 +860,11 @@ handle_mouse() {
     if [[ ! "$field1" =~ ^[0-9]+$ ]]; then return 0; fi
     if [[ ! "$field2" =~ ^[0-9]+$ ]]; then return 0; fi
     if [[ ! "$field3" =~ ^[0-9]+$ ]]; then return 0; fi
-    button=$field1; x=$field2; y=$field3
+    button=$((10#$field1)); x=$((10#$field2)); y=$((10#$field3))
 
     if (( button == 64 )); then navigate -1; return 0; fi
     if (( button == 65 )); then navigate 1; return 0; fi
-    if [[ "$terminator" != "M" ]]; then return 0; fi
+    if [[ "$terminator" != "M" ]] || (( button != 0 && button != 2 )); then return 0; fi
 
     if (( y == TAB_ROW )); then
         if (( CURRENT_VIEW == 0 )); then
@@ -1192,24 +1027,21 @@ handle_input_router() {
 }
 
 main() {
-    if (( BASH_VERSINFO[0] < 5 )); then log_err "Bash 5.0+ required"; exit 1; fi
-    if [[ ! -t 0 ]]; then log_err "TTY required"; exit 1; fi
+    if [[ ! -t 0 || ! -t 1 ]]; then log_err "Input and output TTY required"; exit 1; fi
     if [[ ! -f "$CONFIG_FILE" ]]; then log_err "Config not found: $CONFIG_FILE"; exit 1; fi
     if [[ ! -w "$CONFIG_FILE" ]]; then log_err "Config not writable: $CONFIG_FILE"; exit 1; fi
 
-    local _dep
-    for _dep in awk; do
-        if ! command -v "$_dep" &>/dev/null; then
-            log_err "Missing dependency: ${_dep}"; exit 1
-        fi
-    done
+    command -v awk >/dev/null || { log_err "Missing dependency: awk"; exit 1; }
+    CONFIG_FILE=$(readlink -f -- "$CONFIG_FILE") || exit 1
+    readonly CONFIG_FILE
 
     register_items
     populate_config_cache
 
-    ORIGINAL_STTY=$(stty -g 2>/dev/null) || ORIGINAL_STTY=""
+    ORIGINAL_STTY=$(stty -g) || exit 1
     stty -icanon -echo min 1 time 0 2>/dev/null
 
+    UI_ACTIVE=true
     printf '%s%s%s%s' "$MOUSE_ON" "$CURSOR_HIDE" "$CLR_SCREEN" "$CURSOR_HOME"
     load_active_values
 
