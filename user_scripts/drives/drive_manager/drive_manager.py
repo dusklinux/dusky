@@ -78,7 +78,7 @@ except ImportError as exc:
 # ------------------------------------------------------------------------------
 #  CONSTANTS
 # ------------------------------------------------------------------------------
-VERSION: Final = "2026.10.2"
+VERSION: Final = "2026.10.3"
 FILESYSTEM_TIMEOUT: Final = 15          # by-uuid poll per UUID (seconds, single deadline)
 CRYPTSETUP_TIMEOUT: Final = 180         # argon2id on a throttled laptop can take >30 s
 LOCK_MAX_RETRIES: Final = 5
@@ -1509,6 +1509,7 @@ def ftp_unlock(drive: Drive, secret: str | None) -> Outcome:
 
 
 def ftp_cache_dirty(drive: Drive) -> bool:
+    """Inspect retained writes while allowing rclone to evict clean cache entries."""
     cache_home = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "rclone"
     metadata = cache_home / "vfsMeta" / drive.remote
     try:
@@ -1518,11 +1519,17 @@ def ftp_cache_dirty(drive: Drive) -> bool:
         return False
 
     def onerror(exc: OSError) -> None:
-        raise exc
+        if not isinstance(exc, FileNotFoundError):
+            raise exc
 
     for root, _, files in os.walk(metadata, onerror=onerror):
         for name in files:
-            value = json.loads((Path(root) / name).read_text(encoding="utf-8"))
+            try:
+                value = json.loads((Path(root) / name).read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                # The cleaner may remove an uploaded file after os.walk lists it.
+                # Continue checking the remaining entries for unsent writes.
+                continue
             if not isinstance(value, dict) or type(value.get("Dirty")) is not bool:
                 raise ValueError("cannot verify retained cache metadata; inspect before retrying")
             if value["Dirty"]:

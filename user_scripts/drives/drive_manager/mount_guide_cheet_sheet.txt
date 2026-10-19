@@ -216,7 +216,10 @@ FTP-only unlock/lock uses no sudo, CPU changes, UUID probing, cryptsetup or TRIM
 Mixed FTP/local requests keep normal parallel local behavior. On lock, pending or
 failed uploads are given up to 30 seconds; failure retains the mount and cache.
 Dirty cache metadata is checked too: some failures in older 0s-writeback sessions
-are absent from rclone's upload queue. Unknown service state never counts as stopped.
+are absent from rclone's upload queue. Clean cache files/directories disappearing
+during rclone eviction do not abort the scan; remaining entries are still checked.
+Unreadable or malformed metadata still fails lock. Unknown service state never
+counts as stopped.
 Normal fusermount3 -u runs before service stop: busy open files cause failure and
 keep the service alive. Close files/editors and retry. No normal lazy/force detach
 or editor killing. Any unsent metadata discovered after teardown returns failure;
@@ -265,6 +268,7 @@ Install pyftpdlib only for this optional test suite (or expose a test-only insta
 through PYTHONPATH). It is not a drive-manager runtime dependency. Integration
 exercises anonymous empty/nonempty passwords, authenticated Unicode/punctuation
 credentials, concurrent repeated saves, rapid cycles, rejected login, blocked
-uploads, busy writers, server reconnection, crash recovery and instance locking.
+uploads, busy writers, server reconnection, crash recovery, instance locking,
+same-size/same-mtime external edits and concurrent cache eviction during lock.
 Protocol/cache references: https://rclone.org/commands/rclone_mount/#vfs-file-caching
 Synchronous-versus-queued behavior verified against rclone v1.75.2 vfscache/item.go.
