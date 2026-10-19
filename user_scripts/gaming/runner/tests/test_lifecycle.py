@@ -1,7 +1,7 @@
-#!/usr/bin/env python3.14
+#!/usr/bin/env python3.15
 """Lifecycle regression tests. RUNNER_INTEGRATION=1 enables real rootless FUSE/scope tests.
 
-Run: RUNNER_INTEGRATION=1 python3.14 -m unittest discover -s tests -v
+Run: RUNNER_INTEGRATION=1 python3.15 -m unittest discover -s tests -v
 Add RUNNER_WINE_INTEGRATION=1 to exercise the disposable Wine prefix as well.
 Integration tests create disposable games/prefixes and never touch installed games.
 """
@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -315,7 +316,7 @@ class RealLifecycle(unittest.TestCase):
         cls.root = Path(cls.temp.name)
         cls.source = cls.root / 'source'
         cls.source.mkdir()
-        (cls.source / 'game.sh').write_text('#!/bin/bash\nexec python3.14 "$(dirname "$0")/entry.py" "$@"\n')
+        (cls.source / 'game.sh').write_text(f'#!/bin/bash\nexec {shlex.quote(sys.executable)} "$(dirname "$0")/entry.py" "$@"\n')
         (cls.source / 'game.sh').chmod(0o755)
         (cls.source / 'entry.py').write_text('''import os,sys,time,signal,subprocess,json
 from pathlib import Path

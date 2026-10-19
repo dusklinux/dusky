@@ -1,6 +1,6 @@
 # ==============================================================================
 # Master Game Runner Engine (MGRE) -- Definitive Profile Reference Template
-# Target: Bleeding-Edge Arch Linux (Kernel 7.1+, Python 3.14+, Pure Wayland)
+# Target: Arch Linux (Kernel 7.3+, Python 3.15+, Pure Wayland)
 # ==============================================================================
 # This reference template documents all 15 configuration tables, preset inheritance,
 # variable interpolation, hardware-conditional overrides, and runtime controls.
@@ -144,6 +144,8 @@ protonfixes = true                             # Enable community protonfixes da
 [graphics]
 # GPU Selection:
 #   - Semantic:  "auto", "discrete", "integrated", "primary"
+#   - "auto" uses the primary GPU with gamescope, otherwise a known discrete GPU.
+#     An explicit choice applies to both gamescope and its game.
 #   - Vendor:    "nvidia", "amd", "intel"
 #   - Explicit:  "10de:25a0", "card0", "card1", "0000:01:00.0", "pci-0000_01_00_0", "0", "1"
 # ARCHITECTURE NOTE ON VRAM VS SHARED RAM:
@@ -155,7 +157,7 @@ protonfixes = true                             # Enable community protonfixes da
 gpu = "auto"
 
 wayland_native       = true                    # Enable Wine-Staging native Wayland driver (waylanddrv)
-prefer_xwayland      = false                   # Force DISPLAY=:0 for archaic engines lacking Wayland
+prefer_xwayland      = false                   # Keep false: this runner requires native Wayland
 vulkan_icd           = "auto"                  # Vulkan driver manifest: "auto", "nvidia", "radv", "intel"
 radv_perftest        = ""                      # RADV Vulkan debug/tuning flags (e.g. "sam,rt,aco")
 raytracing           = false                   # Enable DXR ray tracing (auto-sets VKD3D_CONFIG=dxr,dxr11)
@@ -185,9 +187,8 @@ force_grab_cursor = false                      # Force cursor capture/confinemen
 grab_keyboard     = false                      # Force exclusive keyboard capture (-g)
 realtime          = true                       # Real-time process priority (--rt)
 hdr               = false                      # Enable Gamescope HDR wide-gamut presentation
-hdr_itm           = false                      # Enable Gamescope SDR-to-HDR Inverse Tone Mapping (--hdr-itm-enable)
+hdr_itm           = false                      # Enable Gamescope SDR-to-HDR Inverse Tone Mapping (--hdr-itm-enabled)
 expose_wayland    = true                       # Expose wayland socket to native clients (--expose-wayland)
-xwayland_count    = 0                          # Spawn multiple nested Xwayland instances (--xwayland-count)
 mangoapp          = true                       # Use --mangoapp inside Gamescope (avoids double HUD)
 extra_args        = []                         # Custom CLI flags for Gamescope
 

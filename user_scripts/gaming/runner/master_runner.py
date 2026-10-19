@@ -1,15 +1,15 @@
-#!/usr/bin/env python3.14
+#!/usr/bin/env python3.15
 # -*- coding: utf-8 -*-
 # ==============================================================================
 #  MASTER GAME RUNNER ENGINE
 # ------------------------------------------------------------------------------
 #  Target platform : Arch Linux (rolling, 2026 spec) / Linux >= 7.3
-#  Interpreter     : CPython >= 3.14.7 (GIL or free-threaded build)
+#  Interpreter     : CPython >= 3.15.0rc3 (GIL or free-threaded build)
 #  Session         : Wayland / Hyprland -- no X11 session
 #  Dependencies    : stdlib only.  `rich` is an optional presentation upgrade.
 #
 #  Design rules enforced throughout this file:
-#    * ZERO legacy: no Python <3.14 shims, no X11-session fallbacks, no
+#    * ZERO legacy: no Python <3.15 shims, no X11-session fallbacks, no
 #      SysV/OpenRC paths, no deprecated Vulkan/Wine environment variables.
 #    * ZERO subprocess in hot paths: kernel state is read from procfs/sysfs.
 #      `mountpoint`, `lspci`, `vulkaninfo`, `fuser` are never required.
@@ -19,28 +19,28 @@
 # ==============================================================================
 """Master Game Runner Engine - declarative launcher for Arch Linux / Wayland."""
 
-import argparse
-import configparser
+lazy import argparse
+lazy import configparser
 import errno
 import fcntl
-import hashlib
-import json
+lazy import hashlib
+lazy import json
 import math
 import os
 import re
 import resource
 import selectors
-import shlex
+lazy import shlex
 import shutil
 import signal
-import socket
+lazy import socket
 import stat
-import struct
+lazy import struct
 import subprocess
 import sys
 import tempfile
 import time
-import tomllib
+lazy import tomllib
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager, suppress
 from dataclasses import dataclass, field, replace
@@ -48,17 +48,15 @@ from enum import IntEnum, StrEnum
 from functools import cache
 from pathlib import Path
 from typing import Any, Final, Self
+lazy from io import StringIO
+lazy from string import Template
+lazy import traceback
 
 # ------------------------------------------------------------------------------
-# Hard interpreter gate. This engine uses PEP 649 lazy annotations, PEP 750-era
-# stdlib behaviour, `Popen(process_group=)`, `pathlib` 3.14 semantics and
-# `tomllib`. There is deliberately no compatibility path.
+# CPython 3.15 is the deployment floor; no older-interpreter compatibility path.
 # ------------------------------------------------------------------------------
-if sys.version_info < (3, 14):  # pragma: no cover - environment guard
-    raise SystemExit(
-        f"master_runner requires CPython >= 3.14 (running {sys.version.split()[0]}). "
-        "Install `python` from [core] on Arch Linux."
-    )
+if sys.version_info < (3, 15):  # pragma: no cover - environment guard
+    raise SystemExit(f"master_runner requires CPython >= 3.15 (running {sys.version.split()[0]})")
 
 ENGINE_NAME: Final = "Master Game Runner Engine"
 ENGINE_SLUG: Final = "master-runner"
@@ -86,13 +84,11 @@ XDG_CONFIG_HOME: Final = _xdg("XDG_CONFIG_HOME", HOME / ".config")
 XDG_DATA_HOME: Final = _xdg("XDG_DATA_HOME", HOME / ".local/share")
 XDG_STATE_HOME: Final = _xdg("XDG_STATE_HOME", HOME / ".local/state")
 XDG_CACHE_HOME: Final = _xdg("XDG_CACHE_HOME", HOME / ".cache")
-XDG_RUNTIME_DIR: Final = Path(
-    os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
-)
+XDG_RUNTIME_DIR: Final = _xdg("XDG_RUNTIME_DIR", Path("/run/user") / str(os.getuid()))
 
 # Configuration search order: $XDG_CONFIG_HOME/master-runner, then alongside the
 # script (portable / git-checkout mode). The first hit that actually contains a
-# config.toml wins; otherwise the XDG location is used and auto-created.
+# config.toml or profiles wins; otherwise init-config uses the script directory.
 _CONFIG_CANDIDATES: Final = (XDG_CONFIG_HOME / ENGINE_SLUG, SELF_DIR)
 
 
@@ -242,19 +238,16 @@ def run_cmd(
     env: Mapping[str, str] | None = None,
     cwd: str | os.PathLike[str] | None = None,
     stdin_data: str | None = None,
-    check_binary: bool = True,
 ) -> Ran:
-    """Run `argv`, never raise, always bounded. Returns rc=127 if not found."""
-    if check_binary and not (
-        os.path.isabs(argv[0]) or shutil.which(argv[0]) is not None
-    ):
-        return Ran(127, "", f"{argv[0]}: command not found")
+    """Bounded helper; report OS errors as rc=127 and unwind on fatal signals."""
+    if not argv:
+        return Ran(127, "", "empty command")
     Log.trace("exec " + shlex.join(argv))
     try:
         with subprocess.Popen(
             list(argv), stdin=subprocess.PIPE if stdin_data is not None else subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-            errors="replace", start_new_session=True,
+            encoding="utf-8", errors="replace", start_new_session=True,
             env=dict(env) if env is not None else None,
             cwd=os.fspath(cwd) if cwd is not None else None,
         ) as proc:
@@ -352,19 +345,17 @@ def read_int(path: str | os.PathLike[str], default: int = 0) -> int:
 
 def notify(title: str, body: str, *, urgency: str = "normal", icon: str = "input-gaming",
            tag: str = ENGINE_SLUG) -> None:
-    """Fire-and-forget desktop notification; replaces prior ones via a tag."""
+    """Bounded best-effort notification; replaces prior ones via a tag."""
     if not have("notify-send"):
         return
     with suppress(Exception):
-        subprocess.Popen(
+        run_cmd(
             [
                 "notify-send", "--app-name", ENGINE_NAME, "--urgency", urgency,
                 "--icon", icon, "--hint", f"string:x-canonical-private-synchronous:{tag}",
                 title, body,
             ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
+            timeout=2.0,
         )
 
 
@@ -442,7 +433,7 @@ class MountTable:
         return e.fstype if e else ""
 
     def children_of(self, path: Path) -> list[MountEntry]:
-        prefix = os.path.normpath(str(path)) + "/"
+        prefix = os.path.normpath(str(path)).rstrip("/") + "/"
         return [e for t, e in self._by_target.items() if t.startswith(prefix)]
 
     @property
@@ -505,19 +496,22 @@ class MemInfo:
 
     @classmethod
     def read(cls) -> Self:
-        total = avail = 0
+        total = 0
+        avail: int | None = None
         for line in read_text("/proc/meminfo", 8192).splitlines():
             if line.startswith("MemTotal:"):
                 total = int(line.split()[1])
             elif line.startswith("MemAvailable:"):
                 avail = int(line.split()[1])
                 break
-        return cls(total or 16 << 20, avail or (total // 2 if total else 8 << 20))
+        if not total:
+            raise ConfigError("cannot determine physical memory from /proc/meminfo")
+        return cls(total, avail if avail is not None else total // 2)
 
 
 def cpu_count() -> int:
     # os.process_cpu_count() honours sched_setaffinity / cpuset cgroups.
-    return os.process_cpu_count() or os.cpu_count() or 4
+    return os.process_cpu_count() or os.cpu_count() or 1
 
 
 def kernel_release() -> tuple[int, ...]:
@@ -607,10 +601,10 @@ def raise_nofile() -> tuple[int, int]:
 #   the whole session, or (b) hold the logind inhibitor file descriptor. This
 #   client does both, in ~200 lines of stdlib, with zero external processes.
 # ==============================================================================
-_ALIGN: Final[dict[str, int]] = {
+_ALIGN: Final[frozendict[str, int]] = frozendict({
     "y": 1, "b": 4, "n": 2, "q": 2, "i": 4, "u": 4, "x": 8, "t": 8,
     "d": 8, "s": 4, "o": 4, "g": 1, "v": 1, "h": 4, "a": 4, "(": 8, "{": 8,
-}
+})
 
 
 class DBusError(RuntimeError):
@@ -721,12 +715,13 @@ class _Writer:
 
 
 class _Reader:
-    __slots__ = ("data", "pos", "fds")
+    __slots__ = ("data", "pos", "fds", "claimed_fds")
 
     def __init__(self, data: bytes, fds: Sequence[int] = ()) -> None:
         self.data = data
         self.pos = 0
         self.fds = list(fds)
+        self.claimed_fds: set[int] = set()
 
     def align(self, n: int) -> None:
         self.pos += (-self.pos) % n
@@ -761,7 +756,11 @@ class _Reader:
             case "h":
                 self.align(4)
                 idx = struct.unpack("<I", self.take(4))[0]
-                return self.fds[idx] if idx < len(self.fds) else -1
+                if idx >= len(self.fds):
+                    raise DBusError("invalid UNIX file descriptor index")
+                fd = self.fds[idx]
+                self.claimed_fds.add(fd)
+                return fd
             case "x":
                 self.align(8)
                 return struct.unpack("<q", self.take(8))[0]
@@ -885,24 +884,35 @@ class DBusConnection:
         return buf[:-2].decode("ascii", "replace")
 
     # -- io ---------------------------------------------------------------
-    def _recv_exact(self, n: int, want_fds: bool) -> tuple[bytes, list[int]]:
+    def _recv_exact(self, n: int, want_fds: bool, deadline: float) -> tuple[bytes, list[int]]:
         chunks = bytearray()
         fds: list[int] = []
-        while len(chunks) < n:
-            if want_fds:
-                data, anc, _flags, _addr = self._sock.recvmsg(
-                    n - len(chunks), socket.CMSG_SPACE(16 * 4)
-                )
-                for level, ctype, cdata in anc:
-                    if level == socket.SOL_SOCKET and ctype == socket.SCM_RIGHTS:
-                        usable = len(cdata) - (len(cdata) % 4)
-                        fds.extend(struct.unpack(f"<{usable // 4}i", cdata[:usable]))
-            else:
-                data = self._sock.recv(n - len(chunks))
-            if not data:
-                raise DBusError("bus connection closed")
-            chunks += data
-        return bytes(chunks), fds
+        try:
+            while len(chunks) < n:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise DBusError("timeout receiving bus reply")
+                self._sock.settimeout(remaining)
+                if want_fds:
+                    data, anc, flags, _addr = self._sock.recvmsg(
+                        n - len(chunks), socket.CMSG_SPACE(16 * 4), socket.MSG_CMSG_CLOEXEC
+                    )
+                    for level, ctype, cdata in anc:
+                        if level == socket.SOL_SOCKET and ctype == socket.SCM_RIGHTS:
+                            usable = len(cdata) - (len(cdata) % 4)
+                            fds.extend(struct.unpack(f"={usable // 4}i", cdata[:usable]))
+                    if flags & socket.MSG_CTRUNC:
+                        raise DBusError("truncated bus file descriptors")
+                else:
+                    data = self._sock.recv(n - len(chunks))
+                if not data:
+                    raise DBusError("bus connection closed")
+                chunks += data
+            return chunks.take_bytes(), fds
+        except BaseException:
+            for fd in fds:
+                os.close(fd)
+            raise
 
     def call(
         self,
@@ -938,59 +948,66 @@ class DBusConnection:
         hdr.write("a(yv)", fields)
         hdr.align(8)
 
-        self._sock.settimeout(timeout)
-        self._sock.sendall(bytes(hdr.buf) + bytes(body.buf))
-
         deadline = time.monotonic() + timeout
+        self._sock.settimeout(timeout)
+        hdr.buf += body.buf
+        self._sock.sendall(hdr.buf.take_bytes())
         while True:
             if time.monotonic() > deadline:
                 raise DBusError(f"timeout waiting for reply to {member}")
-            head, fds = self._recv_exact(16, True)
-            if head[0:1] != b"l":
-                raise DBusError("big-endian bus messages are not supported")
-            mtype = head[1]
-            # Fixed header layout (little-endian):
-            #   [0] endian [1] type [2] flags [3] protocol
-            #   [4:8] body length  [8:12] serial  [12:16] header-array length
-            body_len = struct.unpack("<I", head[4:8])[0]
-            arr_len = struct.unpack("<I", head[12:16])[0]
-            rest_len = arr_len + ((-arr_len) % 8) + body_len
-            rest, more_fds = self._recv_exact(rest_len, True)
-            fds.extend(more_fds)
+            head, fds = self._recv_exact(16, True, deadline)
+            transferred: set[int] = set()
+            try:
+                if head[0:1] != b"l":
+                    raise DBusError("big-endian bus messages are not supported")
+                mtype = head[1]
+                # Fixed header layout (little-endian):
+                #   [0] endian [1] type [2] flags [3] protocol
+                #   [4:8] body length  [8:12] serial  [12:16] header-array length
+                body_len = struct.unpack("<I", head[4:8])[0]
+                arr_len = struct.unpack("<I", head[12:16])[0]
+                rest_len = arr_len + ((-arr_len) % 8) + body_len
+                rest, more_fds = self._recv_exact(rest_len, True, deadline)
+                fds.extend(more_fds)
 
-            rdr = _Reader(head + rest, fds)
-            rdr.pos = 12
-            hdr_fields = rdr.read("a(yv)")
-            rdr.align(8)
+                rdr = _Reader(head + rest, fds)
+                rdr.pos = 12
+                hdr_fields = rdr.read("a(yv)")
+                rdr.align(8)
 
-            reply_serial = None
-            body_sig = ""
-            err_name = ""
-            for code, val in hdr_fields:
-                if code == self.HDR_REPLY:
-                    reply_serial = val
-                elif code == self.HDR_SIG:
-                    body_sig = val or ""
-                elif code == self.HDR_ERRNAME:
-                    err_name = val or ""
+                rdr.claimed_fds.clear()
+                reply_serial = None
+                body_sig = ""
+                err_name = ""
+                for code, val in hdr_fields:
+                    if code == self.HDR_REPLY:
+                        reply_serial = val
+                    elif code == self.HDR_SIG:
+                        body_sig = val or ""
+                    elif code == self.HDR_ERRNAME:
+                        err_name = val or ""
 
-            if reply_serial != serial:
+                if reply_serial != serial:
+                    continue  # signal or unrelated traffic; keep draining
+
+                if mtype == 3:  # METHOD_ERROR
+                    detail = ""
+                    with suppress(DBusError):
+                        if body_sig.startswith("s"):
+                            detail = rdr.read("s")
+                    raise DBusError(f"{err_name}: {detail}")
+
+                want = reply_sig or body_sig
+                if not want:
+                    return ()
+                result = tuple(rdr.read(s) for s in _sig_split(want))
+                transferred = rdr.claimed_fds
+                return result
+            finally:
                 for fd in fds:
-                    with suppress(OSError):
-                        os.close(fd)
-                continue  # signal or unrelated traffic; keep draining
-
-            if mtype == 3:  # METHOD_ERROR
-                detail = ""
-                with suppress(DBusError):
-                    if body_sig.startswith("s"):
-                        detail = rdr.read("s")
-                raise DBusError(f"{err_name}: {detail}")
-
-            want = reply_sig or body_sig
-            if not want:
-                return ()
-            return tuple(rdr.read(s) for s in _sig_split(want))
+                    if fd not in transferred:
+                        with suppress(OSError):
+                            os.close(fd)
 
     def close(self) -> None:
         with suppress(OSError):
@@ -1098,11 +1115,11 @@ def _uninhibit(conn: DBusConnection, dest: str, path: str, cookie: int) -> None:
 # SECTION 5 -- GPU + Vulkan ICD topology (pure sysfs, zero subprocess)
 # ==============================================================================
 PCI_CLASS_DISPLAY: Final = 0x03
-VENDOR_NAMES: Final[dict[int, str]] = {
+VENDOR_NAMES: Final[frozendict[int, str]] = frozendict({
     0x8086: "Intel", 0x1002: "AMD", 0x1022: "AMD", 0x10DE: "NVIDIA",
     0x1AF4: "Red Hat VirtIO", 0x1414: "Microsoft", 0x15AD: "VMware",
     0x1A03: "ASPEED", 0x102B: "Matrox", 0x1D17: "Zhaoxin",
-}
+})
 
 # Mesa/proprietary Vulkan ICD shared-object -> canonical vendor tag. Matching on
 # `library_path` (not on the manifest file name) is the only reliable method:
@@ -1124,12 +1141,12 @@ ICD_LIB_VENDOR: Final[tuple[tuple[str, str], ...]] = (
     ("libvulkan_powervr", "powervr"),
 )
 
-KMS_DRIVER_VENDOR: Final[dict[str, str]] = {
+KMS_DRIVER_VENDOR: Final[frozendict[str, str]] = frozendict({
     "amdgpu": "amd", "radeon": "amd",
     "i915": "intel", "xe": "intel",
     "nvidia": "nvidia", "nvidia-drm": "nvidia", "nouveau": "nouveau",
     "virtio_gpu": "virtio", "vmwgfx": "vmware", "simpledrm": "simple",
-}
+})
 
 
 @dataclass(frozen=True, slots=True)
@@ -1527,7 +1544,7 @@ def select_gpu(mode: str, *, prefer_vendor: str = "") -> Gpu | None:
         discrete = next((g for g in devs if g.is_amd), None)
     if len(devs) == 1:
         integrated = discrete = devs[0]
-    match enum_or(GpuSelection, mode, GpuSelection.AUTO):
+    match enum_or(GpuSelection, m, GpuSelection.AUTO):
         case GpuSelection.PRIMARY:
             return primary
         case GpuSelection.INTEGRATED:
@@ -1663,7 +1680,7 @@ def active_output() -> Output:
 # are duplicated. `copy.deepcopy` of the whole tree per profile (as in the
 # previous engine) is O(profiles x tree) allocations on every dashboard repaint.
 # ==============================================================================
-TomlDict = dict[str, Any]
+type TomlDict = dict[str, Any]
 
 
 def deep_merge(base: Mapping[str, Any], over: Mapping[str, Any]) -> TomlDict:
@@ -1683,14 +1700,9 @@ def deep_merge(base: Mapping[str, Any], over: Mapping[str, Any]) -> TomlDict:
     return out
 
 
-_VAR_RE: Final = re.compile(r"\$(\w+)|\$\{(\w+)\}")
-_MAX_EXPANSION_PASSES: Final = 8
-
-
 def expand_str(value: str, ctx: Mapping[str, str]) -> str:
     """Expand $VAR / ${VAR} from `ctx`, leaving unmatched tokens intact."""
     try:
-        from string import Template
         res = Template(value).safe_substitute(ctx)
         return os.path.expanduser(res) if res.startswith("~") else res
     except Exception:
@@ -1746,9 +1758,11 @@ def coerce_scalar(raw: str) -> Any:
         return False
     if low in ("null", "none", ""):
         return ""
-    if raw.startswith("[") and raw.endswith("]"):
-        inner = raw[1:-1].strip()
-        return [coerce_scalar(x) for x in shlex.split(inner.replace(",", " "))] if inner else []
+    if raw.strip().startswith("["):
+        try:
+            return tomllib.loads("value = " + raw)["value"]
+        except tomllib.TOMLDecodeError as exc:
+            raise ConfigError(f"invalid array override {raw!r}: {exc}") from exc
     with suppress(ValueError):
         return int(raw, 0)
     with suppress(ValueError):
@@ -1795,7 +1809,7 @@ auto_clean_workdir    = true
 union_backend         = "fuse-overlayfs"
 
 [graphics]
-gpu                   = "auto"    # auto|discrete|integrated|primary|nvidia|amd|intel
+gpu                   = "auto"    # auto: primary with gamescope, otherwise discrete; explicit roles/vendors supported
 wayland_native        = true      # Wine waylanddrv pure Wayland presentation
 prefer_xwayland       = false     # pure Wayland by default
 vulkan_icd            = "auto"    # auto|nvidia|radv|intel
@@ -1826,9 +1840,8 @@ force_grab_cursor     = false     # --force-grab-cursor
 grab_keyboard         = false     # -g
 realtime              = true      # --rt
 hdr                   = false
-hdr_itm               = false     # --hdr-itm-enable (SDR to HDR inverse tone mapping)
+hdr_itm               = false     # --hdr-itm-enabled (SDR to HDR inverse tone mapping)
 expose_wayland        = true      # --expose-wayland to nested clients
-xwayland_count        = 0
 mangoapp              = true      # use --mangoapp instead of MANGOHUD=1 inside
 extra_args            = []
 
@@ -1897,7 +1910,7 @@ post_launch = []
 post_unmount = []
 '''
 
-DEFAULT_PRESETS: Final[dict[str, str]] = {
+DEFAULT_PRESETS: Final[frozendict[str, str]] = frozendict({
     "base_native": '''\
 # Native ELF game: no translation layer, Wayland-first.
 [runtime]
@@ -1976,7 +1989,7 @@ mode = "fullscreen"
 fps_limit = 60
 mangohud = true
 ''',
-}
+})
 
 
 @dataclass(slots=True)
@@ -2016,6 +2029,16 @@ class Profile:
     @property
     def installed_hint(self) -> str:
         return str(self.get("paths.game_dir") or "")
+
+
+def profile_gpu(prof: Profile, *, under_gamescope: bool) -> Gpu | None:
+    """Keep automatic nested composition on the primary GPU.
+
+    Forcing a discrete compositor introduces a cross-GPU presentation path;
+    explicit selections remain available for systems where that path works.
+    """
+    mode = str(prof.get("graphics.gpu", "auto")).strip().lower() or "auto"
+    return select_gpu("primary" if under_gamescope and mode == "auto" else mode)
 
 
 class ProfileManager:
@@ -2124,10 +2147,6 @@ class ProfileManager:
 
         if cfg.get("schema") != 3:
             raise ConfigError(f"[{pid}] unsupported schema {cfg.get('schema')!r}; expected 3")
-        if (runtime := (cfg.get("runtime") or {}).get("type", "native")) not in (
-            "native", "script", "wine", "proton", "umu"
-        ):
-            raise ConfigError(f"[{pid}] unsupported runtime.type {runtime!r}")
         def check_types(node: Mapping[str, Any], defaults: Mapping[str, Any], prefix: str = "") -> None:
             for key, value in node.items():
                 field_name = f"{prefix}.{key}" if prefix else key
@@ -2152,6 +2171,22 @@ class ProfileManager:
                 elif isinstance(expected, list) and not isinstance(value, list):
                     raise ConfigError(f"[{pid}] {field_name} must be an array")
         check_types(cfg, tomllib.loads(DEFAULT_CONFIG_TOML))
+        runtime = cfg["runtime"]["type"]
+        if runtime not in ("native", "script", "wine", "proton", "umu"):
+            raise ConfigError(f"[{pid}] unsupported runtime.type {runtime!r}")
+        for section in ("hooks", "runtime.wine", "graphics.gamescope"):
+            node = cfg
+            for part in section.split("."):
+                node = node[part]
+            for key, value in node.items():
+                if isinstance(value, list) and not all(isinstance(item, str) for item in value):
+                    raise ConfigError(f"[{pid}] {section}.{key} must be an array of strings")
+        wine_cfg = cfg["runtime"]["wine"]
+        if runtime in ("umu", "proton"):
+            if wine_cfg["arch"] != "win64":
+                raise ConfigError(f"[{pid}] Proton/UMU requires runtime.wine.arch='win64'")
+            if wine_cfg["redistributables"] or wine_cfg["winetricks"]:
+                raise ConfigError(f"[{pid}] automatic redistributables/winetricks provisioning is only supported for runtime.type='wine'; provision the UMU prefix separately")
         for section in ("meta", "paths", "env"):
             if section in cfg and not isinstance(cfg[section], Mapping):
                 raise ConfigError(f"[{pid}] {section} must be a table")
@@ -2178,7 +2213,7 @@ class ProfileManager:
             isinstance(k, str) and isinstance(v, str) for k, v in overrides_cfg.items()
         ):
             raise ConfigError(f"[{pid}] runtime.wine.dll_overrides must map names to strings")
-        if str((cfg.get("runtime") or {}).get("wine", {}).get("sync_mode", "auto")) not in SyncMode._value2member_map_:
+        if cfg["runtime"]["wine"]["sync_mode"] not in SyncMode:
             raise ConfigError(f"[{pid}] invalid runtime.wine.sync_mode")
         for field_name, allowed in (
             ("graphics.vsync", {"default", "on", "off"}),
@@ -2194,7 +2229,12 @@ class ProfileManager:
         gs_cfg = cfg.get("graphics", {}).get("gamescope", {})
         if gs_cfg.get("immediate_flips") and gs_cfg.get("backend") != "drm":
             raise ConfigError(f"[{pid}] gamescope immediate_flips requires backend='drm'")
-        for field_name in ("performance.fps_limit", "runner.kill_grace_s", "runner.mount_timeout_s"):
+        for field_name in ("performance.fps_limit", "runner.kill_grace_s", "runner.mount_timeout_s",
+                           "audio.quantum", "audio.rate", "graphics.shader_cache_size_gb",
+                           "storage.dwarfs_workers", "storage.dwarfs_seq_detector",
+                           "graphics.gamescope.width", "graphics.gamescope.height",
+                           "graphics.gamescope.output_width", "graphics.gamescope.output_height",
+                           "graphics.gamescope.refresh_rate", "graphics.gamescope.unfocused_refresh"):
             node: Any = cfg
             for key in field_name.split("."):
                 node = node.get(key) if isinstance(node, Mapping) else None
@@ -2868,14 +2908,13 @@ NVNGX_DLLS: Final = ("nvngx.dll", "_nvngx.dll", "nvngx_dlssg.dll", "nvofapi64.dl
 class WinePrefix:
     """Prefix lifecycle: creation, repair, provisioning, NVAPI/DLSS wiring."""
 
-    __slots__ = ("path", "wine_bin", "server_bin", "arch", "_is_proton_layout")
+    __slots__ = ("path", "wine_bin", "server_bin", "arch")
 
     def __init__(self, path: Path, wine_bin: str = "wine", arch: str = "win64") -> None:
         self.path = path
         self.wine_bin = wine_bin
         self.arch = arch
         self.server_bin = self._sibling(wine_bin, "wineserver")
-        self._is_proton_layout: bool | None = None
 
     # -- layout -----------------------------------------------------------
     @staticmethod
@@ -2907,7 +2946,7 @@ class WinePrefix:
         env["WINEPREFIX"] = str(self.pfx)
         env["WINEARCH"] = self.arch
         env["WINEDEBUG"] = "-all"
-        env["DISPLAY"] = env.get("DISPLAY", "")
+        env.pop("DISPLAY", None)
         env.pop("WINEDLLOVERRIDES", None)
         if extra:
             env.update(extra)
@@ -3048,27 +3087,45 @@ class WinePrefix:
             if dst.is_symlink() and os.path.realpath(dst) == source:
                 managed[key] = source
                 return
-            if dst.exists() or dst.is_symlink():
-                if key not in managed and not dst.is_symlink():
-                    backup = dst.with_name(dst.name + ".master-runner-orig")
-                    if backup.exists():
-                        raise ConfigError(f"DLL backup already exists; refusing to replace {dst}")
-                    dst.rename(backup)
-                elif key not in managed:
-                    old_target = Path(os.path.realpath(dst))
-                    known = (Path("/usr/share/dxvk"), Path("/usr/share/vkd3d"),
-                             Path("/usr/share/vkd3d-proton"),
-                             XDG_DATA_HOME / "lutris/runtime",
-                             HOME / ".local/share/Steam/compatibilitytools.d",
-                             *NVIDIA_WINE_DIRS)
-                    if not any(old_target.is_relative_to(base) for base in known):
-                        raise ConfigError(f"unmanaged DLL symlink at {dst}; refusing to replace it")
-                    dst.unlink()
-                else:
-                    dst.unlink()
-            dst.symlink_to(src)
+            # Prepare the replacement before moving the original. A failed
+            # symlink operation must leave the prefix's current DLL usable.
+            fd, tmp = tempfile.mkstemp(prefix=f".{dst.name}.", dir=dst.parent)
+            os.close(fd)
+            temporary = Path(tmp)
+            temporary.unlink()
+            backup = dst.with_name(dst.name + ".master-runner-orig")
+            moved_original = False
+            try:
+                temporary.symlink_to(src)
+                if dst.exists() or dst.is_symlink():
+                    if not dst.is_symlink():
+                        if backup.exists():
+                            raise ConfigError(f"DLL backup already exists; refusing to replace {dst}")
+                        dst.rename(backup)
+                        moved_original = True
+                    elif key not in managed:
+                        old_target = Path(os.path.realpath(dst))
+                        known = (Path("/usr/share/dxvk"), Path("/usr/share/vkd3d"),
+                                 Path("/usr/share/vkd3d-proton"),
+                                 XDG_DATA_HOME / "lutris/runtime",
+                                 HOME / ".local/share/Steam/compatibilitytools.d",
+                                 *NVIDIA_WINE_DIRS)
+                        if not any(old_target.is_relative_to(base) for base in known):
+                            raise ConfigError(f"unmanaged DLL symlink at {dst}; refusing to replace it")
+                    elif os.path.realpath(dst) != managed[key]:
+                        raise ConfigError(f"managed DLL was replaced externally: {dst}")
+                os.replace(temporary, dst)
+            except BaseException:
+                if moved_original:
+                    backup.rename(dst)
+                raise
+            finally:
+                temporary.unlink(missing_ok=True)
             managed[key] = source
             linked += 1
+            # Persist each completed replacement so a later component failure
+            # cannot leave successfully installed DLLs untracked.
+            _write_atomic(manifest, json.dumps(managed, indent=2) + "\n")
 
         def disable(names: Sequence[str], directory: Path) -> None:
             for name in names:
@@ -3076,8 +3133,9 @@ class WinePrefix:
                 key = str(dst)
                 if key not in managed:
                     continue
-                if dst.is_symlink() and os.path.realpath(dst) == managed[key]:
-                    dst.unlink()
+                if (not dst.exists() and not dst.is_symlink()) or (
+                        dst.is_symlink() and os.path.realpath(dst) == managed[key]):
+                    dst.unlink(missing_ok=True)
                     backup = dst.with_name(dst.name + ".master-runner-orig")
                     if backup.exists():
                         backup.rename(dst)
@@ -3128,6 +3186,9 @@ class WinePrefix:
         if want_dxvk:
             for arch, target_dir in targets:
                 dxvk_src = _find_translator_dir("dxvk", arch)
+                if target_dir == sys32 and (dxvk_src is None or not any(
+                        (dxvk_src / dll).is_file() for dll in ("d3d11.dll", "dxgi.dll", "d3d9.dll"))):
+                    raise ConfigError(f"requested DXVK runtime is missing for {arch}; install it before launching")
                 if dxvk_src:
                     for dll in ("d3d11.dll", "dxgi.dll", "d3d9.dll", "d3d10core.dll", "d3d8.dll"):
                         src = dxvk_src / dll
@@ -3141,6 +3202,8 @@ class WinePrefix:
         if want_vkd3d:
             for arch, target_dir in targets:
                 vkd3d_src = _find_translator_dir("vkd3d", arch)
+                if target_dir == sys32 and (vkd3d_src is None or not (vkd3d_src / "d3d12.dll").is_file()):
+                    raise ConfigError(f"requested VKD3D runtime is missing for {arch}; install it before launching")
                 if vkd3d_src:
                     for dll in ("d3d12.dll", "d3d12core.dll"):
                         src = vkd3d_src / dll
@@ -3154,6 +3217,9 @@ class WinePrefix:
         if want_nvapi:
             for arch, target_dir in targets:
                 nvapi_src = _find_translator_dir("dxvk-nvapi", arch)
+                if target_dir == sys32 and (nvapi_src is None or not any(
+                        (nvapi_src / dll).is_file() for dll in ("nvapi64.dll", "nvapi.dll"))):
+                    raise ConfigError(f"requested DXVK-NVAPI runtime is missing for {arch}; install it before launching")
                 if nvapi_src:
                     for dll in ("nvapi64.dll", "nvofapi64.dll", "nvapi.dll"):
                         src = nvapi_src / dll
@@ -3225,9 +3291,9 @@ class WinePrefix:
         want_hash = hashlib.blake2b(
             json.dumps(
                 {
-                    "redist": sorted(redistributables),
+                    "redist": list(redistributables),
                     "redist_files": sorted(x for x in redist_files if x is not None),
-                    "verbs": sorted(winetricks),
+                    "verbs": list(winetricks),
                     "arch": self.arch,
                     "engine": ENGINE_VERSION,
                     "wine": fingerprint(wine_path),
@@ -3246,6 +3312,10 @@ class WinePrefix:
             return
 
         with file_lock(RUNTIME_DIR / f"prefix-{_slug(str(self.path))}.lock"):
+            registry = read_text(self.pfx / "system.reg", 4096)
+            for line in registry.splitlines()[:5]:
+                if line.startswith("#arch=") and line.removeprefix("#arch=") != self.arch:
+                    raise ConfigError(f"prefix architecture {line.removeprefix('#arch=')} does not match configured {self.arch}: {self.pfx}")
             have_hash = ""
             with suppress(OSError, ValueError):
                 have_hash = str(json.loads(self.stamp.read_text(encoding="utf-8")).get("hash", ""))
@@ -3340,9 +3410,10 @@ class WinePrefix:
             argv0 = ["winetricks"]
         else:
             raise ConfigError(f"winetricks unavailable for required verbs: {' '.join(verbs)}")
+        env = dict(env, WINE=self.wine_bin, WINESERVER=self.server_bin)
         for verb in verbs:
             Log.info(f"winetricks: {verb}")
-            r = run_cmd([*argv0, "-q", "--unattended", verb], env=env, timeout=1800.0)
+            r = run_cmd([*argv0, "--unattended", verb], env=env, timeout=1800.0)
             if not r.ok:
                 raise ConfigError(f"winetricks {verb} exited {r.rc}: {r.message}")
             self.serverwait(env)
@@ -3378,38 +3449,6 @@ def _slug(text: str) -> str:
 # ==============================================================================
 # SECTION 11 -- Environment matrix
 # ==============================================================================
-def host_x11_display(env: Mapping[str, str]) -> str:
-    """Find a live host X11 endpoint, including one published after this process started."""
-    def usable(display: str) -> bool:
-        local = re.fullmatch(r":(\d+)(?:\.\d+)?", display)
-        return bool(display and (local is None or
-                    Path(f"/tmp/.X11-unix/X{local.group(1)}").exists()))
-
-    inherited = env.get("DISPLAY", "")
-    if usable(inherited):
-        return inherited
-    # Compositors may start Xwayland after a terminal/launcher was created.
-    # The user manager receives the compositor's DISPLAY via environment import.
-    published = run_cmd(["systemctl", "--user", "show-environment"], timeout=2)
-    if published.ok:
-        for line in published.out.splitlines():
-            if line.startswith("DISPLAY="):
-                display = line.removeprefix("DISPLAY=")
-                if usable(display):
-                    return display
-    return ""
-
-
-def host_x11_problem(env: Mapping[str, str]) -> str:
-    """Return an actionable reason when the host has no usable X11 display."""
-    if host_x11_display(env):
-        return ""
-    display = env.get("DISPLAY", "")
-    if display:
-        return f"DISPLAY={display} has no usable X11 endpoint"
-    return "Xwayland requested but DISPLAY is unset; enable host Xwayland or use native Wayland"
-
-
 class EnvironmentBuilder:
     """Deterministic construction of the child environment.
 
@@ -3470,39 +3509,29 @@ class EnvironmentBuilder:
                 self.env[key] = value
 
     def stage_session(self, *, under_gamescope: bool) -> None:
-        gfx = self.p.sect("graphics")
-        wayland_native = gfx.get("wayland_native")
-        xwayland = bool(gfx.get("prefer_xwayland", False)) or (wayland_native is False)
+        if (not self.p.get("graphics.wayland_native", True) or
+                self.p.get("graphics.prefer_xwayland", False)):
+            raise ConfigError(f"[{self.p.pid}] this runner requires native Wayland presentation")
+        if under_gamescope and not self.p.get("graphics.gamescope.expose_wayland", True):
+            raise ConfigError("gamescope must expose Wayland clients")
 
-        # The environment we build is inherited by the WHOLE pipeline, gamescope
-        # included. gamescope --backend wayland needs the *host* WAYLAND_DISPLAY
-        # to attach to Hyprland; it then overrides WAYLAND_DISPLAY/DISPLAY for
-        # its own child with its nested compositor + Xwayland. Clearing the host
-        # socket here would leave gamescope with no backend at all.
+        # gamescope receives the host socket, then publishes its nested socket
+        # to the game. Do not replace the host socket with an invented name.
+        wl = self.env.get("WAYLAND_DISPLAY")
+        backend = str(self.p.get("graphics.gamescope.backend", "wayland"))
+        if not wl and (not under_gamescope or backend == "wayland"):
+            Log.warn("WAYLAND_DISPLAY is unset -- this engine targets a Wayland session")
+        self._drop("DISPLAY")
+        self._set("SDL_VIDEODRIVER", "wayland")
+        self._set("CLUTTER_BACKEND", "wayland")
+        self._set("GDK_BACKEND", "wayland")
+        self._set("QT_QPA_PLATFORM", "wayland")
+        self._set("XDG_SESSION_TYPE", "wayland")
+        self._set("PROTON_ENABLE_WAYLAND", "1")
+        self._set("MOZ_ENABLE_WAYLAND", "1")
+        self.notes["session"] = "gamescope-wayland" if under_gamescope else "wayland"
         if under_gamescope:
-            host_wl = os.environ.get("WAYLAND_DISPLAY")
-            if host_wl:
-                self._set("WAYLAND_DISPLAY", host_wl)
-            elif str(self.p.get("graphics.gamescope.backend", "wayland")) == "wayland":
-                Log.warn(
-                    "gamescope wayland backend selected but WAYLAND_DISPLAY is "
-                    "unset -- use backend='drm' or 'headless'"
-                )
-            is_wine_rt = str(self.p.get("runtime.type", "native")) in ("wine", "proton", "umu")
-            # Under gamescope, Wine/Proton games should always route via gamescope's
-            # X11 server (winex11.drv) where mode changes, resolution switches, and
-            # cursor grabs are virtualized seamlessly with zero Wayland protocol stalls.
-            force_x11 = xwayland or is_wine_rt
-            self._set("SDL_VIDEODRIVER", "x11" if force_x11 else "wayland")
-            self._set("QT_QPA_PLATFORM", "xcb" if force_x11 else "wayland")
-            self._set("GDK_BACKEND", "x11" if force_x11 else "wayland")
-            # ENABLE_GAMESCOPE_WSI routes the client's VK_KHR_swapchain through
-            # the gamescope WSI layer; it is mandatory for HDR passthrough and
-            # for gamescope's own frame limiter to see real present timings.
             self._set("ENABLE_GAMESCOPE_WSI", "1")
-            self._set("PROTON_ENABLE_WAYLAND", "0" if force_x11 else "1")
-            self.notes["session"] = "gamescope-nested"
-            return
 
         out = active_output()
         if out.width and out.height:
@@ -3511,37 +3540,6 @@ class EnvironmentBuilder:
             self._set("MASTER_RUNNER_DISPLAY_REFRESH", str(int(round(out.refresh_hz))))
             self._set("MASTER_RUNNER_DISPLAY_SCALE", str(out.scale))
             self._set("MASTER_RUNNER_DISPLAY_NAME", out.name)
-
-        if xwayland:
-            self._set("SDL_VIDEODRIVER", "x11")
-            self._set("GDK_BACKEND", "x11")
-            self._set("QT_QPA_PLATFORM", "xcb")
-            self._set("CLUTTER_BACKEND", "x11")
-            # DISPLAY is the compositor's authoritative X11 endpoint. Picking
-            # an arbitrary socket can attach a game to another Gamescope or an
-            # unrelated nested server; inventing :0 hides a missing Xwayland.
-            display = host_x11_display(self.env)
-            if not display:
-                raise ConfigError(f"[{self.p.pid}] {host_x11_problem(self.env)}")
-            self._set("DISPLAY", display)
-            self._drop("PROTON_ENABLE_WAYLAND")
-            self.notes["session"] = "xwayland"
-        else:
-            # Older bundled SDL builds treat a comma-separated value as one
-            # driver name, so select one backend explicitly.
-            self._set("SDL_VIDEODRIVER", "wayland")
-            self._set("CLUTTER_BACKEND", "wayland")
-            self._set("GDK_BACKEND", "wayland,x11")
-            self._set("QT_QPA_PLATFORM", "wayland;xcb")
-            self._set("XDG_SESSION_TYPE", "wayland")
-            self._set("PROTON_ENABLE_WAYLAND", "1")
-            self._set("MOZ_ENABLE_WAYLAND", "1")
-            wl = os.environ.get("WAYLAND_DISPLAY")
-            if wl:
-                self._set("WAYLAND_DISPLAY", wl)
-            else:
-                Log.warn("WAYLAND_DISPLAY is unset -- this engine targets a Wayland session")
-            self.notes["session"] = "wayland"
 
         if bool(self.p.get("input.raw_input", True)):
             self._set("SDL_MOUSE_RELATIVE_MODE_WARP", "0")
@@ -3603,10 +3601,10 @@ class EnvironmentBuilder:
             Log.warn("no display-class PCI device found; leaving GPU env untouched")
             return
 
-        gpu = select_gpu(mode)
+        gpu = profile_gpu(self.p, under_gamescope=under_gamescope)
         if gpu is None:
             Log.warn(f"graphics.gpu={mode!r} matched no device; falling back to auto")
-            gpu = select_gpu("auto")
+            gpu = select_gpu("primary" if under_gamescope else "auto")
         if gpu is None:
             return
         self.gpu = gpu
@@ -3656,10 +3654,8 @@ class EnvironmentBuilder:
                 if hybrid:
                     # PRIME render offload. DRI_PRIME is a *Mesa* knob and is
                     # deliberately NOT set: with the proprietary stack it makes
-                    # Mesa pick a device for GLX/EGL that the NVIDIA GLVND
-                    # vendor library then contradicts.
+                    # Mesa select a renderer conflicting with NVIDIA EGL.
                     self._set("__NV_PRIME_RENDER_OFFLOAD", "1")
-                    self._set("__GLX_VENDOR_LIBRARY_NAME", "nvidia")
                     self._set("__VK_LAYER_NV_optimus", "NVIDIA_only")
                 self._set("__GL_THREADED_OPTIMIZATIONS",
                           "1" if gfx.get("gl_threaded", True) else "0")
@@ -3868,6 +3864,11 @@ class EnvironmentBuilder:
         # ---- UMU / Proton ------------------------------------------------
         if rt in ("proton", "umu"):
             umu = self.p.sect("runtime", "umu")
+            # Shared runtime downloads belong to the launcher data directory,
+            # even when a profile redirects HOME or XDG_DATA_HOME for its saves.
+            self.env.setdefault("UMU_FOLDERS_PATH", str(XDG_DATA_HOME))
+            if self.env.get("LC_ALL"):
+                self.env.setdefault("HOST_LC_ALL", self.env["LC_ALL"])
             self._set("GAMEID", str(umu.get("game_id") or f"umu-{self.p.pid}"))
             self._set("STORE", str(umu.get("store") or "none"))
             self._set("PROTON_VERB", str(umu.get("verb") or "waitforexitandrun"))
@@ -3899,21 +3900,12 @@ class EnvironmentBuilder:
             force=bool(self.p.get("runtime.wine.reprovision", False)),
             dry_run=dry_run,
         )
-        if rt == "wine":
-            native_wayland = (bool(self.p.get("graphics.wayland_native", True)) and
-                              not bool(self.p.get("graphics.prefer_xwayland", False)) and
-                              not under_gamescope)
-            if native_wayland:
-                if not self.env.get("WAYLAND_DISPLAY"):
-                    raise ConfigError(f"[{self.p.pid}] native Wine Wayland requested without WAYLAND_DISPLAY")
-                self._drop("DISPLAY")
-                self.notes["wine display"] = "Wayland"
-                if not dry_run:
-                    prefix.set_graphics_driver("wayland", self.env)
-            else:
-                self.notes["wine display"] = "Xwayland"
-                if not dry_run:
-                    prefix.set_graphics_driver("x11", self.env)
+        if not under_gamescope and not self.env.get("WAYLAND_DISPLAY"):
+            raise ConfigError(f"[{self.p.pid}] native Wine Wayland requested without WAYLAND_DISPLAY")
+        self._drop("DISPLAY")
+        self.notes["wine display"] = "Wayland"
+        if not dry_run:
+            prefix.set_graphics_driver("wayland", self.env)
 
     def stage_overlays(self, *, under_gamescope: bool) -> None:
         perf = self.p.sect("performance")
@@ -3990,7 +3982,7 @@ class EnvironmentBuilder:
         tree = self.paths.game_dir / "files" / "dwarfs-tree"
         if tree.is_file():
             with suppress(OSError):
-                content = tree.read_text(errors="ignore")
+                content = tree.read_text(encoding="utf-8", errors="ignore")
                 if "mscorlib.dll" in content or "FNA.dll" in content:
                     return True
         return False
@@ -4059,15 +4051,17 @@ def parse_affinity(spec: str) -> list[int]:
                 keep.append(cpu)
         return keep or online
     out: list[int] = []
+    allowed = set(online)
     for chunk in spec.replace(" ", "").split(","):
         if "-" in chunk:
             a, _, b = chunk.partition("-")
             with suppress(ValueError):
-                out.extend(range(int(a), int(b) + 1))
+                lo, hi = int(a), int(b)
+                out.extend(cpu for cpu in online if lo <= cpu <= hi)
         else:
             with suppress(ValueError):
                 out.append(int(chunk))
-    return [c for c in dict.fromkeys(out) if c in set(online)]
+    return [c for c in dict.fromkeys(out) if c in allowed]
 
 
 class ConfigPatcher:
@@ -4095,7 +4089,7 @@ class ConfigPatcher:
         w = int(env.get("MASTER_RUNNER_DISPLAY_WIDTH") or out.width or 1920)
         h = int(env.get("MASTER_RUNNER_DISPLAY_HEIGHT") or out.height or 1080)
         r = int(env.get("MASTER_RUNNER_DISPLAY_REFRESH") or round(out.refresh_hz) or 60)
-        selected = select_gpu(str(prof.get("graphics.gpu", "auto")))
+        selected = profile_gpu(prof, under_gamescope=under_gamescope)
         gpu = str(env.get("DXVK_FILTER_DEVICE_NAME") or env.get("VKD3D_FILTER_DEVICE_NAME")
                   or (selected.vulkan_name or selected.model if selected else "Unknown GPU"))
 
@@ -4258,7 +4252,6 @@ class ConfigPatcher:
         else:
             try:
                 target.parent.mkdir(parents=True, exist_ok=True)
-                from io import StringIO
                 buffer = StringIO()
                 cp.write(buffer)
                 _write_atomic(target, buffer.getvalue())
@@ -4333,7 +4326,7 @@ class PipelineBuilder:
             Log.warn(f"fps_limit={fps} exceeds output refresh {rate} Hz")
 
         argv: list[str] = ["gamescope", "--backend", backend]
-        if backend == "wayland" and bool(gs.get("expose_wayland", True)):
+        if bool(gs.get("expose_wayland", True)):
             # Without --expose-wayland a Wayland-native client (Proton's Wayland
             # driver, SDL3, Godot 4) cannot bind xdg-shell inside gamescope and
             # silently falls back to Xwayland.
@@ -4388,14 +4381,9 @@ class PipelineBuilder:
             argv.append("--hdr-enabled")
             if bool(gs.get("hdr_itm", False)):
                 argv.append("--hdr-itm-enabled")
-        xw = _int0(gs.get("xwayland_count"))
-        if xw > 0:
-            argv += ["--xwayland-count", str(xw)]
-
-        # Pin gamescope's own compositing device on hybrid systems, otherwise it
-        # may composite on the iGPU while the game renders on the dGPU, adding a
-        # full PCIe copy per frame.
-        gpu = select_gpu(str(self.p.get("graphics.gpu", "auto")))
+        # Use the same policy as the child environment. Automatically forcing
+        # a discrete compositor can introduce a failing cross-driver import.
+        gpu = profile_gpu(self.p, under_gamescope=True)
         if gpu and len([g for g in gpus() if not g.is_software]) > 1:
             argv += ["--prefer-vk-device", gpu.vk_device_select]
 
@@ -4445,8 +4433,6 @@ class PipelineBuilder:
         argv += ["--bind", str(self.paths.game_dir), str(self.paths.game_dir)]
         if self.paths.uses_dwarfs:
             argv += ["--bind", str(self.paths.overlay_dir), str(self.paths.overlay_dir)]
-        if os.path.exists("/tmp/.X11-unix"):
-            argv += ["--ro-bind-try", "/tmp/.X11-unix", "/tmp/.X11-unix"]
         if bool(sb.get("bind_gpu", True)):
             argv += ["--dev-bind-try", "/dev/dri", "/dev/dri"]
             for node in sorted(Path("/dev").glob("nvidia*")):
@@ -4668,6 +4654,7 @@ class Supervisor:
 
     def __post_init__(self) -> None:
         self._own_cgroup = cgroup_of(os.getpid())
+        self._cgroup_probed = not bool(self.scope_unit)
         with suppress(OSError):
             self._pgid = os.getpgid(self.proc.pid)
 
@@ -4751,7 +4738,12 @@ class Supervisor:
                 # Capture the scope while the leader exists; short-lived
                 # launchers may otherwise disappear before their children.
                 self.cgroup
-                for key, _ in sel.select(timeout=0.05 if not self._cgroup_probed else 0.25):
+                # Once the scope is known, pidfd/signal readiness can wake us
+                # directly. Poll only while locating a new scope or observing
+                # descendants after their original leader has exited.
+                timeout = (0.1 if leader_exited else
+                           0.05 if not self._cgroup_probed else None)
+                for key, _ in sel.select(timeout=timeout):
                     if key.data == "child":
                         self._reap()
                         sel.unregister(pidfd)
@@ -5333,7 +5325,7 @@ def collect_checks() -> list[Check]:
     if any(g.is_nvidia for g in devs):
         modeset_raw = read_first_line("/sys/module/nvidia_drm/parameters/modeset").upper()
         ver_raw = read_first_line("/sys/module/nvidia/version")
-        ver_match = re.match(r"^(\d+)", ver_raw)
+        ver_match = re.prefixmatch(r"^(\d+)", ver_raw)
         has_card = any(g.is_nvidia and g.card.startswith("card") for g in devs)
         cmdline = read_first_line("/proc/cmdline")
         modeset_active = (modeset_raw in ("Y", "1") if modeset_raw in ("Y", "1", "N", "0")
@@ -5415,12 +5407,12 @@ def doctor(*, fix: bool, as_json: bool) -> int:
     return 1 if any(c.state is Health.FAIL for c in checks) else 0
 
 
-_HEALTH_STYLE: Final = {
+_HEALTH_STYLE: Final = frozendict({
     Health.OK: ("bold green", Ansi.GREEN, "OK  "),
     Health.WARN: ("bold yellow", Ansi.YELLOW, "WARN"),
     Health.FAIL: ("bold red", Ansi.RED, "FAIL"),
     Health.INFO: ("dim", Ansi.DIM, "  · "),
-}
+})
 
 
 def _render_checks(checks: Sequence[Check]) -> None:
@@ -5504,11 +5496,9 @@ def validate(mgr: ProfileManager, targets: Sequence[str] | str | None, *, as_jso
                     problems.append(f"runtime launcher missing: {launcher}")
             elif prof.runtime == "wine" and shutil.which(str(prof.get("runtime.wine.wine_binary") or "wine")) is None:
                 problems.append("Wine launcher missing")
-            if (not prof.get("graphics.gamescope.enabled", False) and
-                    (prof.get("graphics.prefer_xwayland", False) or
-                     prof.get("graphics.wayland_native", True) is False)):
-                if problem := host_x11_problem(os.environ):
-                    problems.append(problem)
+            if (prof.get("graphics.prefer_xwayland", False) or
+                    prof.get("graphics.wayland_native", True) is False):
+                problems.append("profile requires native Wayland presentation")
             if prof.get("graphics.gamescope.enabled", False) and not have("gamescope"):
                 problems.append("gamescope requested but not installed")
             if prof.get("sandbox.enabled", False) and not have("bwrap"):
@@ -5732,7 +5722,7 @@ class Scaffolder:
 
 
 def _toml_str(value: str) -> str:
-    return value.replace("\\", "\\\\").replace('"', '\\"')
+    return json.dumps(value, ensure_ascii=False)[1:-1].replace("\x7f", r"\u007f")
 
 
 # ==============================================================================
@@ -6057,7 +6047,6 @@ def _launch_many(mgr: ProfileManager, pids: Sequence[str], opts: RunOptions) -> 
         except Exception as exc:  # last-resort guard: never kill the dashboard
             Log.error(f"unhandled error running {pid}: {exc!r}")
             if Log.level >= Verbosity.VERBOSE:
-                import traceback
                 traceback.print_exc()
             rc = 70
     return rc
@@ -6611,7 +6600,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     except Exception as exc:
         Log.error(f"fatal: {exc!r}")
         if Log.level >= Verbosity.VERBOSE:
-            import traceback
             traceback.print_exc()
         return 70            # EX_SOFTWARE
 

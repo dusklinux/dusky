@@ -1,5 +1,232 @@
 # Runner lifecycle audit — 2026-09-30
 
+## Current audit status — 2026-10-19
+
+**No full Green Light.** Non-graphical runner verification passed, but the
+NVIDIA gamescope probes coincided with two Hyprland crashes. All graphics
+testing stopped when the user reported them. No compositor settings, GPU
+driver packages, or installed game prefixes were changed. No test workloads
+or `master-runner-*.scope` units remained after the tests.
+
+Evidence: `${XDG_STATE_HOME:-$HOME/.local/state}/master-runner/audits/2026-10-19/`.
+The older audit below describes its own historical environment and results.
+
+### Phase 1: structure and logic
+
+Read the entire runner and reviewed directly related configuration, tests,
+the I/O shim and relevant Lutris source. The Lutris comparison covered
+`monitored_command.py`, its wrapper and process watcher, Wine prefix and
+architecture detection, DLL managers, Proton/UMU environment construction,
+GPU/ICD detection, XDG settings and runtime discovery. Translations, assets,
+unrelated services and emulator implementations were outside this comparison.
+
+Changes:
+
+- Validate section shapes before accessing their nested fields, and reject
+  incorrectly typed argument/hook/provisioning arrays and negative dimensions,
+  audio parameters, workers and cache sizes.
+- Parse CLI arrays with TOML rather than stripping quotes and splitting commas.
+  Strings such as `"true"`, `"12"` and `"a,b"` retain their types and contents.
+- Prepare replacement DLL links before moving originals, preserve originals
+  when publication fails, persist completed links before attempting another
+  component, and restore originals even if a broken managed link was removed
+  already. Missing requested translation runtimes now produce an explicit error.
+- Use existing registry architecture to reject conflicting Wine prefix settings,
+  following Lutris's architecture-aware approach. UMU/Proton require win64;
+  provisioning arrays that this path previously ignored now report that they
+  require separate provisioning instead of silently succeeding.
+- Keep UMU's shared runtime path independent of game-specific HOME/data paths,
+  and propagate the host locale. Proton still owns its prefix and translators.
+- Make Winetricks use the selected Wine and wineserver, with one documented
+  unattended option instead of duplicate aliases.
+- Stop forcing Wine to X11 under gamescope. Native Wayland backends are used
+  consistently, and gamescope exposes native Wayland clients. Existing profiles
+  requesting X11 presentation are reported as unavailable; no fallback was added.
+- Wait directly on pidfd/signal events while the original leader is running
+  once its scope is known. Descendant observation and scope discovery retain
+  their necessary polling. Large affinity ranges are bounded by usable CPUs.
+- Apply a total D-Bus reply deadline, including fragmented reads; close received
+  descriptors on failure or when no caller claims them. Notification helpers
+  are now bounded and reaped. Empty commands return an error result, supplied
+  child PATH is honored, and zero MemAvailable no longer becomes half of RAM.
+
+### Phase 2: modern interfaces
+
+The actual shebang now selects Python 3.15. Adopted explicit lazy stdlib imports,
+immutable `frozendict` tables, a modern type alias, `re.prefixmatch`, consuming
+private bytearrays with `take_bytes`, and explicit UTF-8 for defined text formats.
+Optional Rich imports retain their existing local ImportError handling.
+
+Checked installed manuals/help for DwarFS, mkdwarfs, fuse-overlayfs, fusermount3,
+umount, stat, systemd-run, systemctl, bubblewrap, taskset, Bash, GCC, notify-send,
+fzf, MangoHud, GameMode, desktop-database updating, sudo, sysctl and modprobe.
+Gamescope and vulkaninfo lack installed manual pages; their installed help was
+used. MangoHud/GameMode wrappers execute their arguments rather than interpreting
+`--help`, so their installed manuals supply their interface documentation.
+Wine, wineserver, UMU and Winetricks are absent: their relevant interfaces were
+checked against upstream source/docs, without claiming installed-runtime tests.
+
+Observed: Python 3.15.0rc3, kernel 7.3.0-rc7, systemd 262.1, Hyprland
+19fb395d4, DwarFS 0.15.8, FUSE 3.18.3, fuse-overlayfs 1.18, bubblewrap 0.13.1,
+gamescope 3.16.31, util-linux 2.42.4, Bash 5.3.20, fzf 0.74.5. The final ISO
+package manifest is unavailable; these are development-system observations.
+
+References: [Python 3.15](https://docs.python.org/3.15/whatsnew/3.15.html),
+[D-Bus protocol](https://dbus.freedesktop.org/doc/dbus-specification.html),
+[UMU manual](https://github.com/Open-Wine-Components/umu-launcher/blob/main/docs/umu.1.scd),
+[Winetricks options and Wine selection](https://github.com/Winetricks/winetricks/blob/master/src/winetricks).
+
+### Phase 3: empirical results and unresolved failure
+
+- Initial new regression group: 2/19 tests passed against the original script;
+  all 19 pass after fixes. Additional regressions were added during review.
+- Final non-graphical suite: **43 passed**, 22 opt-in integration cases skipped.
+  Includes 25 audit tests for configuration, protocols, FD ownership, DLL failure
+  recovery, architecture, PATH, Winetricks, affinity and event-driven supervision.
+- Real FUSE/systemd lifecycle run: **62 passed**, one live Wine case skipped
+  (63 tests before the final PATH and Winetricks regression additions).
+  Includes mount rollback/recovery, busy stacks, persistence, detached children,
+  all four fatal signals, stubborn/stopped processes, concurrent launches,
+  sandbox cleanup, unusual paths and 20 repeated complete launches.
+- Additional stress: **100/100** full disposable DwarFS/overlay/systemd launch
+  cycles completed with verified unmounts (109.106 seconds).
+- Shared reliability suite: **24 passed**, including 21 runner checks and
+  three retained installer checks. Obsolete X11 compatibility tests were removed.
+- Twelve CLI scenarios passed, including scaffold/init, JSON list/status/
+  validation/environment/dry-run, desktop-file validation, native/script launch,
+  and malformed configuration errors. UTF-8 warning checks found no runner warnings.
+- All 50 existing profiles parse without configuration errors. Availability:
+  13 valid, 37 unavailable due to current missing assets/runtimes or unsupported
+  presentation choices. Doctor returned 28 OK and 16 informational checks;
+  it is not a substitute for live graphics testing.
+- Native Wayland Vulkan cube rendering returned 0 on both Intel and NVIDIA.
+  Intel gamescope rendering also returned 0. These successful probes do not
+  establish session stability: see the crashes below.
+- **NVIDIA gamescope failed twice**, returning 134 with `IWaitable hung up`.
+  Disabling the gamescope WSI layer did not resolve it. Hyprland crashed at
+  14:26:31 and 14:27:14 local time, coinciding with those probes. Both crash
+  reports show Mesa's `dri_create_fence_fd` and Hyprland's
+  `Render::GL::CEGLSync::create()` in their abort stack. This implicates the
+  graphics synchronization path; it does not establish the root cause or prove
+  that a runner change fixes it. Crash reports and graphics logs are preserved.
+  No further live graphics probes were run after the user reported the crashes.
+- Compilation and scoped Git whitespace/diff review passed. No commits/staging
+  were performed. Live Wine/UMU, AMD hardware, HDR, every game, and arbitrary
+  future package versions remain unverified.
+
+Scores are observed regression pass percentages, not whole-program ratings:
+
+| Area / measured probe | Before | After | Result |
+|---|---:|---:|---|
+| Reliability: initial 19 regression tests | 11 | 100 | Better; 2/19 → 19/19 |
+| Efficiency: event-driven leader wait | 0 | 100 | Better; blocking-wait regression passes |
+| Gameplay performance / graphics stability | N/A | N/A | No FPS claim; graphics failure unresolved |
+
+Paired warm-process startup measurements (20 samples per version on the same
+interpreter) observed median `--version` 239.2 → 226.7 ms and an empty JSON
+catalogue 221.0 → 212.2 ms. These runs overlapped other audit work, so the small
+differences are not treated as a controlled performance result.
+
+For non-graphical regression checks:
+
+```sh
+python3.15 -X dev -m unittest discover -s tests -v
+```
+
+Do not repeat the NVIDIA gamescope probes on the active desktop while the
+compositor crash remains unresolved. The full Green Light is withheld.
+
+### Follow-up non-graphical recheck
+
+Revisited Lutris's DLL architecture/restoration, Proton ownership, UMU path and
+locale handling, and process watcher. Retained the runner's owned-cgroup model;
+Lutris's process-name exclusions and automatic downloads do not fit this runner's
+supervision and offline setup goals.
+
+Found and reproduced an additional provisioning-cache error: the stamp sorted
+redistributable and Winetricks lists, so reordering either list incorrectly
+skipped provisioning. The fingerprint now preserves execution order. Both
+failure cases now pass; unchanged lists still reuse the stamp. Existing profiles
+with unsorted lists may provision once again because their old stamp discarded
+order information.
+
+Recheck results: **44 passed**, 22 opt-in integration cases skipped (66 tests),
+and **24/24** shared reliability checks passed. Compilation and Git whitespace
+checks passed. No live graphics tests were repeated. The earlier 100 successful
+launch cycles remain historical evidence; compositor stability and live Wine/UMU
+remain unverified or unresolved.
+
+| Added regression group | Before | After | Result |
+|---|---:|---:|---|
+| Provisioning order: two failure cases | 0 | 100 | Better; 0/2 → 2/2 |
+| Performance | N/A | N/A | No new performance measurement |
+
+### Compositor crash investigation and mitigation
+
+Inspected the saved Hyprland core with GDB and downloaded the matching official
+[Mesa 26.2.5 source archive](https://archive.mesa3d.org/mesa-26.2.5.tar.xz).
+This investigation did not launch any additional graphics workloads, restart the
+compositor, change compositor configuration, or replace graphics packages.
+
+Confirmed immediate failure in the second core:
+
+1. Hyprland's `CEGLSync::create()` called EGL native-fence creation.
+2. Mesa reached `iris_fence_flush()` and `_iris_batch_flush()`; the return address
+   identifies `iris_fence.c:247` in the matching archive.
+3. The batch submission return value, retained in `r13d`, is **-12 (-ENOMEM)**.
+   Disassembly confirms that register receives `batch_submit()`'s result and
+   carries it to the fatal branch. The i915 backend converts an unsuccessful
+   `i915_gem_execbuf_ioctl()` into `-errno`.
+4. Mesa's fatal negative-result branch calls `abort()`. Hyprland's own crash
+   handler then runs, explaining the two abort frames in its backtrace.
+
+Both compositor crash reports share this Intel Mesa submission/fence path.
+Only the second core's errno was decoded; do not assume the first had the same
+errno. The journal contains no OOM-killer or GPU-reset report in this interval.
+That absence does not prove memory availability, and ENOMEM does not establish
+which GPU, kernel or imported-buffer allocation failed.
+
+The triggering launch configuration rendered gamescope on NVIDIA and presented
+to the Intel-hosted desktop. Its Wayland socket closes when Hyprland dies.
+Gamescope's `IWaitable::OnPollHangUp()` calls abort on EPOLLHUP, so the later
+`IWaitable hung up` log is consistent with compositor loss, not proof of the
+original failure. The two `vulkaninfo` segfaults logged just after the crashes
+are additional Wayland-client failures; they do not establish the cause of
+Hyprland's abort. Disabling gamescope WSI did not prevent the second crash.
+
+The runner previously forced a discrete GPU even for automatic gamescope
+selection. Automatic gamescope launches now prefer the primary GPU, with one
+shared selection policy used by GPU environment construction, gamescope's
+`--prefer-vk-device`, and config patches. On this machine that selects Intel,
+matching the earlier successful Intel gamescope probe. **Both gamescope and its
+game use this GPU.** Direct automatic launches still prefer a known discrete
+GPU. Explicit `--gpu nvidia`, `--gpu discrete` and PCI selectors are preserved.
+Primary uses the existing boot-display heuristic; it is not a newly verified
+probe of every compositor's rendering device.
+
+This is a mitigation of the reproduced launch configuration, **not a repair of
+Mesa/i915 or a verified guarantee against compositor crashes**. Explicit NVIDIA
+gamescope remains affected on this host; use `--no-gamescope` for that GPU until
+the graphics failure is fixed and verified in an isolated session. No automatic
+retry or silent fallback after a graphics crash was introduced. The automatic
+policy can reduce game performance on hybrid systems compared with the dGPU.
+
+Verification: a new automatic-gamescope selection regression failed before the
+change and passed after it. Additional tests preserve explicit GPU choices and
+the direct-launch default. **47 tests passed**, 22 opt-in integration cases
+skipped (69 total), plus **24/24** shared reliability checks. Compilation and
+whitespace checks passed. These are fixture/protocol checks; no new live
+graphics A/B test was attempted on the user's active desktop.
+
+GDB register/disassembly proof, matching source excerpts, kernel log and test
+logs are saved in the `crash-investigation` subdirectory of the evidence path
+above. The original compressed core remains managed by systemd-coredump.
+
+| New change / measured probe | Before | After | Result |
+|---|---:|---:|---|
+| Automatic gamescope primary-GPU regression | 0 | 100 | Better; reproduced policy failure corrected |
+| Compositor stability / game performance | N/A | N/A | Live mitigation unverified; driver failure unresolved |
+
 The runner now removes reused and newly created game mount stacks after the
 owned workload ends when `runner.auto_unmount_on_exit = true`. This applies
 with `--no-mount` and `auto_mount = false` as well: those control setup, while
