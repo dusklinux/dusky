@@ -1,5 +1,6 @@
 @-moz-document domain("gemini.google.com") {
 
+    :root,
     body {
         color-scheme: dark !important;
 
@@ -17,6 +18,10 @@
         --gem-sys-color--on-error: var(--on_secondary) !important;
 
         --gem-sys-color--surface: var(--surface) !important;
+        --lumi-sys-color--surface: var(--surface) !important;
+        --lumi-sys-color--surface-container: var(--surface_container) !important;
+        --lumi-sys-color--surface-container-high: var(--surface_container_high) !important;
+        --lumi-sys-color--surface-container-low: var(--surface_container_low) !important;
         --gem-sys-color--surface-bright: var(--surface_bright) !important;
         --gem-sys-color--surface-container: var(--surface_container) !important;
         --gem-sys-color--surface-container-high: var(--surface_container_high) !important;
@@ -83,8 +88,6 @@
     div.response-content.ng-tns-c3550608724-25 { background-color: var(--surface) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fdiv.response-content.ng-tns-c3550608724-25%1Fbg | bg: surface */
     div.scroll-container { background-color: var(--surface) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fdiv.scroll-container%1Fbg | bg: surface */
     div[data-test-id="overflow-container"] { background-color: var(--surface) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fdiv%5Bdata-test-id%3D%22overflow-container%22%5D%1Fbg | bg: surface */
-    input-area-v2.ng-tns-c1873170697-4.ng-tns-c2287058552-3.ui-improvements-phase-1 { background-color: var(--surface_container_high) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Finput-area-v2.ng-tns-c1873170697-4.ng-tns-c2287058552-3.ui-improvements-phase-1%1Fbg | bg: surface_container_high */
-    input-container.hide-on-print.ng-tns-c2287058552-3.ng-tns-c1211221456-2 { background-color: var(--surface_container_low) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Finput-container.hide-on-print.ng-tns-c2287058552-3.ng-tns-c1211221456-2%1Fbg | bg: surface_container_low */
     hallucination-disclaimer.hallucination-disclaimer.ng-tns-c2287058552-8.enable-luminous-disclaimer-updates { display: none !important; } /* dusky key=sel%1Fhallucination-disclaimer.hallucination-disclaimer.ng-tns-c2287058552-8.enable-luminous-disclaimer-updates%1Fdisplay | hidden */
     /* <<< dusky:picks */
 }
