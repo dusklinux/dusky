@@ -361,17 +361,19 @@ class InstallerTests(unittest.TestCase):
 
     def test_multilib_repairs_partial_section_once(self) -> None:
         conf = self.root / "pacman.conf"
-        conf.write_text("[options]\nColor\nDisableDownloadTimeout\n\n[multilib]\n#Include = /etc/pacman.d/mirrorlist\n")
+        conf.write_text("[options]\nColor\nDisableDownloadTimeout\n\n[multilib]\n#Include = /etc/pacman.d/mirrorlist\n", encoding="utf-8")
         ctx = setup.SetupContext(auto_yes=True)
 
         def install_command(_ctx, argv, _description, **_kwargs):
             if isinstance(argv, list) and len(argv) > 2 and argv[1] == "install":
-                conf.write_text(Path(argv[-2]).read_text())
+                subprocess.run(argv[1:], check=True)
+            elif argv[1] == "mv":
+                subprocess.run(argv[1:], check=True)
             return True
 
         with mock.patch.object(setup, "run_command", side_effect=install_command):
             self.assertTrue(setup.enable_multilib_and_optimizations(ctx, conf))
-            self.assertIn("\nInclude = /etc/pacman.d/mirrorlist\n", conf.read_text())
+            self.assertIn("\nInclude = /etc/pacman.d/mirrorlist\n", conf.read_text(encoding="utf-8"))
             self.assertFalse(setup.enable_multilib_and_optimizations(ctx, conf))
 
     def test_native_dwarfs_build_uses_makepkg_config(self) -> None:
@@ -385,10 +387,10 @@ class InstallerTests(unittest.TestCase):
             if "--makepkgconf" in argv:
                 conf = Path(argv[argv.index("--makepkgconf") + 1])
             else:
-                conf = Path(argv[argv.index("--mflags") + 1].split()[-1])
-            self.assertIn('-march=native -O3', conf.read_text())
+                conf = Path(argv[argv.index("--mflags") + 1].removeprefix("--config="))
+            self.assertIn('-march=native -O3', conf.read_text(encoding="utf-8"))
             result = subprocess.run(["bash", "-c", 'source "$1"; printf "%s\\n" "$CFLAGS" "$CXXFLAGS"',
-                                     "bash", str(conf)], capture_output=True, text=True, check=True)
+                                     "bash", str(conf)], capture_output=True, encoding="utf-8", check=True)
             self.assertEqual(result.stdout.count("-march=native -O3"), 2)
             return True
 
