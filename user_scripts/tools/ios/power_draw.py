@@ -1,25 +1,24 @@
 #!/usr/bin/env python3
-"""Read-only iPhone dashboard: local Python 3.15 + Rich + OpenSSH; phone Python 3.
+"""Read-only iPhone telemetry. Pick what to watch; combine flags for more.
 
-Run with --configure for saved SSH/sampling options. Example:
-  power_draw.py --minutes 4 --interval 20 --metrics cpu-temp,cpu,memory
-  power_draw.py --readings 19 --baseline-watts 1.44 --label 'Audio on'
-  power_draw.py --live --interval 5
+  power_draw.py --current            Current + battery charge/depletion ETA
+  power_draw.py --cpu-temp           CPU temperature only
+  power_draw.py --ram                RAM only
+  power_draw.py --battery-temp       Battery temperature only
+  power_draw.py --current --power    Current and power
+  power_draw.py --all                Full dashboard
 
-Battery sampling is always enabled. Extra metric groups may be disabled with
---metrics none. Configuration and JSONL/JSON reports live under
-$XDG_CONFIG_HOME/dusky/settings/ssh_phone_reading (normally ~/.config/...).
-No files are installed on the phone and no recording/settings commands are used.
-CPU temperature uses the same PMGR SoC sensors as Duskie's CPUTemperature.m;
-VM/counter layouts follow Apple's iOS SDK mach headers. Unsupported sensors are
-reported as unavailable rather than replaced with a different temperature.
-Power/current are positive magnitudes with a charging/discharging direction.
-They measure net battery flow, not charger input or plugged-in phone consumption.
-JSONL retains signed_power_w (positive = discharge) and raw signed current_ma.
+Metric flags watch live until Ctrl+C. Add --readings 1 for a single reading,
+or --minutes 2 for a finite run. --configure saves connection/settings.
+Battery power is net battery flow, not charger input. ETAs are host-calculated
+constant-rate estimates; charging taper and workload changes affect accuracy.
+Health is estimated from reported full/design capacity. Capacity is refreshed
+at startup, source changes, long gaps and every five minutes for recalibration.
 """
 
 import argparse
 from collections import deque
+from contextlib import nullcontext
 from datetime import datetime
 import json
 import math
@@ -44,22 +43,24 @@ from rich.table import Table
 from rich.text import Text
 
 CONSOLE = Console()
-VALID_METRICS = frozenset({'cpu-temp', 'cpu', 'memory', 'none'})
+VALID_METRICS = frozenset({'current', 'power', 'battery', 'battery-temp', 'health', 'voltage', 'cpu-temp', 'cpu', 'memory', 'none'})
+BATTERY_METRICS = frozenset({'current', 'power', 'battery', 'battery-temp', 'health', 'voltage'})
 CONFIG_HOME = Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config')
 STATE_DIR = (CONFIG_HOME if CONFIG_HOME.is_absolute() else Path.home() / '.config') / 'dusky/settings/ssh_phone_reading'
 DEFAULTS = frozendict(host="", user="", port=22, identity="", interval=20.0,
                      readings=13, live=False, label="", baseline_watts=0.0, charge_window=40.0,
-                     timeout=12.0, metrics='cpu-temp,cpu,memory')
+                     timeout=12.0, metrics='cpu-temp,cpu,memory', focus='')
 
 # One persistent remote process, without installing files or changing phone settings.
 # The remote Python may be older than the local Python 3.15 baseline.
 REMOTE = r'''
 import ctypes as C
-import json, math, resource, sys, time
+import json, math, sys, time
 
 metrics = frozenset(filter(None, sys.argv[1].split(',')))
-cf = C.CDLL('/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation')
-io = C.CDLL('/System/Library/Frameworks/IOKit.framework/IOKit')
+profile = 'collector' in metrics
+if profile:
+    import resource
 P = C.c_void_p
 
 def bind(lib, name, result, args):
@@ -68,27 +69,36 @@ def bind(lib, name, result, args):
     fn.argtypes = args
     return fn
 
-release = bind(cf, 'CFRelease', None, [P])
-string = bind(cf, 'CFStringCreateWithCString', P, [P, C.c_char_p, C.c_uint32])
-number_get = bind(cf, 'CFNumberGetValue', C.c_bool, [P, C.c_long, P])
-boolean_get = bind(cf, 'CFBooleanGetValue', C.c_bool, [P])
-dict_get = bind(cf, 'CFDictionaryGetValue', P, [P, P])
-service_matching = bind(io, 'IOServiceMatching', P, [C.c_char_p])
-service_get = bind(io, 'IOServiceGetMatchingService', C.c_uint32, [C.c_uint32, P])
-properties = bind(io, 'IORegistryEntryCreateCFProperties', C.c_int, [C.c_uint32, P, P, C.c_uint32])
-service_release = bind(io, 'IOObjectRelease', C.c_int, [C.c_uint32])
+battery_metrics = metrics.intersection(('current', 'power', 'battery', 'battery-temp', 'health', 'voltage'))
+needs_metadata = bool(metrics.intersection(('current', 'power', 'health')))
+if battery_metrics or 'cpu-temp' in metrics:
+    cf = C.CDLL('/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation')
+    io = C.CDLL('/System/Library/Frameworks/IOKit.framework/IOKit')
+    release = bind(cf, 'CFRelease', None, [P])
+    string = bind(cf, 'CFStringCreateWithCString', P, [P, C.c_char_p, C.c_uint32])
+if battery_metrics:
+    number_get = bind(cf, 'CFNumberGetValue', C.c_bool, [P, C.c_long, P])
+    boolean_get = bind(cf, 'CFBooleanGetValue', C.c_bool, [P])
+    service_matching = bind(io, 'IOServiceMatching', P, [C.c_char_p])
+    service_get = bind(io, 'IOServiceGetMatchingService', C.c_uint32, [C.c_uint32, P])
+    property_get = bind(io, 'IORegistryEntryCreateCFProperty', P, [C.c_uint32, P, P, C.c_uint32])
+    service_release = bind(io, 'IOObjectRelease', C.c_int, [C.c_uint32])
 
-fields = {
-    'CurrentCapacity': 'percent',
-    'AppleRawCurrentCapacity': 'raw_mah',
-    'NominalChargeCapacity': 'capacity_mah',
-    'AppleRawMaxCapacity': 'raw_max_mah',
-    'Voltage': 'voltage_mv',
-    'InstantAmperage': 'current_ma',
-    'Temperature': 'battery_c',
-    'ExternalConnected': 'external_power',
-    'UpdateTime': 'gauge_time',
-}
+fields = {}
+if metrics.intersection(('current', 'power')): fields['InstantAmperage'] = 'current_ma'
+if metrics.intersection(('power', 'voltage')): fields['Voltage'] = 'voltage_mv'
+if 'battery-temp' in metrics: fields['Temperature'] = 'battery_c'
+if 'battery' in metrics: fields['CurrentCapacity'] = 'percent'
+if 'health' in metrics:
+    fields['CurrentCapacity'] = 'percent'
+    fields['AppleRawCurrentCapacity'] = 'raw_mah'
+if needs_metadata: fields['ExternalConnected'] = 'external_power'
+metadata_fields = {
+    'CurrentCapacity': 'percent', 'AppleRawCurrentCapacity': 'raw_mah',
+    'NominalChargeCapacity': 'capacity_mah', 'AppleRawMaxCapacity': 'raw_max_mah',
+    'DesignCapacity': 'design_mah', 'CycleCount': 'cycle_count', 'UpdateTime': 'gauge_time',
+} if needs_metadata else {}
+previous_external = None
 
 # Mach ABI from Apple's XNU/iOS SDK: natural_t=uint32, counters=uint64.
 # Free pages include speculative pages; never add speculative_count to free_count.
@@ -117,10 +127,25 @@ def own(ptr, message='CoreFoundation allocation failed'):
     return ptr
 
 try:
-    keys = {key: own(string(None, key.encode(), 0x08000100)) for key in fields}
-    battery = service_get(0, service_matching(b'AppleSmartBattery'))
-    if not battery:
-        raise RuntimeError('AppleSmartBattery service unavailable')
+    keys = {key: own(string(None, key.encode(), 0x08000100)) for key in set(fields) | set(metadata_fields)}
+    if battery_metrics:
+        battery = service_get(0, service_matching(b'AppleSmartBattery'))
+        if not battery:
+            raise RuntimeError('AppleSmartBattery service unavailable')
+
+    def read_property(key):
+        ptr = property_get(battery, keys[key], None, 0)
+        if not ptr:
+            return None
+        try:
+            if key == 'ExternalConnected':
+                return bool(boolean_get(ptr))
+            value = C.c_longlong()
+            if not number_get(ptr, 4, C.byref(value)):
+                return None
+            return value.value / 100 if key == 'Temperature' else value.value
+        finally:
+            release(ptr)
 
     if 'cpu-temp' in metrics:
         try:
@@ -168,21 +193,23 @@ try:
             system = C.CDLL('/usr/lib/libSystem.B.dylib')
             task = C.c_uint32.in_dll(system, 'mach_task_self_').value
             port_release = bind(system, 'mach_port_deallocate', C.c_int, [C.c_uint32, C.c_uint32])
-            vm_release = bind(system, 'mach_vm_deallocate', C.c_int, [C.c_uint32, C.c_uint64, C.c_uint64])
-            processor_info = bind(system, 'host_processor_info', C.c_int, [C.c_uint32, C.c_int, P, P, P])
-            vm_info = bind(system, 'host_statistics64', C.c_int, [C.c_uint32, C.c_int, P, P])
-            page_size_get = bind(system, 'host_page_size', C.c_int, [C.c_uint32, P])
-            sysctl = bind(system, 'sysctlbyname', C.c_int, [C.c_char_p, P, P, P, C.c_size_t])
+            if 'cpu' in metrics:
+                vm_release = bind(system, 'mach_vm_deallocate', C.c_int, [C.c_uint32, C.c_uint64, C.c_uint64])
+                processor_info = bind(system, 'host_processor_info', C.c_int, [C.c_uint32, C.c_int, P, P, P])
             host_self = bind(system, 'mach_host_self', C.c_uint32, [])
             host = host_self()
-            # vm_size_t is pointer-sized: the output buffer must be eight bytes on arm64.
-            page_size = C.c_size_t()
-            if page_size_get(host, C.byref(page_size)):
-                raise RuntimeError('Cannot read page size')
-            total_ram = C.c_uint64()
-            length = C.c_size_t(C.sizeof(total_ram))
-            if sysctl(b'hw.memsize', C.byref(total_ram), C.byref(length), None, 0):
-                total_ram.value = 0
+            if 'memory' in metrics:
+                vm_info = bind(system, 'host_statistics64', C.c_int, [C.c_uint32, C.c_int, P, P])
+                page_size_get = bind(system, 'host_page_size', C.c_int, [C.c_uint32, P])
+                sysctl = bind(system, 'sysctlbyname', C.c_int, [C.c_char_p, P, P, P, C.c_size_t])
+                # vm_size_t is pointer-sized: the output buffer must be eight bytes on arm64.
+                page_size = C.c_size_t()
+                if page_size_get(host, C.byref(page_size)):
+                    raise RuntimeError('Cannot read page size')
+                total_ram = C.c_uint64()
+                length = C.c_size_t(C.sizeof(total_ram))
+                if sysctl(b'hw.memsize', C.byref(total_ram), C.byref(length), None, 0):
+                    total_ram.value = 0
         except Exception as exc:
             mach_error = str(exc)
             if host and port_release:
@@ -250,31 +277,27 @@ try:
                 row['memory']['page_size'] = page_size.value
 
     for command in sys.stdin:
-        if command.strip() != 'read':
+        if command.strip() not in ('read', 'read-meta'):
             continue
-        cpu_start = time.process_time()
-        wall_start = time.monotonic()
-        row = {'time': time.time(), 'cpu_c': None}
-        dictionary = P()
-        if properties(battery, C.byref(dictionary), None, 0) or not dictionary:
-            raise RuntimeError('Cannot read battery service')
-        try:
-            for key, target in fields.items():
-                pointer = dict_get(dictionary, keys[key])
-                if not pointer:
-                    continue
-                if key == 'ExternalConnected':
-                    value = bool(boolean_get(pointer))
-                else:
-                    value = C.c_longlong()
-                    if not number_get(pointer, 4, C.byref(value)):
-                        continue
-                    value = value.value
-                if key == 'Temperature':
-                    value /= 100
+        if profile:
+            cpu_start = time.process_time()
+            wall_start = time.monotonic()
+        row = {'time': time.time()}
+        for key, target in fields.items():
+            value = read_property(key)
+            if value is not None:
                 row[target] = value
-        finally:
-            release(dictionary)
+        if needs_metadata:
+            if 'external_power' not in row:
+                raise RuntimeError('External-power state unavailable')
+            if row['external_power'] != previous_external or command.strip() == 'read-meta':
+                for key, target in metadata_fields.items():
+                    value = row.get(target) if key in fields else read_property(key)
+                    if value is not None:
+                        row[target] = value
+                row['metadata_refreshed'] = True
+                previous_external = row['external_power']
+        row['battery_properties_read'] = len(fields) + (len(set(metadata_fields)-set(fields)) if row.get('metadata_refreshed') else 0)
         values = []
         for service in sensors:
             sample = event(service, 15, None, 0)
@@ -290,12 +313,12 @@ try:
             row['cpu_c'] = max(values)
         elif 'cpu-temp' in metrics:
             row['cpu_error'] = cpu_error or 'No current CPU temperature event'
-        if not all(key in row for key in ('percent', 'voltage_mv', 'current_ma', 'battery_c', 'external_power')):
-            raise RuntimeError('Battery telemetry fields unavailable')
-        read_system(row)
-        row['collector_cpu_ms'] = (time.process_time() - cpu_start) * 1000
-        row['collector_wall_ms'] = (time.monotonic() - wall_start) * 1000
-        row['collector_peak_rss_bytes'] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        if metrics.intersection(('cpu', 'memory')):
+            read_system(row)
+        if profile:
+            row['collector_cpu_ms'] = (time.process_time() - cpu_start) * 1000
+            row['collector_wall_ms'] = (time.monotonic() - wall_start) * 1000
+            row['collector_peak_rss_bytes'] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         print(json.dumps(row, allow_nan=False), flush=True)
 finally:
     if host and port_release:
@@ -323,6 +346,12 @@ def normalize_metrics(raw_metrics):
     return ','.join(seen)
 
 
+def selected_metrics(config):
+    if config.get('focus'):
+        return frozenset(config['focus'].split(','))
+    return BATTERY_METRICS | (frozenset(config['metrics'].split(',')) - {'none'})
+
+
 def is_real_number(value):
     return not isinstance(value, bool) and isinstance(value, (int, float)) and math.isfinite(value)
 
@@ -332,7 +361,7 @@ def validate(config):
         raise ValueError('Enter a hostname, IP address or SSH config alias.')
     if any(c.isspace() for c in config['host']) or '@' in config['host']:
         raise ValueError('Enter the host and username in their separate fields.')
-    for key in ('user', 'identity', 'label', 'metrics'):
+    for key in ('user', 'identity', 'label', 'metrics', 'focus'):
         if not isinstance(config[key], str):
             raise ValueError(f'{key} must be text')
     if any(c.isspace() for c in config['user']) or config['user'].startswith('-'):
@@ -351,6 +380,8 @@ def validate(config):
     if unknown:
         raise ValueError('Metrics must be comma-separated cpu-temp,cpu,memory or none.')
     config['metrics'] = normalized
+    if config['focus'] and (set(config['focus'].split(',')) - (VALID_METRICS-{'none'})):
+        raise ValueError('Unknown selected metric.')
     if config['interval'] < 1 or config['timeout'] < 1:
         raise ValueError('Interval and timeout must be at least one second.')
     if config['baseline_watts'] < 0 or not 0 < config['charge_window'] <= 100:
@@ -392,9 +423,18 @@ def configure(config, *, minutes=None):
         if not config['live']:
             config['readings'] = IntPrompt.ask('Number of readings (your entry wins; duration supplies the default)', default=suggested)
         config['label'] = Prompt.ask('Session label', default=config['label'])
-        config['baseline_watts'] = FloatPrompt.ask('Compare with baseline watts (0 = off)', default=config['baseline_watts'])
-        config['charge_window'] = FloatPrompt.ask('Battery percentage window for runtime estimate', default=config['charge_window'])
-        config['metrics'] = Prompt.ask('Extra metrics: cpu-temp,cpu,memory (or none)', default=config['metrics']).strip().lower()
+        choice = Prompt.ask('Show: current,power,battery,battery-temp,health,voltage,cpu-temp,cpu,ram (or all)',
+                            default=config['focus'] or 'all').strip().lower()
+        if choice == 'all':
+            config['focus'] = ''; config['metrics'] = DEFAULTS['metrics']
+        elif choice == 'none':
+            config['focus'] = ''; config['metrics'] = 'none'  # Legacy battery dashboard.
+        else:
+            aliases = {'ram':'memory', 'capacity':'health'}
+            config['focus'] = ','.join(dict.fromkeys(aliases.get(part.strip(),part.strip()) for part in choice.split(',')))
+        if not config['focus']:
+            config['baseline_watts'] = FloatPrompt.ask('Compare with baseline watts (0 = off)', default=config['baseline_watts'])
+            config['charge_window'] = FloatPrompt.ask('Battery percentage window for runtime estimate', default=config['charge_window'])
         config['timeout'] = FloatPrompt.ask('SSH reading timeout in seconds', default=config['timeout'])
         try:
             validate(config)
@@ -403,12 +443,73 @@ def configure(config, *, minutes=None):
             CONSOLE.print(str(exc), style='red', markup=False)
 
 
+class BatteryEstimate:
+    """Host-only capacity cache, coulomb integration and 60-second current smoothing."""
+    KEYS = frozenset({'percent', 'raw_mah', 'capacity_mah', 'raw_max_mah', 'design_mah', 'cycle_count', 'gauge_time'})
+
+    def __init__(self, interval):
+        self.interval = interval
+        self.info = {}
+        self.remaining = self.rate = self.previous = None
+
+    def update(self, row):
+        now = row['received_monotonic']
+        refreshed = row.get('metadata_refreshed') or not self.info
+        if refreshed:
+            self.info = {k: row[k] for k in self.KEYS if k in row}
+            self.remaining = None
+            self.previous = self.rate = None
+        row.update({k: v for k, v in self.info.items() if k not in row})
+        capacity = next((row[k] for k in ('raw_max_mah', 'capacity_mah')
+                         if is_real_number(row.get(k)) and row[k] > 0), None)
+        health_capacity = next((row[k] for k in ('capacity_mah', 'raw_max_mah')
+                                if is_real_number(row.get(k)) and row[k] > 0), None)
+        design = row.get('design_mah')
+        if is_real_number(health_capacity) and is_real_number(design) and design > 0:
+            row['health_percent'] = health_capacity / design * 100
+        if refreshed and capacity and self.remaining is None:
+            raw = row.get('raw_mah')
+            if is_real_number(raw) and raw >= 0:
+                self.remaining = min(capacity, raw)
+            elif is_real_number(row.get('percent')) and 0 <= row['percent'] <= 100:
+                self.remaining = capacity * row['percent'] / 100
+        current = row.get('current_ma')
+        row['eta_seconds'] = None
+        if not is_real_number(current): return
+        if self.previous:
+            previous_time, previous_current, previous_source = self.previous
+            dt = now - previous_time
+            if previous_source != row.get('external_power') or not 0 < dt <= self.interval * 2.5:
+                self.remaining = self.rate = None
+            else:
+                if self.remaining is not None:
+                    self.remaining += (previous_current + current) / 2 * dt / 3600
+                if self.rate is not None and current * self.rate > 0:
+                    self.rate += -math.expm1(-dt / 60) * (current - self.rate)
+                else:
+                    self.rate = current
+        if self.rate is None: self.rate = current
+        self.previous = now, current, row.get('external_power')
+        if capacity and self.remaining is not None:
+            self.remaining = max(0, min(capacity, self.remaining))
+            row['estimated_remaining_mah'] = self.remaining
+            if current and self.rate and current * self.rate > 0:
+                amount = capacity - self.remaining if current > 0 else self.remaining
+                row['eta_seconds'] = amount / abs(self.rate) * 3600
+                row['eta_target'] = 'full' if current > 0 else 'empty'
+                row['eta_rate_ma'] = abs(self.rate)
+
+
 class Phone:
     def __init__(self, config, socket):
         self.config = config
         self.closed = False
         self.process = None
         self.errors = None
+        self.metrics = selected_metrics(config)
+        self.battery = BatteryEstimate(config['interval']) if self.metrics.intersection({'current', 'power', 'health'}) else None
+        self.last_metadata = None
+        self.last_received = None
         self.base = [
             'ssh',
             '-o', f'ControlPath={socket}',
@@ -443,7 +544,8 @@ class Phone:
         # Include rootless (/var/jb) and standard paths so non-login SSH finds python3 on palera1n/Procursus.
         command = (
             'export PATH="/var/jb/usr/bin:/var/jb/bin:/usr/local/bin:/usr/bin:/bin:$PATH"; '
-            'exec python3 -u -c ' + shlex.quote(REMOTE) + ' ' + shlex.quote(self.config['metrics'])
+            'exec python3 -u -c ' + shlex.quote(REMOTE) + ' ' + shlex.quote(','.join(sorted(
+                self.metrics if self.config.get('focus') else self.metrics | {'collector'})))
         )
         self.process = subprocess.Popen(
             self.base + ['-T', '-o', 'BatchMode=yes', '--', self.target, command],
@@ -456,7 +558,9 @@ class Phone:
     def read(self, on_wait=None):
         requested = time.monotonic()
         try:
-            self.process.stdin.write(b'read\n')
+            metadata_due = self.battery is not None and self.last_metadata is not None and requested - self.last_metadata >= 300
+            after_gap = self.battery is not None and self.last_received is not None and requested - self.last_received > self.config['interval'] * 2.5
+            self.process.stdin.write(b'read-meta\n' if metadata_due or after_gap else b'read\n')
         except (BrokenPipeError, OSError) as exc:
             raise RuntimeError(self.disconnect_error()) from exc
         payload = bytearray()
@@ -483,10 +587,12 @@ class Phone:
                 raise RuntimeError('Oversized phone response.')
         try:
             row = json.loads(payload)
-            for key in ('time', 'percent', 'voltage_mv', 'current_ma', 'battery_c'):
-                if not is_real_number(row[key]):
+            if not isinstance(row, dict): raise ValueError('Expected a JSON object')
+            if not is_real_number(row.get('time')): raise ValueError('Invalid timestamp')
+            for key in ('percent', 'voltage_mv', 'current_ma', 'battery_c', 'raw_mah', 'capacity_mah', 'raw_max_mah', 'design_mah', 'cycle_count'):
+                if key in row and not is_real_number(row[key]):
                     raise ValueError(f'Invalid {key}')
-            if type(row['external_power']) is not bool:
+            if 'external_power' in row and type(row['external_power']) is not bool:
                 raise ValueError('Invalid external-power flag')
             if row.get('cpu_c') is not None and not is_real_number(row['cpu_c']):
                 raise ValueError('Invalid CPU temperature')
@@ -494,11 +600,17 @@ class Phone:
             raise RuntimeError(f'Invalid phone response: { bytes(payload[:200])!r}') from exc
         row['received_monotonic'] = time.monotonic()
         row['request_ms'] = (row['received_monotonic'] - requested) * 1000
-        row['signed_power_w'] = -row['current_ma'] * row['voltage_mv'] / 1_000_000
-        row['power_w'] = abs(row['signed_power_w'])
-        if not math.isfinite(row['power_w']) or row['voltage_mv'] <= 0:
-            raise RuntimeError('Invalid calculated battery power.')
-        row['battery_flow'] = battery_flow(row)
+        if 'current_ma' in row:
+            row['battery_flow'] = battery_flow(row)
+            if 'voltage_mv' in row:
+                row['signed_power_w'] = -row['current_ma'] * row['voltage_mv'] / 1_000_000
+                row['power_w'] = abs(row['signed_power_w'])
+                if not math.isfinite(row['power_w']) or row['voltage_mv'] <= 0:
+                    raise RuntimeError('Invalid calculated battery power.')
+        if self.battery is not None:
+            self.battery.update(row)
+        if row.get('metadata_refreshed'): self.last_metadata = row['received_monotonic']
+        self.last_received = row['received_monotonic']
         return row
 
     def close(self):
@@ -547,7 +659,7 @@ class Readings:
         self.recent = deque(maxlen=60)
         self.first = None
         self.count = self.pairs = self.cpu_count = 0
-        self.energy = self.charge = self.covered = self.cpu_ms = 0.0
+        self.energy = self.charge = self.covered = self.charge_covered = self.cpu_ms = 0.0
         self.peak_rss = 0
 
     def __len__(self):
@@ -572,21 +684,27 @@ class Readings:
         self.peak_rss = max(self.peak_rss, row.get('collector_peak_rss_bytes', 0))
 
     def _integrate(self, a, b):
+        if not all(k in r for r in (a, b) for k in ('current_ma', 'external_power')):
+            return
         dt = b['received_monotonic'] - a['received_monotonic']
         if (a['segment'] != b['segment'] or not 0 < dt <= self.interval * 2.5
                 or a['external_power'] or b['external_power']
                 or a['current_ma'] > 0 or b['current_ma'] > 0):
             return
-        self.energy += (a['power_w'] + b['power_w']) / 2 * dt
         self.charge += (-a['current_ma'] - b['current_ma']) / 2 * dt / 3600
+        self.charge_covered += dt
+        if not all('power_w' in r for r in (a, b)):
+            return
+        self.energy += (a['power_w'] + b['power_w']) / 2 * dt
         self.covered += dt
         self.pairs += 1
 
     def summary(self):
         return dict(mean_w=self.energy / self.covered if self.covered else None,
-                    mean_ma=self.charge * 3600 / self.covered if self.covered else None,
+                    mean_ma=self.charge * 3600 / self.charge_covered if self.charge_covered else None,
                     energy_wh=self.energy / 3600, consumed_mah=self.charge,
-                    covered_seconds=self.covered, integrated_intervals=self.pairs, readings=self.count)
+                    covered_seconds=self.covered, charge_covered_seconds=self.charge_covered,
+                    integrated_intervals=self.pairs, readings=self.count)
 
 
 def summarize(rows, interval):
@@ -599,7 +717,8 @@ def summarize(rows, interval):
 
 
 def battery_flow(row):
-    current = row.get('current_ma', 0)
+    current = row.get('current_ma')
+    if current is None: return 'unavailable'
     return 'charging' if current > 0 else 'discharging' if current < 0 else 'idle'
 
 
@@ -621,14 +740,14 @@ def history(rows, limit=None):
     for name in ('Time', 'Battery', 'Power', 'Current', 'CPU/SoC', 'Battery °C', 'Source / flow'):
         table.add_column(name, justify='left' if name == 'Source / flow' else 'right', no_wrap=True)
     for row in (rows[-limit:] if limit else rows):
-        table.add_row(elapsed(row['elapsed']), f'{row["percent"]}%', number(row['power_w'], ' W'),
-                      number(abs(row['current_ma']), ' mA', 0), number(row.get('cpu_c'), '°C'),
-                      number(row['battery_c'], '°C'), power_source(row))
+        table.add_row(elapsed(row['elapsed']), number(row.get('percent'), '%', 0), number(row.get('power_w'), ' W'),
+                      number(abs(row['current_ma']) if 'current_ma' in row else None, ' mA', 0), number(row.get('cpu_c'), '°C'),
+                      number(row.get('battery_c'), '°C'), power_source(row) if 'external_power' in row else 'Unavailable')
     return table
 
 
 def sparkline(rows):
-    values = [r['power_w'] for r in rows[-60:]]
+    values = [r['power_w'] for r in rows[-60:] if 'power_w' in r]
     if not values: return 'Waiting for first reading'
     low, high = min(values), max(values)
     blocks = '▁▂▃▄▅▆▇█'
@@ -698,6 +817,8 @@ def dashboard(rows, config, status, started):
         notes += f'  Gauge age: {max(0, last["time"]-last["gauge_time"]):.0f}s.'
     if last.get('cpu_error'): notes += '\n' + last['cpu_error']
     if last.get('external_power'): notes += '\nExternal power: excluded from battery-power averages.'
+    if 'current_ma' in last: notes += '\n' + number(abs(last['current_ma']), ' mA', 0) + ' ' + battery_flow(last) + ' · ' + eta_text(last)
+    if 'health_percent' in last: notes += '\n' + battery_details(last)
     if rows and time.monotonic() - last['received_monotonic'] > config['interval'] + config['timeout']:
         notes += '\nSTALE: no recent reading.'
     title = Text(f'PHONE POWER  •  {config["label"] or config["host"]}', style='bold cyan')
@@ -710,12 +831,62 @@ def dashboard(rows, config, status, started):
     return Panel(Group(*body), title=title, border_style='bright_blue', padding=(1, 2))
 
 
+def eta_text(row):
+    seconds = row.get('eta_seconds')
+    if not is_real_number(seconds):
+        return 'ETA — idle' if row.get('current_ma') == 0 else 'ETA unavailable'
+    minutes = math.ceil(seconds / 60)
+    return f'ETA ≈{minutes//60}h {minutes%60:02d}m to {row["eta_target"]} (at current rate)'
+
+
+def battery_details(row):
+    source = 'External power' if row.get('external_power') is True else 'On battery' if row.get('external_power') is False else 'Source unavailable'
+    parts = [source, 'Battery ' + number(row.get('percent'), '%', 0),
+             'remaining ' + number(row.get('raw_mah'), ' mAh', 0),
+             'nominal full ' + number(row.get('capacity_mah'), ' mAh', 0),
+             'gauge full ' + number(row.get('raw_max_mah'), ' mAh', 0),
+             'design ' + number(row.get('design_mah'), ' mAh', 0),
+             'health ≈' + number(row.get('health_percent'), '%', 1),
+             'cycles ' + number(row.get('cycle_count'), '', 0)]
+    return ' · '.join(parts)
+
+
+def selected_line(row, config):
+    parts = []
+    for metric in config['focus'].split(','):
+        if metric == 'current':
+            parts.append(number(abs(row['current_ma']) if 'current_ma' in row else None, ' mA', 0)
+                         + ' ' + (battery_flow(row) if 'current_ma' in row else 'unavailable') + ' · ' + eta_text(row))
+        elif metric == 'power':
+            parts.append('Power ' + number(row.get('power_w'), ' W') + ' ' + battery_flow(row))
+            if 'current' not in config['focus'].split(','): parts.append(eta_text(row))
+        elif metric == 'battery': parts.append('Battery ' + number(row.get('percent'), '%', 0))
+        elif metric == 'battery-temp': parts.append('Battery ' + number(row.get('battery_c'), '°C'))
+        elif metric == 'voltage': parts.append('Voltage ' + number(row.get('voltage_mv'), ' mV', 0))
+        elif metric == 'health': parts.append(battery_details(row))
+        elif metric == 'cpu-temp': parts.append('CPU/SoC ' + number(row.get('cpu_c'), '°C'))
+        elif metric == 'cpu':
+            parts.append('CPU ' + number(row.get('cpu_percent'), '%', 1))
+            if row.get('cpu_cores_percent'):
+                parts.append(' '.join(f'C{i} {number(v,"%",1)}' for i,v in enumerate(row['cpu_cores_percent'])))
+        elif metric == 'memory':
+            memory = row.get('memory')
+            parts.append('RAM ' + (' · '.join(f'{k} {memory[k]/2**20:,.0f} MiB' for k in ('free','active','inactive','wired','compressed','total')) if memory else 'unavailable'))
+    for key in ('cpu_error','system_error','cpu_usage_error','memory_error'):
+        if row.get(key): parts.append(row[key])
+    return datetime.fromtimestamp(row['time']).strftime('%H:%M:%S') + '  ' + ' · '.join(parts)
+
+
 def final_report(rows, config, path, reason):
     stats = summarize(rows, config['interval'])
     # A terminal can disappear on SIGHUP; save before attempting any rendering.
     summary_path = path.with_suffix('.summary.json')
     summary_path.write_text(json.dumps(dict(config=config, summary=stats, reason=reason),
                                        indent=2, allow_nan=False) + '\n', encoding='utf-8')
+    if config.get('focus'):
+        CONSOLE.print(f'Stopped · {len(rows)} readings · {reason}', markup=False)
+        CONSOLE.print('Saved: ' + str(path), markup=False)
+        return
     CONSOLE.print(Panel(Text(reason), title='Session complete', border_style='cyan'))
     if isinstance(rows, Readings) and len(rows) > len(rows.recent):
         CONSOLE.print(f'Latest {len(rows.recent)} of {len(rows)} readings below; the JSONL contains every reading.', style='dim')
@@ -727,9 +898,9 @@ def final_report(rows, config, path, reason):
                   f'Covered: {elapsed(stats["covered_seconds"])}')
     if rows:
         a, b = rows.first if isinstance(rows, Readings) else rows[0], rows[-1]
-        CONSOLE.print(f'Battery: {a["percent"]}% → {b["percent"]}%  ·  '
+        CONSOLE.print(f'Battery: {number(a.get("percent"), "%", 0)} → {number(b.get("percent"), "%", 0)}  ·  '
                       f'CPU: {number(a.get("cpu_c"), "°C")} → {number(b.get("cpu_c"), "°C")}  ·  '
-                      f'Battery temperature: {a["battery_c"]:.2f}°C → {b["battery_c"]:.2f}°C')
+                      f'Battery temperature: {number(a.get("battery_c"), "°C")} → {number(b.get("battery_c"), "°C")}')
         capacity = b.get('capacity_mah') or b.get('raw_max_mah')
         if capacity and stats['mean_ma'] and stats['mean_ma'] > 0 and stats['covered_seconds'] >= 60:
             hours = capacity * config['charge_window'] / 100 / stats['mean_ma']
@@ -759,15 +930,26 @@ def parser():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter, epilog='First run prompts for configuration. Ctrl+C saves a partial report.')
     for name in ('host', 'user', 'identity', 'label'):
         p.add_argument('--' + name)
-    p.add_argument('--metrics', help='Extra metric groups: cpu-temp,cpu,memory or none for battery only (saved)')
+    for flag, metric in [('current','current'), ('power','power'), ('battery','battery'),
+                         ('battery-temp','battery-temp'), ('health','health'), ('voltage','voltage'),
+                         ('cpu-temp','cpu-temp'), ('cpu','cpu'), ('ram','memory')]:
+        names = ['--'+flag]
+        if flag == 'health': names.append('--capacity')
+        if flag == 'ram': names.append('--memory')
+        if flag == 'battery': names.append('--battery-percent')
+        label = {'current':'Current in mA + charge/depletion ETA', 'battery':'Battery percentage', 'health':'Battery capacity, health and cycles', 'ram':'RAM', 'cpu':'CPU usage', 'cpu-temp':'CPU temperature'}.get(flag, flag.replace('-', ' ').capitalize())
+        p.add_argument(*names, dest='select', action='append_const', const=metric,
+                       help=label + ' only; live by default')
+    p.add_argument('--all', action='store_true', help='Full dashboard and all sensors')
+    p.add_argument('--metrics', help=argparse.SUPPRESS)  # Keep old commands working; advertise direct flags.
     p.add_argument('--port', type=int)
     p.add_argument('--interval', type=float, help='Seconds between readings (saved; default 20)')
     count = p.add_mutually_exclusive_group()
     count.add_argument('--readings', type=int, help='Total readings, including initial baseline (saved)')
     count.add_argument('--minutes', type=float, help='Duration; rounded up to the next complete interval (saved as readings)')
     count.add_argument('--live', action='store_true', default=None, help='Run until Ctrl+C; retry lost connections automatically (saved)')
-    p.add_argument('--baseline-watts', type=float, help='Comparison baseline; 0 disables (saved)')
-    p.add_argument('--charge-window', type=float, help='Percentage-point window for rough runtime (saved; default 40)')
+    p.add_argument('--baseline-watts', type=float, help=argparse.SUPPRESS)
+    p.add_argument('--charge-window', type=float, help=argparse.SUPPRESS)
     p.add_argument('--timeout', type=float, help='Maximum seconds for each SSH reading (saved)')
     p.add_argument('--configure', action='store_true', help='Edit saved settings before starting')
     p.add_argument('--config-dir', type=Path, default=STATE_DIR, help='Override state directory')
@@ -802,6 +984,18 @@ def main():
             config[key] = value
     if args.readings is not None or args.minutes is not None:
         config['live'] = False
+    if (args.select and (args.all or args.metrics is not None)) or (args.all and args.metrics is not None):
+        arg_parser.error('Use metric flags together, or --all/--metrics, not both.')
+    if args.select:
+        config['focus'] = ','.join(dict.fromkeys(args.select))
+        if args.readings is None and args.minutes is None:
+            config['live'] = True
+    elif args.all or args.metrics is not None:
+        config['focus'] = ''
+        if args.all:
+            config['metrics'] = DEFAULTS['metrics']
+            if args.readings is None and args.minutes is None: config['live'] = True
+
 
     if args.configure or not config['host']:
         if not sys.stdin.isatty():
@@ -848,18 +1042,19 @@ def main():
                     CONSOLE.print(f'Connecting to {config["host"]}…', markup=False, style='cyan')
                     phone.connect()
                     due = time.monotonic()
-                    with Live(console=CONSOLE, auto_refresh=False, transient=True) as live:
+                    with (nullcontext(None) if config.get('focus') else Live(console=CONSOLE, auto_refresh=False, transient=True)) as live:
                         while config['live'] or len(rows) < config['readings']:
                             while (now := time.monotonic()) < due:
-                                live.update(
+                                if live is not None: live.update(
                                     dashboard(rows, config, f'next reading in {math.ceil(due - now)}s', started),
                                     refresh=True,
                                 )
-                                time.sleep(min(1.0, max(0.0, due - time.monotonic())))
+                                remaining = max(0.0, due - time.monotonic())
+                                time.sleep(min(1.0, remaining) if live is not None else remaining)
                             row = phone.read(
-                                on_wait=lambda: live.update(
+                                on_wait=(lambda: live.update(
                                     dashboard(rows, config, 'reading phone…', started), refresh=True
-                                )
+                                )) if live is not None else None
                             )
                             row['elapsed'] = row['received_monotonic'] - started
                             row['segment'] = segment
@@ -868,9 +1063,13 @@ def main():
                             log.flush()
                             # Never burst requests to catch up after a delayed Wi-Fi response.
                             due = row['received_monotonic'] + config['interval']
-                            if not CONSOLE.is_terminal:
+                            if config.get('focus'):
+                                if row.get('metadata_refreshed') and selected_metrics(config).intersection({'current','power'}):
+                                    CONSOLE.print(battery_details(row), markup=False)
+                                CONSOLE.print(selected_line(row, config), markup=False)
+                            elif not CONSOLE.is_terminal:
                                 CONSOLE.print(
-                                    f'{elapsed(row["elapsed"])}  {row["power_w"]:.2f} W  {power_source(row)}  '
+                                    f'{elapsed(row["elapsed"])}  {number(row.get("power_w"), " W")}  {power_source(row) if "external_power" in row else "Source unavailable"}  '
                                     f'CPU {number(row.get("cpu_c"), "°C")}'
                                 )
                 except (RuntimeError, OSError) as exc:

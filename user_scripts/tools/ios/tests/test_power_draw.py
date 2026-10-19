@@ -5,6 +5,7 @@ POWER_DRAW_MODULE may point to a saved script for before/after comparisons.
 """
 
 import ast
+import ctypes
 from concurrent.futures import ThreadPoolExecutor
 import importlib.util
 import io
@@ -18,7 +19,7 @@ import sys
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 from rich.console import Console
 
@@ -49,6 +50,20 @@ for index, command in enumerate(sys.stdin):
     if mode == 'external_discharge': row.update(current_ma=-400, external_power=True)
     if mode == 'idle': row.update(current_ma=0, external_power=True)
     if mode == 'bad_voltage': row['voltage_mv'] = -1
+    if mode == 'missing_battery':
+        for key in ('percent','battery_c','voltage_mv','current_ma'):row.pop(key,None)
+    if mode == 'selected':
+        import shlex
+        metrics=set(shlex.split(sys.argv[-1])[-1].split(','))
+        keep={'time'}
+        for metric,keys in {'current':{'current_ma','external_power'},'power':{'current_ma','voltage_mv','external_power'},
+                            'battery':{'percent'},'battery-temp':{'battery_c'},'voltage':{'voltage_mv'},
+                            'cpu-temp':{'cpu_c'},'cpu':{'cpu_percent'},'memory':{'memory'}}.items():
+            if metric in metrics:keep.update(keys)
+        row={k:v for k,v in row.items() if k in keep}
+        if metrics.intersection({'current','power','health'}):
+            row['external_power']=False
+            if index==0:row.update(percent=70,raw_mah=1540,capacity_mah=2200,design_mah=2675,metadata_refreshed=True)
     payload = json.dumps(row) + '\n'
     if mode == 'fragmented':
         for offset in range(0,len(payload),7):
@@ -128,6 +143,26 @@ class Configuration(unittest.TestCase):
 
 
 class Accounting(unittest.TestCase):
+    def test_current_only_integrates_charge_without_fabricating_watts(self):
+        rows=[sample(0),sample(20)]
+        for row in rows:row.pop('power_w')
+        result=power.summarize(rows,20)
+        self.assertAlmostEqual(result['consumed_mah'],250*20/3600)
+        self.assertEqual(result['mean_ma'],250)
+        self.assertEqual(result['charge_covered_seconds'],20)
+        self.assertIsNone(result['mean_w'])
+        self.assertEqual(result['covered_seconds'],0)
+
+    def test_missing_battery_fields_render_unavailable_not_idle(self):
+        row=sample(0)
+        for key in ('percent','battery_c','current_ma','power_w'):row.pop(key)
+        output=io.StringIO()
+        with tempfile.TemporaryDirectory() as directory,patch.object(power,'CONSOLE',Console(file=output,width=140)):
+            power.CONSOLE.print(power.dashboard([row],dict(power.DEFAULTS,host='fixture'),'waiting',time.monotonic()))
+            power.final_report([row],dict(power.DEFAULTS),Path(directory)/'run.jsonl','Done')
+        self.assertEqual(power.battery_flow(row),'unavailable')
+        self.assertNotIn('· Idle',output.getvalue())
+
     def test_unequal_spacing_and_charge(self):
         result = power.summarize([sample(0,1),sample(10,3),sample(30,5)],20)
         self.assertAlmostEqual(result['mean_w'],100/30)
@@ -305,8 +340,120 @@ class NativeContract(unittest.TestCase):
         self.assertEqual(len(page_sizes),1)
         self.assertEqual(ast.unparse(page_sizes[0]),'C.c_size_t()')
 
+    def native_battery(self, selection, sources, commands):
+        keys={};values={};calls=[];counter=iter(range(10,10000));external=iter(sources)
+        def text(_allocator,raw,_encoding):
+            ptr=next(counter);keys[ptr]=raw.decode();return ptr
+        def prop(_service,key,_allocator,_options):
+            name=keys[key];calls.append(name);ptr=next(counter)
+            available={'InstantAmperage':-400,'Voltage':3900,'Temperature':2900,'CurrentCapacity':70,
+                       'AppleRawCurrentCapacity':1540,'NominalChargeCapacity':2200,'AppleRawMaxCapacity':2200,
+                       'DesignCapacity':2675,'CycleCount':100,'UpdateTime':100}
+            values[ptr]=next(external) if name=='ExternalConnected' else available.get(name)
+            return ptr if values[ptr] is not None else 0
+        def number(ptr,_kind,out):out._obj.value=values[ptr];return True
+        functions={'CFRelease':Mock(),'CFStringCreateWithCString':Mock(side_effect=text),
+                   'CFNumberGetValue':Mock(side_effect=number),'CFBooleanGetValue':Mock(side_effect=lambda ptr:values[ptr]),
+                   'IOServiceMatching':Mock(return_value=1),'IOServiceGetMatchingService':Mock(return_value=1),
+                   'IORegistryEntryCreateCFProperty':Mock(side_effect=prop),'IOObjectRelease':Mock()}
+        class Library:
+            def __getattr__(self,name):return functions[name]
+        output=io.StringIO()
+        with patch.object(ctypes,'CDLL',return_value=Library()),patch.object(sys,'argv',['collector',selection]), \
+             patch.object(sys,'stdin',io.StringIO(commands)),patch.object(sys,'stdout',output):
+            exec(compile(power.REMOTE,'<phone-collector>','exec'),{})
+        return [json.loads(line) for line in output.getvalue().splitlines()],calls
+
+    def test_current_queries_only_dependencies_and_refreshes_on_source_change(self):
+        rows,calls=self.native_battery('current',[False,False,True],'read\nread\nread\n')
+        self.assertEqual([r['battery_properties_read'] for r in rows],[9,2,9])
+        self.assertNotIn('metadata_refreshed',rows[1]);self.assertTrue(rows[2]['metadata_refreshed'])
+        self.assertNotIn('Voltage',calls);self.assertNotIn('Temperature',calls)
+        self.assertEqual(calls.count('NominalChargeCapacity'),2)
+
+    def test_temperature_only_reads_one_property_and_no_metadata(self):
+        rows,calls=self.native_battery('battery-temp',[],'read\nread\n')
+        self.assertEqual(calls,['Temperature','Temperature'])
+        self.assertEqual(rows[0]['battery_c'],29)
+        self.assertNotIn('current_ma',rows[0]);self.assertNotIn('cpu_c',rows[0])
+        self.assertNotIn('collector_cpu_ms',rows[0]);self.assertNotIn('collector_peak_rss_bytes',rows[0])
+
+    def test_explicit_metadata_refresh_for_recalibration(self):
+        rows,calls=self.native_battery('current',[False,False],'read\nread-meta\n')
+        self.assertEqual([r['battery_properties_read'] for r in rows],[9,9])
+        self.assertEqual(calls.count('DesignCapacity'),2)
+
+    def test_health_refreshes_remaining_charge_each_poll_without_reading_current(self):
+        rows,calls=self.native_battery('health',[False,False],'read\nread\n')
+        self.assertEqual([r['battery_properties_read'] for r in rows],[8,3])
+        self.assertEqual(calls.count('CurrentCapacity'),2)
+        self.assertEqual(calls.count('AppleRawCurrentCapacity'),2)
+        self.assertEqual(calls.count('DesignCapacity'),1)
+        self.assertNotIn('InstantAmperage',calls)
+
+    def test_metadata_first_on_start_and_source_change_only_even_with_profile(self):
+        rows,_=self.native_battery('current,collector',[False,False,True,True],'read\nread\nread\nread\n')
+        self.assertEqual([bool(r.get('metadata_refreshed')) for r in rows],[True,False,True,False])
+
+
+class BatteryEstimates(unittest.TestCase):
+    def test_capacity_labels_distinguish_health_and_eta_basis(self):
+        row=self.initial();power.BatteryEstimate(20).update(row)
+        text=power.battery_details(row)
+        self.assertIn('nominal full 1800 mAh',text)
+        self.assertIn('gauge full 2000 mAh',text)
+        self.assertEqual(row['health_percent'],72)
+        self.assertEqual(row['eta_seconds'],7200)
+
+    def row(self,t,current=-500,**kwargs):
+        return dict(time=100+t,received_monotonic=t,current_ma=current,external_power=False)|kwargs
+
+    def initial(self,t=0,current=-500,**kwargs):
+        return self.row(t,current,metadata_refreshed=True,raw_mah=1000,raw_max_mah=2000,
+                        capacity_mah=1800,design_mah=2500,percent=50,**kwargs)
+
+    def test_depletion_charging_health_and_host_integration(self):
+        estimator=power.BatteryEstimate(20);r=self.initial();estimator.update(r)
+        self.assertEqual(r['eta_seconds'],7200);self.assertEqual(r['eta_target'],'empty')
+        self.assertEqual(r['health_percent'],72)
+        later=self.row(20);estimator.update(later)
+        self.assertAlmostEqual(later['estimated_remaining_mah'],1000-500*20/3600)
+        self.assertAlmostEqual(later['eta_seconds'],7180)
+        charge=self.initial(40,500);charge['external_power']=True;estimator.update(charge)
+        self.assertEqual(charge['eta_target'],'full');self.assertEqual(charge['eta_seconds'],7200)
+
+    def test_missing_capacity_zero_current_and_long_gap_do_not_invent_eta(self):
+        estimator=power.BatteryEstimate(20);r=self.row(0);estimator.update(r)
+        self.assertIsNone(r['eta_seconds'])
+        zero=self.initial(20,0);estimator.update(zero);self.assertIsNone(zero['eta_seconds'])
+        gap=self.row(200);estimator.update(gap);self.assertIsNone(gap['eta_seconds'])
+        fresh=self.initial(220);estimator.update(fresh);self.assertEqual(fresh['eta_seconds'],7200)
+
+    def test_direction_switch_resets_smoothed_rate(self):
+        estimator=power.BatteryEstimate(20);r=self.initial();estimator.update(r)
+        charge=self.row(20,500);estimator.update(charge)
+        self.assertEqual(charge['eta_target'],'full');self.assertEqual(charge['eta_rate_ma'],500)
+
+    def test_new_metadata_after_power_change_reanchors_estimate(self):
+        estimator=power.BatteryEstimate(20);r=self.initial();estimator.update(r)
+        newer=self.initial(20,1000);newer['raw_mah']=1500;newer['external_power']=True;estimator.update(newer)
+        self.assertEqual(newer['estimated_remaining_mah'],1500)
+        self.assertEqual(newer['eta_seconds'],1800)
+
 
 class CommandLine(unittest.TestCase):
+    def test_missing_battery_fields_do_not_crash_full_run(self):
+        result=subprocess.run(self.command+['--host','fixture','--all','--readings','1'],
+                              env=self.env|{'PHONE_FIXTURE':'missing_battery'},stdin=subprocess.DEVNULL,
+                              capture_output=True,text=True,timeout=5)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertNotIn('Traceback',result.stderr)
+
+    def test_all_and_legacy_metrics_rejected_as_conflicting(self):
+        result=subprocess.run(self.command+['--host','fixture','--all','--metrics','none'],
+                              env=self.env,stdin=subprocess.DEVNULL,capture_output=True,text=True,timeout=5)
+        self.assertEqual(result.returncode,2)
+
     def setUp(self):
         self.directory=tempfile.TemporaryDirectory()
         self.root=Path(self.directory.name)
@@ -388,6 +535,51 @@ class CommandLine(unittest.TestCase):
             result=subprocess.run(self.command+['--live']+option,env=self.env,stdin=subprocess.DEVNULL,
                                   capture_output=True,text=True,timeout=5)
             self.assertEqual(result.returncode,2)
+
+    def test_metric_flags_show_only_selected_values_and_short_summary(self):
+        for flag,label,missing in [('--cpu-temp','CPU/SoC','Battery'),('--current','mA','CPU'),
+                                   ('--battery-temp','Battery','CPU'),('--ram','RAM','Battery'),
+                                   ('--voltage','Voltage','CPU'),('--battery','Battery','CPU')]:
+            with self.subTest(flag=flag):
+                result=subprocess.run(self.command+['--host','fixture',flag,'--readings','1'],
+                                      env=self.env|{'PHONE_FIXTURE':'selected'},stdin=subprocess.DEVNULL,
+                                      capture_output=True,text=True,timeout=5)
+                self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+                self.assertIn(label,result.stdout)
+                self.assertNotIn(missing,result.stdout)
+                self.assertNotIn('Session complete',result.stdout)
+                self.assertNotIn('baseline',result.stdout)
+                config=json.loads((self.state/'config.json').read_text())
+                self.assertFalse(config['live'])
+
+    def test_combined_flags_override_saved_selection(self):
+        result=subprocess.run(self.command+['--host','fixture','--current','--power','--cpu-temp','--readings','1'],
+                              env=self.env|{'PHONE_FIXTURE':'selected'},stdin=subprocess.DEVNULL,
+                              capture_output=True,text=True,timeout=5)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertIn('mA',result.stdout);self.assertIn('Power',result.stdout);self.assertIn('CPU/SoC',result.stdout)
+        self.assertEqual(json.loads((self.state/'config.json').read_text())['focus'],'current,power,cpu-temp')
+        result=subprocess.run(self.command+['--cpu-temp','--readings','1'],env=self.env|{'PHONE_FIXTURE':'selected'},
+                              stdin=subprocess.DEVNULL,capture_output=True,text=True,timeout=5)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertNotIn('Battery',result.stdout);self.assertNotIn(' mA',result.stdout)
+
+    def test_metric_flag_alone_defaults_to_live_until_interrupted(self):
+        marker=self.root/'started'
+        proc=subprocess.Popen(self.command+['--host','fixture','--current','--interval','1'],
+                              env=self.env|{'PHONE_FIXTURE':'selected','PHONE_FIXTURE_STARTED':str(marker)},
+                              stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        try:
+            deadline=time.monotonic()+5
+            while not marker.exists() and time.monotonic()<deadline:time.sleep(.02)
+            self.assertTrue(marker.exists());time.sleep(.2)
+            self.assertIsNone(proc.poll());proc.send_signal(signal.SIGINT)
+            out,err=proc.communicate(timeout=8)
+            self.assertEqual(proc.returncode,0,out+err)
+            self.assertTrue(json.loads((self.state/'config.json').read_text())['live'])
+            self.assertNotIn('Session complete',out)
+        finally:
+            if proc.poll() is None:proc.kill();proc.communicate()
 
     def assert_signal_cleanup(self,stop_signal):
         marker=self.root/'collector-started'
