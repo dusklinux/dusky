@@ -19,6 +19,7 @@
 
         --gem-sys-color--surface: var(--surface) !important;
         --lumi-sys-color--surface: var(--surface) !important;
+        --lumi-sys-color--surface-dim: var(--surface_container_low) !important;
         --lumi-sys-color--surface-container: var(--surface_container) !important;
         --lumi-sys-color--surface-container-high: var(--surface_container_high) !important;
         --lumi-sys-color--surface-container-low: var(--surface_container_low) !important;
@@ -85,9 +86,6 @@
     p.query-text-line.ng-star-inserted { background-color: var(--surface_container_low) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fp.query-text-line.ng-star-inserted%1Fbg | bg: surface_container_low */
     span[data-test-id="luminous-collapsed-bubble"] { background-color: var(--surface_container_low) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fspan%5Bdata-test-id%3D%22luminous-collapsed-bubble%22%5D%1Fbg | bg: surface_container_low */
     span[data-test-id="luminous-expanded-bubble"] { background-color: var(--surface_container_low) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fspan%5Bdata-test-id%3D%22luminous-expanded-bubble%22%5D%1Fbg | bg: surface_container_low */
-    div.response-content.ng-tns-c3550608724-25 { background-color: var(--surface) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fdiv.response-content.ng-tns-c3550608724-25%1Fbg | bg: surface */
-    div.scroll-container { background-color: var(--surface) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fdiv.scroll-container%1Fbg | bg: surface */
-    div[data-test-id="overflow-container"] { background-color: var(--surface) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fdiv%5Bdata-test-id%3D%22overflow-container%22%5D%1Fbg | bg: surface */
     hallucination-disclaimer.hallucination-disclaimer.ng-tns-c2287058552-8.enable-luminous-disclaimer-updates { display: none !important; } /* dusky key=sel%1Fhallucination-disclaimer.hallucination-disclaimer.ng-tns-c2287058552-8.enable-luminous-disclaimer-updates%1Fdisplay | hidden */
     /* <<< dusky:picks */
 }
