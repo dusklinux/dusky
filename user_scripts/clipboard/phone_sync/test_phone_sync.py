@@ -108,7 +108,7 @@ class Behavior(unittest.IsolatedAsyncioTestCase):
         stream = asyncio.StreamReader()
         stream.feed_data(sync.encode({"type": "hello", "version": 1, "maxBytes": sync.MAX_TEXT}))
         process = AsyncMock(stdin=Writer(), stdout=stream, stderr=None, returncode=0)
-        with patch.object(sync.asyncio, "create_subprocess_exec", return_value=process):
+        with patch.object(sync.asyncio, "create_subprocess_exec", return_value=process) as launch:
             task = asyncio.create_task(self.sync.connect("fixture", 22))
             try:
                 async with asyncio.timeout(1):
@@ -117,6 +117,7 @@ class Behavior(unittest.IsolatedAsyncioTestCase):
                 await self.local("existing clipboard")
                 self.assertTrue(self.sync.copies.empty(), "Initial selection was queued as a new copy")
                 self.assertFalse(process.stdin.data)
+                self.assertIsNone(launch.call_args.kwargs["stderr"], "SSH diagnostics were hidden")
                 await self.local("fresh copy")
                 await asyncio.sleep(0)
                 message = await sync.read_frame(reader_from_bytes(process.stdin.data))
@@ -144,9 +145,12 @@ class Behavior(unittest.IsolatedAsyncioTestCase):
                 raise asyncio.CancelledError
 
         with patch.object(self.sync, "connect", side_effect=OSError) as connect, \
-             patch.object(sync.asyncio, "sleep", side_effect=sleep):
+             patch.object(sync.asyncio, "sleep", side_effect=sleep), \
+             self.assertLogs(level="WARNING") as logs:
             with self.assertRaises(asyncio.CancelledError):
                 await self.sync.reconnect()
+        self.assertIn("fixture-wifi:22", logs.output[0])
+        self.assertIn("127.0.0.1:2222", logs.output[1])
         self.assertEqual(delays, [1, 2, 4, 8, 16, 30, 30])
         self.assertEqual([call.args for call in connect.call_args_list],
                          [("fixture-wifi", 22), ("127.0.0.1", 2222)] * 7)
@@ -223,6 +227,8 @@ class Install(unittest.TestCase):
             existing.parent.mkdir(parents=True)
             existing.write_bytes(b"existing service remains identical\n")
             with patch.object(setup, "CONFIG", configuration), patch.object(setup, "SERVICE", service), \
+                 patch.object(setup, "USB_SERVICE", service.with_name(setup.USB_UNIT)), \
+                 patch.object(setup, "INSTALL_ROOT", root / "data/phone_sync"), \
                  patch.object(setup.subprocess, "run") as command, patch.object(setup.shutil, "which", return_value="/usr/bin/tool"):
                 command.return_value.returncode = 0
                 with patch.object(setup.sys, "argv", ["setup.py", "install", "--host", "phone", "--identity", str(identity)]):
@@ -230,6 +236,9 @@ class Install(unittest.TestCase):
                 self.assertEqual(json.loads(configuration.read_text())["host"], "phone")
                 self.assertEqual(configuration.stat().st_mode & 0o777, 0o600)
                 self.assertTrue(service.is_file())
+                self.assertEqual((setup.INSTALL_ROOT / "phone_sync.py").read_bytes(),
+                                 (setup.ROOT / "phone_sync.py").read_bytes())
+                self.assertIn(str(setup.INSTALL_ROOT), service.read_text())
                 calls = [call.args[0] for call in command.call_args_list]
                 self.assertEqual(calls[0][-1], "--enable")
                 self.assertTrue(all("dusky_clipboard.service" not in call for call in calls))
@@ -243,6 +252,25 @@ class Install(unittest.TestCase):
                 self.assertFalse(service.exists())
                 self.assertFalse(configuration.exists())
                 self.assertEqual(existing.read_bytes(), b"existing service remains identical\n")
+
+    def test_managed_usb_install_and_uninstall(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            tunnel = root / "systemd/user" / setup.USB_UNIT
+            with patch.object(setup, "USB_SERVICE", tunnel), \
+                 patch.object(setup, "SERVICE", root / "sync.service"), \
+                 patch.object(setup, "CONFIG", root / "missing.json"), \
+                 patch.object(setup.shutil, "which", return_value="/usr/bin/iproxy"), \
+                 patch.object(setup.subprocess, "run") as command:
+                with patch.object(setup.sys, "argv", ["setup.py", "usb", "--usb-port", "2222"]):
+                    setup.main()
+                self.assertIn('"/usr/bin/iproxy" -s 127.0.0.1 2222:22', tunnel.read_text())
+                self.assertIn("Restart=on-failure", tunnel.read_text())
+                self.assertIn(["systemctl", "--user", "enable", "--now", setup.USB_UNIT],
+                              [call.args[0] for call in command.call_args_list])
+                with patch.object(setup.sys, "argv", ["setup.py", "uninstall"]):
+                    setup.main()
+                self.assertFalse(tunnel.exists())
 
     def test_phone_failure_does_not_install_linux_service(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -25,20 +25,60 @@ an already authorized key. Verify the SSH host fingerprint when first connecting
 Setup enables **Settings → Duskie → Phone clipboard sharing → Phone clipboard
 sync**, creates `dusky/phone_sync.json` under your XDG configuration directory,
 and enables `dusky_phone_sync.service` for your user’s graphical session.
-The service uses the script directory from which setup was run; keep it installed.
+Setup copies its runtime and recovery installer into
+`$XDG_DATA_HOME/dusky/phone_sync` (normally `~/.local/share/dusky/phone_sync`).
+The service runs that persistent copy, so removing the checkout or losing a RAM
+disk does not remove its executable. Rerun install after updating the source.
 
 ### USB
 
-An existing `iproxy 2222:22` tunnel can be the sole connection:
+For a USB tunnel that starts with the graphical session and restarts on failure,
+stop any manually started iproxy using the same port, then run:
+
+```sh
+python3 setup.py usb --usb-port 2222
+python3 setup.py install --host 127.0.0.1 --port 2222 --pair
+```
+
+The optional `dusky_phone_sync_usb.service` runs iproxy bound to loopback. It
+uses the connected USB device; unplugging/reconnecting is handled by iproxy and
+the clipboard service's existing reconnect loop. With multiple iPhones, use your
+own device-specific iproxy tunnel instead. The `usb` action does not pair or
+enable clipboard sharing. `status` shows both managed services; uninstall removes
+both, retaining the recovery installer and SSH keys.
+
+An externally managed `iproxy 2222:22` tunnel can also be the sole connection:
 
 ```sh
 python3 setup.py install --host 127.0.0.1 --port 2222 --pair
 ```
 
 Or add `--usb-port 2222` to a Wi-Fi installation for fallback to that existing
-tunnel. This service does not start, stop, or replace your iproxy process.
+tunnel. Clipboard sync leaves external iproxy processes alone; only the explicit
+`usb` action installs a tunnel service.
 If USB uses a different SSH host-key entry, connect once as `mobile` through
 that endpoint to verify its fingerprint before relying on automatic fallback.
+
+### After restoring iOS
+
+A restore can remove authorized SSH keys, regenerate the phone's SSH host keys,
+reset Duskie preferences, and change its Wi-Fi address. Reinstalling the DEB
+alone cannot restore the laptop pairing. With the phone jailbroken, SSH running
+and Duskie installed, rerun the USB installation above with `--pair`. This adds
+the laptop key to the mobile account's actual home directory and enables the
+phone's sharing switch. Enable Duskie's master switch too if it was turned off.
+
+If SSH reports a changed host key, verify the new phone fingerprint over a
+trusted connection first. Then remove only that endpoint's old entry, for example
+`ssh-keygen -R '[127.0.0.1]:2222'`, and rerun pairing to accept the verified key.
+Do not disable host-key checking. USB avoids dependence on a changing DHCP address;
+Wi-Fi installations must update `--host` when that address changes.
+
+The installed recovery command is
+`python3 ~/.local/share/dusky/phone_sync/setup.py install --host 127.0.0.1 --port 2222 --pair`
+(adjust for a custom XDG data directory). Connection logs now retain the actual
+SSH/helper error and identify the failed endpoint, so missing pairing, changed
+host keys, refused connections and disabled phone sharing are visible in the journal.
 
 ## Behavior
 

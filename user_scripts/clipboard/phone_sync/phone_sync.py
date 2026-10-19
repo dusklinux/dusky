@@ -206,7 +206,7 @@ class Sync:
         process = await asyncio.create_subprocess_exec(
             *ssh_command(self.config, host, port, "--stream"),
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL)
+            stderr=None)
         try:
             async with asyncio.timeout(8):
                 hello = await read_frame(process.stdout)
@@ -233,8 +233,9 @@ class Sync:
             for host, port in endpoints:
                 try:
                     await self.connect(host, port)
-                except (ExceptionGroup, OSError, ValueError, TimeoutError, asyncio.IncompleteReadError):
-                    logging.info("Phone connection unavailable; retrying")
+                except (ExceptionGroup, OSError, ValueError, TimeoutError, asyncio.IncompleteReadError) as error:
+                    logging.warning("Phone connection unavailable via %s:%d (%s); retrying",
+                                    host, port, error)
             await asyncio.sleep(self.retry_delay)
             self.retry_delay = min(self.retry_delay * 2, 30)
 
