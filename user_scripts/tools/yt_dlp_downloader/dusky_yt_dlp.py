@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python
 """Dusky Universal Media Downloader: Arch Linux / Python 3.14.7+ TUI."""
 
 from __future__ import annotations
@@ -1305,7 +1305,7 @@ def job_guard(state: Path, job: Job, controller: QueueController, slot: Slot) ->
 
 
 def ytdlp_command(job: Job, work: Path, state: Path, archive: Path, cookie_args: list[str]) -> list[str]:
-    template = str(work / "%(title).140B [%(extractor_key).20B-%(id).50B].%(ext)s")
+    template = str(work / "%(title).180B [%(id)s].%(ext)s")
     return [
         "yt-dlp", "--ignore-config", "--no-js-runtimes",
         "--js-runtimes", "node", "--color", "never", "--encoding", "utf-8",
@@ -1519,8 +1519,46 @@ def same_content(first: Path, second: Path) -> bool:
     return hashes[0] == hashes[1]
 
 
-def publish(source: Path, destination: Path) -> tuple[Path, bool]:
-    target = destination / source.name
+def mark_url_downloaded(urls_path: Path, url: str) -> None:
+    lock_path = urls_path.parent / f".{urls_path.name}.lock"
+    with exclusive_lock(lock_path):
+        try:
+            content = urls_path.read_text(encoding="utf-8-sig")
+            lines = content.splitlines(keepends=True)
+            changed = False
+            new_lines = []
+            for line in lines:
+                if line.strip() == url:
+                    new_lines.append(f"# DOWNLOADED {url}\n")
+                    changed = True
+                else:
+                    new_lines.append(line)
+            if changed:
+                temp_path = urls_path.with_name(f".tmp-{urls_path.name}-{os.getpid()}")
+                temp_path.write_text("".join(new_lines), encoding="utf-8")
+                temp_path.replace(urls_path)
+        except OSError:
+            pass
+
+
+def publish(source: Path, destination: Path, move_to: Path | None = None) -> tuple[Path, bool]:
+    target_dir = move_to if move_to is not None else destination
+    target = target_dir / source.name
+    if target.exists():
+        if not target.is_file() or not same_content(source, target):
+            raise ValueError(f"Output name collision; refusing to replace a different file: {target}") from None
+        source.unlink()
+        return target, True
+    if move_to is not None:
+        temp_name = f".part-{os.getpid()}-{hashlib.sha256(target.name.encode()).hexdigest()[:16]}.tmp"
+        temp_target = target_dir / temp_name
+        try:
+            shutil.copyfile(source, temp_target)
+            temp_target.replace(target)
+        finally:
+            temp_target.unlink(missing_ok=True)
+        source.unlink()
+        return target, False
     try:
         os.link(source, target)
         existed = False
@@ -1535,7 +1573,13 @@ def publish(source: Path, destination: Path) -> tuple[Path, bool]:
 def execute_job(
     job: Job, slot: Slot, controller: QueueController, progress: Progress,
     destination: Path, state: Path, cookies: CookieChoice,
+    move_to: Path | None = None, urls_file: Path | None = None, min_free_gb: float = 4.0,
 ) -> Report:
+    if move_to is not None:
+        free_gb = shutil.disk_usage(move_to).free / (1024 ** 3)
+        if free_gb < min_free_gb:
+            controller.abort(f"disk space low ({free_gb:.2f} GiB remaining on {move_to})")
+            return Report(job.title, Status.ABORTED, error=f"Disk space low ({free_gb:.1f} GiB remaining)")
     parser = ProgressParser(job.title)
     work: Path | None = None
     scratch_archive: Path | None = None
@@ -1574,6 +1618,8 @@ def execute_job(
                 return Report(title, Status.FAILED, error=translate_error(message, job.mode))
             if not parser.state.final_paths:
                 if parser.state.archive_skip:
+                    if urls_file is not None:
+                        mark_url_downloaded(urls_file, job.url)
                     return Report(title, Status.SKIPPED, error="already in the per-format archive")
                 return Report(title, Status.FAILED,
                               error="yt-dlp exited without an after_move filepath or confirmed archive skip")
@@ -1586,12 +1632,14 @@ def execute_job(
             entry = new_archive_entry(scratch_archive, old_lines)
             if controller.cancellation(slot):
                 raise StopRequested
-            published, existed = publish(final, destination)
+            published, existed = publish(final, destination, move_to=move_to)
             try:
                 commit_archive(state, archive, entry)
             except OSError as exc:
                 return Report(title, Status.FAILED, path=published,
                               error=f"Media published, archive commit failed: {exc}; retry safely")
+            if urls_file is not None:
+                mark_url_downloaded(urls_file, job.url)
             return Report(title, Status.SKIPPED if existed else Status.SUCCESS,
                           path=published, size=published.stat().st_size,
                           error="identical output already present" if existed else "")
@@ -1695,7 +1743,10 @@ def start_keys(
     return KeyReader(thread, fd, original)
 
 
-def run_queue(jobs: list[Job], destination: Path, state: Path, cookies: CookieChoice, workers: int) -> tuple[list[Report], str]:
+def run_queue(
+    jobs: list[Job], destination: Path, state: Path, cookies: CookieChoice, workers: int,
+    move_to: Path | None = None, urls_file: Path | None = None, min_free_gb: float = 4.0,
+) -> tuple[list[Report], str]:
     """One Rich task per slot; reports remain in input order."""
     results: list[Report | None] = [None] * len(jobs)
     mailbox = SignalMailbox()
@@ -1728,7 +1779,10 @@ def run_queue(jobs: list[Job], destination: Path, state: Path, cookies: CookieCh
                 if slot is None:
                     return Report(job.title, Status.ABORTED, error="not started")
                 try:
-                    return execute_job(job, slot, controller, display, destination, state, cookies)
+                    return execute_job(
+                        job, slot, controller, display, destination, state, cookies,
+                        move_to=move_to, urls_file=urls_file, min_free_gb=min_free_gb,
+                    )
                 finally:
                     controller.finish(slot, display)
 
@@ -1740,6 +1794,12 @@ def run_queue(jobs: list[Job], destination: Path, state: Path, cookies: CookieCh
                 def fill_workers() -> None:
                     nonlocal next_index
                     while not controller.aborted.is_set() and len(pending) < workers and next_index < len(jobs):
+                        if move_to is not None:
+                            free_gb = shutil.disk_usage(move_to).free / (1024 ** 3)
+                            if free_gb < min_free_gb:
+                                controller.abort(f"disk space low ({free_gb:.2f} GiB remaining on {move_to})")
+                                messages.append(f"Disk space headroom reached ({free_gb:.2f} GiB remaining); stopping new downloads.")
+                                break
                         future = executor.submit(one, jobs[next_index])
                         pending[future] = next_index
                         next_index += 1
@@ -1802,7 +1862,7 @@ def run_queue(jobs: list[Job], destination: Path, state: Path, cookies: CookieCh
     return reports, controller.reason
 
 
-def print_reports(reports: list[Report], destination: Path, archive: Path) -> None:
+def print_reports(reports: list[Report], destination: Path, archive: Path, move_to: Path | None = None) -> None:
     tally = {status: sum(item.status is status for item in reports) for status in Status}
     console.print(" | ".join(f"{count} {status.value.lower()}" for status, count in tally.items()))
     table = Table(title="Extraction log", box=box.SIMPLE, expand=True)
@@ -1818,6 +1878,8 @@ def print_reports(reports: list[Report], destination: Path, archive: Path) -> No
                       bytes_label(report.size) if report.size else "-", escape(detail))
     console.print(table)
     console.print(f"Memory pool: {escape(str(destination))}\nArchive: {escape(str(archive))}")
+    if move_to is not None:
+        console.print(f"Final storage: {escape(str(move_to))}")
 
 
 def self_test() -> None:
@@ -1899,7 +1961,20 @@ def self_test() -> None:
             assert published.read_bytes() == b"example"
         else:
             raise AssertionError("Name collision overwrote existing media")
-    print("Self-test passed: ranges, formats, progress stages, slot reset, archive and no-overwrite publication.")
+        # Test move_to across directories
+        ext_dir = private_dir(directory / "final_dest")
+        source = private_dir(directory / "work") / "media2.m4a"
+        source.write_bytes(b"moved-example")
+        moved_pub, moved_ex = publish(source, directory, move_to=ext_dir)
+        assert not moved_ex and moved_pub == ext_dir / "media2.m4a"
+        assert moved_pub.read_bytes() == b"moved-example"
+        assert not source.exists()
+        # Test mark_url_downloaded
+        test_urls = directory / "urls.txt"
+        test_urls.write_text("https://example.com/one\nhttps://example.com/two\n", encoding="utf-8")
+        mark_url_downloaded(test_urls, "https://example.com/one")
+        assert test_urls.read_text(encoding="utf-8") == "# DOWNLOADED https://example.com/one\nhttps://example.com/two\n"
+    print("Self-test passed: ranges, formats, progress stages, slot reset, archive, move_to and no-overwrite publication.")
 
 
 def argument_parser() -> argparse.ArgumentParser:
@@ -1908,6 +1983,9 @@ def argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("-f", "--format", choices=[mode.value for mode in TargetFormat])
     parser.add_argument("-q", "--quality", choices=["best", *(str(cap) for cap in QUALITY_CAPS)])
     parser.add_argument("-o", "--output-dir", type=Path, help="absolute path below a Dusky memory pool")
+    parser.add_argument("--move-to", type=Path, help="move finalized media from memory pool to disk directory")
+    parser.add_argument("--update-urls-file", type=Path, help="mark completed URLs with # DOWNLOADED in this file")
+    parser.add_argument("--min-free-gb", type=float, default=4.0, help="stop queue if free disk space in GB drops below this (default 4.0)")
     parser.add_argument("-I", "--playlist-items", help="inclusive playlist positions (all, 1-3, -3:, ::-1)")
     parser.add_argument("-N", "--concurrent", type=int, help="parallel jobs (positive; limited by queue length)")
     parser.add_argument("--skip-items", help="skip final queue positions; use --skip-items=-3: for a leading minus")
@@ -1932,6 +2010,16 @@ def main() -> int:
     state = state_directory()
     initial_pool = storage_pool(args.output_dir)
     cookies = cookie_choice(args, state)
+    move_to = args.move_to.expanduser().resolve() if args.move_to else None
+    if move_to is not None:
+        if not move_to.is_dir():
+            raise ValueError(f"--move-to target is not a directory: {move_to}")
+        if not os.access(move_to, os.W_OK):
+            raise ValueError(f"--move-to target directory is not writable: {move_to}")
+    urls_file = args.update_urls_file.expanduser().resolve() if args.update_urls_file else None
+    if urls_file is not None:
+        if not urls_file.is_file():
+            raise ValueError(f"--update-urls-file target is not a file: {urls_file}")
     history_path = state / "input_history.txt"
     os.close(private_file(history_path))
     history = FileHistory(str(history_path))
@@ -1944,8 +2032,11 @@ def main() -> int:
                   f"{jobs[0].mode.value} | {escape(str(destination))}")
     if os.environ.get("DUSKY_GUI") == "1":
         print("DUSKY_EVENT|" + json.dumps({"event": "queue", "total": len(jobs)}), flush=True)
-    reports, abort_reason = run_queue(jobs, destination, state, cookies, workers)
-    print_reports(reports, destination, archive_path(state, jobs[0].mode))
+    reports, abort_reason = run_queue(
+        jobs, destination, state, cookies, workers,
+        move_to=move_to, urls_file=urls_file, min_free_gb=args.min_free_gb,
+    )
+    print_reports(reports, destination, archive_path(state, jobs[0].mode), move_to=move_to)
     if preflight_errors:
         console.print(f"[yellow]{preflight_errors} input(s) could not be queued; run exits nonzero.[/]")
     if abort_reason:
