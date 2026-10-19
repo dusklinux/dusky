@@ -45,6 +45,10 @@ for index, command in enumerate(sys.stdin):
     if mode == 'invalid': row['percent'] = True
     if mode == 'overflow': row['voltage_mv'] = row['current_ma'] = 1e308
     if mode == 'nan': row['cpu_c'] = float('nan')
+    if mode == 'charging': row.update(current_ma=400, external_power=True)
+    if mode == 'external_discharge': row.update(current_ma=-400, external_power=True)
+    if mode == 'idle': row.update(current_ma=0, external_power=True)
+    if mode == 'bad_voltage': row['voltage_mv'] = -1
     payload = json.dumps(row) + '\n'
     if mode == 'fragmented':
         for offset in range(0,len(payload),7):
@@ -84,6 +88,7 @@ class Configuration(unittest.TestCase):
 
     def test_interactive_count_wins_even_if_equal_to_previous_count(self):
         with patch.object(power,'CONSOLE',Console(file=io.StringIO())), \
+             patch.object(power.Confirm,'ask',return_value=False), \
              patch.object(power.Prompt,'ask',side_effect=['phone','','','Label','none']), \
              patch.object(power.IntPrompt,'ask',side_effect=[22,13]) as prompt, \
              patch.object(power.FloatPrompt,'ask',side_effect=[10,0,40,12]):
@@ -100,7 +105,7 @@ class Configuration(unittest.TestCase):
     def test_invalid_numeric_and_metric_values(self):
         for change in ({'interval':0}, {'timeout':float('inf')}, {'interval':True},
                        {'readings':True}, {'port':True}, {'metrics':'none,cpu'},
-                       {'metrics':''}, {'metrics':'unknown'}, {'baseline_watts':float('nan')}):
+                       {'metrics':''}, {'metrics':'unknown'}, {'baseline_watts':float('nan')}, {'live':1}):
             with self.subTest(change=change), self.assertRaises(ValueError):
                 power.validate(dict(power.DEFAULTS, host='phone') | change)
 
@@ -146,6 +151,52 @@ class Accounting(unittest.TestCase):
     def test_empty_optional_panels(self):
         for compact in (True,False):
             self.assertIsNone(power.system_panel({},compact))
+
+    def test_bounded_history_retains_full_session_totals(self):
+        rows=power.Readings(20)
+        for i in range(100_000):
+            rows.append(sample(i*20,1.5)|{'collector_cpu_ms':2,'collector_peak_rss_bytes':1000+i})
+        self.assertEqual(len(rows),100_000)
+        self.assertEqual(len(rows.recent),60)
+        self.assertEqual(rows.first['elapsed'],0)
+        self.assertAlmostEqual(rows.summary()['mean_w'],1.5)
+        self.assertEqual(rows.summary()['integrated_intervals'],99_999)
+        self.assertEqual((rows.cpu_count,rows.cpu_ms,rows.peak_rss),(100_000,200_000,100_999))
+        self.assertEqual(len(rows[-5:]),5)
+
+    def test_incremental_statistics_equal_batch_with_mixed_sources(self):
+        rows=[sample(0,1),sample(10,3),sample(30,5),sample(40,2)|{'external_power':True},
+              sample(50,2),sample(60,4)|{'segment':1},sample(70,6)|{'segment':1}]
+        session=power.Readings(20)
+        for row in rows:session.append(row)
+        self.assertEqual(session.summary(),power.summarize(rows,20))
+        self.assertEqual(session.summary()['integrated_intervals'],3)
+        self.assertAlmostEqual(session.summary()['energy_wh'],150/3600)
+
+    def test_charging_display_has_no_negative_magnitudes(self):
+        row=sample(0,1.56)|dict(current_ma=400,external_power=True)
+        output=io.StringIO();console=Console(file=output,width=160,height=50)
+        with patch.object(power,'CONSOLE',console):
+            console.print(power.dashboard([row],dict(power.DEFAULTS,live=True,host='phone'),'waiting',time.monotonic()))
+        text=output.getvalue()
+        self.assertIn('Charging',text)
+        self.assertIn('LIVE',text)
+        self.assertIn('External · charging',text)
+        self.assertNotIn('-1.56',text)
+        self.assertNotIn('-400',text)
+
+    def test_final_report_uses_first_reading_and_all_totals(self):
+        with tempfile.TemporaryDirectory() as directory:
+            session=power.Readings(20)
+            for i in range(100):session.append(sample(i*20)|{'percent':100-i//2})
+            output=io.StringIO()
+            path=Path(directory)/'session.jsonl'
+            with patch.object(power,'CONSOLE',Console(file=output,width=160)):
+                power.final_report(session,dict(power.DEFAULTS),path,'Done')
+            self.assertIn('Latest 60 of 100',output.getvalue())
+            self.assertIn('100% → 51%',output.getvalue())
+            summary=json.loads(path.with_suffix('.summary.json').read_text())['summary']
+            self.assertEqual((summary['readings'],summary['integrated_intervals']),(100,99))
 
     def test_responsive_dashboard(self):
         row = sample(0)|dict(cpu_cores_percent=[0,10,None,50,100,0],cpu_percent=32)
@@ -193,12 +244,21 @@ class Transport(unittest.TestCase):
         self.assertEqual(len(list(Path('/proc/self/fd').iterdir())),before)
 
     def test_bad_and_fragmented_responses(self):
-        for mode in ('eof','oversize','invalid','nan','overflow','fragmented'):
+        for mode in ('eof','oversize','invalid','nan','overflow','bad_voltage','fragmented'):
             with self.subTest(mode=mode), patch.dict(os.environ,PHONE_FIXTURE=mode):
                 phone=self.connect()
                 if mode=='fragmented':self.assertAlmostEqual(phone.read()['power_w'],1.56)
                 else:
                     with self.assertRaises(RuntimeError):phone.read()
+                phone.close()
+
+    def test_charging_discharging_and_idle_magnitudes(self):
+        for mode,flow,signed in [('charging','charging',-1.56),('external_discharge','discharging',1.56),('idle','idle',0.0)]:
+            with self.subTest(mode=mode),patch.dict(os.environ,PHONE_FIXTURE=mode):
+                phone=self.connect();row=phone.read()
+                self.assertEqual(row['battery_flow'],flow)
+                self.assertAlmostEqual(row['power_w'],abs(signed))
+                self.assertAlmostEqual(row['signed_power_w'],signed)
                 phone.close()
 
     def test_remote_error_after_stdout_closes_is_reported(self):
@@ -271,6 +331,63 @@ class CommandLine(unittest.TestCase):
             rows=[json.loads(line) for line in path.read_text().splitlines()]
             self.assertEqual(len(rows),2)
             self.assertGreaterEqual(rows[1]['received_monotonic']-rows[0]['received_monotonic'],1)
+
+    def test_live_survives_saved_count_and_stops_cleanly(self):
+        power.save_config(self.state,dict(power.DEFAULTS,host='fixture',readings=1))
+        proc=subprocess.Popen(self.command+['--host','fixture','--live','--interval','1'],
+                              env=self.env,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        try:
+            deadline=time.monotonic()+6
+            log=None
+            while time.monotonic()<deadline:
+                logs=list((self.state/'sessions').glob('*.jsonl'))
+                if logs:
+                    log=logs[0]
+                    if len(log.read_text().splitlines())>=3:break
+                time.sleep(.02)
+            self.assertIsNotNone(log)
+            self.assertGreaterEqual(len(log.read_text().splitlines()),3)
+            self.assertIsNone(proc.poll())
+            proc.send_signal(signal.SIGINT);out,err=proc.communicate(timeout=8)
+            self.assertEqual(proc.returncode,0,out+err)
+            self.assertEqual(out.count('Session complete'),1)
+            self.assertNotIn('Traceback',err)
+            self.assertTrue(json.loads((self.state/'config.json').read_text())['live'])
+            summary=json.loads(log.with_suffix('.summary.json').read_text())
+            self.assertGreaterEqual(summary['summary']['readings'],3)
+            # Explicit finite count overrides and clears a saved live setting.
+            done=subprocess.run(self.command+['--readings','1'],env=self.env,stdin=subprocess.DEVNULL,
+                                capture_output=True,text=True,timeout=5)
+            self.assertEqual(done.returncode,0,done.stdout+done.stderr)
+            self.assertFalse(json.loads((self.state/'config.json').read_text())['live'])
+        finally:
+            if proc.poll() is None:proc.kill();proc.communicate()
+
+    def test_live_retries_disconnect_until_interrupted(self):
+        marker=self.root/'collector-started'
+        proc=subprocess.Popen(self.command+['--host','fixture','--live','--interval','1'],
+                              env=self.env|{'PHONE_FIXTURE':'eof','PHONE_FIXTURE_STARTED':str(marker)},
+                              stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        try:
+            deadline=time.monotonic()+5
+            while not marker.exists() and time.monotonic()<deadline:time.sleep(.02)
+            self.assertTrue(marker.exists());first=marker.read_text()
+            deadline=time.monotonic()+9
+            while marker.read_text()==first and time.monotonic()<deadline:time.sleep(.02)
+            self.assertNotEqual(marker.read_text(),first)
+            self.assertIsNone(proc.poll());proc.send_signal(signal.SIGINT)
+            out,err=proc.communicate(timeout=8)
+            self.assertEqual(proc.returncode,0,out+err)
+            self.assertIn('Reconnecting in 5s',out)
+            self.assertNotIn('Traceback',err)
+        finally:
+            if proc.poll() is None:proc.kill();proc.communicate()
+
+    def test_live_is_exclusive_with_duration_and_count(self):
+        for option in (['--readings','1'],['--minutes','1']):
+            result=subprocess.run(self.command+['--live']+option,env=self.env,stdin=subprocess.DEVNULL,
+                                  capture_output=True,text=True,timeout=5)
+            self.assertEqual(result.returncode,2)
 
     def assert_signal_cleanup(self,stop_signal):
         marker=self.root/'collector-started'

@@ -4,6 +4,7 @@
 Run with --configure for saved SSH/sampling options. Example:
   power_draw.py --minutes 4 --interval 20 --metrics cpu-temp,cpu,memory
   power_draw.py --readings 19 --baseline-watts 1.44 --label 'Audio on'
+  power_draw.py --live --interval 5
 
 Battery sampling is always enabled. Extra metric groups may be disabled with
 --metrics none. Configuration and JSONL/JSON reports live under
@@ -12,11 +13,14 @@ No files are installed on the phone and no recording/settings commands are used.
 CPU temperature uses the same PMGR SoC sensors as Duskie's CPUTemperature.m;
 VM/counter layouts follow Apple's iOS SDK mach headers. Unsupported sensors are
 reported as unavailable rather than replaced with a different temperature.
+Power/current are positive magnitudes with a charging/discharging direction.
+They measure net battery flow, not charger input or plugged-in phone consumption.
+JSONL retains signed_power_w (positive = discharge) and raw signed current_ma.
 """
 
 import argparse
+from collections import deque
 from datetime import datetime
-from itertools import pairwise
 import json
 import math
 import os
@@ -32,10 +36,10 @@ import time
 from rich import box
 from rich.console import Console, Group
 from rich.columns import Columns
-from rich.live import Live
+lazy from rich.live import Live
 from rich.panel import Panel
 from rich.progress_bar import ProgressBar
-from rich.prompt import Prompt, IntPrompt, FloatPrompt
+lazy from rich.prompt import Prompt, IntPrompt, FloatPrompt, Confirm
 from rich.table import Table
 from rich.text import Text
 
@@ -44,7 +48,7 @@ VALID_METRICS = frozenset({'cpu-temp', 'cpu', 'memory', 'none'})
 CONFIG_HOME = Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config')
 STATE_DIR = (CONFIG_HOME if CONFIG_HOME.is_absolute() else Path.home() / '.config') / 'dusky/settings/ssh_phone_reading'
 DEFAULTS = frozendict(host="", user="", port=22, identity="", interval=20.0,
-                     readings=13, label="", baseline_watts=0.0, charge_window=40.0,
+                     readings=13, live=False, label="", baseline_watts=0.0, charge_window=40.0,
                      timeout=12.0, metrics='cpu-temp,cpu,memory')
 
 # One persistent remote process, without installing files or changing phone settings.
@@ -337,6 +341,8 @@ def validate(config):
         raise ValueError('Port must be between 1 and 65535.')
     if isinstance(config['readings'], bool) or not isinstance(config['readings'], int) or config['readings'] < 1:
         raise ValueError('Readings must be a positive integer.')
+    if type(config['live']) is not bool:
+        raise ValueError('Live mode must be true or false.')
     for key in ('interval', 'timeout', 'baseline_watts', 'charge_window'):
         if not is_real_number(config[key]):
             raise ValueError(f'{key} must be a finite number.')
@@ -382,7 +388,9 @@ def configure(config, *, minutes=None):
         suggested = config['readings']
         if minutes is not None and is_real_number(config['interval']) and config['interval'] >= 1:
             suggested = math.ceil(minutes * 60 / config['interval']) + 1
-        config['readings'] = IntPrompt.ask('Number of readings (your entry wins; duration supplies the default)', default=suggested)
+        config['live'] = Confirm.ask('Live mode: run until Ctrl+C', default=config['live'])
+        if not config['live']:
+            config['readings'] = IntPrompt.ask('Number of readings (your entry wins; duration supplies the default)', default=suggested)
         config['label'] = Prompt.ask('Session label', default=config['label'])
         config['baseline_watts'] = FloatPrompt.ask('Compare with baseline watts (0 = off)', default=config['baseline_watts'])
         config['charge_window'] = FloatPrompt.ask('Battery percentage window for runtime estimate', default=config['charge_window'])
@@ -486,8 +494,11 @@ class Phone:
             raise RuntimeError(f'Invalid phone response: { bytes(payload[:200])!r}') from exc
         row['received_monotonic'] = time.monotonic()
         row['request_ms'] = (row['received_monotonic'] - requested) * 1000
-        row['power_w'] = -row['current_ma'] * row['voltage_mv'] / 1_000_000
-        if not math.isfinite(row['power_w']): raise RuntimeError('Invalid calculated battery power.')
+        row['signed_power_w'] = -row['current_ma'] * row['voltage_mv'] / 1_000_000
+        row['power_w'] = abs(row['signed_power_w'])
+        if not math.isfinite(row['power_w']) or row['voltage_mv'] <= 0:
+            raise RuntimeError('Invalid calculated battery power.')
+        row['battery_flow'] = battery_flow(row)
         return row
 
     def close(self):
@@ -526,23 +537,74 @@ class Phone:
             pass
 
 
-def summarize(rows, interval):
-    energy = charge = covered = 0.0
-    pairs = 0
-    for a, b in pairwise(rows):
+class Readings:
+    """Session totals plus bounded display history; full samples stream to JSONL.
+
+    len() counts the whole session; iteration/slices expose the recent 60 rows.
+    """
+    def __init__(self, interval):
+        self.interval = interval
+        self.recent = deque(maxlen=60)
+        self.first = None
+        self.count = self.pairs = self.cpu_count = 0
+        self.energy = self.charge = self.covered = self.cpu_ms = 0.0
+        self.peak_rss = 0
+
+    def __len__(self):
+        return self.count
+
+    def __iter__(self):
+        return iter(self.recent)
+
+    def __getitem__(self, key):
+        return list(self.recent)[key] if isinstance(key, slice) else self.recent[key]
+
+    def append(self, row):
+        if self.recent:
+            self._integrate(self.recent[-1], row)
+        else:
+            self.first = row
+        self.recent.append(row)
+        self.count += 1
+        if is_real_number(row.get('collector_cpu_ms')):
+            self.cpu_ms += row['collector_cpu_ms']
+            self.cpu_count += 1
+        self.peak_rss = max(self.peak_rss, row.get('collector_peak_rss_bytes', 0))
+
+    def _integrate(self, a, b):
         dt = b['received_monotonic'] - a['received_monotonic']
-        if (a['segment'] != b['segment'] or not 0 < dt <= interval * 2.5
+        if (a['segment'] != b['segment'] or not 0 < dt <= self.interval * 2.5
                 or a['external_power'] or b['external_power']
                 or a['current_ma'] > 0 or b['current_ma'] > 0):
-            continue
-        energy += (a['power_w'] + b['power_w']) / 2 * dt
-        charge += (-a['current_ma'] - b['current_ma']) / 2 * dt / 3600
-        covered += dt
-        pairs += 1
-    return dict(mean_w=energy / covered if covered else None,
-                mean_ma=charge * 3600 / covered if covered else None,
-                energy_wh=energy / 3600, consumed_mah=charge,
-                covered_seconds=covered, integrated_intervals=pairs, readings=len(rows))
+            return
+        self.energy += (a['power_w'] + b['power_w']) / 2 * dt
+        self.charge += (-a['current_ma'] - b['current_ma']) / 2 * dt / 3600
+        self.covered += dt
+        self.pairs += 1
+
+    def summary(self):
+        return dict(mean_w=self.energy / self.covered if self.covered else None,
+                    mean_ma=self.charge * 3600 / self.covered if self.covered else None,
+                    energy_wh=self.energy / 3600, consumed_mah=self.charge,
+                    covered_seconds=self.covered, integrated_intervals=self.pairs, readings=self.count)
+
+
+def summarize(rows, interval):
+    if isinstance(rows, Readings):
+        return rows.summary()
+    session = Readings(interval)
+    for row in rows:
+        session.append(row)
+    return session.summary()
+
+
+def battery_flow(row):
+    current = row.get('current_ma', 0)
+    return 'charging' if current > 0 else 'discharging' if current < 0 else 'idle'
+
+
+def power_source(row):
+    return ('External' if row['external_power'] else 'Battery') + ' · ' + battery_flow(row)
 
 
 def elapsed(seconds):
@@ -556,12 +618,12 @@ def number(value, suffix='', digits=2):
 
 def history(rows, limit=None):
     table = Table(box=box.SIMPLE, expand=True, header_style='bold cyan')
-    for name in ('Time', 'Battery', 'Draw', 'Current', 'CPU/SoC', 'Battery °C', 'Source'):
-        table.add_column(name, justify='right' if name != 'Source' else 'left', no_wrap=True)
+    for name in ('Time', 'Battery', 'Power', 'Current', 'CPU/SoC', 'Battery °C', 'Source / flow'):
+        table.add_column(name, justify='left' if name == 'Source / flow' else 'right', no_wrap=True)
     for row in (rows[-limit:] if limit else rows):
         table.add_row(elapsed(row['elapsed']), f'{row["percent"]}%', number(row['power_w'], ' W'),
-                      number(-row['current_ma'], ' mA', 0), number(row.get('cpu_c'), '°C'),
-                      number(row['battery_c'], '°C'), 'External' if row['external_power'] else 'Battery')
+                      number(abs(row['current_ma']), ' mA', 0), number(row.get('cpu_c'), '°C'),
+                      number(row['battery_c'], '°C'), power_source(row))
     return table
 
 
@@ -621,13 +683,15 @@ def dashboard(rows, config, status, started):
     grid = Table.grid(expand=True, padding=(0, 2))
     for _ in range(3): grid.add_column(ratio=1)
     last = rows[-1] if rows else {}
-    grid.add_row(Panel(f'[bold cyan]{number(last.get("power_w"), " W")}[/]\nLive draw', border_style='cyan'),
-                 Panel(f'[bold green]{number(stats["mean_w"], " W")}[/]\nSession average', border_style='green'),
+    flow = battery_flow(last).capitalize() if last else 'Waiting'
+    grid.add_row(Panel(f'[bold cyan]{number(last.get("power_w"), " W")}[/]\nBattery · {flow}', border_style='cyan'),
+                 Panel(f'[bold green]{number(stats["mean_w"], " W")}[/]\nBattery-only discharge average', border_style='green'),
                  Panel(f'[bold magenta]{number(last.get("cpu_c"), "°C")}[/]\nCPU / SoC hottest die', border_style='magenta'))
     battery = last.get('percent')
-    progress = ProgressBar(total=config['readings'], completed=len(rows), complete_style='cyan', finished_style='green')
-    footer = f'{len(rows)}/{config["readings"]} readings · {elapsed(time.monotonic()-started)} elapsed · {status} · Ctrl+C to finish'
-    notes = 'Whole-phone estimate, not camera-only. CPU — means the sensor is unavailable.'
+    live_mode = config.get('live', False)
+    count = f'{len(rows)} readings · LIVE' if live_mode else f'{len(rows)}/{config["readings"]} readings'
+    footer = f'{count} · {elapsed(time.monotonic()-started)} elapsed · {status} · Ctrl+C to finish'
+    notes = 'Net battery flow; not charger input or plugged-in phone consumption. CPU — means sensor unavailable.'
     if last.get('collector_cpu_ms') is not None:
         notes += f'\nCollector: {last["collector_cpu_ms"]:.2f} ms CPU / reading; sleeps between requests.'
     if last.get('gauge_time'):
@@ -640,7 +704,9 @@ def dashboard(rows, config, status, started):
     compact = CONSOLE.height < 38
     body = [grid, Text(f'Battery: {battery if battery is not None else "—"}%  ·  '+sparkline(rows), style='cyan')]
     if view := system_panel(last, compact): body.append(view)
-    body.extend([history(rows, 3 if compact else 5), progress, Text(footer, style='dim'), Text(notes, style='dim')])
+    body.extend([history(rows, 3 if compact else 5), Text(footer, style='dim'), Text(notes, style='dim')])
+    if not live_mode:
+        body.append(ProgressBar(total=config['readings'], completed=len(rows), complete_style='cyan', finished_style='green'))
     return Panel(Group(*body), title=title, border_style='bright_blue', padding=(1, 2))
 
 
@@ -651,6 +717,8 @@ def final_report(rows, config, path, reason):
     summary_path.write_text(json.dumps(dict(config=config, summary=stats, reason=reason),
                                        indent=2, allow_nan=False) + '\n', encoding='utf-8')
     CONSOLE.print(Panel(Text(reason), title='Session complete', border_style='cyan'))
+    if isinstance(rows, Readings) and len(rows) > len(rows.recent):
+        CONSOLE.print(f'Latest {len(rows.recent)} of {len(rows)} readings below; the JSONL contains every reading.', style='dim')
     CONSOLE.print(history(rows))
     if rows and (view := system_panel(rows[-1])):
         CONSOLE.print(view)
@@ -658,7 +726,7 @@ def final_report(rows, config, path, reason):
                   f'Estimated use: {stats["consumed_mah"]:.1f} mAh / {stats["energy_wh"]:.3f} Wh  ·  '
                   f'Covered: {elapsed(stats["covered_seconds"])}')
     if rows:
-        a, b = rows[0], rows[-1]
+        a, b = rows.first if isinstance(rows, Readings) else rows[0], rows[-1]
         CONSOLE.print(f'Battery: {a["percent"]}% → {b["percent"]}%  ·  '
                       f'CPU: {number(a.get("cpu_c"), "°C")} → {number(b.get("cpu_c"), "°C")}  ·  '
                       f'Battery temperature: {a["battery_c"]:.2f}°C → {b["battery_c"]:.2f}°C')
@@ -670,15 +738,17 @@ def final_report(rows, config, path, reason):
     if config['baseline_watts'] and stats['mean_w'] is not None:
         change = (stats['mean_w'] / config['baseline_watts'] - 1) * 100
         CONSOLE.print(f'Observed difference from {config["baseline_watts"]:.2f} W baseline: {change:+.1f}%')
-    cpu_costs = [r['collector_cpu_ms'] for r in rows if 'collector_cpu_ms' in r]
-    if cpu_costs:
-        mean_cpu_ms = sum(cpu_costs) / len(cpu_costs)
+    cpu_costs = [r['collector_cpu_ms'] for r in rows if 'collector_cpu_ms' in r] if not isinstance(rows, Readings) else []
+    cpu_count = rows.cpu_count if isinstance(rows, Readings) else len(cpu_costs)
+    if cpu_count:
+        mean_cpu_ms = rows.cpu_ms / cpu_count if isinstance(rows, Readings) else sum(cpu_costs) / cpu_count
         CONSOLE.print(f'Collector sensor reads: {mean_cpu_ms:.2f} ms CPU/reading '
                       f'(~{mean_cpu_ms / (config["interval"] * 10):.3f}% of one core at this interval). '
                       'Excludes Python startup, JSON/SSH and Wi-Fi costs.', style='dim')
-    rss = [r['collector_peak_rss_bytes'] for r in rows if 'collector_peak_rss_bytes' in r]
-    if rss:
-        CONSOLE.print(f'Collector peak resident memory: {max(rss)/2**20:.1f} MiB (Darwin getrusage).', style='dim')
+    peak_rss = rows.peak_rss if isinstance(rows, Readings) else max((r.get('collector_peak_rss_bytes', 0) for r in rows), default=0)
+    if peak_rss:
+        CONSOLE.print(f'Collector peak resident memory: {peak_rss/2**20:.1f} MiB (Darwin getrusage).', style='dim')
+    CONSOLE.print('Power/current magnitudes show battery flow, not charger input. Charging uses a positive value with a direction label.', style='dim')
     CONSOLE.print('Averages use actual sample spacing. Reconnects, long gaps and externally powered intervals are excluded.\n'
                   'Recording state is not inspected; idle readings remain included. Gauge updates may lag by ~20 seconds.', style='dim')
     CONSOLE.print('Readings: ' + str(path), markup=False)
@@ -695,6 +765,7 @@ def parser():
     count = p.add_mutually_exclusive_group()
     count.add_argument('--readings', type=int, help='Total readings, including initial baseline (saved)')
     count.add_argument('--minutes', type=float, help='Duration; rounded up to the next complete interval (saved as readings)')
+    count.add_argument('--live', action='store_true', default=None, help='Run until Ctrl+C; retry lost connections automatically (saved)')
     p.add_argument('--baseline-watts', type=float, help='Comparison baseline; 0 disables (saved)')
     p.add_argument('--charge-window', type=float, help='Percentage-point window for rough runtime (saved; default 40)')
     p.add_argument('--timeout', type=float, help='Maximum seconds for each SSH reading (saved)')
@@ -729,6 +800,8 @@ def main():
         value = getattr(args, key, None)
         if value is not None:
             config[key] = value
+    if args.readings is not None or args.minutes is not None:
+        config['live'] = False
 
     if args.configure or not config['host']:
         if not sys.stdin.isatty():
@@ -737,7 +810,9 @@ def main():
         # Correct invalid persisted value types before passing defaults to Rich prompts.
         for key, default in DEFAULTS.items():
             value = config[key]
-            if key in ('port', 'readings'):
+            if key == 'live':
+                if type(value) is not bool: config[key] = default
+            elif key in ('port', 'readings'):
                 if type(value) is not int: config[key] = default
             elif isinstance(default, str):
                 if not isinstance(value, str): config[key] = default
@@ -753,7 +828,7 @@ def main():
             config['readings'] = math.ceil(args.minutes * 60 / config['interval']) + 1
 
     save_config(directory, config)
-    rows = []
+    rows = Readings(config['interval'])
     reason = 'Finished requested readings.'
     reported = False
     stamp = datetime.now().strftime('%Y%m%d-%H%M%S-%f')
@@ -763,17 +838,18 @@ def main():
     started = time.monotonic()
     segment = 0
     phone = None
+    interrupted = False
 
     try:
         with tempfile.TemporaryDirectory(prefix='phone-power-') as temp, path.open('w', encoding='utf-8') as log:
-            while len(rows) < config['readings']:
+            while config['live'] or len(rows) < config['readings']:
                 try:
                     phone = Phone(config, str(Path(temp) / 'ssh'))
                     CONSOLE.print(f'Connecting to {config["host"]}…', markup=False, style='cyan')
                     phone.connect()
                     due = time.monotonic()
                     with Live(console=CONSOLE, auto_refresh=False, transient=True) as live:
-                        while len(rows) < config['readings']:
+                        while config['live'] or len(rows) < config['readings']:
                             while (now := time.monotonic()) < due:
                                 live.update(
                                     dashboard(rows, config, f'next reading in {math.ceil(due - now)}s', started),
@@ -794,7 +870,7 @@ def main():
                             due = row['received_monotonic'] + config['interval']
                             if not CONSOLE.is_terminal:
                                 CONSOLE.print(
-                                    f'{elapsed(row["elapsed"])}  {row["power_w"]:.2f} W  '
+                                    f'{elapsed(row["elapsed"])}  {row["power_w"]:.2f} W  {power_source(row)}  '
                                     f'CPU {number(row.get("cpu_c"), "°C")}'
                                 )
                 except (RuntimeError, OSError) as exc:
@@ -804,6 +880,12 @@ def main():
                     if isinstance(exc, OSError):
                         reason = 'Stopped after local I/O error; existing readings retained.'
                         break
+                    if config['live']:
+                        delay = max(5, min(config['interval'], 30))
+                        CONSOLE.print(f'Reconnecting in {delay:g}s; Ctrl+C to finish.', style='yellow')
+                        segment += 1
+                        time.sleep(delay)
+                        continue
                     if not sys.stdin.isatty():
                         reason = 'Stopped after connection or reading failure.'
                         break
@@ -825,6 +907,7 @@ def main():
                         phone.close()
     except KeyboardInterrupt:
         reason = 'Interrupted; partial readings saved.'
+        interrupted = True
     except OSError:
         reason = 'Stopped after local I/O error; existing readings retained.'
         raise
@@ -833,7 +916,7 @@ def main():
             phone.close()
         if not reported:
             final_report(rows, config, path, reason)
-    return 0 if len(rows) == config['readings'] else 1
+    return 0 if (config['live'] and interrupted) or (not config['live'] and len(rows) == config['readings']) else 1
 
 
 def request_stop(_signum, _frame):
