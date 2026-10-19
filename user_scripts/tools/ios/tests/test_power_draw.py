@@ -422,12 +422,23 @@ class BatteryEstimates(unittest.TestCase):
         charge=self.initial(40,500);charge['external_power']=True;estimator.update(charge)
         self.assertEqual(charge['eta_target'],'full');self.assertEqual(charge['eta_seconds'],7200)
 
-    def test_missing_capacity_zero_current_and_long_gap_do_not_invent_eta(self):
+    def test_missing_capacity_zero_current_and_long_gap_recovery(self):
         estimator=power.BatteryEstimate(20);r=self.row(0);estimator.update(r)
         self.assertIsNone(r['eta_seconds'])
         zero=self.initial(20,0);estimator.update(zero);self.assertIsNone(zero['eta_seconds'])
-        gap=self.row(200);estimator.update(gap);self.assertIsNone(gap['eta_seconds'])
+        gap=self.row(200);estimator.update(gap)
+        self.assertEqual(gap['eta_seconds'],7200)
+        self.assertEqual(gap['estimated_remaining_mah'],1000)
+        self.assertTrue(estimator.refresh_needed)
         fresh=self.initial(220);estimator.update(fresh);self.assertEqual(fresh['eta_seconds'],7200)
+        self.assertFalse(estimator.refresh_needed)
+
+    def test_repeated_delayed_samples_keep_eta_until_metadata_refresh(self):
+        estimator=power.BatteryEstimate(2);r=self.initial();estimator.update(r)
+        for t in (9,11,20,22,30):
+            row=self.row(t);estimator.update(row)
+            self.assertIsNotNone(row['eta_seconds'])
+        self.assertTrue(estimator.refresh_needed)
 
     def test_direction_switch_resets_smoothed_rate(self):
         estimator=power.BatteryEstimate(20);r=self.initial();estimator.update(r)

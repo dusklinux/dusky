@@ -451,6 +451,7 @@ class BatteryEstimate:
         self.interval = interval
         self.info = {}
         self.remaining = self.rate = self.previous = None
+        self.refresh_needed = False
 
     def update(self, row):
         now = row['received_monotonic']
@@ -459,6 +460,7 @@ class BatteryEstimate:
             self.info = {k: row[k] for k in self.KEYS if k in row}
             self.remaining = None
             self.previous = self.rate = None
+            self.refresh_needed = False
         row.update({k: v for k, v in self.info.items() if k not in row})
         capacity = next((row[k] for k in ('raw_max_mah', 'capacity_mah')
                          if is_real_number(row.get(k)) and row[k] > 0), None)
@@ -480,7 +482,10 @@ class BatteryEstimate:
             previous_time, previous_current, previous_source = self.previous
             dt = now - previous_time
             if previous_source != row.get('external_power') or not 0 < dt <= self.interval * 2.5:
-                self.remaining = self.rate = None
+                # Keep the last capacity estimate without integrating unknown
+                # time. A delayed SSH response must not permanently erase ETA.
+                self.rate = None
+                self.refresh_needed = True
             else:
                 if self.remaining is not None:
                     self.remaining += (previous_current + current) / 2 * dt / 3600
@@ -558,7 +563,8 @@ class Phone:
     def read(self, on_wait=None):
         requested = time.monotonic()
         try:
-            metadata_due = self.battery is not None and self.last_metadata is not None and requested - self.last_metadata >= 300
+            metadata_due = self.battery is not None and (self.battery.refresh_needed or
+                (self.last_metadata is not None and requested - self.last_metadata >= 300))
             after_gap = self.battery is not None and self.last_received is not None and requested - self.last_received > self.config['interval'] * 2.5
             self.process.stdin.write(b'read-meta\n' if metadata_due or after_gap else b'read\n')
         except (BrokenPipeError, OSError) as exc:
