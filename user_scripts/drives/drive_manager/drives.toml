@@ -112,4 +112,4 @@ type       = "FTP"
 mountpoint = "/mnt/zram1/duskie"
 host       = "192.168.29.226" # update here when the phone's LAN address changes
 port       = 2121
-remote     = "duskie-iphone" # FTP root / maps to /var/mobile/Media/duskie
+remote     = "duskie-iphone" # FTP root / maps to the folder selected in Duskie Settings

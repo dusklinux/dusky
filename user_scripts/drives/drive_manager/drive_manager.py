@@ -1469,7 +1469,13 @@ def ftp_unlock(drive: Drive, secret: str | None) -> Outcome:
                    f"--unit={ftp_unit(drive)}", "--property=TimeoutStopSec=15s",
                    "--property=SendSIGKILL=no", shutil.which("rclone"), "mount", f"{drive.remote}:",
                    str(target), "--config", str(config), "--cache-dir", str(cache),
-                   "--vfs-cache-mode", "writes", "--vfs-read-chunk-size", "0",
+                   # FTP LIST can leave size/mtime unchanged for external edits.
+                   # Bypass kernel data caching; retain VFS caching for writes/retries.
+                   "--direct-io", "--vfs-cache-mode", "writes", "--vfs-read-chunk-size", "0",
+                   # FTP may lack usable modification times for fingerprints.
+                   # Retain pending writes, but promptly evict closed, clean data.
+                   "--vfs-handle-caching", "0s", "--vfs-cache-max-age", "0s",
+                   "--vfs-cache-poll-interval", "1s",
                    # Zero selects synchronous uploads and bypasses retry queuing.
                    "--vfs-write-back", "1ms", "--dir-cache-time", "1s", "--poll-interval", "0",
                    "--rc", "--rc-addr", f"unix://{sock}"], timeout=10)

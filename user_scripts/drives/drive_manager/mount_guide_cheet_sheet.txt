@@ -151,7 +151,9 @@ f2fs    | flash only    | atgc,gc_merge,lazytime,compress_algorithm=zstd:6 | nee
 --------------------------------------------------------------------------------
 Repository: /mnt/zram1/git/duskie (including .git, ignored build and recovery files).
 FTP root:   /mnt/zram1/duskie (read/write; no nested iphone/ repository mount).
-The server root / already maps to /var/mobile/Media/duskie; do not append that path.
+The server root / maps to the folder selected in Duskie Settings; do not append its
+iOS path. The current default is Files → On My iPhone → duskie_ftp, with the Files
+AppGroup container discovered dynamically on each phone.
 
   unlock duskie
   drive_status
@@ -230,13 +232,20 @@ use set-password to correct saved credentials before retrying. A verified servic
 stuck in login before mounting can be cancelled with lock without a VFS socket;
 any unsent cache bytes are retained and reported as incomplete.
 
-Settings: writes-only VFS cache, write-back 1ms, directory cache 1s.
+Settings: direct I/O, writes-only VFS cache, write-back 1ms, directory cache 1s.
 Write-back changed from 0s after failure injection showed synchronous uploads could
 leave dirty bytes outside the retry queue. A positive 1ms delay selects rclone's
 asynchronous queue and automatic retry path while keeping upload scheduling fast.
 Closing a file therefore confirms local caching, not completed remote upload;
 lock verifies uploads before releasing the mount. This is not an offline filesystem:
 new opens or metadata queries may fail while the server is unreachable.
+Direct I/O bypasses the kernel data cache. Closed, clean VFS data is evicted on
+the 1s cache sweep (max-age 0s, handle-caching 0s); dirty/pending writes are retained.
+Both are needed: the server lacks modification-time setting, so rclone's FTP
+fingerprints cannot reliably detect same-size external edits. Keeping clean data
+would return stale bytes even after reopening. This preserves write caching/retries
+without a separate watcher or network polling. Repeated reads use the connection
+rather than the kernel data cache. Applications requiring file mmap may be incompatible.
 Other settings retained: chunked reads disabled (server has no REST), kernel attribute timeout default 1s.
 Save/close/flush files before expecting upload. Refresh/list the containing
 directory after cache expiry to discover external edits, then reload/reopen the
