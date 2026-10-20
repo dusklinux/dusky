@@ -36,7 +36,10 @@ INTERNAL_DOCUMENT_RULE = '@-moz-document regexp("about:(?!blank(?:[?#]|$)|srcdoc
 def print_step(msg: str) -> None: print(f"{C_BLUE}==>{C_RESET} {msg}")
 def print_success(msg: str) -> None: print(f"{C_GREEN}✓{C_RESET} {msg}")
 def print_warn(msg: str) -> None: print(f"{C_YELLOW}[!] {msg}{C_RESET}")
-def print_error(msg: str) -> None: print(f"{C_RED}[!] Error:{C_RESET} {msg}"); sys.exit(1)
+def print_error(msg: str) -> None:
+    prefix = f"{C_RED}[!] Error:{C_RESET}" if sys.stderr.isatty() else "Error:"
+    print(f"{prefix} {msg}", file=sys.stderr)
+    sys.exit(1)
 
 PREFS_TO_SET = [
     ("toolkit.legacyUserProfileCustomizations.stylesheets", "true"),
@@ -450,23 +453,40 @@ def resolve_source_host(script_dir: Path) -> Path:
             return c
     return candidates[0]
 
-def resolve_source_xpi(script_dir: Path) -> Path | None:
-    """Find a signed package matching shipped source; Firefox validates signing."""
+def resolve_source_xpi(script_dir: Path, *, require_source_match: bool = True) -> Path | None:
+    """Prefer a source-matching signed release; optionally allow the shipped release.
+
+    Source audits require an exact match. Normal setup may install the available
+    signed release while development changes await signing. Firefox validates
+    the package signature when loading it.
+    """
     source_dir = Path.home() / ".config/firefox_extentions/dusky_sites/extension"
     if not source_dir.is_dir():
         source_dir = script_dir / "extension"
     expected_manifest = None
     expected_scripts = {}
     if source_dir.is_dir():
-        expected_manifest = json.loads((source_dir / "manifest.json").read_text(encoding="utf-8"))
-        expected_scripts = {name: (source_dir / name).read_bytes()
-                            for name in ("background.js", "content.js", "defaults.js")}
+        try:
+            expected_manifest = json.loads((source_dir / "manifest.json").read_text(encoding="utf-8"))
+            if not isinstance(expected_manifest, dict):
+                raise ValueError("Development extension manifest must contain an object")
+            expected_scripts = {name: (source_dir / name).read_bytes()
+                                for name in ("background.js", "content.js", "defaults.js")}
+        except (OSError, ValueError):
+            if require_source_match:
+                raise
+            # Installing a packaged release does not require a complete dev tree.
+            expected_manifest = None
+            expected_scripts = {}
     stale_packages = []
+    released_packages = []
 
     def _xpi_has_expected_id(xpi: Path) -> bool:
         try:
             with zipfile.ZipFile(xpi) as zf:
-                if not {"META-INF/mozilla.rsa", "META-INF/mozilla.sf"} <= set(zf.namelist()):
+                required = {"META-INF/mozilla.rsa", "META-INF/mozilla.sf",
+                            "manifest.json", "background.js", "content.js", "defaults.js"}
+                if not required <= set(zf.namelist()):
                     return False
                 with zf.open("manifest.json") as fh:
                     data = json.load(fh)
@@ -481,8 +501,11 @@ def resolve_source_xpi(script_dir: Path) -> Path | None:
                         mismatched.append("manifest.json")
                     if mismatched:
                         stale_packages.append(f"{xpi}: {', '.join(mismatched)}")
+                        released_packages.append((xpi, data.get("version", "unknown")))
                         return False
-        except (OSError, zipfile.BadZipFile, json.JSONDecodeError, KeyError):
+                if not require_source_match:
+                    print(f"Dusky Sites {data.get('version', 'unknown')}; signed release.")
+        except (OSError, zipfile.BadZipFile, json.JSONDecodeError, UnicodeDecodeError, KeyError):
             return False
         return True
 
@@ -512,6 +535,10 @@ def resolve_source_xpi(script_dir: Path) -> Path | None:
                 seen.add(xpi)
                 if xpi.is_file() and _xpi_has_expected_id(xpi):
                     return xpi
+    if released_packages and not require_source_match:
+        package, version = released_packages[0]
+        print(f"Dusky Sites {version}; local JS changes await signing.")
+        return package
     if stale_packages:
         raise ValueError("Signed XPI does not match the shipped extension source. "
                          "Update the signed package before running setup.\n  "
@@ -785,15 +812,14 @@ def main() -> None:
         print("Dusky Sites is not installed; skipping automatic update.")
         return
 
-    print(f"\n{C_CYAN}Dusky Sites Setup Script (Arch Linux / Python 3.15+){C_RESET}\n")
-
     script_dir = Path(__file__).parent.resolve()
     source_host = resolve_source_host(script_dir)
     try:
-        source_xpi = resolve_source_xpi(script_dir)
+        source_xpi = resolve_source_xpi(script_dir, require_source_match=False)
     except (OSError, ValueError) as error:
         print_error(str(error))
 
+    print(f"\n{C_CYAN}Dusky Sites Setup Script (Arch Linux / Python 3.15+){C_RESET}\n")
     print_step("Performing pre-flight checks...")
     if sys.version_info < (3, 15):
         print_error("Python 3.15 or newer is required.")

@@ -42,8 +42,11 @@ schema-7 paint entries are invalidated on upgrade. The preserved signed
 
 Submit `dusky_sites-unsigned.zip` to Mozilla for an unlisted signature, then
 replace `xpi/dusky_sites.xpi` with the returned signed 6.2.2 package. Re-run the
-main Firefox theme setup and its source/file audit after replacing it. The main
-setup deliberately refuses a signed package that differs from the source.
+main Firefox theme setup and its source/file audit after replacing it. Normal
+setup can update the native host and styles using the existing signed release;
+it reports that local JavaScript changes still await signing. It prefers a
+source-matching signed package when available. The release/source audit continues
+to require an exact match.
 Do not replace the signed XPI with an unsigned ZIP or alter files inside it:
 Firefox release verifies the signature.
 

@@ -147,8 +147,14 @@ def audit(directory: Path, source_only: bool) -> int:
     checks.check(manifest.get("browser_specific_settings", {}).get("gecko", {}).get("id") == setup.EXTENSION_ID
                  and {"theme", "nativeMessaging", "storage"} <= set(manifest.get("permissions", [])),
                  "Extension ID and required theme/host permissions")
-    xpi = setup.resolve_source_xpi(ROOT)
-    checks.check(xpi is not None, "Signed package matches shipped extension source (Firefox validates the signature)")
+    try:
+        xpi = setup.resolve_source_xpi(ROOT)
+    except ValueError as error:
+        checks.check(False, str(error))
+        # A pending development release must not hide installed-file failures.
+        xpi = setup.resolve_source_xpi(ROOT, require_source_match=False)
+    else:
+        checks.check(xpi is not None, "Signed package matches shipped extension source (Firefox validates the signature)")
     if not source_only:
         checks.check(scope in uncomment(palette_text), "Generated palette has current document scope (regenerate if stale)")
         config = json.loads((home / ".config/dusky/settings/dusky_sites/config.json").read_text())

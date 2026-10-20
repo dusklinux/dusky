@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 import unittest
+import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -45,6 +46,122 @@ class DuskySitesTests(unittest.TestCase):
             "disabledSites": [],
             "websitesDir": str(self.sites),
         }), encoding="utf-8")
+
+    def package_fixture(self, name="dusky_sites.xpi", *, matches=False, signed=True, extension_id=None):
+        source = self.root / ".config/firefox_extentions/dusky_sites/extension"
+        source.mkdir(parents=True, exist_ok=True)
+        manifest = {"version": "6.2.2", "browser_specific_settings": {"gecko": {"id": setup.EXTENSION_ID}}}
+        (source / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        scripts = {name: name + " new source" for name in ("background.js", "content.js", "defaults.js")}
+        for filename, text in scripts.items():
+            (source / filename).write_text(text, encoding="utf-8")
+        package = source.parent / "xpi" / name
+        package.parent.mkdir(exist_ok=True)
+        if not matches:
+            manifest["version"] = "6.2.1"
+        if extension_id is not None:
+            manifest["browser_specific_settings"]["gecko"]["id"] = extension_id
+        with zipfile.ZipFile(package, "w") as archive:
+            archive.writestr("manifest.json", json.dumps(manifest))
+            for filename, text in scripts.items():
+                archive.writestr(filename, text if matches else "previous release")
+            # Lookup metadata fixtures only; Firefox performs real signature validation.
+            if signed:
+                archive.writestr("META-INF/mozilla.rsa", "fixture")
+                archive.writestr("META-INF/mozilla.sf", "fixture")
+        return package
+
+    def test_setup_errors_reach_tui_stderr_without_escape_codes(self):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with (contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr)):
+            with self.assertRaises(SystemExit) as stopped:
+                setup.print_error("fixture install failure")
+        self.assertEqual(stopped.exception.code, 1)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertEqual(stderr.getvalue(), "Error: fixture install failure\n")
+
+    def test_setup_can_select_existing_signed_release_while_source_changes(self):
+        package = self.package_fixture()
+        output = io.StringIO()
+        with patch.object(Path, "home", return_value=self.root), contextlib.redirect_stdout(output):
+            chosen = setup.resolve_source_xpi(self.root, require_source_match=False)
+        self.assertEqual(chosen, package)
+        self.assertIn("6.2.1", output.getvalue())
+        self.assertIn("await signing", output.getvalue())
+
+    def test_release_audit_still_requires_matching_sources(self):
+        self.package_fixture()
+        with patch.object(Path, "home", return_value=self.root):
+            with self.assertRaisesRegex(ValueError, "does not match"):
+                setup.resolve_source_xpi(self.root)
+
+    def test_setup_prefers_matching_release_over_old_canonical_package(self):
+        self.package_fixture()
+        latest = self.package_fixture("latest-signed.xpi", matches=True)
+        with patch.object(Path, "home", return_value=self.root):
+            self.assertEqual(setup.resolve_source_xpi(self.root, require_source_match=False), latest)
+
+    def test_setup_does_not_select_unsigned_development_package(self):
+        self.package_fixture(signed=False)
+        with patch.object(Path, "home", return_value=self.root):
+            self.assertIsNone(setup.resolve_source_xpi(self.root, require_source_match=False))
+
+    def test_setup_does_not_select_another_extension(self):
+        self.package_fixture(extension_id="unrelated@example.test")
+        with patch.object(Path, "home", return_value=self.root):
+            self.assertIsNone(setup.resolve_source_xpi(self.root, require_source_match=False))
+
+    def test_released_install_survives_missing_development_script(self):
+        package = self.package_fixture()
+        (package.parent.parent / "extension/defaults.js").unlink()
+        with patch.object(Path, "home", return_value=self.root), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(setup.resolve_source_xpi(self.root, require_source_match=False), package)
+            with self.assertRaises(FileNotFoundError):
+                setup.resolve_source_xpi(self.root)
+
+    def test_released_install_survives_malformed_development_manifest(self):
+        package = self.package_fixture()
+        (package.parent.parent / "extension/manifest.json").write_text("{", encoding="utf-8")
+        with patch.object(Path, "home", return_value=self.root), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(setup.resolve_source_xpi(self.root, require_source_match=False), package)
+            with self.assertRaises(ValueError):
+                setup.resolve_source_xpi(self.root)
+
+    def test_released_install_rejects_nonobject_development_manifest_for_audits(self):
+        package = self.package_fixture()
+        (package.parent.parent / "extension/manifest.json").write_text("[]", encoding="utf-8")
+        with patch.object(Path, "home", return_value=self.root), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(setup.resolve_source_xpi(self.root, require_source_match=False), package)
+            with self.assertRaises(ValueError):
+                setup.resolve_source_xpi(self.root)
+
+    def test_incomplete_release_is_not_an_install_candidate(self):
+        package = self.package_fixture()
+        with zipfile.ZipFile(package) as archive:
+            entries = {name: archive.read(name) for name in archive.namelist() if name != "content.js"}
+        with zipfile.ZipFile(package, "w") as archive:
+            for name, content in entries.items():
+                archive.writestr(name, content)
+        with patch.object(Path, "home", return_value=self.root), contextlib.redirect_stdout(io.StringIO()):
+            self.assertIsNone(setup.resolve_source_xpi(self.root, require_source_match=False))
+
+    def test_bad_utf8_package_does_not_hide_a_valid_release(self):
+        broken = self.package_fixture()
+        latest = self.package_fixture("latest-signed.xpi", matches=True)
+        with zipfile.ZipFile(broken, "w") as archive:
+            archive.writestr("manifest.json", b"\xff")
+            for name in ("background.js", "content.js", "defaults.js", "META-INF/mozilla.rsa", "META-INF/mozilla.sf"):
+                archive.writestr(name, "fixture")
+        with patch.object(Path, "home", return_value=self.root), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(setup.resolve_source_xpi(self.root, require_source_match=False), latest)
+
+    def test_matching_release_reports_version_to_tui(self):
+        package = self.package_fixture(matches=True)
+        stdout = io.StringIO()
+        with patch.object(Path, "home", return_value=self.root), contextlib.redirect_stdout(stdout):
+            self.assertEqual(setup.resolve_source_xpi(self.root, require_source_match=False), package)
+        self.assertIn("6.2.2", stdout.getvalue().splitlines()[0])
+        self.assertNotIn("await signing", stdout.getvalue())
 
     def make_host(self):
         # Exercise protocol/configuration methods without opening stdin/inotify.
