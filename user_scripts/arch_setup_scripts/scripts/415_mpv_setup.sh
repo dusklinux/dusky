@@ -9,7 +9,7 @@ SETUP_DIR=$(cd -- "${SCRIPT_PATH%/*}/../../mpv/setup" && pwd)
 readonly SETUP_DIR
 readonly ASSETS_DIR="$SETUP_DIR/assets"
 readonly MPV_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/mpv"
-readonly DEPENDENCIES=(mpv yt-dlp mpv-mpris)
+readonly DEPENDENCIES=(mpv yt-dlp mpv-mpris ffmpeg)
 BACKUP_ID=$(date +%Y%m%d_%H%M%S_%N)
 readonly BACKUP_ID
 
@@ -61,7 +61,7 @@ install_file() {
 log_info 'Starting Dusky Player setup.'
 
 # Detect an incomplete ISO bundle before changing the installed configuration.
-for relative in scripts/dusky_player/main.lua scripts/dusky_player/lib/icons.lua scripts/dusky_thumbnails.lua scripts/dusky_silence.lua; do
+for relative in scripts/dusky_player/main.lua scripts/dusky_player/lib/icons.lua scripts/dusky_player/lib/waveform.lua scripts/dusky_thumbnails.lua scripts/dusky_silence.lua; do
     [[ -s "$ASSETS_DIR/$relative" ]] || die "Missing bundled asset: $relative"
 done
 for relative in mpv.conf input.conf script-opts/dusky_player.conf script-opts/dusky_silence.conf; do
