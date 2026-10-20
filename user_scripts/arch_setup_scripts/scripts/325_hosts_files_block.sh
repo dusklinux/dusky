@@ -8,11 +8,10 @@ shopt -s extglob
 # ▼ CONFIGURATION ▼
 # =============================================================================
 
-declare -r HOSTS_FILE="/etc/hosts"
+declare HOSTS_FILE="/etc/hosts"
 declare -r BACKUP_FILE="/etc/hosts.backup.focusforge"
-declare -r REDIRECT_IP="0.0.0.0"
 declare -r APP_TITLE="Dusky Site Blocker"
-declare -r APP_VERSION="v2.3.5 (Stable)"
+declare -r APP_VERSION="v2.4.0"
 
 # Dimensions & Layout
 declare -ri MAX_DISPLAY_ROWS=14
@@ -80,7 +79,7 @@ declare -r CURSOR_SHOW=$'\033[?25h'
 declare -r MOUSE_ON=$'\033[?1000h\033[?1002h\033[?1006h'
 declare -r MOUSE_OFF=$'\033[?1000l\033[?1002l\033[?1006l'
 
-declare -r ESC_READ_TIMEOUT=0.01
+declare -r ESC_READ_TIMEOUT=0.05
 
 # --- State Management ---
 declare -i SELECTED_ROW=0
@@ -97,6 +96,8 @@ declare INPUT_BUFFER=""        # For custom domain input
 # Temp file global
 declare _TMPFILE=""
 declare ORIGINAL_STTY=""
+declare STATUS_MESSAGE=""
+declare IMPORT_HOME="${HOME}"
 
 # --- Click Zones ---
 declare LEFT_ARROW_ZONE=""
@@ -117,23 +118,22 @@ declare -A KNOWN_DOMAIN_TAB=()
 
 log_err() {
     printf '%s[ERROR]%s %s\n' "$C_RED" "$C_RESET" "$1" >&2
-    sleep 2
 }
 
 cleanup() {
-    printf '%s%s%s' "$MOUSE_OFF" "$CURSOR_SHOW" "$C_RESET" 2>/dev/null || :
-    if [[ -n "${ORIGINAL_STTY:-}" ]]; then
+    if [[ -n "$ORIGINAL_STTY" ]]; then
+        printf '%s%s%s\n' "$MOUSE_OFF" "$CURSOR_SHOW" "$C_RESET" 2>/dev/null || :
         stty "$ORIGINAL_STTY" 2>/dev/null || :
     fi
-    if [[ -n "${_TMPFILE:-}" && -f "$_TMPFILE" ]]; then
-        rm -f "$_TMPFILE" 2>/dev/null || :
+    if [[ -n "$_TMPFILE" ]]; then
+        rm -f -- "$_TMPFILE" 2>/dev/null || :
     fi
-    printf '\n' 2>/dev/null || :
 }
 
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+trap 'exit 129' HUP
 
 strip_ansi() {
     local v="$1"
@@ -158,262 +158,187 @@ init_db() {
     TAB_ITEMS_4=("$ADD_BUTTON_LABEL" "$IMPORT_BUTTON_LABEL" "$CLEAR_BUTTON_LABEL")
 }
 
+# Canonicalize DNS input; NSS matches dotted and undotted hosts aliases separately.
+# Keep local host aliases out of imports and the block list.
+declare -r HOSTS_AWK='
+function normalize(d) { d = tolower(d); sub(/\r$/, "", d); sub(/\.$/, "", d); return d }
+function valid(d,    n, labels, i) {
+    if (length(d) > 253 || d !~ /\./ || d ~ /^[0-9.]+$/ ||
+        d == "localhost.localdomain" || d ~ /^ip6-/) return 0
+    n = split(d, labels, ".")
+    for (i = 1; i <= n; i++)
+        if (length(labels[i]) > 63 ||
+            labels[i] !~ /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/) return 0
+    return 1
+}
+function sink(ip) { return ip == "0.0.0.0" || ip == "::" }
+'
+
 refresh_state() {
-    IS_BLOCKED=()
-
-    # Build a set of all known standard-tab domains for awk to filter against
-    local known_list=""
-    local d
-    for d in "${!KNOWN_DOMAIN_TAB[@]}"; do
-        known_list+="${d}"$'\n'
-    done
-
-    # Also build a set of current custom domains (excluding button labels)
-    # so awk can tell us which blocked domains are truly new
-    local -A current_custom=()
-    local item
-    for item in "${TAB_ITEMS_4[@]}"; do
-        if [[ "$item" != "$ADD_BUTTON_LABEL" && "$item" != "$IMPORT_BUTTON_LABEL" && "$item" != "$CLEAR_BUTTON_LABEL" ]]; then
-            current_custom["$item"]=1
-        fi
-    done
-
-    local custom_list=""
-    for d in "${!current_custom[@]}"; do
-        custom_list+="${d}"$'\n'
-    done
-
-    # Single awk pass: extract all blocked domains, classify as known/custom/new
-    # Output format: STATUS<tab>DOMAIN
-    #   B = blocked (known domain)
-    #   N = blocked (new custom domain, not in known or current custom)
-    #   C = blocked (existing custom domain)
-    local awk_output
-    awk_output=$(awk -v known="$known_list" -v custom="$custom_list" '
-    BEGIN {
-        n = split(known, karr, "\n")
-        for (i = 1; i <= n; i++) if (karr[i] != "") known_set[karr[i]] = 1
-        n = split(custom, carr, "\n")
-        for (i = 1; i <= n; i++) if (carr[i] != "") custom_set[carr[i]] = 1
-    }
-    /^0\.0\.0\.0[[:space:]]/ {
-        domain = $2
-        if (domain == "" || domain ~ /^#/) next
-        if (domain in known_set) {
-            print "B\t" domain
-        } else if (domain in custom_set) {
-            print "C\t" domain
-        } else {
-            print "N\t" domain
+    local output status domain
+    # Stream known/listed names over stdin: large imports must not hit ARG_MAX.
+    # Capture errors explicitly: unreadable input must never mean "all allowed".
+    output=$(printf '%s\n' "${!KNOWN_DOMAIN_TAB[@]}" "${TAB_ITEMS_4[@]:3}" |
+        LC_ALL=C gawk -- "$HOSTS_AWK"'
+        ARGIND == 1 { listed[$0] = 1; next }
+        { sub(/#.*/, "") }
+        sink($1) {
+            for (i = 2; i <= NF; i++) {
+                # A dotted-only alias does not block the undotted name in NSS.
+                if ($i ~ /\.\r?$/) continue
+                d = normalize($i)
+                if (valid(d) && !seen[d]++) ordered[++count] = d
+            }
         }
-    }
-    ' "$HOSTS_FILE" 2>/dev/null) || true
+        END {
+            for (i = 1; i <= count; i++) {
+                d = ordered[i]
+                base = d
+                sub(/^www\./, "", base)
+                hidden = d != base && (base in seen)
+                print ((d in listed) || hidden ? "B" : "N") "\t" d
+            }
+        }
+    ' - "$HOSTS_FILE") || return 1
 
-    # Process awk output
-    local new_customs=()
-    local status domain
+    IS_BLOCKED=()
+    local -a new_customs=()
     while IFS=$'\t' read -r status domain; do
-        [[ -z "$domain" ]] && continue
+        [[ -n "$domain" ]] || continue
         IS_BLOCKED["$domain"]=1
+        if [[ "$status" == N ]]; then new_customs+=("$domain"); fi
+    done <<< "$output"
+    TAB_ITEMS_4+=("${new_customs[@]}")
+}
 
-        if [[ "$status" == "N" ]]; then
-            new_customs+=("$domain")
-        fi
-    done <<< "$awk_output"
-
-    # Bulk-append genuinely new custom domains
-    if (( ${#new_customs[@]} > 0 )); then
-        TAB_ITEMS_4+=("${new_customs[@]}")
+# All mutations produce one complete replacement beside the resolved hosts file.
+# Rename leaves the original intact if generation or metadata copying fails.
+# The session lock in main serializes instances of this application.
+rewrite_hosts() {
+    local action=$1 domain=${2:-} source=${3:-/dev/null}
+    _TMPFILE=$(mktemp -- "${HOSTS_FILE}.dusky.XXXXXXXXXX") || return 1
+    if ! LC_ALL=C gawk -v action="$action" -v domain="$domain" -- "$HOSTS_AWK"'
+        BEGIN {
+            if (action == "block" || action == "unblock") {
+                wanted[domain] = 1
+                if (domain !~ /^www\./ && length(domain) <= 249) wanted["www." domain] = 1
+            }
+        }
+        ARGIND == 1 {
+            sub(/#.*/, "")
+            # Import sink/loopback blocklists, never normal host address books.
+            if (!(sink($1) || $1 == "127.0.0.1" || $1 == "::1")) next
+            for (i = 2; i <= NF && $i !~ /^#/; i++) {
+                d = normalize($i)
+                if (valid(d)) wanted[d] = 1
+            }
+            next
+        }
+        {
+            if (action == "import" && !length(wanted)) { print; next }
+            original = $0
+            comment = ""
+            pos = index($0, "#")
+            if (pos) { comment = substr($0, pos); $0 = substr($0, 1, pos - 1) }
+            address = $1
+            line = address
+            removed = 0
+            kept = 0
+            for (i = 2; i <= NF; i++) {
+                d = normalize($i)
+                drop = action == "clear" ? sink(address) && valid(d) :
+                    (d in wanted) && (action != "unblock" || sink(address))
+                if (drop) removed = 1
+                else { line = line " " $i; kept++ }
+            }
+            if (!removed) print original
+            else if (kept) print line (comment != "" ? " " comment : "")
+            else if (comment != "") print comment
+        }
+        END {
+            if (action == "import" && !length(wanted)) exit 2
+            if (action == "block" || action == "import")
+                for (d in wanted) print "0.0.0.0 " d " " d "."
+        }
+    ' "$source" "$HOSTS_FILE" > "$_TMPFILE"; then
+        rm -f -- "$_TMPFILE"
+        _TMPFILE=""
+        STATUS_MESSAGE="Update failed: unreadable input or no valid import domains."
+        return 1
     fi
+    if ! cp --attributes-only --preserve=mode,ownership -- "$HOSTS_FILE" "$_TMPFILE" ||
+       ! mv -fT -- "$_TMPFILE" "$HOSTS_FILE"; then
+        rm -f -- "$_TMPFILE"
+        _TMPFILE=""
+        STATUS_MESSAGE="Could not replace hosts file; original retained."
+        return 1
+    fi
+    _TMPFILE=""
+    refresh_state
 }
 
 toggle_domain() {
-    local domain="$1"
-    # Safety check: never try to block the button labels
-    if [[ "$domain" == "$ADD_BUTTON_LABEL" || "$domain" == "$IMPORT_BUTTON_LABEL" || "$domain" == "$CLEAR_BUTTON_LABEL" ]]; then return; fi
-
-    local current_state="${IS_BLOCKED["$domain"]:-0}"
-    local new_state=$(( 1 - current_state ))
-
-    _TMPFILE=$(mktemp)
-
-    if (( new_state == 1 )); then
-        # BLOCKING
-        awk -v d="$domain" -v ip="$REDIRECT_IP" '
-        { print $0 }
-        END { print ip " " d }
-        ' "$HOSTS_FILE" > "$_TMPFILE"
-    else
-        # UNBLOCKING
-        awk -v d="$domain" '
-        $1 == "0.0.0.0" && $2 == d { next }
-        $1 == "0.0.0.0" && $2 == "www."d { next }
-        { print $0 }
-        ' "$HOSTS_FILE" > "$_TMPFILE"
-    fi
-
-    if [[ ! -s "$_TMPFILE" ]]; then
-        rm -f "$_TMPFILE"
-        return 1
-    fi
-
-    cat "$_TMPFILE" > "$HOSTS_FILE"
-    rm -f "$_TMPFILE"
-    _TMPFILE=""
-
-    # Handle www. prefix
-    if [[ "$domain" != www.* ]]; then
-        if (( new_state == 1 )); then
-             if ! grep -q "0.0.0.0 www.$domain" "$HOSTS_FILE"; then
-                 echo "$REDIRECT_IP www.$domain" >> "$HOSTS_FILE"
-             fi
-        else
-             _TMPFILE=$(mktemp)
-             awk -v d="www.$domain" '$1 == "0.0.0.0" && $2 == d { next } { print $0 }' "$HOSTS_FILE" > "$_TMPFILE"
-             cat "$_TMPFILE" > "$HOSTS_FILE"
-             rm -f "$_TMPFILE"
-        fi
-    fi
-
-    refresh_state
+    local domain=$1 action=block
+    refresh_state || return 1
+    [[ -v IS_BLOCKED["$domain"] ]] && action=unblock
+    rewrite_hosts "$action" "$domain"
 }
 
 add_custom_domain() {
-    local domain="$1"
-    if [[ -z "$domain" || "$domain" =~ [^a-zA-Z0-9.-] ]]; then return 1; fi
-
-    local exists=0
-    for d in "${TAB_ITEMS_4[@]}"; do
-        [[ "$d" == "$domain" ]] && exists=1
-    done
-
-    if (( exists == 0 )); then
-        TAB_ITEMS_4+=("$domain")
-        toggle_domain "$domain"
-        CURRENT_TAB=4
-        # Scroll to bottom to show new entry
-        local -i count=${#TAB_ITEMS_4[@]}
-        SELECTED_ROW=$(( count - 1 ))
-        compute_scroll_window "$count"
-    fi
-}
-
-import_file_process() {
-    local fpath="$1"
-    # Resolve ~ to home if present (simple expansion)
-    if [[ "$fpath" == ~* ]]; then fpath="${HOME}${fpath:1}"; fi
-
-    if [[ ! -f "$fpath" ]]; then return 1; fi
-
-    local _temp_import
-    _temp_import=$(mktemp)
-
-    # 1. Extract valid domains
-    awk '
-    /^[[:space:]]*#/ { next }
-    /^[[:space:]]*$/ { next }
-    {
-        domain=""
-        for(i=1; i<=NF; i++) {
-            if ($i ~ /^([0-9]{1,3}\.){3}[0-9]{1,3}$/ || $i ~ /:/) {
-                 if (i+1 <= NF) { domain=$(i+1); break }
-            }
-        }
-        if (domain == "") next
-        if (domain == "localhost") next
-        if (domain == "localhost.localdomain") next
-        if (domain == "broadcasthost") next
-        if (domain == "local") next
-        if (domain == "0.0.0.0") next
-        if (domain ~ /^ip6-/) next
-        print domain
-    }
-    ' "$fpath" | sort -u > "$_temp_import"
-
-    if [[ ! -s "$_temp_import" ]]; then
-        rm -f "$_temp_import"
+    local domain=${1,,}
+    domain=${domain%.}
+    if ! LC_ALL=C gawk -v d="$domain" -- "$HOSTS_AWK"'BEGIN { exit !valid(d) }'; then
+        STATUS_MESSAGE="Enter a valid DNS name, such as example.com (ASCII/punycode)."
         return 1
     fi
 
-    # 2. Filter duplicates against what's already in hosts
-    local _current_domains
-    _current_domains=$(mktemp)
-    awk '$1 == "0.0.0.0" { print $2 }' "$HOSTS_FILE" | sort > "$_current_domains"
-
-    local _new_domains
-    _new_domains=$(mktemp)
-    comm -23 "$_temp_import" "$_current_domains" > "$_new_domains"
-
-    # 3. Bulk Append to hosts file
-    if [[ -s "$_new_domains" ]]; then
-        sed "s/^/$REDIRECT_IP /" "$_new_domains" >> "$HOSTS_FILE"
+    refresh_state || return 1
+    if [[ ! -v IS_BLOCKED["$domain"] ]]; then
+        rewrite_hosts block "$domain" || return 1
     fi
+    CURRENT_TAB=${KNOWN_DOMAIN_TAB["$domain"]:-4}
+    local -n items="TAB_ITEMS_${CURRENT_TAB}"
+    local -i i
+    for (( i = 0; i < ${#items[@]}; i++ )); do
+        if [[ "${items[i]}" == "$domain" ]]; then SELECTED_ROW=$i; break; fi
+    done
+    # An explicitly requested www alias may have been hidden beside its base.
+    if (( i == ${#items[@]} )); then items+=("$domain"); SELECTED_ROW=$i; fi
+    compute_scroll_window "${#items[@]}"
+}
 
-    rm -f "$_temp_import" "$_current_domains" "$_new_domains"
-    refresh_state
+import_file_process() {
+    local fpath=$1
+    if [[ "$fpath" == '~' ]]; then fpath=$IMPORT_HOME
+    elif [[ "$fpath" == \~/* ]]; then fpath="$IMPORT_HOME/${fpath:2}"; fi
+    if [[ ! -f "$fpath" || ! -r "$fpath" ]]; then
+        STATUS_MESSAGE="Import requires a readable hosts file."
+        return 1
+    fi
+    fpath=$(readlink -e -- "$fpath") || return 1
+    rewrite_hosts import "" "$fpath"
 }
 
 clear_all_blocks() {
-    local _temp_clean
-    _temp_clean=$(mktemp)
-
-    grep -v "^${REDIRECT_IP}[[:space:]]" "$HOSTS_FILE" > "$_temp_clean" || true
-
-    if [[ -s "$_temp_clean" ]]; then
-        cat "$_temp_clean" > "$HOSTS_FILE"
-    else
-        # If hosts file would be empty after removing all blocks,
-        # preserve at least an empty file
-        : > "$HOSTS_FILE"
-    fi
-
-    rm -f "$_temp_clean"
+    rewrite_hosts clear || return 1
     TAB_ITEMS_4=("$ADD_BUTTON_LABEL" "$IMPORT_BUTTON_LABEL" "$CLEAR_BUTTON_LABEL")
-    refresh_state
 }
 
 perform_blocking_import() {
-    # 1. Clear Screen Completely
-    printf "${CLR_SCREEN}${CURSOR_HOME}"
-
-    # 2. Restore standard terminal settings for input
-    if [[ -n "${ORIGINAL_STTY:-}" ]]; then
-        stty "$ORIGINAL_STTY" 2>/dev/null || stty sane
-    else
-        stty sane
-    fi
-    printf "${CURSOR_SHOW}"
-
-    # 3. Print a clean prompt at the top of the blank screen
-    printf "${C_MAGENTA}──────────────────────────────────────────────────${C_RESET}\n"
-    printf "${C_WHITE} IMPORT HOSTS FILE${C_RESET}\n"
-    printf "${C_GREY} Tip: Press [TAB] to list files.${C_RESET}\n"
-    printf "${C_MAGENTA}──────────────────────────────────────────────────${C_RESET}\n"
-
-    # 4. Read with Readline (-e enabled tab completion)
-    local file_path
-    read -e -p " > " file_path
-
-    # 5. Restore TUI Mode (Raw)
-    stty -icanon -echo min 1 time 0 2>/dev/null
-    printf "${CURSOR_HIDE}"
-
-    # 6. Flush the input buffer
-    local trash
-    read -t 0.1 -n 10000 trash || true
-
-    # 7. Process
+    printf '%s%s%s%s' "$MOUSE_OFF" "$CLR_SCREEN" "$CURSOR_HOME" "$CURSOR_SHOW"
+    stty "$ORIGINAL_STTY"
+    printf '%s\n' "${C_WHITE} IMPORT HOSTS FILE${C_RESET}" \
+        "${C_GREY} Tab completes paths; Ctrl-D cancels. Imports sink/loopback entries.${C_RESET}"
+    local file_path=""
+    # Readline completion is filename based; preserve literal backslashes/spaces.
+    IFS= read -er -p ' > ' file_path || file_path=""
+    stty -icanon -echo min 1 time 0
+    printf '%s%s' "$MOUSE_ON" "$CURSOR_HIDE"
     if [[ -n "$file_path" ]]; then
-        # Show progress indicator for large files
-        printf "${CLR_SCREEN}${CURSOR_HOME}"
-        printf "${CURSOR_SHOW}"
-        printf "\n${C_YELLOW}  Importing... this may take a moment for large files.${C_RESET}\n"
-        import_file_process "$file_path"
-        printf "${CURSOR_HIDE}"
+        printf '%s\n' 'Importing...'
+        import_file_process "$file_path" || :
     fi
-
-    # 8. Reset screen for next TUI draw
-    printf "${CLR_SCREEN}${CURSOR_HOME}"
+    printf '%s%s' "$CLR_SCREEN" "$CURSOR_HOME"
 }
 
 # =============================================================================
@@ -473,7 +398,7 @@ render_scroll_indicator() {
 
 draw_main_view() {
     local buf="" pad_buf=""
-    local -i i current_col=3 zone_start len count pad_needed
+    local -i i current_col=3 zone_start count
     local -i left_pad right_pad vis_len
     local -i _vis_start _vis_end
 
@@ -622,22 +547,22 @@ draw_main_view() {
     render_scroll_indicator buf "below" "$count" "$_vis_end"
 
     buf+=$'\n'"${C_CYAN} [Tab] Category  [Space/Enter] Toggle  [q] Quit${C_RESET}${CLR_EOL}"$'\n'
-    buf+="${C_CYAN} System: ${C_WHITE}${HOSTS_FILE}${C_RESET}${CLR_EOL}${CLR_EOS}"
+    buf+="${C_CYAN} System: ${C_WHITE}${HOSTS_FILE}${C_RESET}${CLR_EOL}"$'\n'
+    buf+="${C_YELLOW}${STATUS_MESSAGE}${C_RESET}${CLR_EOL}${CLR_EOS}"
 
     printf '%s' "$buf"
 }
 
 draw_input_modal() {
-    printf "${CURSOR_HOME}"
-    local i
-    for ((i=0; i<8; i++)); do printf "\n"; done
-    printf "${C_MAGENTA}          ┌──────────────────────────────────────────────────┐${C_RESET}\n"
-    printf "${C_MAGENTA}          │ ${C_WHITE}ADD CUSTOM DOMAIN TO BLOCK LIST                  ${C_MAGENTA}│${C_RESET}\n"
-    printf "${C_MAGENTA}          │                                                  │${C_RESET}\n"
-    printf "${C_MAGENTA}          │ ${C_CYAN}> ${INPUT_BUFFER}_${C_RESET}                                         \n"
-    printf "${C_MAGENTA}          │                                                  │${C_RESET}\n"
-    printf "${C_MAGENTA}          └──────────────────────────────────────────────────┘${C_RESET}\n"
-    printf "${CLR_EOS}"
+    printf '%s\n\n\n\n\n\n\n\n' "$CURSOR_HOME"
+    printf '%s\n' \
+        "${C_MAGENTA}          ┌──────────────────────────────────────────────────┐${C_RESET}" \
+        "${C_MAGENTA}          │ ${C_WHITE}ADD CUSTOM DOMAIN TO BLOCK LIST                  ${C_MAGENTA}│${C_RESET}" \
+        "${C_MAGENTA}          │                                                  │${C_RESET}" \
+        "${C_MAGENTA}          │ ${C_CYAN}> ${INPUT_BUFFER: -44}_${C_RESET}${CLR_EOL}" \
+        "${C_MAGENTA}          │                                                  │${C_RESET}" \
+        "${C_MAGENTA}          └──────────────────────────────────────────────────┘${C_RESET}"
+    printf '%s' "$CLR_EOS"
 }
 
 draw_ui() {
@@ -703,11 +628,11 @@ toggle_current() {
     fi
 
     if [[ "$item" == "$CLEAR_BUTTON_LABEL" ]]; then
-        clear_all_blocks
+        clear_all_blocks || STATUS_MESSAGE="Could not clear blocks."
         return
     fi
 
-    toggle_domain "$item"
+    toggle_domain "$item" || STATUS_MESSAGE="Could not update hosts file."
 }
 
 handle_mouse() {
@@ -715,12 +640,12 @@ handle_mouse() {
     local -i button x y i start end
     local zone
 
-    local body="${input#'[<'}"
-    if [[ "$body" == "$input" ]]; then return 0; fi
-    local terminator="${body: -1}"
-    if [[ "$terminator" != "M" && "$terminator" != "m" ]]; then return 0; fi
-    body="${body%[Mm]}"
-    IFS=';' read -r button x y <<< "$body"
+    [[ "$input" =~ ^\[\<([0-9]{1,5})\;([0-9]{1,5})\;([0-9]{1,5})[Mm]$ ]] || return 0
+    (( CURRENT_VIEW == 0 )) || return 0
+    local terminator="${input: -1}"
+    button=$(( 10#${BASH_REMATCH[1]} ))
+    x=$(( 10#${BASH_REMATCH[2]} ))
+    y=$(( 10#${BASH_REMATCH[3]} ))
 
     if (( button == 64 )); then navigate -1; return 0; fi
     if (( button == 65 )); then navigate 1; return 0; fi
@@ -770,6 +695,7 @@ read_escape_seq() {
     if [[ "$char" == '[' || "$char" == 'O' ]]; then
         while IFS= read -rsn1 -t "$ESC_READ_TIMEOUT" char; do
             _esc_out+="$char"
+            (( ${#_esc_out} <= 64 )) || return 1
             if [[ "$char" =~ [a-zA-Z~] ]]; then break; fi
         done
     fi
@@ -808,12 +734,12 @@ handle_key_modal() {
     if [[ "$key" == $'\x7f' || "$key" == $'\x08' ]]; then
         INPUT_BUFFER="${INPUT_BUFFER%?}"
     elif [[ "$key" == "" || "$key" == $'\n' ]]; then
-        add_custom_domain "$INPUT_BUFFER"
+        add_custom_domain "$INPUT_BUFFER" || :
         CURRENT_VIEW=0
     elif [[ "$key" == "ESC" || "$key" == $'\x1b' ]]; then
         CURRENT_VIEW=0
     else
-        if [[ "$key" =~ [a-zA-Z0-9.-] ]] && [[ ${#key} -eq 1 ]]; then
+        if [[ "$key" =~ [a-zA-Z0-9.-] ]] && [[ ${#key} -eq 1 && ${#INPUT_BUFFER} -lt 254 ]]; then
             INPUT_BUFFER+="$key"
         fi
     fi
@@ -821,6 +747,7 @@ handle_key_modal() {
 
 handle_input_router() {
     local key="$1"
+    STATUS_MESSAGE=""
     local escape_seq=""
 
     if [[ "$key" == $'\x1b' ]]; then
@@ -843,55 +770,54 @@ handle_input_router() {
 # =============================================================================
 
 main() {
-    # 0. Root Check (Validate First Pattern)
-    if [[ $EUID -ne 0 ]]; then
-       # FORCE TERMINAL RESET: Fixes invisible prompts from previous crashes
-       stty sane 2>/dev/null
-
-       echo -e "${C_YELLOW}Privileges required. Validating sudo permissions...${C_RESET}"
-
-       # 1. Authenticate FIRST. This handles the password prompt cleanly.
-       if ! sudo -v; then
-           echo -e "${C_RED}Sudo authentication failed or was cancelled.${C_RESET}"
-           exit 1
-       fi
-
-       # 2. Capture the absolute path to self
-       script_path=$(readlink -f "${BASH_SOURCE[0]}")
-
-       # 3. Pass debug flags if they were active
-       opts=()
-       [[ "$-" == *x* ]] && opts+=("-x")
-
-       echo -e "${C_GREEN}Privileges acquired. Restarting as root...${C_RESET}"
-
-       # 4. NOW it is safe to exec
-       exec sudo bash "${opts[@]}" "$script_path" "$@"
+    if [[ ! -t 0 || ! -t 1 || ${TERM:-dumb} == dumb ]]; then
+        log_err "Run this interactive program in a terminal."
+        return 1
     fi
 
-    if [[ ! -f "$HOSTS_FILE" ]]; then touch "$HOSTS_FILE"; fi
-    if [[ ! -f "$BACKUP_FILE" ]]; then cp "$HOSTS_FILE" "$BACKUP_FILE"; chmod 644 "$BACKUP_FILE"; fi
+    if (( EUID != 0 )); then
+        local script_path
+        local -a bash_opts=()
+        script_path=$(readlink -e -- "${BASH_SOURCE[0]}")
+        if [[ $- == *x* ]]; then bash_opts=(-x); fi
+        # Pass the invoking home explicitly so ~/ imports survive sudo HOME changes.
+        exec sudo -- "$BASH" "${bash_opts[@]}" "$script_path" --import-home "$HOME"
+    fi
+    if [[ ${1:-} == --import-home ]]; then IMPORT_HOME=$2; fi
 
-    for _dep in awk grep; do
-        if ! command -v "$_dep" &>/dev/null; then echo "Missing dependency: $_dep"; exit 1; fi
+    local dep lock_fd
+    for dep in gawk flock mktemp cp chmod mv rm stty readlink; do
+        if ! command -v "$dep" &>/dev/null; then
+            log_err "Missing dependency: $dep"
+            return 1
+        fi
     done
 
-    init_db
-
-    # Show loading indicator for large hosts files
-    local -i hosts_lines
-    hosts_lines=$(wc -l < "$HOSTS_FILE" 2>/dev/null) || hosts_lines=0
-    if (( hosts_lines > 5000 )); then
-        printf "${C_YELLOW}  Loading %d entries from hosts file...${C_RESET}\n" "$hosts_lines"
+    exec {lock_fd}> /run/dusky-site-blocker.lock
+    if ! flock -n "$lock_fd"; then
+        log_err "Another site blocker instance is running."
+        return 1
     fi
 
+    if [[ ! -e "$HOSTS_FILE" ]]; then
+        printf '127.0.0.1 localhost\n::1 localhost\n' > "$HOSTS_FILE"
+        chmod 644 -- "$HOSTS_FILE"
+    fi
+    HOSTS_FILE=$(readlink -e -- "$HOSTS_FILE")
+    if [[ ! -f "$BACKUP_FILE" ]]; then
+        # A failed/interrupted copy must not leave a partial permanent backup.
+        _TMPFILE=$(mktemp -- "${BACKUP_FILE}.dusky.XXXXXXXXXX")
+        cp -- "$HOSTS_FILE" "$_TMPFILE"
+        chmod 644 -- "$_TMPFILE"
+        mv -fT -- "$_TMPFILE" "$BACKUP_FILE"
+        _TMPFILE=""
+    fi
+
+    init_db
     refresh_state
 
-    ORIGINAL_STTY=$(stty -g 2>/dev/null) || ORIGINAL_STTY=""
-    stty -icanon -echo min 1 time 0 2>/dev/null
-
-    # Use standard clear to handle buffer flushing before drawing TUI
-    clear 2>/dev/null || printf '%s' "$CLR_SCREEN"
+    ORIGINAL_STTY=$(stty -g)
+    stty -icanon -echo min 1 time 0
     printf '%s%s%s%s' "$MOUSE_ON" "$CURSOR_HIDE" "$CLR_SCREEN" "$CURSOR_HOME"
 
     local key
@@ -902,4 +828,4 @@ main() {
     done
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then main "$@"; fi
