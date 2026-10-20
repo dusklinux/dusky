@@ -59,12 +59,12 @@ def main() -> None:
             filepath,
         ]
         try:
-            subprocess.run(cmd, check=True)
+            subprocess.run(cmd, check=False)
         except KeyboardInterrupt:
             print("\nVerification aborted by user.", file=sys.stderr)
             sys.exit(130)
-        except (OSError, subprocess.CalledProcessError) as error:
-            print(f"MPV verification failed: {error}", file=sys.stderr)
+        except OSError as error:
+            print(f"MPV launch failed: {error}", file=sys.stderr)
             sys.exit(1)
 
     print(f"\nAll {len(episodes)} episodes reviewed!")
