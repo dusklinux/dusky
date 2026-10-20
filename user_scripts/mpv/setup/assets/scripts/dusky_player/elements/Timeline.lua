@@ -332,7 +332,9 @@ function Timeline:render()
 		local rax = chapter_range.start < 0.1 and bax or t2x(chapter_range.start)
 		local rbx = chapter_range['end'] > state.duration - 0.1 and bbx
 			or t2x(math.min(chapter_range['end'], state.duration))
-		ass:rect(rax, fay, rbx, fby, {color = chapter_range.color, opacity = chapter_range.opacity})
+		ass:rect(rax, fay, rbx, fby, {
+			color = config.color[chapter_range.theme_color] or chapter_range.color, opacity = chapter_range.opacity,
+		})
 	end
 
 	-- Chapters

@@ -1,5 +1,31 @@
 # Dusky Player audio features
 
+## Matugen theme
+
+Matugen's `mpv` template publishes `matugen/generated/mpv.json` in the user
+configuration directory. Dusky Player loads it automatically and follows changes
+within two seconds, including palettes published by the offline vivid theme
+system. Both light and dark modes use the selected palette. Run the mpv setup
+script after updating the bundle, then reopen existing players once to load the
+new implementation. Subsequent palette changes apply without restarting.
+
+The palette covers controls, timeline and waveform, volume, titles, window
+buttons and border, menus and search highlights, chapter ranges, tooltips and
+indicators, the empty player background, native mpv OSD messages, console menus
+and statistics (including plots). mpv 0.41's internal console diagnostic and
+completion log colors are fixed upstream, without public palette options.
+Video and authored subtitles retain their original colors. The controller
+uses mpv's OSD font; existing sizing, opacity and animation settings are retained.
+
+There are no theme helper processes or required IPC sockets. Each player reads
+one small file every two seconds and redraws only when a complete valid palette
+changes. Missing or incomplete palettes retain the previous valid theme (or the
+built-in defaults before the first palette). Explicit `color=` settings override
+individual controller colors; `theme_path=` disables Matugen integration, or can
+point to another palette. Paths follow `XDG_CONFIG_HOME`, falling back to
+`~/.config`. Palette generation remains the responsibility of Matugen/the theme
+publisher, so the mpv installer does not change the desktop theme.
+
 ## Optional whole-track waveform
 
 Press `Ctrl+w`, or choose **Audio waveform on/off** in the right-click menu,
@@ -119,7 +145,11 @@ Normal MPV playback continues to use the live Lua filter.
 ## Verification
 
 Silence integration tests require Python 3.15+, mpv and FFmpeg. Waveform
-lifecycle tests require Lua or LuaJIT:
+lifecycle tests require Lua or LuaJIT. Theme integration tests additionally
+require Matugen; they render isolated light/dark palettes, exercise real mpv
+reloads and open search results, retain the last valid palette during failed
+writes, preserve explicit overrides, and stress 100 same-size replacements
+with identical modification times:
 
 ```sh
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s user_scripts/mpv/tests -v

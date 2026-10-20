@@ -688,7 +688,13 @@ end
 
 function Menu:on_display() self:update_dimensions() end
 function Menu:on_prop_fullormaxed() self:update_content_dimensions() end
-function Menu:on_options() self:update_content_dimensions() end
+function Menu:on_options()
+	-- Search results embed ASS colors; regenerate them when the palette changes.
+	for _, menu in ipairs(self.all) do
+		if menu.search and not menu.on_search then self:search_internal(menu.id, true) end
+	end
+	self:update_content_dimensions()
+end
 
 function Menu:handle_cursor_down()
 	if self.proximity_raw <= 0 then

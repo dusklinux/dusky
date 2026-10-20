@@ -15,6 +15,9 @@ require('lib/std')
 
 --[[ OPTIONS ]]
 
+local config_home = os.getenv('XDG_CONFIG_HOME')
+if not config_home or config_home == '' then config_home = os.getenv('HOME') .. '/.config' end
+
 defaults = {
 	timeline_style = 'line',
 	timeline_line_width = 2,
@@ -72,6 +75,7 @@ defaults = {
 	text_border = 1.2,
 	border_radius = 4,
 	color = '',
+	theme_path = config_home .. '/matugen/generated/mpv.json',
 	opacity = '',
 	animation_duration = 100,
 	refine = '',
@@ -135,6 +139,7 @@ end
 fzy = require('lib/fzy')
 
 --[[ CONFIG ]]
+local theme = require('lib/theme').new(options.theme_path)
 local config_defaults = {
 	color = {
 		foreground = serialize_rgba('ffffff').color,
@@ -145,8 +150,12 @@ local config_defaults = {
 		curtain = serialize_rgba('111111').color,
 		success = serialize_rgba('a5e075').color,
 		error = serialize_rgba('ff616e').color,
+		error_text = serialize_rgba('ffffff').color,
 		match = serialize_rgba('69c5ff').color,
 		heatmap = serialize_rgba('00adee').color,
+		chapter_openings = serialize_rgba('30abf9').color,
+		chapter_endings = serialize_rgba('30abf9').color,
+		chapter_ads = serialize_rgba('c54e4e').color,
 	},
 	opacity = {
 		timeline = 0.9,
@@ -216,6 +225,7 @@ config = {
 					and name:match('^[a-zA-Z0-9_]+$') and color:match('^[a-fA-F0-9]+$')
 					and (#color == 6 or #color == 8) then
 					local range = serialize_rgba(name_color[2])
+					if options.chapter_ranges == defaults.chapter_ranges then range.theme_color = 'chapter_' .. name end
 					range.patterns = alt_patterns[name]
 					ranges[name_color[1]] = range
 				end
@@ -277,7 +287,7 @@ function update_config()
 	))
 
 	-- Color
-	config.color = table_assign({}, config_defaults.color, serialize_key_value_list(options.color, function(value)
+	config.color = table_assign({}, config_defaults.color, theme.colors, serialize_key_value_list(options.color, function(value)
 		return serialize_rgba(value).color
 	end))
 
@@ -1126,3 +1136,5 @@ end
 
 -- Initial commit
 Manager:disable('user', options.disable_elements)
+
+theme:watch(function() handle_options({}) end)

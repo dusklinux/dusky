@@ -596,8 +596,10 @@ function highlight_match(text, byte_positions, font_color, bold)
 	end
 
 	table.sort(byte_positions)
-	local start_tag = '{\\c&H' .. config.color.match .. '&\\b' .. (bold and '1' or '0') .. '}'
-	local end_tag   = '{\\c&H' .. font_color .. '&}'
+	-- Active rows sit on the accent fill: retain its contrasting text color.
+	local match_color = font_color == fgt and fgt or config.color.match
+	local start_tag = '{\\c&H' .. match_color .. '&\\b1}'
+	local end_tag   = '{\\c&H' .. font_color .. '&\\b' .. (bold and '1' or '0') .. '}'
 
 	local result = {}
 	local pos_set = {}

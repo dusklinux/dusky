@@ -187,6 +187,12 @@ output_path = '~/.config/matugen/generated/dusky_visualizer_colors.json'
 # 3. Applications (Terminals, Editors, Browsers)
 # =============================================================================
 
+# Dusky Player reads this palette at startup and follows changes in running players.
+# No post-hook: works with both Matugen and the offline vivid palette publisher.
+[templates.mpv]
+input_path  = '~/.config/matugen/templates/mpv.json'
+output_path = '~/.config/matugen/generated/mpv.json'
+
 [templates.kitty]
 input_path  = '~/.config/matugen/templates/kitty-colors.conf'
 output_path = '~/.config/matugen/generated/kitty-colors.conf'

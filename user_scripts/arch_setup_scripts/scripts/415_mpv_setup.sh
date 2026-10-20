@@ -61,7 +61,7 @@ install_file() {
 log_info 'Starting Dusky Player setup.'
 
 # Detect an incomplete ISO bundle before changing the installed configuration.
-for relative in scripts/dusky_player/main.lua scripts/dusky_player/lib/icons.lua scripts/dusky_player/lib/waveform.lua scripts/dusky_thumbnails.lua scripts/dusky_silence.lua; do
+for relative in scripts/dusky_player/main.lua scripts/dusky_player/lib/icons.lua scripts/dusky_player/lib/waveform.lua scripts/dusky_player/lib/theme.lua scripts/dusky_thumbnails.lua scripts/dusky_silence.lua; do
     [[ -s "$ASSETS_DIR/$relative" ]] || die "Missing bundled asset: $relative"
 done
 for relative in mpv.conf input.conf script-opts/dusky_player.conf script-opts/dusky_silence.conf; do

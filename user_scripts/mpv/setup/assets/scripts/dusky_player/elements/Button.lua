@@ -15,8 +15,8 @@ function Button:init(id, props)
 	self.active = props.active
 	self.tooltip = props.tooltip
 	self.badge = props.badge
-	self.foreground = props.foreground or fg
-	self.background = props.background or bg
+	self.foreground = props.foreground
+	self.background = props.background
 	self.is_clickable = true
 	---@type fun()|nil
 	self.on_click = props.on_click
@@ -41,8 +41,9 @@ function Button:render()
 	local ass = assdraw.ass_new()
 	local is_clickable = self.is_clickable and self.on_click ~= nil
 	local is_hover = self.proximity_raw <= 0
-	local foreground = self.active and self.background or self.foreground
-	local background = self.active and self.foreground or self.background
+	local base_foreground, base_background = self.foreground or fg, self.background or bg
+	local foreground = self.active and base_background or base_foreground
+	local background = self.active and base_foreground or base_background
 	local background_opacity = self.active and 1 or config.opacity.controls
 
 	if is_hover and is_clickable and background_opacity < 0.3 then background_opacity = 0.3 end

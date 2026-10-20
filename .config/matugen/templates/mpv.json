@@ -1,0 +1,16 @@
+{
+  "foreground": "{{ colors.primary.default.hex }}",
+  "foreground_text": "{{ colors.on_primary.default.hex }}",
+  "background": "{{ colors.surface_container.default.hex }}",
+  "background_text": "{{ colors.on_surface.default.hex }}",
+  "window_border": "{{ colors.outline_variant.default.hex }}",
+  "curtain": "{{ colors.surface_container_lowest.default.hex }}",
+  "success": "{{ colors.tertiary.default.hex }}",
+  "error": "{{ colors.error.default.hex }}",
+  "error_text": "{{ colors.on_error.default.hex }}",
+  "match": "{{ colors.primary.default.hex }}",
+  "heatmap": "{{ colors.secondary.default.hex }}",
+  "chapter_openings": "{{ colors.tertiary.default.hex }}",
+  "chapter_endings": "{{ colors.secondary.default.hex }}",
+  "chapter_ads": "{{ colors.error.default.hex }}"
+}
