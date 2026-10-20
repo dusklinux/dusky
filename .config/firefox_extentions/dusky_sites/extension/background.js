@@ -1,10 +1,10 @@
 /* =============================================================================
- * Dusky Sites — Background Engine v6.2
- * Firefox 156+ · MV3 event page · wire v3 (delta) native host · no UI
+ * Dusky Sites — Background Engine v6.2.2
+ * Firefox 158+ · MV3 event page · wire v3 (delta) native host · no UI
  *
  * HOT PATH — one matugen tick = one ~4 KB MATUGEN_UPDATE frame
  *   adopt()            O(colours)  the rule map is hashed only when the host actually sends it
- *   queueTheme()       adaptive    ≤ 1 theme.update() per max(100 ms, 4 × measured parent cost)
+ *   queueTheme()       adaptive    ≤ 1 theme.update() per max(250 ms, 4 × measured parent cost)
  *   broadcastActive()  O(windows)  tabs.query({active:true}) + per-tab signature dedupe, palette-only frames
  *   persistWarm()      4 KB        storage.session only; disk (seed / paint cache) after a 1.2 s settle
  *
@@ -25,7 +25,7 @@
     const APP = 'Dusky Sites';
     const NATIVE_APP = 'dusky_sites';
     const WIRE = 3;
-    const SCHEMA = 7;
+    const SCHEMA = 8;
 
     const T = Object.freeze({
         RECONNECT_BASE_MS: 1500,
@@ -200,7 +200,7 @@
         webThemeEnabled: false,          // webpage theming requires explicit opt-in
         forceUnthemedWebsites: false,    // idem
         fastPaint: true,
-        contentColorScheme: 'dark',      // auto | light | dark | system
+        contentColorScheme: 'auto',      // auto | light | dark | system
         watchdogMinutes: 0.5,
         debug: false,
         disabledSites: [],
@@ -227,7 +227,7 @@
         }
     });
 
-    /** Colour keys Gecko 156 honours (tab_background_separator / toolbar_field_separator died in 89). */
+    /** Colour keys Gecko 158 honours (tab_background_separator / toolbar_field_separator died in 89). */
     const VALID_THEME_KEYS = new Set([
         'bookmark_text', 'button_background_active', 'button_background_hover', 'frame', 'frame_inactive',
         'icons', 'icons_attention', 'ntp_background', 'ntp_card_background', 'ntp_text',
@@ -322,6 +322,7 @@
     let tabEpochSeq = 0;
     const paintDirty = new Map();                   // host -> paint entry | null (tombstone)
     let paintIndex = [];                            // [[host, rulesHash], …] MRU order, mirrors paint:<host> keys on disk
+    let paintWork = Promise.resolve();               // serialize cache clear/publish operations
     let paletteWritten = null;                      // palette hash last written to paint:palette
     let seedHash = null, seedSitesRev = null;
 
@@ -335,7 +336,8 @@
                 'enabled',
                 'seed',
                 'seedSites',
-                'paintIndex'
+                'paintIndex',
+                'paint:palette'
             ]).catch(() => ({})),
 
             browser.storage.session.get([
@@ -354,7 +356,9 @@
                 ...local,
                 schema: SCHEMA,
                 seed: undefined,
-                seedSites: undefined
+                seedSites: undefined,
+                paintIndex: [],
+                'paint:palette': undefined
             };
 
             sess = {
@@ -377,13 +381,10 @@
             )
             : [];
 
+        paletteWritten = typeof local['paint:palette']?.hash === 'string' ? local['paint:palette'].hash : null;
         const meta = sess.meta;
 
         if (meta && typeof meta === 'object') {
-            if (typeof meta.enabled === 'boolean') {
-                S.enabled = meta.enabled;
-            }
-
             S.themeHash =
                 typeof meta.themeHash === 'string'
                     ? meta.themeHash
@@ -394,10 +395,6 @@
                     ? 'light'
                     : 'dark';
 
-            if (typeof meta.paletteWritten === 'string') {
-                paletteWritten = meta.paletteWritten;
-            }
-
             if (Array.isArray(meta.tabs)) {
                 for (const id of meta.tabs) {
                     if (Number.isInteger(id)) {
@@ -407,7 +404,7 @@
             }
         }
 
-        // Schema-7 seeds always carry the host's canonical revisions.
+        // Schema-8 seeds always carry the host's canonical revisions.
         const seedSites =
             local.seedSites &&
             typeof local.seedSites === 'object' &&
@@ -484,15 +481,15 @@
     }
 
     /**
-     * Schema 7 makes host-generated revisions canonical.
-     * Cold/warm records from older schemas cannot be reused safely.
-     *
-     * Paint cache format is unchanged and intentionally preserved.
+     * Schema 8 invalidates older paint entries and revision-bearing state.
+     * Old paint entries may refer to disabled hosts or obsolete scan semantics.
      */
     async function migrate() {
         try {
+            const records = await browser.storage.local.get(null);
+            const paintKeys = Object.keys(records).filter((key) => key.startsWith('paint:'));
             await Promise.all([
-                browser.storage.local.remove([
+                browser.storage.local.remove([...paintKeys, 'paintIndex',
                     'config',
                     'themeData',
                     'paintCache',
@@ -873,7 +870,10 @@
         const ch = adopt(d, true);
         if (!ch) { log('frame carried no change'); return; }
         if (ch.colors && S.cfg.browserThemeEnabled) queueTheme();
-        if (ch.webOff) { rollbackAll(); clearPaint(); }
+        // Rule/disabled-site transitions invalidate every cached host, including
+        // background tabs that eco mode deliberately does not visit.
+        if (ch.rules || ch.webOff) clearPaint();
+        if (ch.webOff) rollbackAll();
         else if (S.cfg.webThemeEnabled && (ch.colors || ch.rules || ch.webOn)) {
             broadcastActive(false);
             if (!S.cfg.ecoMode) S.wantTrickle = true;
@@ -1078,7 +1078,7 @@
 
     const FALLBACK_CSS = [
         '@media screen {',
-        '  :root { color-scheme: dark !important; }',
+        '  :root { color-scheme: var(--color-scheme, dark) !important; }',
         '  html, body, header, nav, main, footer, aside, section, article,',
         '  form, table, thead, tbody, tfoot, tr, td, th, ul, ol, li, dl, dt, dd,',
         '  details, summary, figure, fieldset, legend,',
@@ -1128,13 +1128,19 @@
     }
 
     const packRules = (css, scan, hints, provisional) =>
-        Object.freeze({ css, hash: hash32(css), scan, hints: hints || null, provisional: !!provisional });
+        Object.freeze({ css, hash: hash32(JSON.stringify([css, scan, hints || null])), scan, hints: hints || null, provisional: !!provisional });
 
     /** @returns {object|null} rules entry for a host (cached across palette revisions) or null => nothing to apply. */
     function resolveRules(host) {
         if (!S.theme || !host) return null;
         const hit = rulesCache.get(host);
-        if (hit !== undefined) return hit;
+        if (hit !== undefined) {
+            const fix = domainCache.get(host);
+            const ttl = fix?.neg ? LIM.DOMAIN_NEG_TTL_MS : LIM.DOMAIN_TTL_MS;
+            if (!S.cfg.forceUnthemedWebsites || hit?.scan === false
+                || (fix && now() - fix.at <= ttl) || isSiteDisabled(host)) return hit;
+            rulesCache.delete(host);
+        }
         let out = null;
         if (!isSiteDisabled(host)) {
             const site = siteRulesFor(host, S.theme.websites);
@@ -1324,7 +1330,7 @@
         const host = hostOf(url);
         const res = S.enabled && S.cfg.webThemeEnabled ? resolve(host) : null;
         const sig = res ? res.sig : 'x';
-        const prev = lastSig.get(tabId);
+        const prev = slots.get(tabId)?.sig ?? lastSig.get(tabId);
         if (!force && prev === sig) { stats.tabSkips++; return; }
         if (!res) {
             if (prev !== undefined && prev !== 'x') { stats.rollbacks++; queueTab(tabId, { type: 'MATUGEN_ROLLBACK' }, 'x'); dropPaint(host); }
@@ -1363,7 +1369,7 @@
         let tabs;
         try { tabs = await browser.tabs.query({ discarded: false }); } catch { return; }
         for (const t of tabs) {
-            const prev = lastSig.get(t.id);
+            const prev = slots.get(t.id)?.sig ?? lastSig.get(t.id);
             if (prev !== undefined && prev !== 'x' && isInjectable(t.url)) { stats.rollbacks++; queueTab(t.id, { type: 'MATUGEN_ROLLBACK' }, 'x'); }
         }
     }
@@ -1568,16 +1574,11 @@
         return browser.storage.session
             .set({
                 meta: {
-                    enabled:
-                        S.enabled,
-
                     themeHash:
                         S.themeHash,
 
                     scheme:
                         S.scheme,
-
-                    paletteWritten,
 
                     tabs:
                         tabs.slice(-2048)
@@ -1599,8 +1600,13 @@
         if (paintHashOf(host) !== null) paintDirty.set(host, null); else paintDirty.delete(host);
     }
 
-    async function flushPaint() {
-        if (!S.cfg.fastPaint) {
+    function flushPaint() {
+        paintWork = paintWork.then(flushPaintNow).catch(swallow);
+        return paintWork;
+    }
+
+    async function flushPaintNow() {
+        if (!S.cfg.fastPaint || !S.enabled || !S.cfg.webThemeEnabled) {
             return;
         }
 
@@ -1722,11 +1728,15 @@
         }
     }
 
-    async function clearPaint() {
+    function clearPaint() {
+        // Clear memory now; serialize disk removal after any in-flight flush.
         paintDirty.clear();
-        const keys = paintIndex.map((e) => 'paint:' + e[0]).concat(['paint:palette', 'paintIndex']);
-        paintIndex = []; paletteWritten = null;
-        await browser.storage.local.remove(keys).catch(swallow);
+        paintWork = paintWork.then(async () => {
+            const keys = paintIndex.map((e) => 'paint:' + e[0]).concat(['paint:palette', 'paintIndex']);
+            await browser.storage.local.remove(keys);
+            paintIndex = []; paletteWritten = null;
+        }).catch(swallow);
+        return paintWork;
     }
 
     /* ── 13. Runtime message router (content scripts + console diagnostics) */
@@ -1756,10 +1766,7 @@
         const top = !!sender.tab && sender.frameId === 0;
         if (!res) {
             if (top) {
-                noteTabSig(
-                    sender.tab.id,
-                    'x'
-                );
+                pushTab(sender.tab.id, url, true);
             }
 
             return {
@@ -1770,7 +1777,7 @@
         if (top) {
             noteTabSig(
                 sender.tab.id,
-                res.sig
+                '?'
             );
         }
         if (!res.rules.provisional) { markPaint(host, res.rules); if (!S.tm.settle) armSettle(); }
@@ -1844,7 +1851,10 @@
 
     browser.tabs.onRemoved.addListener(dropTab);
 
-    browser.action.onClicked.addListener(() => { ready().then(() => setEnabled(!S.enabled)); });
+    let enableWork = Promise.resolve();
+    browser.action.onClicked.addListener(() => {
+        enableWork = enableWork.then(() => ready()).then(() => setEnabled(!S.enabled)).catch(swallow);
+    });
 
     /** API-surface probe (not a compat shim): touching .addListener on an event Gecko lacks throws during eval. */
     function on(ns, event, handler) {

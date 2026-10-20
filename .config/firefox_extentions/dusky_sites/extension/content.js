@@ -1,6 +1,6 @@
 /* =============================================================================
- * Dusky Sites — Content Runtime v6.2.1
- * Firefox 157+ · document_start · every frame (all_frames + about:blank)
+ * Dusky Sites — Content Runtime v6.2.2
+ * Firefox 158+ · document_start · every frame (all_frames + about:blank)
  *
  * PER-REVISION COST MODEL — the only thing that matters under a matugen burst
  *   palette  ~100 × root.style.setProperty('--x', v, 'important'), diffed against the previous
@@ -33,6 +33,8 @@
     let raf = 0, gapTimer = 0, lastFlushAt = -1e9, minGap = 0;
     let everApplied = false;
     let disposed = false;
+    let deliveryEpoch = 0;       // ignore pulls superseded by a push/rollback
+    const originalVars = new Map();
 
     let palHash = null, palVars = null, palKeys = [];
     let rulHash = null, rulCss = '', derived = '', nativeDark = false;
@@ -48,72 +50,43 @@
     function setVars(vars) {
         const st = document.documentElement.style;
         const keys = Object.keys(vars);
-        if (palVars) for (const k of palKeys) if (!Object.hasOwn(vars, k)) st.removeProperty(k);
-        for (const k of keys) if (!palVars || palVars[k] !== vars[k]) st.setProperty(k, vars[k], 'important');
+        if (palVars) for (const k of palKeys) if (!Object.hasOwn(vars, k)) restoreVar(st, k);
+        for (const k of keys) {
+            if (!originalVars.has(k)) originalVars.set(k, [st.getPropertyValue(k), st.getPropertyPriority(k)]);
+            if (!palVars || palVars[k] !== vars[k]) st.setProperty(k, vars[k], 'important');
+        }
         palVars = vars; palKeys = keys;
         rootObs?.takeRecords();                    // our own writes are not a fight
     }
-    function varIntact(
-        st,
-        k
-    ) {
-        return (
-            st.getPropertyPriority(k) ===
-                'important' &&
-
-            st.getPropertyValue(k).trim() ===
-                String(palVars[k]).trim()
-        );
+    function varIntact(st, key) {
+        return st.getPropertyPriority(key) === 'important'
+            && st.getPropertyValue(key).trim() === String(palVars[key]).trim();
     }
 
     function varsIntact() {
-        const st =
-            document.documentElement?.style;
-
-        if (
-            !st ||
-            !palVars
-        ) {
-            return true;
-        }
-
-        return palKeys.every(
-            (k) =>
-                varIntact(st, k)
-        );
+        const style = document.documentElement?.style;
+        return !style || !palVars || palKeys.every((key) => varIntact(style, key));
     }
 
     function reassertVars() {
-        const st =
-            document.documentElement?.style;
-
-        if (
-            !st ||
-            !palVars
-        ) {
-            return;
+        const style = document.documentElement?.style;
+        if (!style || !palVars) return;
+        for (const key of palKeys) {
+            if (!varIntact(style, key)) style.setProperty(key, palVars[key], 'important');
         }
-
-        for (
-            const k
-            of palKeys
-        ) {
-            if (
-                !varIntact(st, k)
-            ) {
-                st.setProperty(
-                    k,
-                    palVars[k],
-                    'important'
-                );
-            }
-        }
-
         rootObs?.takeRecords();
+    }
+    function restoreVar(st, k) {
+        const original = originalVars.get(k);
+        if (original && varIntact(st, k)) {
+            if (original[0]) st.setProperty(k, ...original);
+            else st.removeProperty(k);
+        }
+        originalVars.delete(k);
     }
     function unsetVars() {
         const st = document.documentElement?.style;
-        if (st && palVars) for (const k of palKeys) st.removeProperty(k);
+        if (st && palVars) for (const k of palKeys) restoreVar(st, k);
         palVars = null; palKeys = []; palHash = null;
     }
     /** Single-node attribute observer: fires only when something else rewrites the root's style attribute. */
@@ -198,6 +171,12 @@
     function apply(data) {
         if (disposed) return;
         if (!data || typeof data !== 'object' || !data.rules || typeof data.rules.hash !== 'string') { clear(); return; }
+        deliveryEpoch++;
+        // Keep a queued full stylesheet when a newer palette-only frame refers
+        // to that same rule revision (hidden documents may defer many frames).
+        if (!data.rules.css && pending?.rules.css && pending.rules.hash === data.rules.hash) {
+            data = { ...data, rules: pending.rules };
+        }
         pending = data;
         if (!everApplied) { flush(); return; }             // pre-paint path: synchronous
         schedule();
@@ -216,7 +195,8 @@
         if (!document.documentElement) { raf = requestAnimationFrame(flush); return; }
         const d = pending; pending = null;
         const t0 = performance.now();
-        if (d.palette && d.palette.vars && typeof d.palette.vars === 'object' && d.palette.hash !== palHash) {
+        if (d.rules.hash !== rulHash) { cancelScan(); nativeDark = false; }
+        if (!nativeDark && d.palette && d.palette.vars && typeof d.palette.vars === 'object' && d.palette.hash !== palHash) {
             setVars(d.palette.vars); palHash = d.palette.hash; watchRoot();
         }
         if (d.rules.hash !== rulHash) {
@@ -236,6 +216,7 @@
     }
 
     function clear() {
+        deliveryEpoch++;
         pending = null;
         if (raf) { cancelAnimationFrame(raf); raf = 0; }
         if (gapTimer) { clearTimeout(gapTimer); gapTimer = 0; }
@@ -308,21 +289,37 @@
     }
 
     function walk(rules, depth, out, budget) {
-        for (let i = 0; i < rules.length; i++) {
-            if (budget.rules-- <= 0 || out.length > CAPS.out) return;
-            const rule = rules[i];
-            if (!rule) continue;
-            // Duck-typing: @layer/@container/@scope/@starting-style all report type 0; nesting makes a rule both.
-            const kids = rule.cssRules;
-            if (kids && kids.length && depth < CAPS.depth && typeof rule.keyText !== 'string') walk(kids, depth + 1, out, budget);
-            const sel = rule.selectorText, st = rule.style;
-            if (typeof sel !== 'string' || !st || !sel || sel.length > 400 || SKIP_SEL.test(sel)) continue;
+        for (const rule of rules) {
+            if (budget.rules-- <= 0 || budget.chars <= 0) return;
+            if (!rule || typeof rule.keyText === 'string') continue;
+            const sel = rule.selectorText ?? (rule.constructor?.name === 'CSSNestedDeclarations' ? '&' : undefined);
+            const st = rule.style;
             let body = '';
-            if (quickLuma(st.backgroundColor) > 0.45) body += 'background-color:var(--background,var(--surface,#181a1b))!important;';
-            const fg = quickLuma(st.color);
-            if (fg >= 0 && fg < 0.5) body += 'color:var(--on_background,var(--on_surface,#e0e0e0))!important;';
-            if (quickLuma(st.borderColor) > 0.6) body += 'border-color:var(--outline_variant,rgba(255,255,255,.10))!important;';
-            if (body) out.push(sel + '{' + body + '}');
+            if (typeof sel === 'string' && st && sel && sel.length <= 400 && !SKIP_SEL.test(sel)) {
+                if (quickLuma(st.backgroundColor) > 0.45) body += 'background-color:var(--background,var(--surface,#181a1b))!important;';
+                const fg = quickLuma(st.color);
+                if (fg >= 0 && fg < 0.5) body += 'color:var(--on_background,var(--on_surface,#e0e0e0))!important;';
+                if (quickLuma(st.borderColor) > 0.6) body += 'border-color:var(--outline_variant,rgba(255,255,255,.10))!important;';
+            }
+            // Keep grouping conditions and nesting context. Flattening a rule
+            // from @media print or @container would change when it applies.
+            const children = [];
+            const kids = rule.cssRules;
+            const header = typeof sel === 'string' ? sel : (rule.cssText ?? '').split('{', 1)[0].trim();
+            const canNest = typeof sel === 'string' || /^@(media|supports|layer|container|scope|starting-style)\b/i.test(header);
+            const wrapperCost = header.length + 2;
+            if (canNest && kids?.length && depth < CAPS.depth && budget.chars > wrapperCost + body.length) {
+                budget.chars -= wrapperCost + body.length;
+                walk(kids, depth + 1, children, budget);
+                budget.chars += wrapperCost + body.length;
+            }
+            if (!body && !children.length) continue;
+            const css = header + '{' + body + children.join('') + '}';
+            // Children already consumed their own budget above.
+            const ownCost = wrapperCost + body.length;
+            if (ownCost > budget.chars) continue;
+            budget.chars -= ownCost;
+            out.push(css);
         }
     }
 
@@ -332,8 +329,8 @@
     }
     function scheduleScan(reason) {
         if (disposed || nativeDark) return;
-        scanState ??= { seen: new WeakSet(), out: [], handle: 0, runs: 0 };
-        if (scanState.handle || scanState.runs > CAPS.runs) return;
+        scanState ??= { seen: new WeakSet(), out: [], handle: 0, runs: 0, budget: { rules: CAPS.rules, chars: CAPS.out }, sheets: 0 };
+        if (scanState.handle || scanState.runs >= CAPS.runs) return;
         scanState.handle = requestIdleCallback((deadline) => { scanState.handle = 0; scanState.runs++; runScanSlice(deadline); },
             { timeout: reason === 'load' ? 1500 : 4000 });
     }
@@ -341,14 +338,16 @@
         if (disposed || !scanState) return;
         if (nativelyDark()) {
             // The site already ships a dark theme: hands off until the rules revision changes.
-            nativeDark = true; hints = null; cancelScan(); derived = ''; unmountRules();
+            nativeDark = true; hints = null; cancelScan(); derived = ''; stopRoot(); unsetVars(); unmountRules();
             return;
         }
         const sheets = collectSheets();
         if (!sheets.length) return;
-        const budget = { rules: CAPS.rules };
+        const budget = scanState.budget;
         const start = performance.now();
         for (const s of sheets) {
+            if (scanState.sheets >= CAPS.sheets || budget.rules <= 0 || budget.chars <= 0) break;
+            scanState.sheets++;
             scanState.seen.add(s);
             try { walk(s.cssRules, 0, scanState.out, budget); } catch { /* detached sheet */ }
             if (budget.rules <= 0 || performance.now() - start > CAPS.slice || (deadline.timeRemaining() <= 1 && !deadline.didTimeout)) break;
@@ -357,7 +356,7 @@
             const next = '@media screen{' + scanState.out.join('') + '}';
             if (next !== derived) { derived = next; setRules(rulCss + '\n' + derived); }
         }
-        if (collectSheets().length) scheduleScan('continue');   // lazily loaded chunks get the next slice
+        if (budget.rules > 0 && budget.chars > 0 && scanState.sheets < CAPS.sheets && collectSheets().length) scheduleScan('continue');   // lazily loaded chunks get the next slice
     }
 
     /* ── 5. Transport ────────────────────────────────────────────────────── */
@@ -369,7 +368,9 @@
         let host = '';
         try { host = location.hostname.toLowerCase(); } catch { /* opaque origin */ }
         if (!host) return Promise.resolve();
-        return browser.storage.local.get(['paint:palette', 'paint:' + host]).then((r) => {
+        const epoch = deliveryEpoch;
+        return browser.storage.local.get(['schema', 'enabled', 'seed', 'paint:palette', 'paint:' + host]).then((r) => {
+            if (epoch !== deliveryEpoch || r.schema !== 8 || r.enabled === false || !r.seed?.webThemeEnabled) return;
             if (everApplied || pending) return;                          // authoritative payload already won the race
             const p = r['paint:palette'], e = r['paint:' + host];
             if (!p || typeof p.vars !== 'object' || !p.vars || typeof p.hash !== 'string') return;
@@ -381,7 +382,9 @@
     let attempt = 0;
     function sync() {
         if (disposed) return;
+        const epoch = deliveryEpoch;
         browser.runtime.sendMessage({ type: 'GET_THEME_DATA', have: have() }).then((res) => {
+            if (disposed || epoch !== deliveryEpoch) return;
             attempt = 0;
             if (!res || res.same) return;
             apply(res.data ?? null);
@@ -417,7 +420,7 @@
     }, true);
 
     document.addEventListener('visibilitychange', () => {
-        if (document.hidden || !scanState || scanState.handle || scanState.runs > CAPS.runs) return;
+        if (document.hidden || !scanState || scanState.handle || scanState.runs >= CAPS.runs) return;
         scheduleScan('visible');
     }, true);
 

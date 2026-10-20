@@ -1,7 +1,7 @@
 #!/usr/bin/env -S python3 -u
 """
-Dusky Sites — native-messaging host v6.2
-Python 3.14+ · Linux only (inotify via libc) · single thread · wire v3 (delta)
+Dusky Sites — native-messaging host v6.2.2
+Python 3.15+ · Linux only (inotify via libc) · single thread · wire v3 (delta)
 
 Hot path per matugen tick: one stat, one 3.6 KB regex parse, one BLAKE2b, one ~4 KB frame.
 The 174 KB site-rule map is re-parsed only when the directory signature changes and is sent
@@ -39,6 +39,8 @@ import signal
 import struct
 import sys
 import time
+lazy import tempfile
+lazy import fcntl
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -89,9 +91,15 @@ def stat_sig(path: Path) -> tuple[int, int, int] | None:
 
 def atomic_write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)
+    tmp = None
+    try:
+        with tempfile.NamedTemporaryFile("w", dir=path.parent, encoding="utf-8", delete=False) as stream:
+            tmp = Path(stream.name)
+            stream.write(text)
+        tmp.replace(path)
+    finally:
+        if tmp is not None:
+            tmp.unlink(missing_ok=True)
 
 
 # ── Configuration ─────────────────────────────────────────────────────────────
@@ -113,7 +121,7 @@ class Config:
     web_theme_enabled: bool = False
     force_unthemed_websites: bool = False
     disabled_sites: list[str] = field(default_factory=list)
-    keep_alive: bool = True
+    keep_alive: bool = False  # Firefox 158 keeps open native ports alive without periodic traffic.
     debug: bool = False
 
     def apply(self, updates: dict) -> bool:
@@ -128,6 +136,8 @@ class Config:
                     if not isinstance(val, str) or not val.strip() or "\0" in val or len(val) > 4096:
                         continue
                     val = val.strip()
+                    if not Path(os.path.expanduser(val)).is_absolute():
+                        continue
                 case "disabled_sites":
                     if not isinstance(val, list):
                         continue
@@ -152,25 +162,63 @@ class Config:
         return Path(self.websites_dir).expanduser()
 
 
-def load_config() -> Config:
+def read_config_data(path: Path) -> dict:
+    """Reject malformed on-disk settings instead of replacing them with defaults."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    if not isinstance(data, dict):
+        raise ValueError("Configuration must contain an object")
+    for key, attr in CAMEL.items():
+        if key not in data:
+            continue
+        value = data[key]
+        if attr in {"colors_path", "websites_dir"}:
+            valid = (isinstance(value, str) and bool(value.strip()) and "\0" not in value
+                     and len(value) <= 4096 and Path(os.path.expanduser(value)).is_absolute())
+        elif attr == "disabled_sites":
+            valid = isinstance(value, list) and all(isinstance(site, str) for site in value)
+        else:
+            valid = isinstance(value, bool)
+        if not valid:
+            raise ValueError(f"Invalid configuration value for {key}")
+    return data
+
+
+def load_config(*, strict: bool = False) -> Config:
     cfg = Config()
     try:
-        raw = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return cfg
-    except OSError, ValueError:                       # PEP 758
+        raw = read_config_data(CONFIG_PATH)
+    except (OSError, ValueError):
+        if strict:
+            raise
         err(f"config unreadable: {CONFIG_PATH}")
         return cfg
-    if isinstance(raw, dict):
-        cfg.apply(raw)
+    cfg.apply(raw)
     return cfg
 
 
-def save_config(cfg: Config) -> None:
+def save_config(cfg: Config, updates: dict | None = None) -> bool:
+    """Merge a patch with the latest disk state; publish before changing memory."""
     try:
-        atomic_write(CONFIG_PATH, json.dumps(cfg.to_json(), indent=4) + "\n")
-    except OSError as e:
-        err(f"config write failed: {e}")
+        path = CONFIG_PATH.resolve()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.with_name(path.name + ".lock").open("a", encoding="utf-8") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            data = read_config_data(path)
+            fresh = Config()
+            fresh.apply(data)
+            fresh.apply(cfg.to_json() if updates is None else updates)
+            # Preserve installer-owned stylesheet options and future settings.
+            merged = data | fresh.to_json()
+            if merged != data:
+                atomic_write(path, json.dumps(merged, indent=4) + "\n")
+            cfg.apply(fresh.to_json())
+        return True
+    except (OSError, ValueError) as error:
+        err(f"config write failed: {error}")
+        return False
 
 
 # ── Palette + site rules (stat-signature cached) ─────────────────────────────
@@ -232,13 +280,15 @@ def parse_site_file(path: Path, out: dict[str, str]) -> None:
     Several files targeting the same domain are concatenated (v5 silently kept the last one)."""
     text = path.read_text(encoding="utf-8")
     stem = path.stem.lower()
-    blocks = list(_MOZ_DOC_RE.finditer(text))
+    protected = list(re.finditer(r"""/\*.*?\*/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'""", text, re.DOTALL))
+    blocks = [match for match in _MOZ_DOC_RE.finditer(text)
+              if not any(part.start() <= match.start() < part.end() for part in protected)]
     if not blocks:
         out[stem] = text.strip()
         return
     for m in blocks:
         specs = m.group("specs")
-        domains = [d.lower() for d in _DOMAIN_SPEC_RE.findall(specs)] or [d.lower() for d in _URL_SPEC_RE.findall(specs)]
+        domains = dict.fromkeys(d.lower() for d in (*_DOMAIN_SPEC_RE.findall(specs), *_URL_SPEC_RE.findall(specs)))
         body = balanced_block(text, m.end() - 1)
         if not domains:
             out[stem] = body or text.strip()
@@ -279,7 +329,7 @@ class SiteRules:
         try:
             with os.scandir(self.dir) as it:
                 for e in it:
-                    if e.name.endswith(".css") and e.is_file():
+                    if e.name.endswith(".css") and e.name != "about.css" and e.is_file():
                         st = e.stat()
                         entries.append((e.name, st.st_mtime_ns, st.st_size))
         except OSError:
@@ -362,7 +412,7 @@ def parse_blocks(text: str) -> list[Block]:
             s = line.strip()
             if not s:
                 continue
-            if _SECTION_RE.match(s):
+            if _SECTION_RE.prefixmatch(s):
                 cur = s
                 sections.setdefault(cur, [])
             elif cur is None:
@@ -393,7 +443,7 @@ def domain_score(host: str, pattern: str) -> int:
 
 def tone(token: str) -> str | None:
     t = token.strip().lower()
-    if _HEX_RE.match(t):
+    if _HEX_RE.prefixmatch(t):
         h = t[1:]
         if len(h) in (3, 4):
             r, g, b = (int(c * 2, 16) for c in h[:3])
@@ -512,16 +562,20 @@ class Wire:
         self._buf = bytearray(1 << 16)
         self._view = memoryview(self._buf)
         self._chunk_seq = 0
+        self._eof = False
 
     def read(self) -> list[dict] | None:
         """Drain stdin. Returns decoded frames, or None on EOF (Firefox closed the port)."""
+        if self._eof:
+            return None
         while True:
             try:
                 n = os.readinto(0, self._view)
             except BlockingIOError:
                 break
             if n == 0:
-                return None
+                self._eof = True
+                break
             self._in += self._view[:n]
             if n < len(self._buf):
                 break
@@ -532,8 +586,8 @@ class Wire:
                 raise ValueError(f"inbound frame of {length} B exceeds cap")
             if len(self._in) < 4 + length:
                 break
-            body = bytes(self._in[4:4 + length])
-            del self._in[:4 + length]
+            del self._in[:4]
+            body = self._in.take_bytes(length)
             try:
                 msg = json.loads(body)
             except ValueError as e:
@@ -541,7 +595,7 @@ class Wire:
                 continue
             if isinstance(msg, dict):
                 frames.append(msg)
-        return frames
+        return frames if frames or not self._eof else None
 
     def send(self, msg: dict) -> bool:
         text = json.dumps(msg, ensure_ascii=False, separators=(",", ":"))
@@ -609,6 +663,9 @@ class Inotify:
 
     def sync(self, wanted: set[Path]) -> bool:
         """Watch exactly `wanted`; False when a directory does not exist yet (caller retries)."""
+        # Directory aliases share an inotify watch descriptor; canonicalize
+        # them before updating either lookup table.
+        wanted = {directory.resolve() for directory in wanted}
         for d in [d for d in self._by_dir if d not in wanted]:
             self._libc.inotify_rm_watch(self.fd, self._by_dir[d])
             self._by_wd.pop(self._by_dir.pop(d), None)
@@ -643,7 +700,9 @@ class Inotify:
                 d = self._by_wd.get(wd)
                 if d is None:
                     continue
-                if mask & IN_IGNORED:
+                if mask & (IN_IGNORED | IN_DELETE_SELF | IN_MOVE_SELF):
+                    if not mask & IN_IGNORED:
+                        self._libc.inotify_rm_watch(self.fd, wd)
                     self._by_wd.pop(wd, None)
                     self._by_dir.pop(d, None)
                 out.append((d, mask, name))
@@ -656,7 +715,7 @@ class Host:
         SETTINGS_DIR.mkdir(parents=True, exist_ok=True)   # config watch must never have to retry
         self.cfg = load_config()
         DEBUG = self.cfg.debug
-        self.cfg_sig = stat_sig(CONFIG_PATH)
+        self.cfg_sig = None  # First fetch rechecks changes made during startup.
         self.palette = Palette(self.cfg.colors_file)
         self.sites = SiteRules(self.cfg.sites_dir)
         self.fallback = Fallback(lambda: self.cfg.sites_dir)
@@ -709,7 +768,8 @@ class Host:
 
     # watches --------------------------------------------------------------
     def sync_watches(self) -> None:
-        self.watch_ok = self.ino.sync({self.palette.path.parent, self.sites.dir, CONFIG_PATH.parent})
+        self.watch_ok = self.ino.sync({self.palette.path.parent, self.palette.path.resolve().parent,
+                                       self.sites.dir, CONFIG_PATH.parent, CONFIG_PATH.resolve().parent})
         if not self.watch_ok:
             self.t_watch = time.monotonic() + WATCH_RETRY_S
 
@@ -720,7 +780,14 @@ class Host:
         self.t_update = min(t + QUIET_S, self.t_hard)
 
     def on_inotify(self) -> None:
-        for d, mask, name in self.ino.drain():
+        events = self.ino.drain()
+        palette_target = self.palette.path.resolve()
+        palette_parent = self.palette.path.parent.resolve()
+        sites_dir = self.sites.dir.resolve()
+        config_target = CONFIG_PATH.resolve()
+        config_parent = CONFIG_PATH.parent.resolve()
+        palette_event = False
+        for d, mask, name in events:
             if mask & IN_Q_OVERFLOW:
                 self.dirty.update(palette=True, sites=True, config=True)
                 self.schedule_update()
@@ -728,15 +795,21 @@ class Host:
             if mask & (IN_IGNORED | IN_DELETE_SELF | IN_MOVE_SELF):
                 self.watch_ok = False
                 self.t_watch = time.monotonic() + 1.0
-            if d == self.palette.path.parent and name == self.palette.path.name:
+            if ((d == palette_parent and name == self.palette.path.name)
+                    or (d == palette_target.parent and name == palette_target.name)):
                 self.dirty["palette"] = True
+                palette_event = True
                 self.schedule_update()
-            if d == self.sites.dir and (not name or name.endswith(".css")):
+            if d == sites_dir and (not name or name.endswith(".css")):
                 self.dirty["sites"] = True
                 self.schedule_update()
-            if d == CONFIG_PATH.parent and name == CONFIG_PATH.name:
+            if ((d == config_parent and name == CONFIG_PATH.name)
+                    or (d == config_target.parent and name == config_target.name)):
                 self.dirty["config"] = True
                 self.schedule_update()
+
+        if palette_event:
+            self.sync_watches()  # A palette alias may now point into another directory.
 
     # timers ---------------------------------------------------------------
     def next_timeout(self) -> float:
@@ -771,6 +844,9 @@ class Host:
             self.tick()
         if not self.watch_ok and t >= self.t_watch:
             self.sync_watches()
+            # Reconcile changes made while a directory had no valid watch.
+            self.dirty.update(palette=True, sites=True, config=True)
+            self.tick()
 
     # state ----------------------------------------------------------------
     def tick(self) -> None:
@@ -796,7 +872,11 @@ class Host:
         if sig == self.cfg_sig:
             return False
         self.cfg_sig = sig
-        fresh = load_config()
+        try:
+            fresh = load_config(strict=True)
+        except (OSError, ValueError) as error:
+            err(f"config reload failed; retaining previous settings: {error}")
+            return False
         changed = fresh.to_json() != self.cfg.to_json()
         self.cfg = fresh
         DEBUG = fresh.debug
@@ -871,9 +951,10 @@ class Host:
                 self.t_hard = None
             case "SET_CONFIG":
                 cfg = m.get("config")
-                if isinstance(cfg, dict) and self.cfg.apply(cfg):
-                    save_config(self.cfg)
-                    self.cfg_sig = stat_sig(CONFIG_PATH)
+                if isinstance(cfg, dict) and save_config(self.cfg, cfg):
+                    # A different writer may publish immediately after our lock
+                    # closes. Never tag our snapshot with that writer's stat.
+                    self.cfg_sig = None
                     DEBUG = self.cfg.debug
                     self.retarget()
                     self.force = True

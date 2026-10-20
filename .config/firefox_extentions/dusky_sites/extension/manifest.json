@@ -1,14 +1,14 @@
 {
   "manifest_version": 3,
   "name": "Dusky Sites",
-  "version": "6.2.1",
+  "version": "6.2.2",
   "description": "Real-time Material You (Matugen) theming for the Firefox chrome and for website content, driven by a local native-messaging daemon.",
   "homepage_url": "https://github.com/dusklinux/dusky",
 
   "browser_specific_settings": {
     "gecko": {
       "id": "dusky_sites@dusky.com",
-      "strict_min_version": "157.0",
+      "strict_min_version": "158.0",
       "data_collection_permissions": {
         "required": ["none"]
       }

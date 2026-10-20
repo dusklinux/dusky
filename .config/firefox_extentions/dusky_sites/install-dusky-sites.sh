@@ -3,7 +3,8 @@
 # usage: ./install-dusky-sites.sh [repo-root]   (repo-root contains extension/ and dusky_sites_host.py)
 set -euo pipefail
 
-SRC="$(realpath "${1:-$PWD}")"
+SCRIPT_PATH="$(realpath -- "${BASH_SOURCE[0]}")"
+SRC="$(realpath -- "${1:-${SCRIPT_PATH%/*}}")"
 HOST_DST="$HOME/.local/share/dusky-sites/dusky_sites_host.py"
 NM_DIR="$HOME/.mozilla/native-messaging-hosts"
 EXT_ID="dusky_sites@dusky.com"
@@ -27,7 +28,7 @@ command -v zip >/dev/null || {
 
 python3 -c '
 import sys
-assert sys.version_info >= (3, 14, 7), sys.version
+assert sys.version_info >= (3, 15), sys.version
 print("python", sys.version.split()[0])
 '
 
@@ -40,11 +41,10 @@ ff_major="$(
     <<<"$ff_ver"
 )"
 
-[[ "$ff_major" =~ ^[0-9]+$ ]] &&
-  (( ff_major >= 156 )) || {
-    echo "Firefox >= 156 required" >&2
-    exit 1
-  }
+if [[ ! "$ff_major" =~ ^[0-9]+$ ]] || (( ff_major < 158 )); then
+  echo "Firefox >= 158 required" >&2
+  exit 1
+fi
 if command -v node >/dev/null; then
   node --check "$SRC/extension/background.js"
   node --check "$SRC/extension/content.js"
@@ -59,29 +59,58 @@ echo "== host"
 install -Dm755 "$SRC/dusky_sites_host.py" "$HOST_DST"
 python3 -m py_compile "$HOST_DST" && echo "py_compile ok"
 install -d "$NM_DIR"
-cat > "$NM_DIR/dusky_sites.json" <<EOF
-{
-  "name": "dusky_sites",
-  "description": "Dusky Sites Native Messaging Host",
-  "path": "$HOST_DST",
-  "type": "stdio",
-  "allowed_extensions": ["$EXT_ID"]
-}
-EOF
+python3 - "$HOST_DST" "$NM_DIR/dusky_sites.json" "$EXT_ID" <<'PYMANIFEST'
+import json
+from pathlib import Path
+import sys
+host, manifest, extension = sys.argv[1:]
+Path(manifest).write_text(json.dumps({
+    "name": "dusky_sites",
+    "description": "Dusky Sites Native Messaging Host",
+    "path": host,
+    "type": "stdio",
+    "allowed_extensions": [extension],
+}, indent=2) + "\n", encoding="utf-8")
+PYMANIFEST
 echo "native manifest → $NM_DIR/dusky_sites.json"
 install -d "$HOME/.config/dusky/settings/dusky_sites" "$HOME/.config/dusky_sites"
 
 echo "== wire smoke test (HELLO → HELLO_ACK, FETCH_NOW → MATUGEN_UPDATE, delta path, EOF → exit 0)"
 python3 - "$HOST_DST" "$NM_DIR/dusky_sites.json" "$EXT_ID" <<'PY'
-import json, struct, subprocess, sys, time
+import atexit, json, os, select, struct, subprocess, sys, time
 host, manifest, ext = sys.argv[1:4]
 p = subprocess.Popen([host, manifest, ext], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+def cleanup():
+    if p.poll() is None:
+        p.kill()
+        p.wait()
+    p.stdin.close()
+    p.stdout.close()
+atexit.register(cleanup)
 def send(m):
     b = json.dumps(m).encode(); p.stdin.write(struct.pack('=I', len(b)) + b); p.stdin.flush()
+def read_exact(size, deadline):
+    result = bytearray()
+    while len(result) < size:
+        remaining = deadline - time.monotonic()
+        assert remaining > 0 and select.select([p.stdout], [], [], remaining)[0], 'host response timeout'
+        part = os.read(p.stdout.fileno(), size - len(result))
+        assert part, 'host closed early'
+        result.extend(part)
+    return result
+
 def recv(want):
+    deadline = time.monotonic() + 10
+    chunks = {}
     while True:
-        h = p.stdout.read(4); assert len(h) == 4, 'host closed early'
-        m = json.loads(p.stdout.read(struct.unpack('=I', h)[0]))
+        h = read_exact(4, deadline)
+        m = json.loads(read_exact(struct.unpack('=I', h)[0], deadline))
+        if m.get('type') == 'CHUNK':
+            parts = chunks.setdefault(m['id'], {})
+            parts[m['seq']] = m['part']
+            if len(parts) < m['total']:
+                continue
+            m = json.loads(''.join(parts[i] for i in range(m['total'])))
         if m.get('type') == want:
             return m
 send({'type': 'HELLO', 'wire': 3, 'extension': ext, 'known': {}})
@@ -142,10 +171,11 @@ print(
     "delta ok: second FETCH_NOW omitted websites"
 )
 send({'type': 'PING', 'at': 1}); assert recv('PONG')['at'] == 1
-p.stdin.close(); print("exit", p.wait(timeout=5))
+p.stdin.close(); code = p.wait(timeout=5); assert code == 0, code; print("exit", code)
 PY
 
 echo "== xpi"
-( cd "$SRC/extension" && rm -f ../dusky_sites.xpi && zip -qr -X ../dusky_sites.xpi manifest.json background.js content.js defaults.js icons )
-echo "built $SRC/dusky_sites.xpi"
+( cd "$SRC/extension" && rm -f ../dusky_sites-unsigned.zip && zip -qr -X ../dusky_sites-unsigned.zip manifest.json background.js content.js defaults.js icons )
+echo "built unsigned signing input: $SRC/dusky_sites-unsigned.zip"
+echo "Submit this archive to Mozilla for signing; preserve xpi/dusky_sites.xpi until a new signed release is available."
 echo "load via about:debugging#/runtime/this-firefox → Load Temporary Add-on → $SRC/extension/manifest.json"

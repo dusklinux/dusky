@@ -9,7 +9,7 @@
                                   once a burst has settled (their restyle is deferred until visible anyway).
      browserThemeEnabled  true    drive browser.theme (chrome colours)
      fastPaint            true    pre-paint from the per-host paint cache at document_start
-     contentColorScheme   'dark'  'auto' | 'light' | 'dark' | 'system' → theme.properties.content_color_scheme
+     contentColorScheme   'auto'  'auto' | 'light' | 'dark' | 'system' → theme.properties.content_color_scheme
      watchdogMinutes      0.5     alarm cadence that revives the native link after an event-page suspension
      debug                false   console logging + per-burst counters
      disabledSites        []      additional hostnames never themed (merged with the host's list, never pushed)
@@ -26,5 +26,5 @@
 // const USER_CONFIG = {
 //     debug: false,
 //     ecoMode: true,
-//     contentColorScheme: 'dark'
+//     contentColorScheme: 'auto'
 // };
