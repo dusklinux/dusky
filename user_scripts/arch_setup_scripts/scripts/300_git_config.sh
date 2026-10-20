@@ -1,109 +1,70 @@
 #!/usr/bin/env bash
-#d: Configure git identity and settings
+#d: Configure Git's delta pager and diff display
 
 set -euo pipefail
 
-# -----------------------------------------------------------------------------
-# CONFIGURATION ZONE
-# Edit the content inside the GIT_DELTA_CONFIG variable to add/remove lines.
-# -----------------------------------------------------------------------------
-
-# The target file
-readonly TARGET_FILE="${HOME}/.gitconfig"
-
-# The unique string to check if configuration already exists.
-# Choose a line that is unique to this specific block.
-readonly FINGERPRINT="diffFilter = delta --color-only"
-
-# The configuration block to append.
-# Note: Keep the indentation exactly as you want it to appear in the file.
-define_config_content() {
-    cat <<'EOF'
-[core]
-    pager = delta
-[interactive]
-    diffFilter = delta --color-only
-[delta]
-    navigate = true    # use n and N to move between diff sections
-    side-by-side = true
-    line-numbers = true
-    hyperlinks = true
-    tabs = 2
-    true-color = always
-# the ugly thing at the top being omited
-    hunk-header-style = omit
-# 2. FORCE the File Path to the top in a nice box
-    file-style = box bold yellow
-    file-decoration-style = none
-# Wrap as many times as needed.
-    wrap-max-lines = 100
-EOF
-}
-
-# -----------------------------------------------------------------------------
-# UTILITIES
-# -----------------------------------------------------------------------------
-
-# ANSI Colors
-readonly C_RESET=$'\033[0m'
-readonly C_GREEN=$'\033[1;32m'
-readonly C_BLUE=$'\033[1;34m'
-readonly C_RED=$'\033[1;31m'
-readonly C_GRAY=$'\033[0;90m'
-
-log_info()    { printf "${C_BLUE}[INFO]${C_RESET} %s\n" "$1"; }
-log_success() { printf "${C_GREEN}[OK]${C_RESET}   %s\n" "$1"; }
-log_error()   { printf "${C_RED}[ERR]${C_RESET}  %s\n" "$1" >&2; }
-
-# Cleanup trap
-cleanup() {
-    # If we created a lock or temp file, we would remove it here.
-    # Currently just a placeholder for robust architecture.
-    :
-}
-trap cleanup EXIT
-
-# -----------------------------------------------------------------------------
-# MAIN EXECUTION
-# -----------------------------------------------------------------------------
+# Keep the existing setup target; do not modify repository-local configuration.
+readonly TARGET_FILE="${HOME:?HOME must be set}/.gitconfig"
 
 main() {
-    # 0. Ensure Dependencies
-    # We install git-delta first to ensure the config below is valid.
-    log_info "Ensuring dependency 'git-delta' is installed via pacman..."
-    sudo pacman -S --needed --noconfirm git-delta
+    local -a missing_packages=()
+    command -v git >/dev/null 2>&1 || missing_packages+=(git)
+    command -v delta >/dev/null 2>&1 || missing_packages+=(git-delta)
 
-    local config_content
-    config_content="$(define_config_content)"
-
-    # 1. Ensure the file exists
-    if [[ ! -f "$TARGET_FILE" ]]; then
-        log_info "File $TARGET_FILE not found. Creating it..."
-        touch "$TARGET_FILE"
+    # Preinstalled dependencies need neither sudo nor repository access.
+    if (( ${#missing_packages[@]} )); then
+        printf '[INFO] Installing missing dependencies: %s\n' "${missing_packages[*]}"
+        if (( EUID == 0 )); then
+            pacman -S --needed --noconfirm "${missing_packages[@]}"
+        else
+            sudo pacman -S --needed --noconfirm "${missing_packages[@]}"
+        fi
     fi
 
-    # 2. Check for idempotency (Fingerprinting)
-    # We use grep -F (fixed string) for speed and safety against regex characters.
-    if grep -Fq "$FINGERPRINT" "$TARGET_FILE"; then
-        log_success "Configuration already detected in $TARGET_FILE."
-        log_info "No changes made."
-        exit 0
+    # Reject malformed existing configuration before changing any settings.
+    if [[ -e "$TARGET_FILE" ]]; then
+        git config list --file "$TARGET_FILE" --no-includes >/dev/null
     fi
 
-    log_info "Configuration block not found. Preparing to append..."
+    local key value current status
+    local changed=0
+    # Keep one display line per patch line; retain delta's long-line performance limit.
+    while read -r key value; do
+        # Inspect all direct values so duplicate entries are consolidated too.
+        # Included files remain user-managed and are never rewritten.
+        if current=$(git config get --file "$TARGET_FILE" --no-includes --all "$key"); then
+            [[ "$current" == "$value" ]] && continue
+        else
+            status=$?
+            if (( status != 1 )); then
+                printf '[ERR] Cannot read %s from %s.\n' "$key" "$TARGET_FILE" >&2
+                return "$status"
+            fi
+        fi
 
-    # 3. Safety Check: Ensure file ends with a newline before appending
-    # tail -c1 reads the last byte. If it's not empty and not a newline, add one.
-    if [[ -s "$TARGET_FILE" ]] && [[ "$(tail -c1 "$TARGET_FILE" | wc -l)" -eq 0 ]]; then
-        log_info "Fixing missing trailing newline in $TARGET_FILE..."
-        printf "\n" >> "$TARGET_FILE"
+        # Git handles parsing, escaping, newlines, locking and atomic file writes.
+        git config set --file "$TARGET_FILE" --all "$key" "$value"
+        changed=$((changed + 1))
+    done <<'EOF'
+core.pager delta
+interactive.diffFilter delta --color-only --no-gitconfig
+delta.navigate true
+delta.side-by-side true
+delta.line-numbers true
+delta.hyperlinks true
+delta.tabs 2
+delta.true-color always
+delta.hunk-header-style omit
+delta.file-style bold yellow
+delta.file-decoration-style yellow box
+delta.wrap-max-lines 100
+EOF
+
+    if (( changed )); then
+        printf '[OK] Updated %d delta settings in %s.\n' "$changed" "$TARGET_FILE"
+    else
+        printf '[OK] Delta settings already configured in %s.\n' "$TARGET_FILE"
     fi
-
-    # 4. Append the configuration
-    # We allow the expansion of the variable content into the file.
-    printf "%s\n" "$config_content" >> "$TARGET_FILE"
-
-    log_success "Successfully appended Delta config to $TARGET_FILE."
 }
 
 main "$@"
