@@ -5,6 +5,7 @@
  */
 @-moz-document regexp("about:(?!blank(?:[?#]|$)|srcdoc(?:[?#]|$)).*"), url("chrome://global/content/print.html"), url("chrome://global/content/commonDialog.xhtml"), url("chrome://browser/content/places/places.xhtml"), url-prefix("chrome://devtools/content/") {
   :root {
+    color-scheme: var(--dusky-palette-color-scheme) !important;
     --text-color: var(--dusky-palette-on_surface) !important;
     --text-color-deemphasized: var(--dusky-palette-on_surface_variant) !important;
     --text-color-disabled: color-mix(in srgb, var(--dusky-palette-on_surface) 40%, transparent) !important;
@@ -150,7 +151,6 @@
 /* Developer Tools UI. Keep native syntax, status, warning and error colors. */
 @-moz-document url("about:devtools-toolbox"), url-prefix("chrome://devtools/content/") {
   :root {
-    color-scheme: var(--dusky-palette-color-scheme) !important;
     --table-splitter-color: var(--dusky-palette-outline_variant) !important;
     --table-zebra-inline-icons-background: var(--dusky-palette-surface_container_low) !important;
     --table-selection-background-hover: var(--dusky-palette-surface_container_high) !important;

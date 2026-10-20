@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
-"""Read-only source and installation checks for native Firefox 157+.
+"""Read-only source and installation checks for native Firefox 158+.
 
 Inspect the installed browser's shipped resources, not a cached web page.
 This checks source contracts and files; it does not claim to test rendering.
 """
-from __future__ import annotations
-
 import argparse
 import configparser
 import importlib.util
@@ -106,8 +104,8 @@ def audit(directory: Path, source_only: bool) -> int:
     ini = configparser.ConfigParser()
     ini.read(directory / "application.ini")
     version = ini.get("App", "Version", fallback="")
-    checks.check(bool(re.match(r"\d+", version)) and int(version.split(".")[0]) >= 157,
-                 f"Firefox {version or 'unknown'} (157+ required)")
+    checks.check(bool(re.prefixmatch(r"\d+", version)) and int(version.split(".")[0]) >= 158,
+                 f"Firefox {version or 'unknown'} (158+ required)")
     print(f"Build: {ini.get('App', 'BuildID', fallback='unknown')}; source: {ini.get('App', 'SourceStamp', fallback='unknown')}")
     sources = firefox_sources(directory)
     checks.check(all(any(name.endswith(required) for name in sources) for required in (
@@ -173,17 +171,20 @@ def audit(directory: Path, source_only: bool) -> int:
                                           ("userChrome.css", '@import url("dusky_about.css");'),
                                           ("userContent.css", '@import url("dusky_about.css");')):
                 path = chrome / filename
-                text = uncomment(path.read_text()) if path.is_file() else ""
+                raw_text = path.read_text(encoding="utf-8") if path.is_file() else ""
+                text = uncomment(raw_text).removeprefix("\ufeff")
                 # Imports must precede all qualified rules (not just occur somewhere).
                 prefix = re.sub(r'^\s*@charset\s+"[^"\n]+"\s*;', '', text)
-                leading = re.match(r'(?:\s*@import\s+[^;]+;)*', prefix)[0]
-                checks.check(import_line in leading, f"{profile.name}: active leading import in {filename}")
+                leading = re.prefixmatch(r'(?:\s*@import\s+[^;]+;)*', prefix)[0]
+                enabled = config.get("userChromeEnabled" if filename == "userChrome.css" else "userContentEnabled", True)
+                valid = import_line in leading if enabled else not setup._css_import_matches(raw_text.removeprefix("\ufeff"), import_line)
+                checks.check(valid, f"{profile.name}: {filename} import matches configured {'enabled' if enabled else 'disabled'} state")
             user_js = profile / "user.js"
             text = uncomment(user_js.read_text()) if user_js.is_file() else ""
             matches = re.findall(r'^\s*user_pref\("toolkit\.legacyUserProfileCustomizations\.stylesheets",\s*(true|false)\);', text, re.MULTILINE)
             checks.check(bool(matches) and matches[-1] == "true", f"{profile.name}: stylesheet preference enabled")
             about_path = chrome / "dusky_about.css"
-            expected = setup.about_css_content(about)
+            expected = setup.about_css_content(about if config.get("userChromeEnabled", True) or config.get("userContentEnabled", True) else "")
             checks.check(about_path.is_file() and about_path.read_text() == expected, f"{profile.name}: internal-page stylesheet matches template")
             link = chrome / "dusky_palette.css"
             checks.check(link.is_symlink() and link.resolve() == colors.resolve() and link.is_file(), f"{profile.name}: live palette link resolves to configured colorsPath")

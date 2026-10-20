@@ -1,14 +1,10 @@
 #!/usr/bin/env python3
-"""
-🦊 Dusky Sites Engine for Dusky TUI (Arch Linux / Python 3.12+)
-================================================================
-Engine for managing Dusky Sites per-site theming configuration and 
-templates in ~/.config/dusky_sites/ and ~/.config/dusky/settings/dusky_sites/config.json.
-"""
+"""Dusky Sites configuration engine for Dusky TUI (Python 3.15+)."""
 
 import os
-lazy import json
 import re
+lazy import json
+lazy import fcntl
 lazy import tempfile
 lazy import threading
 lazy from pathlib import Path
@@ -16,32 +12,40 @@ lazy from typing import Any
 
 from python.frontend.core_types import BaseEngine
 
-_DOMAIN_RE = re.compile(r'domain\(\s*["\']([^"\']+)["\']\s*\)', re.IGNORECASE)
-_URL_HOST_RE = re.compile(r'(?:url|url-prefix)\(\s*["\'](?:https?://)?([^/"\']+)["\']\s*\)', re.IGNORECASE)
+# Match the native host's document headers and domain/url precedence.
+_DOCUMENT_RE = re.compile(r"@-moz-document\s+([^{]+)\{", re.IGNORECASE)
+_DOMAIN_RE = re.compile(r"""domain\(\s*["']?([^"')\s]+)["']?\s*\)""", re.IGNORECASE)
+_URL_HOST_RE = re.compile(r"""(?:url|url-prefix)\(\s*["']?(?:https?://)?([^/"')\s]+)""", re.IGNORECASE)
+_DEFAULTS = frozendict(
+    colorsPath="~/.config/matugen/generated/dusky_sites.css",
+    websitesDir="~/.config/dusky_sites",
+    webThemeEnabled=False,
+    forceUnthemedWebsites=False,
+    userChromeEnabled=True,
+    userContentEnabled=True,
+)
+_BOOL_KEYS = frozenset(key for key, value in _DEFAULTS.items() if isinstance(value, bool))
 
 
 def _doc_hosts(content: str) -> set[str]:
-    """Hosts a site template declares, mirroring the native host's parsing.
+    """Return the HTTP host keys the native host extracts from this template."""
+    hosts = set()
+    for specs in _DOCUMENT_RE.findall(content):
+        hosts.update(h.lower() for h in (*_DOMAIN_RE.findall(specs), *_URL_HOST_RE.findall(specs)))
+    return {h for h in hosts if h and ":" not in h}
 
-    Covers domain("…") in either quote style plus url()/url-prefix() hosts,
-    lowercased exactly as the host normalises them for disabledSites checks,
-    so toggling a template disables every host the daemon would theme.
-    """
-    hosts = {d.lower() for d in _DOMAIN_RE.findall(content)}
-    hosts.update(h.lower() for h in _URL_HOST_RE.findall(content))
-    # Entries containing ':' (about: URLs, host:port, IPv6) can never equal an
-    # http(s) hostname the daemon themes, so keep them out of disabledSites.
-    return {h for h in hosts if h and ':' not in h}
+
+def _disabled_sites(data: dict[str, Any]) -> set[str]:
+    sites = data.get("disabledSites", [])
+    if not isinstance(sites, list) or any(not isinstance(site, str) for site in sites):
+        raise ValueError("disabledSites must be a JSON array of strings")
+    return {site.strip().lower() for site in sites if site.strip()}
+
 
 class DuskySitesEngine(BaseEngine):
-    """
-    Engine for managing Dusky Sites configuration and site-specific CSS themes.
-    """
-
     def __init__(self, config_path: str = "~/.config/dusky/settings/dusky_sites/config.json"):
         self.config_path = Path(config_path).expanduser().resolve()
-        self.sites_dir = Path("~/.config/dusky_sites").expanduser().resolve()
-        self.sites_dir.mkdir(parents=True, exist_ok=True)
+        self.sites_dir = Path(_DEFAULTS["websitesDir"]).expanduser()
         self._lock = threading.Lock()
         self.cache: dict[str, Any] = {}
 
@@ -50,101 +54,64 @@ class DuskySitesEngine(BaseEngine):
         return str(self.config_path)
 
     def _read_config_json(self, *, strict: bool = False) -> dict[str, Any]:
-        if not self.config_path.exists():
-            return {
-                "colorsPath": "~/.config/matugen/generated/dusky_sites.css",
-                "websitesDir": "~/.config/dusky_sites",
-                "webThemeEnabled": False,
-                "disabledSites": []
-            }
         try:
-            content = self.config_path.read_text(encoding="utf-8")
-            if content.strip():
-                data = json.loads(content)
-                if not isinstance(data, dict):
-                    raise ValueError("Target JSON must contain an object.")
-                return data
+            data = json.loads(self.config_path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("Target JSON must contain an object")
+            _disabled_sites(data)
+            for key in _BOOL_KEYS:
+                if key in data and not isinstance(data[key], bool):
+                    raise ValueError(f"{key} must be a JSON boolean")
+            for key in ("colorsPath", "websitesDir"):
+                path = data.get(key, _DEFAULTS[key])
+                if not isinstance(path, str) or not path.strip() or "\0" in path or not Path(os.path.expanduser(path)).is_absolute():
+                    raise ValueError(f"{key} must be an absolute path or begin with ~")
+            return data
+        except FileNotFoundError:
+            return dict(_DEFAULTS) | {"disabledSites": []}
         except (OSError, ValueError):
             if strict:
                 raise
-        return {}
+            return dict(_DEFAULTS) | {"disabledSites": []}
 
-    def _write_config_json(self, data: dict[str, Any]) -> bool:
+    def _write_config_json(self, data: dict[str, Any]) -> None:
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = None
         try:
-            parent_dir = self.config_path.parent
-            parent_dir.mkdir(parents=True, exist_ok=True)
-
-            with tempfile.NamedTemporaryFile("w", dir=parent_dir, delete=False, encoding="utf-8") as tmp_file:
+            with tempfile.NamedTemporaryFile("w", dir=self.config_path.parent, delete=False, encoding="utf-8") as tmp_file:
                 tmp_path = Path(tmp_file.name)
                 json.dump(data, tmp_file, indent=4, ensure_ascii=False)
+                tmp_file.write("\n")
                 tmp_file.flush()
                 os.fsync(tmp_file.fileno())
-
-            os.replace(tmp_path, self.config_path)
-            return True
-        except Exception as e:
-            if "tmp_path" in locals() and tmp_path.exists():
-                try:
-                    tmp_path.unlink()
-                except Exception:
-                    pass
-            return False
+            tmp_path.replace(self.config_path)
+        finally:
+            if tmp_path is not None:
+                tmp_path.unlink(missing_ok=True)
 
     def get_site_files(self) -> list[Path]:
-        if not self.sites_dir.exists():
-            return []
-        return sorted(self.sites_dir.glob("*.css"))
+        # about.css belongs to profile stylesheets, not webpage injection.
+        return sorted(path for path in self.sites_dir.glob("*.css") if path.is_file() and path.name != "about.css")
 
     def load_state(self) -> dict[str, Any]:
         with self._lock:
             data = self._read_config_json()
-            web_enabled = bool(data.get("webThemeEnabled", False))
-            force_unthemed = bool(data.get("forceUnthemedWebsites", False))
-            eco_mode = bool(data.get("ecoMode", True))
-            browser_enabled = bool(data.get("browserThemeEnabled", True))
-            chrome_enabled = bool(data.get("userChromeEnabled", True))
-            content_enabled = bool(data.get("userContentEnabled", True))
-            disabled_list = [str(s).strip().lower() for s in data.get("disabledSites", []) if s]
-            disabled_set = set(disabled_list)
-
-            self.cache = {
-                "webThemeEnabled": web_enabled,
-                "DEFAULT/webThemeEnabled": web_enabled,
-                "forceUnthemedWebsites": force_unthemed,
-                "DEFAULT/forceUnthemedWebsites": force_unthemed,
-                "ecoMode": eco_mode,
-                "DEFAULT/ecoMode": eco_mode,
-                "browserThemeEnabled": browser_enabled,
-                "DEFAULT/browserThemeEnabled": browser_enabled,
-                "userChromeEnabled": chrome_enabled,
-                "DEFAULT/userChromeEnabled": chrome_enabled,
-                "userContentEnabled": content_enabled,
-                "DEFAULT/userContentEnabled": content_enabled,
-                "colorsPath": data.get("colorsPath", "~/.config/matugen/generated/dusky_sites.css"),
-                "websitesDir": data.get("websitesDir", "~/.config/dusky_sites"),
-            }
-
-            site_files = self.get_site_files()
-            for css_file in site_files:
-                domain = css_file.stem.lower()
+            self.sites_dir = Path(data.get("websitesDir", _DEFAULTS["websitesDir"])).expanduser()
+            disabled = _disabled_sites(data)
+            self.cache = {}
+            for key, default in _DEFAULTS.items():
+                value = data.get(key, default)
+                self.cache[key] = value
+                self.cache[f"DEFAULT/{key}"] = value
+            for css_file in self.get_site_files():
                 try:
-                    content = css_file.read_text(encoding="utf-8")
-                    m = _DOMAIN_RE.search(content)
-                    if m:
-                        domain = m.group(1).lower()
-                    else:
-                        u = _URL_HOST_RE.search(content)
-                        if u:
-                            domain = u.group(1).lower()
-                except Exception:
-                    pass
-
-                is_enabled = domain not in disabled_set and css_file.stem.lower() not in disabled_set
-                key_name = f"site_{css_file.stem.lower()}"
-                self.cache[key_name] = is_enabled
-                self.cache[f"DEFAULT/{key_name}"] = is_enabled
-                self.cache[f"domain_{domain}"] = is_enabled
-
+                    hosts = _doc_hosts(css_file.read_text(encoding="utf-8"))
+                except (OSError, UnicodeError):
+                    hosts = set()
+                enabled = not (hosts | {css_file.stem.lower()}) & disabled
+                key = f"site_{css_file.stem.lower()}"
+                self.cache[key] = enabled
+                self.cache[f"DEFAULT/{key}"] = enabled
             return self.cache
 
     def write_value(self, target_key: str, target_scope: str, new_value: str, item_type: str = "string") -> tuple[bool, str, str]:
@@ -153,103 +120,46 @@ class DuskySitesEngine(BaseEngine):
     def write_batch(self, changes: list[tuple[str, str, str, str]]) -> tuple[bool, str, str]:
         if not changes:
             return True, "No changes pending.", ""
-
         with self._lock:
             try:
-                data = self._read_config_json(strict=True)
-            except (OSError, ValueError) as exc:
-                return False, f"Refusing to write: Cannot read target JSON ({exc}).", ""
-            disabled_list = [str(s).strip().lower() for s in data.get("disabledSites", []) if s]
-            disabled_set = set(disabled_list)
-
-            status_messages = []
-
-            for key, scope, val, itype in changes:
-                str_val = str(val).lower()
-                bool_val = str_val in ("true", "1", "yes", "on", "t", "y")
-
-                if key == "webThemeEnabled":
-                    data["webThemeEnabled"] = bool_val
-                    status_messages.append(f"Web theming set to {bool_val}")
-
-                elif key == "forceUnthemedWebsites":
-                    data["forceUnthemedWebsites"] = bool_val
-                    status_messages.append(f"Theme unthemed websites set to {bool_val}")
-
-                elif key == "ecoMode":
-                    data["ecoMode"] = bool_val
-                    status_messages.append(f"Eco mode set to {bool_val}")
-
-                elif key == "browserThemeEnabled":
-                    data["browserThemeEnabled"] = bool_val
-                    status_messages.append(f"Browser UI theme set to {bool_val}")
-
-                elif key == "userChromeEnabled":
-                    data["userChromeEnabled"] = bool_val
-                    status_messages.append(f"userChrome.css integration set to {bool_val}")
-
-                elif key == "userContentEnabled":
-                    data["userContentEnabled"] = bool_val
-                    status_messages.append(f"userContent.css integration set to {bool_val}")
-
-                elif key.startswith("site_") or key.startswith("domain_"):
-                    raw_name = key.replace("site_", "").replace("domain_", "").lower()
-                    matched_files = []
-                    for f in self.get_site_files():
-                        f_stem = f.stem.lower()
-                        if f_stem == raw_name or f_stem.replace(".", "_") == raw_name or f_stem.replace("-", "_") == raw_name:
-                            matched_files.append(f)
-
-                    domains_to_toggle = {raw_name}
-                    for f in matched_files:
-                        domains_to_toggle.add(f.stem.lower())
-                        try:
-                            content = f.read_text(encoding="utf-8")
-                            domains_to_toggle.update(_doc_hosts(content))
-                        except Exception:
-                            pass
-
-                    disp_name = matched_files[0].stem if matched_files else raw_name
-
-                    if bool_val:
-                        for d in domains_to_toggle:
-                            disabled_set.discard(d)
-                        status_messages.append(f"Enabled theme for {disp_name}")
-                    else:
-                        for d in domains_to_toggle:
-                            disabled_set.add(d)
-                        status_messages.append(f"Disabled theme for {disp_name}")
-
-                elif key == "action_add_site":
-                    new_domain = str(val).strip().lower()
-                    if new_domain:
-                        new_file = self.sites_dir / f"{new_domain}.css"
-                        if not new_file.exists():
-                            template_content = f"""@-moz-document domain("{new_domain}") {{
-    :root {{
-        --bgColor-default: var(--surface) !important;
-        --fgColor-default: var(--on_surface) !important;
-        --borderColor-default: var(--outline_variant) !important;
-    }}
-}}
-"""
-                            new_file.write_text(template_content, encoding="utf-8")
-                            disabled_set.discard(new_domain)
-                            status_messages.append(f"Created template for {new_domain}")
-
-                elif key == "action_delete_site":
-                    del_domain = str(val).strip().lower()
-                    if del_domain:
-                        del_file = self.sites_dir / f"{del_domain}.css"
-                        if del_file.exists():
-                            del_file.unlink()
-                            disabled_set.discard(del_domain)
-                            status_messages.append(f"Deleted template for {del_domain}")
-
-            data["disabledSites"] = sorted(list(disabled_set))
-            ok = self._write_config_json(data)
-
-            if ok:
-                msg = "; ".join(status_messages) if status_messages else "Configuration updated."
-                return True, msg, ""
-            return False, "Failed to write configuration file.", ""
+                self.config_path.parent.mkdir(parents=True, exist_ok=True)
+                # Lock a stable sidecar: replacing config.json changes its inode.
+                with self.config_path.with_name(self.config_path.name + ".lock").open("a", encoding="utf-8") as lock:
+                    fcntl.flock(lock, fcntl.LOCK_EX)
+                    data = self._read_config_json(strict=True)
+                    self.sites_dir = Path(data.get("websitesDir", _DEFAULTS["websitesDir"])).expanduser()
+                    disabled = _disabled_sites(data)
+                    messages = []
+                    for key, scope, value, item_type in changes:
+                        if scope != "DEFAULT":
+                            raise ValueError(f"Unsupported scope: {scope}")
+                        text = str(value).strip().lower()
+                        if text not in {"true", "1", "yes", "on", "t", "y", "false", "0", "no", "off", "f", "n"}:
+                            raise ValueError(f"Invalid boolean for {key}: {value!r}")
+                        enabled = text in {"true", "1", "yes", "on", "t", "y"}
+                        if key in _BOOL_KEYS:
+                            data[key] = enabled
+                            messages.append(f"{key} set to {enabled}")
+                        elif key.startswith("site_"):
+                            stem = key.removeprefix("site_")
+                            matches = [path for path in self.get_site_files() if path.stem.lower() == stem]
+                            if not matches:
+                                raise ValueError(f"Template no longer exists: {stem}")
+                            hosts = {stem}
+                            for path in matches:
+                                hosts.update(_doc_hosts(path.read_text(encoding="utf-8")))
+                            if enabled:
+                                disabled.difference_update(hosts)
+                            else:
+                                disabled.update(hosts)
+                            messages.append(f"{'Enabled' if enabled else 'Disabled'} theme for {stem}")
+                        else:
+                            raise ValueError(f"Unsupported setting: {key}")
+                    data["disabledSites"] = sorted(disabled)
+                    self._write_config_json(data)
+            except (OSError, ValueError) as error:
+                return False, f"Configuration was not saved: {error}", ""
+        self.load_state()
+        if any(key in {"userChromeEnabled", "userContentEnabled"} for key, *_ in changes):
+            messages.append("Apply stylesheet settings with Install / Update, then restart Firefox")
+        return True, "; ".join(messages), ""

@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 """
-Dusky Sites Setup Script (Arch Linux / Python 3.14.7+ / Firefox 157+)
+Dusky Sites Setup Script (Arch Linux / Python 3.15+ / Firefox 158+)
 ======================================================================
 Provisions XDG configuration directories, installs native messaging host
 to ~/.local/share/dusky-sites/dusky_sites_host.py, parses profiles.ini,
 registers native messaging host manifests, and configures userChrome CSS.
 """
-
-from __future__ import annotations
 
 import sys
 import os
@@ -15,9 +13,11 @@ import re
 import json
 import shutil
 import configparser
+import fcntl
 import subprocess
 import tempfile
 import argparse
+import zipfile
 from pathlib import Path
 
 # Terminal Styling
@@ -42,7 +42,7 @@ PREFS_TO_SET = [
     ("toolkit.legacyUserProfileCustomizations.stylesheets", "true"),
     ("extensions.autoDisableScopes", "0"),
     ("extensions.enabledScopes", "15"),
-    # Firefox 157 otherwise skips newly copied XPIs after a profile's first run.
+    # Firefox 158 otherwise skips newly copied XPIs after a profile's first run.
     ("extensions.startupScanScopes", "1"),  # AddonManager.SCOPE_PROFILE
 ]
 
@@ -73,17 +73,26 @@ def atomic_copy_file(src: Path, dst: Path) -> None:
         tmp.unlink(missing_ok=True)
 
 
+def _css_import_matches(content: str, import_line: str) -> list[re.Match[str]]:
+    """Find our directives outside CSS strings and comments."""
+    protected = list(re.finditer(
+        r"""/\*.*?\*/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'""",
+        content, re.DOTALL,
+    ))
+    return [match for match in re.finditer(
+        r"^[ \t]*" + re.escape(import_line) + r"(?:[ \t]*\r?\n)?", content, re.MULTILINE,
+    ) if not any(part.start() <= match.start() < part.end() for part in protected)]
+
+
 def ensure_css_import(path: Path, import_line: str) -> None:
     """Keep our import before style rules; a late @import is ignored by Gecko."""
     original = path.read_text(encoding="utf-8") if path.is_file() else ""
     bom = "\ufeff" if original.startswith("\ufeff") else ""
     content = original.removeprefix("\ufeff")
-    comments = list(re.finditer(r"/\*.*?\*/", content, re.DOTALL))
-    matches = [match for match in re.finditer(r"^[ \t]*" + re.escape(import_line) + r"(?:[ \t]*\r?\n)?", content, re.MULTILINE)
-               if not any(comment.start() <= match.start() < comment.end() for comment in comments)]
+    matches = _css_import_matches(content, import_line)
     for match in reversed(matches):
         content = content[:match.start()] + content[match.end():]
-    charset = re.match(r'^(?:\ufeff)?@charset\s+"[^"\n]+"\s*;', content)
+    charset = re.prefixmatch(r'^(?:\ufeff)?@charset\s+"[^"\n]+"\s*;', content)
     offset = charset.end() if charset else 0
     prefix = content[:offset]
     if charset:
@@ -95,8 +104,8 @@ def ensure_css_import(path: Path, import_line: str) -> None:
 
 def ensure_symlink(link: Path, target: Path) -> None:
     """Atomically publish an absolute palette link; report failures to the caller."""
-    target = target.expanduser().resolve()
-    if link.is_symlink() and link.resolve() == target:
+    target = target.expanduser().absolute()
+    if link.is_symlink() and link.readlink() == target:
         return
     if link.is_dir() and not link.is_symlink():
         raise IsADirectoryError(f"Cannot replace palette link directory: {link}")
@@ -114,36 +123,41 @@ def remove_css_import(path: Path, import_line: str) -> None:
     """Remove import_line from path if present."""
     if not path.is_file():
         return
-    content = path.read_text(encoding="utf-8")
-    if import_line not in content:
+    original = path.read_text(encoding="utf-8")
+    bom = "\ufeff" if original.startswith("\ufeff") else ""
+    content = original.removeprefix("\ufeff")
+    matches = _css_import_matches(content, import_line)
+    if not matches:
         return
-    new_content = content.replace(f"{import_line}\n", "").replace(import_line, "")
-    atomic_write_text(path, new_content)
+    for match in reversed(matches):
+        content = content[:match.start()] + content[match.end():]
+    atomic_write_text(path, bom + content)
+
+
+PREF_BLOCK_START = "// BEGIN DUSKY SITES MANAGED PREFS"
+PREF_BLOCK_END = "// END DUSKY SITES MANAGED PREFS"
+_PREF_BLOCK_RE = re.compile(
+    rf"^{re.escape(PREF_BLOCK_START)}\n.*?^{re.escape(PREF_BLOCK_END)}(?:\n|$)",
+    re.MULTILINE | re.DOTALL,
+)
+
 
 def ensure_firefox_prefs(user_js: Path) -> bool:
+    """Append owned overrides; preserve original preferences for uninstall."""
     try:
-        content = user_js.read_text(encoding="utf-8") if user_js.is_file() else ""
-        for pref_name, pref_val in PREFS_TO_SET:
-            pref_re = re.compile(
-                rf"^[ \t]*user_pref\(\s*['\"]{re.escape(pref_name)}['\"]\s*,\s*[^)]+\s*\)\s*;",
-                re.MULTILINE,
-            )
-            pref_line = f'user_pref("{pref_name}", {pref_val});'
-            comments = list(re.finditer(r"/\*.*?\*/|//[^\n]*", content, re.DOTALL))
-            matches = [match for match in pref_re.finditer(content)
-                       if not any(comment.start() <= match.start() < comment.end() for comment in comments)]
-            if matches:
-                for match in reversed(matches):
-                    content = content[:match.start()] + pref_line + content[match.end():]
-            else:
-                content = content.rstrip() + f"\n{pref_line}\n"
-        if not content.endswith("\n"):
+        original = user_js.read_text(encoding="utf-8") if user_js.is_file() else ""
+        content = _PREF_BLOCK_RE.sub("", original)
+        if content and not content.endswith("\n"):
             content += "\n"
-        atomic_write_text(user_js, content)
+        prefs = "\n".join(f'user_pref("{name}", {value});' for name, value in PREFS_TO_SET)
+        content += f"{PREF_BLOCK_START}\n{prefs}\n{PREF_BLOCK_END}\n"
+        if content != original:
+            atomic_write_text(user_js, content)
         return True
-    except (OSError, UnicodeError) as e:
-        print_warn(f"Could not write {user_js}: {e}")
+    except (OSError, UnicodeError) as error:
+        print_warn(f"Could not write {user_js}: {error}")
         return False
+
 
 def iter_firefox_profiles(base_dir: Path):
     """Read only Profile sections; honor relative and external profile paths."""
@@ -159,7 +173,11 @@ def iter_firefox_profiles(base_dir: Path):
         for section in parser.sections():
             if not section.startswith("Profile") or not parser.has_option(section, "Path"):
                 continue
-            profile = Path(parser[section]["Path"])
+            raw_path = parser[section]["Path"].strip()
+            if not raw_path:
+                print_warn(f"Ignoring empty profile path in {ini}: {section}")
+                continue
+            profile = Path(raw_path)
             if parser[section].get("IsRelative", "1") != "0":
                 profile = base_dir / profile
             elif not profile.is_absolute():
@@ -180,7 +198,7 @@ def iter_firefox_profiles(base_dir: Path):
                 yield profile
 
 
-MENU_CSS_CONTENT = """/* Dusky Sites — Firefox 157+ browser chrome.
+MENU_CSS_CONTENT = """/* Dusky Sites — Firefox 158+ browser chrome.
  * LWT owns toolbar/tab/sidebar/urlbar colors. Override design tokens and
  * native menu defaults only; retain Firefox layout, icons and popup parts.
  * Sources: LightweightThemeConsumer, ThemeVariableMap, tokens-shared.css,
@@ -239,7 +257,7 @@ MENU_CSS_CONTENT = """/* Dusky Sites — Firefox 157+ browser chrome.
     accent-color: var(--toolbarbutton-icon-fill-attention);
   }
   :root[lwtheme] menubar > menu[open] {
-    border-bottom-color: var(--tab-loading-fill) !important;
+    border-bottom-color: var(--color-accent-primary) !important;
   }
 
   :root[lwtheme] findbar {
@@ -313,33 +331,46 @@ def about_css_content(template: str) -> str:
     )
 
 
-def setup_user_chrome(home: Path, source_xpi: Path | None = None) -> bool:
-    browser_dirs = _profile_base_dirs(home)
+def load_profile_styles(home: Path) -> tuple[Path, str, bool, bool]:
+    """Validate shared inputs before provisioning any profile or installed files."""
     config_file = home / ".config/dusky/settings/dusky_sites/config.json"
-    palette_path = home / ".config/matugen/generated/dusky_sites.css"
     try:
         config = json.loads(config_file.read_text(encoding="utf-8"))
-        if not isinstance(config, dict):
-            raise ValueError("Configuration must be a JSON object")
-        if isinstance(config.get("colorsPath"), str):
-            palette_path = Path(config["colorsPath"]).expanduser()
-            if not palette_path.is_absolute():
-                raise ValueError("colorsPath must be absolute or begin with ~")
     except FileNotFoundError:
-        pass  # Fresh offline profile provisioning uses the default palette path.
-    except (OSError, ValueError) as error:
-        print_warn(f"Could not resolve palette from {config_file}: {error}")
-        return False
+        config = {}
+    if not isinstance(config, dict):
+        raise ValueError(f"Configuration must be a JSON object: {config_file}")
+    colors_path = config.get("colorsPath", str(home / ".config/matugen/generated/dusky_sites.css"))
+    if not isinstance(colors_path, str) or not colors_path.strip():
+        raise ValueError("colorsPath must be a nonempty string")
+    palette_path = Path(os.path.expanduser(colors_path))
+    if not palette_path.is_absolute():
+        raise ValueError("colorsPath must be absolute or begin with ~")
+    chrome_enabled = config.get("userChromeEnabled", True)
+    content_enabled = config.get("userContentEnabled", True)
+    if not isinstance(chrome_enabled, bool) or not isinstance(content_enabled, bool):
+        raise ValueError("userChromeEnabled and userContentEnabled must be JSON booleans")
 
+    template_about = home / ".config/dusky_sites/about.css"
+    base_about = template_about.read_text(encoding="utf-8") if chrome_enabled or content_enabled else ""
+    if (chrome_enabled or content_enabled) and palette_path.is_file():
+        palette = re.sub(r"/\*.*?\*/", "", palette_path.read_text(encoding="utf-8"), flags=re.DOTALL)
+        if (not palette.lstrip().startswith(INTERNAL_DOCUMENT_RULE)
+                or not {"--dusky-palette-background", "--dusky-palette-primary", "--dusky-palette-on_surface", "--dusky-palette-color-scheme"}
+                <= set(re.findall(r"(--[\w-]+)\s*:", palette))):
+            raise ValueError("Regenerate the Matugen palette with the updated document-scoped template before running setup")
+    return palette_path, base_about, chrome_enabled, content_enabled
+
+
+def setup_user_chrome(
+    home: Path, source_xpi: Path | None = None,
+    *, styles: tuple[Path, str, bool, bool] | None = None,
+) -> bool:
+    browser_dirs = _profile_base_dirs(home)
     try:
-        if palette_path.is_file():
-            palette = re.sub(r"/\*.*?\*/", "", palette_path.read_text(encoding="utf-8"), flags=re.DOTALL)
-            if (not palette.lstrip().startswith(INTERNAL_DOCUMENT_RULE)
-                    or not {"--dusky-palette-background", "--dusky-palette-primary", "--dusky-palette-on_surface", "--dusky-palette-color-scheme"}
-                    <= set(re.findall(r"(--[\w-]+)\s*:", palette))):
-                raise ValueError("Regenerate the Matugen palette with the updated document-scoped template before running setup")
+        palette_path, base_about, chrome_enabled, content_enabled = styles or load_profile_styles(home)
     except (OSError, ValueError) as error:
-        print_warn(f"Cannot import {palette_path}: {error}")
+        print_warn(f"Cannot provision profile stylesheets: {error}")
         return False
 
     installed_profiles = 0
@@ -376,7 +407,8 @@ def setup_user_chrome(home: Path, source_xpi: Path | None = None) -> bool:
                 # Browser chrome (menus, toolbars, panels) -> userChrome.css
                 menu_css = chrome_dir / "dusky_menu.css"
                 atomic_write_text(menu_css, MENU_CSS_CONTENT)
-                ensure_css_import(chrome_dir / "userChrome.css", '@import url("dusky_menu.css");')
+                chrome_import = ensure_css_import if chrome_enabled else remove_css_import
+                chrome_import(chrome_dir / "userChrome.css", '@import url("dusky_menu.css");')
 
                 # Internal documents use both chrome and content docshells.
                 # Import the same URL-scoped stylesheet through both entry points;
@@ -385,17 +417,12 @@ def setup_user_chrome(home: Path, source_xpi: Path | None = None) -> bool:
                 matugen_gen_css = palette_path
                 ensure_symlink(chrome_dir / "dusky_palette.css", matugen_gen_css)
 
-                template_about = home / ".config" / "dusky_sites" / "about.css"
-                if not template_about.is_file():
-                    raise FileNotFoundError(f"Internal-page template missing: {template_about}")
-                base_about = template_about.read_text(encoding="utf-8")
-
                 about_content = about_css_content(base_about)
                 atomic_write_text(about_css, about_content)
 
-                ensure_css_import(chrome_dir / "userChrome.css", '@import url("dusky_about.css");')
-                user_content = chrome_dir / "userContent.css"
-                ensure_css_import(user_content, '@import url("dusky_about.css");')
+                chrome_import(chrome_dir / "userChrome.css", '@import url("dusky_about.css");')
+                content_import = ensure_css_import if content_enabled else remove_css_import
+                content_import(chrome_dir / "userContent.css", '@import url("dusky_about.css");')
 
                 installed_profiles += 1
             except (OSError, UnicodeError) as e:
@@ -437,7 +464,6 @@ def resolve_source_xpi(script_dir: Path) -> Path | None:
     stale_packages = []
 
     def _xpi_has_expected_id(xpi: Path) -> bool:
-        import zipfile
         try:
             with zipfile.ZipFile(xpi) as zf:
                 if not {"META-INF/mozilla.rsa", "META-INF/mozilla.sf"} <= set(zf.namelist()):
@@ -538,67 +564,43 @@ def ensure_firefox_profiles(home: Path, firefox: str) -> None:
 
 def _browser_processes_running() -> list[str]:
     """Return names of detected running Firefox browsers."""
-    try:
-        import subprocess
-        out = subprocess.run(["pgrep", "-x", "-a", "firefox"],
-                             capture_output=True, text=True).stdout
-    except OSError:
-        return []
-    names: set[str] = set()
-    for line in out.splitlines():
-        for b in ("firefox",):
-            # pgrep -x matches full process name; token at start or after whitespace
-            if re.search(rf"(^|\s){re.escape(b)}(\s|$)", line):
-                names.add(b)
-    return sorted(names)
+    result = subprocess.run(
+        ["pgrep", "--euid", str(os.geteuid()), "--exact", "firefox"],
+        capture_output=True, text=True, check=False,
+    )
+    if result.returncode not in (0, 1):
+        raise OSError(f"pgrep failed: {result.stderr.strip()}")
+    return ["firefox"] if result.returncode == 0 else []
 
 def _remove_file(path: Path) -> bool:
-    try:
-        if path.is_symlink() or path.is_file():
-            path.unlink()
-            return True
-    except OSError as e:
-        print_warn(f"Could not remove {path}: {e}")
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+        return True
     return False
+
 
 def _remove_tree(path: Path) -> bool:
-    try:
-        if path.is_dir():
-            shutil.rmtree(path)
-            return True
-    except OSError as e:
-        print_warn(f"Could not remove directory {path}: {e}")
+    if path.is_symlink():
+        path.unlink()
+        return True
+    if path.is_dir():
+        shutil.rmtree(path)
+        return True
     return False
 
+
 def restore_profile_prefs(profile: Path) -> int:
-    """Remove the prefs the installer wrote, only if they still match our values."""
+    """Remove only our marked overrides; never guess ownership of older lines."""
     user_js = profile / "user.js"
     if not user_js.is_file():
         return 0
-    try:
-        content = user_js.read_text(encoding="utf-8")
-    except OSError as e:
-        print_warn(f"Could not read {user_js}: {e}")
-        return 0
-    removed = 0
-    for pref_name, pref_val in PREFS_TO_SET:
-        exact = f'user_pref("{pref_name}", {pref_val});'
-        # remove only exact full-line matches we wrote (never a user-modified value)
-        new_content_lines = []
-        for line in content.splitlines(keepends=True):
-            stripped = line.strip()
-            if stripped == exact:
-                removed += 1
-                continue
-            new_content_lines.append(line)
-        content = "".join(new_content_lines)
+    content = user_js.read_text(encoding="utf-8")
+    restored, removed = _PREF_BLOCK_RE.subn("", content)
     if removed:
-        try:
-            atomic_write_text(user_js, content)
-            print_success(f"Removed {removed} pref line(s) from {user_js}")
-        except OSError as e:
-            print_warn(f"Could not write {user_js}: {e}")
+        atomic_write_text(user_js, restored)
+        print_success(f"Removed managed preference block from {user_js}")
     return removed
+
 
 def restore_user_chrome(profile: Path) -> None:
     """Remove dusky_menu.css and its @import from userChrome.css."""
@@ -638,7 +640,9 @@ def uninstall_manifests(home: Path) -> int:
             data = json.loads(manifest_file.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
-        if data.get("name") == "dusky_sites" and EXTENSION_ID in data.get("allowed_extensions", []):
+        if (isinstance(data, dict) and data.get("name") == "dusky_sites"
+                and isinstance(data.get("allowed_extensions"), list)
+                and EXTENSION_ID in data["allowed_extensions"]):
             if _remove_file(manifest_file):
                 print_success(f"Removed manifest {manifest_file}")
                 removed += 1
@@ -659,10 +663,14 @@ def uninstall_global_xpis(home: Path) -> int:
 def uninstall_profile_artifacts(home: Path) -> int:
     """Per profile: remove our XPI, storage data, chrome CSS, and prefs."""
     profiles = 0
+    seen: set[Path] = set()
     for base_dir in _profile_base_dirs(home):
         if not base_dir.is_dir():
             continue
         for profile in iter_firefox_profiles(base_dir):
+            if profile in seen:
+                continue
+            seen.add(profile)
             profiles += 1
             xpi = profile / "extensions" / f"{EXTENSION_ID}.xpi"
             if _remove_file(xpi):
@@ -744,6 +752,7 @@ def run_uninstall(home: Path) -> None:
     print("------------------------------------------------------------------")
     print(f"Removed: {manifests} manifest(s), {global_xpis} global XPI(s), host, {profiles} profile(s) cleaned.")
     print("Purging: User configuration (config.json) and generated CSS removed.")
+    print("Saved prefs.js values and unmarked legacy user.js preferences are retained.")
     print("Site templates under ~/.config/dusky_sites and dev files under ~/.config/firefox_extentions/dusky_sites were left intact.")
     print("------------------------------------------------------------------\n")
 
@@ -776,7 +785,7 @@ def main() -> None:
         print("Dusky Sites is not installed; skipping automatic update.")
         return
 
-    print(f"\n{C_CYAN}Dusky Sites Setup Script (Arch Linux / Python 3.14.7+){C_RESET}\n")
+    print(f"\n{C_CYAN}Dusky Sites Setup Script (Arch Linux / Python 3.15+){C_RESET}\n")
 
     script_dir = Path(__file__).parent.resolve()
     source_host = resolve_source_host(script_dir)
@@ -786,8 +795,8 @@ def main() -> None:
         print_error(str(error))
 
     print_step("Performing pre-flight checks...")
-    if sys.version_info < (3, 14, 7):
-        print_error("Python 3.14.7 or newer is required.")
+    if sys.version_info < (3, 15):
+        print_error("Python 3.15 or newer is required.")
     firefox = shutil.which("firefox")
     if firefox is None:
         print_error("Firefox was not found in PATH.")
@@ -796,8 +805,8 @@ def main() -> None:
     except (OSError, subprocess.TimeoutExpired) as error:
         print_error(f"Could not query Firefox version: {error}")
     version = re.search(r"Firefox (\d+)", result.stdout)
-    if result.returncode or version is None or int(version[1]) < 157:
-        print_error("Firefox 157 or newer is required.")
+    if result.returncode or version is None or int(version[1]) < 158:
+        print_error("Firefox 158 or newer is required.")
     print_success(result.stdout.strip())
     if not source_host.is_file():
         print_error(f"Host script not found. Place {HOST_INSTALL_NAME} next to this setup script.\n  looked for: {source_host}")
@@ -808,6 +817,10 @@ def main() -> None:
     else:
         print_error("Signed XPI package not found. Supply the signed extension package before running setup.")
 
+    profile_styles = load_profile_styles(home)
+    running = _browser_processes_running()
+    if running:
+        print_warn("Firefox is running; restart it after setup to load the updated extension and stylesheets.")
     ensure_firefox_profiles(home, firefox)
     install_dir.mkdir(parents=True, exist_ok=True)
 
@@ -826,21 +839,23 @@ def main() -> None:
     config_dir.mkdir(parents=True, exist_ok=True)
 
     config_file = config_dir / "config.json"
-    if not config_file.is_file():
-        config_data = {
-            "colorsPath": "~/.config/matugen/generated/dusky_sites.css",
-            "websitesDir": "~/.config/dusky_sites",
-            "webThemeEnabled": False,
-            "forceUnthemedWebsites": False,
-            "disabledSites": [],
-        }
-        try:
-            atomic_write_text(config_file, json.dumps(config_data, indent=2) + "\n")
-            print_success(f"Created primary config file at {config_file}")
-        except OSError as e:
-            print_error(f"Failed to create config: {e}")
-    else:
-        print_success(f"Config file exists at {config_file}")
+    with config_file.with_name(config_file.name + ".lock").open("a", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if not config_file.is_file():
+            config_data = {
+                "colorsPath": "~/.config/matugen/generated/dusky_sites.css",
+                "websitesDir": "~/.config/dusky_sites",
+                "webThemeEnabled": False,
+                "forceUnthemedWebsites": False,
+                "disabledSites": [],
+            }
+            try:
+                atomic_write_text(config_file, json.dumps(config_data, indent=2) + "\n")
+                print_success(f"Created primary config file at {config_file}")
+            except OSError as e:
+                print_error(f"Failed to create config: {e}")
+        else:
+            print_success(f"Config file exists at {config_file}")
 
     dusky_sites_dir = home / ".config" / "dusky_sites"
     dusky_sites_dir.mkdir(parents=True, exist_ok=True)
@@ -856,7 +871,7 @@ def main() -> None:
 
     for name, path in candidates:
         nmh_dir = path / "native-messaging-hosts"
-        # Firefox 157's XREUserNativeManifests remains ~/.mozilla even when
+        # Firefox 158's XREUserNativeManifests remains ~/.mozilla even when
         # its profile registry is under ~/.config/mozilla/firefox.
         if path == home / ".mozilla" or path.is_dir() or nmh_dir.is_dir():
             targets.append((name, nmh_dir))
@@ -888,7 +903,7 @@ def main() -> None:
     print_step("Provisioning native context menu, userChrome & profile XPI extensions...")
     if installed_count != len(targets):
         print_error("Native messaging registration was incomplete.")
-    if not setup_user_chrome(home, source_xpi):
+    if not setup_user_chrome(home, source_xpi, styles=profile_styles):
         print_error("Profile provisioning was incomplete; see the errors above.")
 
     if source_xpi and source_xpi.is_file():
@@ -903,8 +918,9 @@ def main() -> None:
                 g_count += 1
             except OSError as e:
                 print_warn(f"Could not copy XPI to {g_dir}: {e}")
-        if g_count > 0:
-            print_success(f"Signed XPI copied into {g_count} global extension path(s).")
+        if g_count != len(global_ext_dirs):
+            print_error("Global extension provisioning was incomplete; see the errors above.")
+        print_success(f"Signed XPI copied into {g_count} global extension path(s).")
 
     print(f"\n{C_GREEN}[+] Setup finished. Restart Firefox to load profile stylesheets and discover copied extensions.{C_RESET}")
     print("------------------------------------------------------------------")
@@ -915,4 +931,7 @@ def main() -> None:
     print("------------------------------------------------------------------\n")
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (OSError, ValueError) as error:
+        print_error(str(error))
