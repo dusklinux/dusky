@@ -1,21 +1,17 @@
 @-moz-document domain("artificialanalysis.ai") {
+    html,
+    body,
+    main,
+    #__next,
+    .bg-background {
+        background-color: var(--background) !important;
+        color: var(--on_background) !important;
+    }
+
+    .text-foreground {
+        color: var(--on_background) !important;
+    }
+
     /* >>> dusky:picks - managed by the Visual Picker, one rule per line */
-    h1 { color: var(--primary) !important; } /* dusky key=sel%1Fh1%1Ftext | text: primary */
-    p { color: var(--inverse_surface) !important; } /* dusky key=sel%1Fp%1Ftext | text: inverse_surface */
-    text { fill: var(--inverse_surface) !important; color: var(--inverse_surface) !important; } /* dusky key=sel%1Ftext%1Ffill | fill: inverse_surface */
-    p { background-color: var(--surface_container_lowest) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fp%1Fbg | bg: surface_container_lowest */
-    main > div:nth-of-type(2) > section { background-color: var(--surface_container_lowest) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fmain%20%3E%20div%3Anth-of-type(2)%20%3E%20section%1Fbg | bg: surface_container_lowest */
-    button { background-color: var(--surface_variant) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fbutton%1Fbg | bg: surface_variant */
-    h4 { background-color: var(--surface_container_lowest) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fh4%1Fbg | bg: surface_container_lowest */
-    div.scroll-mt-24 { background-color: var(--background) !important; color: var(--on_background) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fdiv.scroll-mt-24%1Fbg | bg: background */
-    div.container { background-color: var(--surface_container_lowest) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fdiv.container%1Fbg | bg: surface_container_lowest */
-    main > div:nth-of-type(2) { background-color: var(--surface_container_lowest) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fmain%20%3E%20div%3Anth-of-type(2)%1Fbg | bg: surface_container_lowest */
-    div.-mb-9 > div.container:nth-of-type(1) > div { background-color: var(--secondary) !important; color: var(--on_secondary) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fdiv.-mb-9%20%3E%20div.container%3Anth-of-type(1)%20%3E%20div%1Fbg | bg: secondary */
-    div.flex-col { background-color: var(--surface_container_low) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fdiv.flex-col%1Fbg | bg: surface_container_low */
-    a.flex-col { background-color: var(--surface_container_low) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fa.flex-col%1Fbg | bg: surface_container_low */
-    div.light-scrollbar { background-color: var(--surface_container_lowest) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fdiv.light-scrollbar%1Fbg | bg: surface_container_lowest */
-    button.\!rounded-none.\!bg-transparent { background-color: var(--surface_bright) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fbutton.%5C!rounded-none.%5C!bg-transparent%1Fbg | bg: surface_bright */
-    #intelligence-breakdown > div.flex-col:nth-of-type(2) > div:nth-of-type(7) { background-color: var(--background) !important; color: var(--on_background) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1F%23intelligence-breakdown%20%3E%20div.flex-col%3Anth-of-type(2)%20%3E%20div%3Anth-of-type(7)%1Fbg | bg: background */
-    nav { background-color: var(--surface_container_lowest) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fnav%1Fbg | bg: surface_container_lowest */
     /* <<< dusky:picks */
 }
