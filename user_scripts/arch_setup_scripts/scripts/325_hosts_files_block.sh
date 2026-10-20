@@ -11,7 +11,7 @@ shopt -s extglob
 declare HOSTS_FILE="/etc/hosts"
 declare -r BACKUP_FILE="/etc/hosts.backup.focusforge"
 declare -r APP_TITLE="Dusky Site Blocker"
-declare -r APP_VERSION="v2.4.0"
+declare -r APP_VERSION="v2.5.0"
 
 # Dimensions & Layout
 declare -ri MAX_DISPLAY_ROWS=14
@@ -51,7 +51,7 @@ declare -r IMPORT_BUTTON_LABEL="[⬇] Import Host File"
 declare -r CLEAR_BUTTON_LABEL="[X] Clear All Blocks"
 
 # =============================================================================
-# ▼ CORE ENGINE (Dusky v3.9.5) ▼
+# ▼ CORE ENGINE ▼
 # =============================================================================
 
 # --- Pre-computed Constants ---
@@ -76,10 +76,20 @@ declare -r CLR_SCREEN=$'\033[2J'
 declare -r CURSOR_HOME=$'\033[H'
 declare -r CURSOR_HIDE=$'\033[?25l'
 declare -r CURSOR_SHOW=$'\033[?25h'
-declare -r MOUSE_ON=$'\033[?1000h\033[?1002h\033[?1006h'
-declare -r MOUSE_OFF=$'\033[?1000l\033[?1002l\033[?1006l'
+declare -r ALT_SCREEN_ON=$'\033[?1049h'
+declare -r ALT_SCREEN_OFF=$'\033[?1049l'
+declare -r MOUSE_ON=$'\033[?1000h\033[?1002h\033[?1006h\033[?2004h'
+declare -r MOUSE_OFF=$'\033[?1000l\033[?1002l\033[?1006l\033[?2004l'
 
-declare -r ESC_READ_TIMEOUT=0.05
+declare -r ESC_READ_TIMEOUT=0.08
+declare -r READ_LOOP_TIMEOUT=0.25
+declare -ri MAX_ESCAPE_BYTES=64
+declare -ri MIN_TERM_COLS=$(( BOX_INNER_WIDTH + 2 ))
+declare -ri MIN_TERM_ROWS=$(( HEADER_ROWS + MAX_DISPLAY_ROWS + 6 ))
+declare -i TERM_ROWS=0 TERM_COLS=0 RESIZE_PENDING=0 TUI_STARTED=0
+declare -i PASTE_ACTIVE=0 MOUSE_CLICK_PENDING=0 MOUSE_PRESS_X=0 MOUSE_PRESS_Y=0
+declare MOUSE_PRESS_CONTEXT="" PASTE_TAIL=""
+declare -a TAB_SAVED_ROW=() TAB_SAVED_SCROLL=()
 
 # --- State Management ---
 declare -i SELECTED_ROW=0
@@ -122,7 +132,8 @@ log_err() {
 
 cleanup() {
     if [[ -n "$ORIGINAL_STTY" ]]; then
-        printf '%s%s%s\n' "$MOUSE_OFF" "$CURSOR_SHOW" "$C_RESET" 2>/dev/null || :
+        printf '%s%s%s' "$MOUSE_OFF" "$CURSOR_SHOW" "$C_RESET" 2>/dev/null || :
+        if (( TUI_STARTED )); then printf '%s' "$ALT_SCREEN_OFF" 2>/dev/null || :; fi
         stty "$ORIGINAL_STTY" 2>/dev/null || :
     fi
     if [[ -n "$_TMPFILE" ]]; then
@@ -133,7 +144,26 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+trap 'exit 131' QUIT
 trap 'exit 129' HUP
+
+update_terminal_size() {
+    local size
+    size=$(stty size) || return 1
+    TERM_ROWS=${size%% *}
+    TERM_COLS=${size##* }
+}
+
+terminal_size_ok() {
+    (( TERM_COLS >= MIN_TERM_COLS && TERM_ROWS >= MIN_TERM_ROWS ))
+}
+
+draw_small_terminal_notice() {
+    printf '%s%s%sTerminal too small%s\n' "$CURSOR_HOME" "$CLR_SCREEN" "$C_RED" "$C_RESET"
+    printf 'Need %d columns × %d rows; current size is %d × %d.\n' \
+        "$MIN_TERM_COLS" "$MIN_TERM_ROWS" "$TERM_COLS" "$TERM_ROWS"
+    printf '%sResize to continue, or press q to quit.%s%s' "$C_CYAN" "$C_RESET" "$CLR_EOS"
+}
 
 strip_ansi() {
     local v="$1"
@@ -285,9 +315,12 @@ toggle_domain() {
 }
 
 add_custom_domain() {
-    local domain=${1,,}
+    local domain=$1
+    domain=${domain#"${domain%%[![:space:]]*}"}
+    domain=${domain%"${domain##*[![:space:]]}"}
+    domain=${domain,,}
     domain=${domain%.}
-    if ! LC_ALL=C gawk -v d="$domain" -- "$HOSTS_AWK"'BEGIN { exit !valid(d) }'; then
+    if ! HOSTS_DOMAIN="$domain" LC_ALL=C gawk -- "$HOSTS_AWK"'BEGIN { exit !valid(ENVIRON["HOSTS_DOMAIN"]) }'; then
         STATUS_MESSAGE="Enter a valid DNS name, such as example.com (ASCII/punycode)."
         return 1
     fi
@@ -296,7 +329,7 @@ add_custom_domain() {
     if [[ ! -v IS_BLOCKED["$domain"] ]]; then
         rewrite_hosts block "$domain" || return 1
     fi
-    CURRENT_TAB=${KNOWN_DOMAIN_TAB["$domain"]:-4}
+    set_tab "${KNOWN_DOMAIN_TAB["$domain"]:-4}"
     local -n items="TAB_ITEMS_${CURRENT_TAB}"
     local -i i
     for (( i = 0; i < ${#items[@]}; i++ )); do
@@ -332,7 +365,7 @@ perform_blocking_import() {
     local file_path=""
     # Readline completion is filename based; preserve literal backslashes/spaces.
     IFS= read -er -p ' > ' file_path || file_path=""
-    stty -icanon -echo min 1 time 0
+    stty -icanon -echo -ixon min 1 time 0
     printf '%s%s' "$MOUSE_ON" "$CURSOR_HIDE"
     if [[ -n "$file_path" ]]; then
         printf '%s\n' 'Importing...'
@@ -364,6 +397,7 @@ compute_scroll_window() {
 
     local -i max_scroll=$(( count - MAX_DISPLAY_ROWS ))
     if (( max_scroll < 0 )); then max_scroll=0; fi
+    if (( SCROLL_OFFSET < 0 )); then SCROLL_OFFSET=0; fi
     if (( SCROLL_OFFSET > max_scroll )); then SCROLL_OFFSET=$max_scroll; fi
 
     _vis_start=$SCROLL_OFFSET
@@ -546,26 +580,36 @@ draw_main_view() {
 
     render_scroll_indicator buf "below" "$count" "$_vis_end"
 
-    buf+=$'\n'"${C_CYAN} [Tab] Category  [Space/Enter] Toggle  [q] Quit${C_RESET}${CLR_EOL}"$'\n'
-    buf+="${C_CYAN} System: ${C_WHITE}${HOSTS_FILE}${C_RESET}${CLR_EOL}"$'\n'
-    buf+="${C_YELLOW}${STATUS_MESSAGE}${C_RESET}${CLR_EOL}${CLR_EOS}"
+    buf+=$'\n'"${C_CYAN} [Tab] Category  [Space/Enter] Toggle  [PgUp/PgDn] Page  [q] Quit${C_RESET}${CLR_EOL}"$'\n'
+    local system_line=" System: ${HOSTS_FILE}  [F5] Reload"
+    system_line=${system_line//[[:cntrl:]]/?}
+    if (( ${#system_line} >= TERM_COLS )); then system_line="${system_line:0:TERM_COLS-2}…"; fi
+    buf+="${C_CYAN}${system_line}${C_RESET}${CLR_EOL}"$'\n'
+    local footer=${STATUS_MESSAGE//[[:cntrl:]]/?}
+    if (( ${#footer} >= TERM_COLS )); then footer="${footer:0:TERM_COLS-2}…"; fi
+    buf+="${C_YELLOW}${footer}${C_RESET}${CLR_EOL}${CLR_EOS}"
 
     printf '%s' "$buf"
 }
 
 draw_input_modal() {
+    # DNS input is ASCII/punycode; keep invalid pasted glyphs within the box.
+    local LC_ALL=C
+    local shown_input=${INPUT_BUFFER//[! -~]/?}
+    if (( ${#shown_input} > 44 )); then shown_input=${shown_input: -44}; fi
     printf '%s\n\n\n\n\n\n\n\n' "$CURSOR_HOME"
     printf '%s\n' \
         "${C_MAGENTA}          ┌──────────────────────────────────────────────────┐${C_RESET}" \
         "${C_MAGENTA}          │ ${C_WHITE}ADD CUSTOM DOMAIN TO BLOCK LIST                  ${C_MAGENTA}│${C_RESET}" \
         "${C_MAGENTA}          │                                                  │${C_RESET}" \
-        "${C_MAGENTA}          │ ${C_CYAN}> ${INPUT_BUFFER: -44}_${C_RESET}${CLR_EOL}" \
+        "${C_MAGENTA}          │ ${C_CYAN}> ${shown_input}_${C_RESET}${CLR_EOL}" \
         "${C_MAGENTA}          │                                                  │${C_RESET}" \
         "${C_MAGENTA}          └──────────────────────────────────────────────────┘${C_RESET}"
     printf '%s' "$CLR_EOS"
 }
 
 draw_ui() {
+    if ! terminal_size_ok; then draw_small_terminal_notice; return; fi
     if (( CURRENT_VIEW == 0 )); then
         draw_main_view
     elif (( CURRENT_VIEW == 1 )); then
@@ -593,19 +637,28 @@ navigate_end() {
     if (( target == 0 )); then SELECTED_ROW=0; else SELECTED_ROW=$(( count - 1 )); fi
 }
 
+navigate_page() {
+    local -i dir=$1
+    local -n page_items="TAB_ITEMS_${CURRENT_TAB}"
+    local -i count=${#page_items[@]}
+    (( count > 0 )) || return 0
+    SELECTED_ROW=$(( SELECTED_ROW + dir * MAX_DISPLAY_ROWS ))
+    if (( SELECTED_ROW < 0 )); then SELECTED_ROW=0; fi
+    if (( SELECTED_ROW >= count )); then SELECTED_ROW=$(( count - 1 )); fi
+}
+
 switch_tab() {
-    local -i dir=${1:-1}
-    CURRENT_TAB=$(( (CURRENT_TAB + dir + TAB_COUNT) % TAB_COUNT ))
-    SELECTED_ROW=0
-    SCROLL_OFFSET=0
+    set_tab "$(( (CURRENT_TAB + ${1:-1} + TAB_COUNT) % TAB_COUNT ))"
 }
 
 set_tab() {
     local -i idx=$1
     if (( idx != CURRENT_TAB && idx >= 0 && idx < TAB_COUNT )); then
+        TAB_SAVED_ROW[CURRENT_TAB]=$SELECTED_ROW
+        TAB_SAVED_SCROLL[CURRENT_TAB]=$SCROLL_OFFSET
         CURRENT_TAB=$idx
-        SELECTED_ROW=0
-        SCROLL_OFFSET=0
+        SELECTED_ROW=${TAB_SAVED_ROW[CURRENT_TAB]:-0}
+        SCROLL_OFFSET=${TAB_SAVED_SCROLL[CURRENT_TAB]:-0}
     fi
 }
 
@@ -636,52 +689,65 @@ toggle_current() {
 }
 
 handle_mouse() {
-    local input="$1"
-    local -i button x y i start end
+    local input=$1 context="${CURRENT_VIEW}:${CURRENT_TAB}"
+    local -i button x y i start end activate=0
     local zone
 
-    [[ "$input" =~ ^\[\<([0-9]{1,5})\;([0-9]{1,5})\;([0-9]{1,5})[Mm]$ ]] || return 0
-    (( CURRENT_VIEW == 0 )) || return 0
-    local terminator="${input: -1}"
+    [[ $input =~ ^\[\<([0-9]{1,5})\;([0-9]{1,5})\;([0-9]{1,5})[Mm]$ ]] || return 0
     button=$(( 10#${BASH_REMATCH[1]} ))
     x=$(( 10#${BASH_REMATCH[2]} ))
     y=$(( 10#${BASH_REMATCH[3]} ))
+    if (( CURRENT_VIEW != 0 || x < 1 || x > MIN_TERM_COLS || y < 1 || y > TERM_ROWS )); then
+        MOUSE_CLICK_PENDING=0
+        return 0
+    fi
 
-    if (( button == 64 )); then navigate -1; return 0; fi
-    if (( button == 65 )); then navigate 1; return 0; fi
-    if [[ "$terminator" != "M" ]]; then return 0; fi
+    if [[ ${input: -1} == m ]]; then
+        if (( button == 0 && MOUSE_CLICK_PENDING && x == MOUSE_PRESS_X && y == MOUSE_PRESS_Y )) &&
+           [[ $context == "$MOUSE_PRESS_CONTEXT" ]]; then activate=1; fi
+        MOUSE_CLICK_PENDING=0
+        (( activate )) || return 0
+    else
+        case $button in
+            0)
+                MOUSE_CLICK_PENDING=1
+                MOUSE_PRESS_X=$x; MOUSE_PRESS_Y=$y; MOUSE_PRESS_CONTEXT=$context
+                ;;
+            32) MOUSE_CLICK_PENDING=0 ;;
+            64|65)
+                MOUSE_CLICK_PENDING=0
+                local -i direction=$(( button == 64 ? -1 : 1 ))
+                if (( y == TAB_ROW )); then switch_tab "$direction"; else navigate "$direction"; fi
+                return 0
+                ;;
+            *) MOUSE_CLICK_PENDING=0; return 0 ;;
+        esac
+    fi
 
+    # Tabs follow left press/motion; website actions still require a click.
     if (( y == TAB_ROW )); then
-        if (( CURRENT_VIEW == 0 )); then
-            if [[ -n "$LEFT_ARROW_ZONE" ]]; then
-                start="${LEFT_ARROW_ZONE%%:*}"
-                end="${LEFT_ARROW_ZONE##*:}"
-                if (( x >= start && x <= end )); then switch_tab -1; return 0; fi
-            fi
-            if [[ -n "$RIGHT_ARROW_ZONE" ]]; then
-                start="${RIGHT_ARROW_ZONE%%:*}"
-                end="${RIGHT_ARROW_ZONE##*:}"
-                if (( x >= start && x <= end )); then switch_tab 1; return 0; fi
-            fi
-
-            for (( i = 0; i < TAB_COUNT; i++ )); do
-                if [[ -z "${TAB_ZONES[i]:-}" ]]; then continue; fi
-                zone="${TAB_ZONES[i]}"
-                start="${zone%%:*}"
-                end="${zone##*:}"
-                if (( x >= start && x <= end )); then set_tab "$(( i + TAB_SCROLL_START ))"; return 0; fi
-            done
+        if [[ -n $LEFT_ARROW_ZONE ]]; then
+            start=${LEFT_ARROW_ZONE%%:*}; end=${LEFT_ARROW_ZONE##*:}
+            if (( x >= start && x <= end )); then switch_tab -1; return 0; fi
         fi
+        if [[ -n $RIGHT_ARROW_ZONE ]]; then
+            start=${RIGHT_ARROW_ZONE%%:*}; end=${RIGHT_ARROW_ZONE##*:}
+            if (( x >= start && x <= end )); then switch_tab 1; return 0; fi
+        fi
+        for (( i = 0; i < ${#TAB_ZONES[@]}; i++ )); do
+            zone=${TAB_ZONES[i]}
+            start=${zone%%:*}; end=${zone##*:}
+            if (( x >= start && x <= end )); then set_tab "$(( i + TAB_SCROLL_START ))"; return 0; fi
+        done
     fi
 
     local -i effective_start=$(( ITEM_START_ROW + 1 ))
     if (( y >= effective_start && y < effective_start + MAX_DISPLAY_ROWS )); then
         local -i clicked_idx=$(( y - effective_start + SCROLL_OFFSET ))
-        local -n _mouse_items_ref="TAB_ITEMS_${CURRENT_TAB}"
-
-        if (( clicked_idx >= 0 && clicked_idx < ${#_mouse_items_ref[@]} )); then
+        local -n mouse_items="TAB_ITEMS_${CURRENT_TAB}"
+        if (( clicked_idx < ${#mouse_items[@]} )); then
             SELECTED_ROW=$clicked_idx
-            if (( button == 0 )); then toggle_current; fi
+            if (( activate )); then toggle_current; fi
         fi
     fi
 }
@@ -693,12 +759,14 @@ read_escape_seq() {
     if ! IFS= read -rsn1 -t "$ESC_READ_TIMEOUT" char; then return 1; fi
     _esc_out+="$char"
     if [[ "$char" == '[' || "$char" == 'O' ]]; then
-        while IFS= read -rsn1 -t "$ESC_READ_TIMEOUT" char; do
+        while (( ${#_esc_out} < MAX_ESCAPE_BYTES )) && IFS= read -rsn1 -t "$ESC_READ_TIMEOUT" char; do
             _esc_out+="$char"
-            (( ${#_esc_out} <= 64 )) || return 1
-            if [[ "$char" =~ [a-zA-Z~] ]]; then break; fi
+            if [[ $char == [@-~] ]]; then return 0; fi
         done
+        return 1
     fi
+    # Preserve the Escape prefix so Alt+Enter cannot become a bare Enter.
+    _esc_out=$'\e'"$char"
     return 0
 }
 
@@ -711,6 +779,8 @@ handle_key_main() {
         '[B'|'OB')           navigate 1; return ;;
         '[C'|'OC')           switch_tab 1; return ;;
         '[D'|'OD')           switch_tab -1; return ;;
+        '[5~')              navigate_page -1; return ;;
+        '[6~')              navigate_page 1; return ;;
         '[H'|'[1~')          navigate_end 0; return ;;
         '[F'|'[4~')          navigate_end 1; return ;;
         '['*'<'*[Mm])        handle_mouse "$key"; return ;;
@@ -745,24 +815,49 @@ handle_key_modal() {
     fi
 }
 
-handle_input_router() {
-    local key="$1"
-    STATUS_MESSAGE=""
-    local escape_seq=""
-
-    if [[ "$key" == $'\x1b' ]]; then
-        if read_escape_seq escape_seq; then
-            key="$escape_seq"
-        else
-            key="ESC"
+# Bracketed paste is text only: newline/shortcut bytes never trigger actions.
+# Keep the delimiter tail across read timeouts and do not buffer an entire paste.
+consume_paste_byte() {
+    local incoming=$1
+    # read -n1 reports a newline delimiter as an empty string.
+    if [[ -z $incoming ]]; then incoming=$'\n'; fi
+    PASTE_TAIL+=$incoming
+    if (( ${#PASTE_TAIL} > 6 )); then
+        local char=${PASTE_TAIL:0:1}
+        PASTE_TAIL=${PASTE_TAIL:1}
+        if [[ $char == $'\n' || $char == $'\r' || $char == $'\t' ]]; then char=' '; fi
+        if (( CURRENT_VIEW == 1 && ${#INPUT_BUFFER} < 254 )) && [[ $char == [[:print:]] ]]; then
+            INPUT_BUFFER+=$char
         fi
     fi
+    if [[ $PASTE_TAIL == $'\e[201~' ]]; then PASTE_ACTIVE=0; PASTE_TAIL=""; fi
+}
 
-    if (( CURRENT_VIEW == 0 )); then
-        handle_key_main "$key"
-    elif (( CURRENT_VIEW == 1 )); then
-        handle_key_modal "$key"
+handle_input_router() {
+    local key=$1 escape_seq=""
+    if (( PASTE_ACTIVE )); then consume_paste_byte "$key"; return 0; fi
+    if [[ $key == $'\x1b' ]]; then
+        if read_escape_seq escape_seq; then key=$escape_seq; else key=ESC; fi
     fi
+    if [[ $key == '[200~' ]]; then
+        PASTE_ACTIVE=1; PASTE_TAIL=""; MOUSE_CLICK_PENDING=0
+        return 0
+    fi
+    if ! terminal_size_ok; then
+        MOUSE_CLICK_PENDING=0
+        case $key in q|Q|$'\x03') exit 0 ;; esac
+        return 0
+    fi
+    # Mouse press/release pairs survive only within the same input context.
+    if [[ $key != '[<'* ]]; then MOUSE_CLICK_PENDING=0; fi
+    STATUS_MESSAGE=""
+    if [[ $key == '[15~' && $CURRENT_VIEW == 0 ]]; then
+        if refresh_state; then STATUS_MESSAGE="Hosts file refreshed."
+        else STATUS_MESSAGE="Could not read hosts file; previous state retained."; fi
+        return 0
+    fi
+    if (( CURRENT_VIEW == 0 )); then handle_key_main "$key"
+    else handle_key_modal "$key"; fi
 }
 
 # =============================================================================
@@ -817,14 +912,36 @@ main() {
     refresh_state
 
     ORIGINAL_STTY=$(stty -g)
-    stty -icanon -echo min 1 time 0
-    printf '%s%s%s%s' "$MOUSE_ON" "$CURSOR_HIDE" "$CLR_SCREEN" "$CURSOR_HOME"
+    stty -icanon -echo -ixon min 1 time 0
+    TUI_STARTED=1
+    printf '%s%s%s%s%s' "$ALT_SCREEN_ON" "$MOUSE_ON" "$CURSOR_HIDE" "$CLR_SCREEN" "$CURSOR_HOME"
+    trap 'RESIZE_PENDING=1' WINCH CONT
+    update_terminal_size
 
-    local key
+    local key read_status
+    local -i redraw=1
     while true; do
-        draw_ui
-        IFS= read -rsn1 key || break
-        handle_input_router "$key"
+        if (( RESIZE_PENDING )); then
+            RESIZE_PENDING=0; MOUSE_CLICK_PENDING=0
+            update_terminal_size
+            printf '%s' "$CLR_SCREEN"
+            redraw=1
+        fi
+        if (( redraw )); then draw_ui; redraw=0; fi
+        if IFS= read -rsn1 -t "$READ_LOOP_TIMEOUT" key; then
+            # A resize may race the read; do not apply input to stale geometry.
+            if (( RESIZE_PENDING )); then
+                RESIZE_PENDING=0; MOUSE_CLICK_PENDING=0
+                update_terminal_size
+                printf '%s' "$CLR_SCREEN"
+            fi
+            handle_input_router "$key"
+            # No frames while a paste is in flight; draw the completed input once.
+            if (( ! PASTE_ACTIVE )); then redraw=1; fi
+        else
+            read_status=$?
+            if (( read_status == 1 )); then break; fi
+        fi
     done
 }
 
