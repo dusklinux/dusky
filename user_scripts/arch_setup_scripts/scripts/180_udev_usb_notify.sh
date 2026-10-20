@@ -12,6 +12,25 @@ log_info()    { printf '%s[INFO]%s %s\n' "$BLUE" "$NC" "$1"; }
 log_success() { printf '%s[OK]%s %s\n' "$GREEN" "$NC" "$1"; }
 log_error()   { printf '%s[ERROR]%s %s\n' "$RED" "$NC" "$1" >&2; }
 
+install_file() {
+    local source=$1 target=$2 mode=$3
+    local target_dir=${2%/*} staged
+
+    # Preserve unchanged files, including their inode and timestamps.
+    if [[ -f "$target" && ! -L "$target" ]] &&
+       [[ $(stat -c '%a:%u:%g' -- "$target") == "$mode:0:0" ]] &&
+       cmp -s -- "$source" "$target"; then
+        return 0
+    fi
+
+    [[ -d "$target_dir" ]] || install -d -- "$target_dir"
+    # Staging on the same filesystem makes replacement an atomic rename.
+    staged=$(mktemp --tmpdir="$target_dir" .usb-sound.XXXXXXXX)
+    STAGED_FILES+=("$staged")
+    install -T -m "$mode" -o root -g root -- "$source" "$staged"
+    mv -fT -- "$staged" "$target"
+}
+
 SCRIPT_PATH=$(realpath -- "${BASH_SOURCE[0]}")
 readonly SCRIPT_PATH
 
@@ -36,18 +55,19 @@ fi
 bash -n "$SOURCE_SCRIPT"
 RULE_DIR=$(mktemp --directory)
 readonly RULE_DIR
-trap 'rm -rf -- "$RULE_DIR"' EXIT
+STAGED_FILES=()
+trap 'rm -rf -- "$RULE_DIR" "${STAGED_FILES[@]}"' EXIT
 printf '%s\n' "$UDEV_RULE_CONTENT" > "$RULE_DIR/90-usb-sound.rules"
 udevadm verify "$RULE_DIR/90-usb-sound.rules"
 
 # Install explicit permissions independent of the caller's umask.
 log_info "Installing payload to system binaries..."
-install -C -D -T -m 755 -o root -g root "$SOURCE_SCRIPT" "$TARGET_BIN"
+install_file "$SOURCE_SCRIPT" "$TARGET_BIN" 755
 log_success "Installed to $TARGET_BIN"
 
 # Step 2: Udev rules
 log_info "Deploying udev rules..."
-install -C -D -T -m 644 -o root -g root "$RULE_DIR/90-usb-sound.rules" "$UDEV_RULE_FILE"
+install_file "$RULE_DIR/90-usb-sound.rules" "$UDEV_RULE_FILE" 644
 log_success "Udev rules deployed to $UDEV_RULE_FILE"
 
 # Step 3: Daemon reload
