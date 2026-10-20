@@ -1,4 +1,40 @@
-# Audio silence trimming
+# Dusky Player audio features
+
+## Optional whole-track waveform
+
+Press `Ctrl+w`, or choose **Audio waveform on/off** in the right-click menu,
+then move the pointer over the bottom timeline. The waveform appears inside
+the existing seek bar and follows its visibility and scaling. Audio without
+cover art also opens a player window.
+
+Waveforms are **disabled by default**. Set `timeline_waveform=yes` in
+`script-opts/dusky_player.conf` to enable them automatically. Keyboard changes
+last for the current mpv session.
+
+The first analysis decodes the selected audio track through a background FFmpeg
+process. It retains up to approximately 2,048 peak bins, streams audio one bin
+at a time, and creates no temporary audio files. Completed results are reused
+while that track stays loaded; disabling analysis or changing files cancels an
+unfinished scan. Drawing geometry is cached and limited to the visible pixel
+resolution. The waveform describes the source audio before playback filters,
+including silence trimming.
+
+Only local, finite audio files are analyzed; cover art is allowed. Video files,
+network streams, external audio tracks and virtual inputs are skipped. Native
+Matroska demuxing is supported when its internal audio track is unambiguous.
+Other supported formats use mpv's FFmpeg stream index for the selected track.
+
+On the tested machine, a 2h48m AAC file took approximately 20 seconds to analyze,
+with about 78 MiB peak worker memory. Cost depends on duration, codec, channels
+and hardware. There is no analysis process while the feature is disabled.
+
+Run `user_scripts/arch_setup_scripts/scripts/415_mpv_setup.sh` to deploy the
+bundled implementation and bindings, then relaunch mpv. Setup checks FFmpeg as
+a dependency, includes the waveform module in its bundle preflight, and
+preserves existing player settings. Fresh installations receive the disabled
+default; existing settings files can omit it because the Lua default is also off.
+
+## Audio silence trimming
 
 Dusky Player automatically trims quiet pauses in audio using stock mpv's
 libavfilter bridge. No helper process, preprocessing, compiler, extra package,
@@ -82,12 +118,15 @@ Normal MPV playback continues to use the live Lua filter.
 
 ## Verification
 
-Requires Python 3.15+, mpv and ffmpeg for tests only:
+Silence integration tests require Python 3.15+, mpv and FFmpeg. Waveform
+lifecycle tests require Lua or LuaJIT:
 
 ```sh
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s user_scripts/mpv/tests -v
 bash -n user_scripts/arch_setup_scripts/scripts/415_mpv_setup.sh
 shellcheck user_scripts/arch_setup_scripts/scripts/415_mpv_setup.sh
+lua user_scripts/mpv/tests/test_waveform.lua
+luajit user_scripts/mpv/tests/test_waveform.lua
 ```
 
 Tests render actual decoded audio through mpv, covering sample rates, mono and
@@ -103,3 +142,11 @@ for unambiguous single-track audio and actual decoder properties after track
 selection. Verify mpv/libavfilter features again against the final ISO packages.
 
 See [AUDIT.md](AUDIT.md) for the second-pass findings and regression evidence.
+
+The waveform Lua tests exercise bundled-module loading, eligibility, duplicate
+property notifications, cache reuse, cancellation, stale callbacks, worker
+failures, malformed output and drawing-cache invalidation. Runtime verification
+also exercised native Wayland rendering, full-length supplied audio, 8–192 kHz,
+eight channels, silence, three-sample audio, cover art, track changes, real decode
+failure and recovery, and 100 rapid toggles and file replacements. These checks
+do not establish correctness for every possible media file or hardware output.

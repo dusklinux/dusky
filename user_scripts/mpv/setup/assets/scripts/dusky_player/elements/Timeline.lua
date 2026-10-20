@@ -19,6 +19,7 @@ function Timeline:init()
 	self.is_hovered = false
 	self.has_thumbnail = false
 	self.heatmap = nil
+	self.waveform = require('lib/waveform').new(self)
 
 	self:decide_progress_size()
 	self:update_dimensions()
@@ -151,6 +152,16 @@ function Timeline:on_display() self:update_dimensions() end
 function Timeline:on_options()
 	self:decide_progress_size()
 	self:update_dimensions()
+	self.waveform:update()
+end
+
+function Timeline:toggle_waveform()
+	options.timeline_waveform = not options.timeline_waveform
+	self.waveform:update()
+	local suffix = self.waveform.worker and ' (analysing...)'
+		or (not self.waveform.data and ' (requires a local audio file)') or ''
+	mp.osd_message(options.timeline_waveform and ('Audio waveform: on' .. suffix) or 'Audio waveform: off')
+	self:flash()
 end
 function Timeline:handle_cursor_up()
 	if self.pressed then
@@ -303,6 +314,9 @@ function Timeline:render()
 		draw_progress()
 		draw_heatmap()
 	end
+
+	-- Whole-track audio envelope behind timestamps and chapter markers.
+	self.waveform:render(ass, bax, fay, bbx, fby, visibility, line_width, is_line and fax, fbx)
 
 	-- Flat cache shading replaces the bundled texture font.
 	if options.timeline_cache and state.uncached_ranges then

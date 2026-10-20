@@ -27,6 +27,7 @@ defaults = {
 	timeline_step = '5',
 	timeline_cache = true,
 	timeline_heatmap = 'overlay',
+	timeline_waveform = false,
 	timeline_mbtn_right = '',
 
 	controls =
@@ -757,6 +758,7 @@ bind_command('flash-speed', function() Elements:flash({'speed'}) end)
 bind_command('flash-pause-indicator', function() Elements:flash({'pause_indicator'}) end)
 bind_command('flash-progress', function() Elements:flash({'progress'}) end)
 bind_command('toggle-progress', function() Elements:maybe('timeline', 'toggle_progress') end)
+bind_command('toggle-waveform', function() Elements:maybe('timeline', 'toggle_waveform') end)
 bind_command('toggle-title', function() Elements:maybe('top_bar', 'toggle_title') end)
 bind_command('decide-pause-indicator', function() Elements:maybe('pause_indicator', 'decide') end)
 bind_command('menu', function() toggle_menu_with_items() end)
