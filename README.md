@@ -177,6 +177,7 @@ Because Arch is a rolling release, an upstream package change can occasionally t
 * [**Looking Glass**](https://github.com/gnif/LookingGlass) — For the low-latency Windows GPU passthrough setup.
 * [**Matugen**](https://github.com/InioX/matugen) — For enabling system-wide dynamic theming across everything.
 * [**Waybar**](https://github.com/Alexays/Waybar) — For allowing to choose from a wide range of configurable taskbar.
+* [**Cursor**](https://github.com/ful1e5/Bibata_Cursor) — a great cursor!
 * [**TLP**](https://github.com/linrunner/TLP) — For allowing extensive configurability for power management.
 * [**Mako**](https://github.com/emersion/mako) — This isn’t just a notification daemon; it is far beyond that and one of the most impressive projects out there.
 * [**MatugenFox**](https://github.com/Ubaidullah-Web-Dev/MatugenFox) & [**refox**](https://github.com/ADIOR-enigma/refox) — For inspiring Dusky Sites, which makes dynamic website theming on Firefox/Gecko browsers possible.
