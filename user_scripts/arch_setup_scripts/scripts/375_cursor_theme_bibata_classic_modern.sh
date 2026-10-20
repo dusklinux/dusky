@@ -5,15 +5,18 @@ set -Eeuo pipefail
 shopt -s inherit_errexit
 umask 022
 
-# 2. Configuration
+# Configuration
 readonly THEME_NAME="Bibata-Modern-Classic"
 readonly CURSOR_SIZE=18
 readonly REPO_URL="https://github.com/ful1e5/Bibata_Cursor"
 # HOME is guaranteed by login/PAM/systemd on Arch (pam_env(8), systemd.exec(5)
 # SetLoginEnvironment). Fail fast instead of guessing a home directory.
 : "${HOME:?HOME must be set}"
-readonly USER_HOME="${HOME}"
-readonly XDG_DATA_HOME="${XDG_DATA_HOME:-${USER_HOME}/.local/share}"
+# XDG paths must be absolute; ignore relative values as the specification requires.
+if [[ ${XDG_DATA_HOME-} != /* ]]; then
+    XDG_DATA_HOME="${HOME}/.local/share"
+fi
+readonly XDG_DATA_HOME
 readonly ICON_DIR="${XDG_DATA_HOME}/icons"
 readonly THEME_PATH="${ICON_DIR}/${THEME_NAME}"
 
@@ -23,7 +26,8 @@ readonly CURL_VERSION_TIMEOUT=15
 readonly CURL_DOWNLOAD_TIMEOUT=120
 readonly CURL_RETRIES=3
 readonly CURL_RETRY_DELAY=2
-# Shared hardened curl base. --retry-all-errors is only safe with curl-managed
+# Shared curl options. Each call starts with -q to ignore user curlrc settings.
+# --retry-all-errors is only safe with curl-managed
 # -o <file> (it truncates before retry); never use it with a pipe to tar.
 readonly -a CURL_COMMON=(
     --location
@@ -38,7 +42,7 @@ readonly -a CURL_COMMON=(
     --retry-max-time 60
 )
 
-# 3. Colors (Safe & Compact)
+# Colors
 if [[ -z ${NO_COLOR-} ]] && [[ -n ${TERM-} ]] && [[ -t 1 ]] && command -v tput &>/dev/null && [[ $(tput colors 2>/dev/null || echo -1) -ge 8 ]]; then
     BLUE=$(tput setaf 4 2>/dev/null || true)
     GREEN=$(tput setaf 2 2>/dev/null || true)
@@ -49,7 +53,7 @@ else
     BLUE='' GREEN='' YELLOW='' RED='' RESET=''
 fi
 
-# 4. Logging Helpers
+# Logging
 log_info()    { printf -- "%s[INFO]%s %s\n" "${BLUE}" "${RESET}" "$*"; }
 log_success() { printf -- "%s[OK]%s %s\n" "${GREEN}" "${RESET}" "$*"; }
 log_warn()    { printf -- "%s[WARN]%s %s\n" "${YELLOW}" "${RESET}" "$*" >&2; }
@@ -64,20 +68,19 @@ trap 'log_error "Unexpected failure (exit $?) at line ${LINENO}: ${BASH_COMMAND}
 
 usage() {
     printf -- 'Usage: %s [-h|--help]\n' "${0##*/}"
-    printf -- 'Install the Bibata cursor theme (%s) to ~/.local/share/icons.\n' "${THEME_NAME}"
+    printf -- 'Install the Bibata cursor theme (%s) to %s.\n' "${THEME_NAME}" "${ICON_DIR}"
 }
 
-# 5. Functions
 check_dependencies() {
     local cmd
-    for cmd in curl tar mktemp; do
+    for cmd in curl tar xz mktemp mkdir mv rm chmod; do
         command -v "$cmd" &>/dev/null || die "Missing dependency: $cmd"
     done
 }
 
 get_latest_version() {
     local url
-    url=$(curl -sS "${CURL_COMMON[@]}" --fail-with-body \
+    url=$(curl -q -sS "${CURL_COMMON[@]}" --fail \
         --max-time "${CURL_VERSION_TIMEOUT}" \
         -o /dev/null -w '%{url_effective}' \
         "${REPO_URL}/releases/latest") || return 1
@@ -87,46 +90,50 @@ get_latest_version() {
     url="${url%%\#*}"
     url="${url%/}"
 
-    local version="${url##*/}"
-
-    # Full anchor: tags are vMAJOR.MINOR.PATCH with optional pre-release suffix.
-    if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.]+)?$ ]]; then
+    [[ $url == "${REPO_URL}/releases/tag/"* ]] || return 1
+    local version="${url#"${REPO_URL}/releases/tag/"}"
+    # Accept release tags without assuming a particular versioning scheme.
+    if [[ ! $version =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]]; then
         return 1
     fi
     printf -- '%s' "$version"
 }
 
-update_legacy_index() {
-    # This ensures apps that don't respect Hyprland env vars (like some GTK2/X11 apps)
-    # still see the correct cursor.
-    [[ "${THEME_NAME}" =~ ^[A-Za-z0-9._-]+$ ]] || die "Refusing to write index.theme: bad THEME_NAME"
+update_default_index() {
+    # Xcursor consumers in the Wayland session can use this fallback.
     local default_dir="${ICON_DIR}/default"
     mkdir -p -- "$default_dir" || die "Cannot create ${default_dir}"
-    # Remove a pre-planted symlink so we never follow it, then write atomically.
-    if [[ -L "${default_dir}/index.theme" ]]; then
-        rm -f -- "${default_dir}/index.theme" || die "Cannot remove stale index.theme symlink"
-    fi
-    local tmp_theme
-    tmp_theme=$(mktemp -- "${default_dir}/.index.theme.XXXXXX") || die "Cannot create temp index.theme"
+    # Stage beside the destination: default/ may point to another filesystem.
+    # Register it for EXIT cleanup before writing or changing its permissions.
+    INDEX_TEMP=$(mktemp -- "${default_dir}/.index.theme.XXXXXX") || die "Cannot create temp index.theme"
     printf -- '[Icon Theme]\nName=Default\nComment=Default Cursor Theme\nInherits=%s\n' \
-        "${THEME_NAME}" > "$tmp_theme" || die "Cannot write index.theme"
-    chmod 0644 -- "$tmp_theme" || die "Cannot chmod index.theme"
-    mv -- "$tmp_theme" "${default_dir}/index.theme" || die "Cannot install index.theme"
-    log_info "Updated legacy index.theme fallback."
+        "${THEME_NAME}" > "$INDEX_TEMP" || die "Cannot write index.theme"
+    chmod 0644 -- "$INDEX_TEMP" || die "Cannot chmod index.theme"
+    mv -fT --no-copy -- "$INDEX_TEMP" "${default_dir}/index.theme" || die "Cannot install index.theme"
+    INDEX_TEMP=""
+    log_info "Updated default index.theme fallback."
 }
 
-# Staging dir for atomic install (cleaned on any exit).
+# Temporary paths for atomic replacements (cleaned on exit).
 STAGING_DIR=""
+INDEX_TEMP=""
 cleanup_staging() {
+    if [[ -n ${INDEX_TEMP:-} ]]; then
+        rm -f -- "$INDEX_TEMP" || log_warn "Could not remove temporary index.theme: ${INDEX_TEMP}"
+    fi
     if [[ -n "${STAGING_DIR:-}" && -d "${STAGING_DIR}" ]]; then
-        rm -rf -- "${STAGING_DIR}"
+        rm -rf -- "${STAGING_DIR}" || log_warn "Could not remove staging directory: ${STAGING_DIR}"
     fi
     STAGING_DIR=""
 }
-trap cleanup_staging EXIT INT TERM
+trap cleanup_staging EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 
-# 6. Main Execution
+# Main execution
 main() {
+    (( $# <= 1 )) || die "Expected at most one argument (see --help)."
     case "${1-}" in
         -h|--help) usage; return 0 ;;
         '') ;;
@@ -147,22 +154,13 @@ main() {
     local dl_url="${REPO_URL}/releases/download/${latest_ver}/${THEME_NAME}.tar.xz"
     mkdir -p -- "${ICON_DIR}" || die "Cannot create ${ICON_DIR}"
 
-    # Containment guard: never rm outside ICON_DIR, never rm root.
-    : "${THEME_PATH:?THEME_PATH empty, aborting}"
-    : "${ICON_DIR:?ICON_DIR empty, aborting}"
-    case "${THEME_PATH}" in
-        "${ICON_DIR}"/*) ;;
-        *) die "Refusing to remove: THEME_PATH [${THEME_PATH}] outside ICON_DIR [${ICON_DIR}]" ;;
-    esac
-    [[ "${THEME_PATH}" != "/" ]] || die "Refusing to remove root"
-
     # Staging lives inside ICON_DIR on purpose: same filesystem, so the final
     # mv -T below is a true atomic rename (never a cross-device copy).
     STAGING_DIR=$(mktemp -d -- "${ICON_DIR}/.bibata-staging.XXXXXX") || die "Cannot create staging dir"
     local tmpfile="${STAGING_DIR}/dl.tar.xz"
     # --- Atomic download to file (curl-managed -o, so retries are safe) ---
     log_info "Downloading..."
-    if ! curl -fS "${CURL_COMMON[@]}" \
+    if ! curl -q -fS "${CURL_COMMON[@]}" \
             --speed-limit 1024 --speed-time 30 \
             --max-time "${CURL_DOWNLOAD_TIMEOUT}" \
             --remove-on-error \
@@ -175,66 +173,61 @@ main() {
     if ! tar -xJ --no-same-owner --no-same-permissions --no-acls --no-selinux --no-xattrs -f "$tmpfile" -C "${STAGING_DIR}"; then
         die "Extraction failed (existing theme untouched)."
     fi
-    [[ -d "${STAGING_DIR}/${THEME_NAME}/cursors" ]] || die "Archive has unexpected layout (missing ${THEME_NAME}/cursors)."
+    local staged_theme="${STAGING_DIR}/${THEME_NAME}"
+    [[ -f "${staged_theme}/index.theme" && -s "${staged_theme}/cursors/left_ptr" ]] \
+        || die "Archive has unexpected layout (missing index.theme or usable cursors/left_ptr)."
 
-    # --- Atomic swap: old theme moved aside only after new one verifies ---
-    if [[ -d "${THEME_PATH}" && ! -L "${THEME_PATH}" ]]; then
-        log_warn "Removing existing installation for clean update..."
-        rm -rf -- "${THEME_PATH}.bak" || die "Cannot clear backup slot"
-        mv -T -- "${THEME_PATH}" "${THEME_PATH}.bak" || die "Cannot stage old theme aside"
-    elif [[ -L "${THEME_PATH}" ]]; then
-        rm -f -- "${THEME_PATH}" || die "Cannot remove stale theme symlink"
-    elif [[ -e "${THEME_PATH}" ]]; then
-        # A stray file (or other non-directory node) blocks the swap: mv
-        # refuses to overwrite a non-directory with a directory.
-        rm -f -- "${THEME_PATH}" || die "Cannot remove obstructing file at ${THEME_PATH}"
+    # GNU coreutils >= 9.5: exchange atomically, including files and symlinks.
+    # The old installation stays available until the exchange succeeds, then
+    # lives inside staging for EXIT cleanup. No shared backup slot is needed.
+    if [[ -e ${THEME_PATH} || -L ${THEME_PATH} ]]; then
+        mv -T --exchange --no-copy -- "$staged_theme" "${THEME_PATH}" \
+            || die "Atomic exchange failed (existing theme untouched)."
+    else
+        mv -T --no-copy --update=none-fail -- "$staged_theme" "${THEME_PATH}" \
+            || die "Atomic install failed."
     fi
-    if ! mv -T -- "${STAGING_DIR}/${THEME_NAME}" "${THEME_PATH}"; then
-        # Best-effort rollback.
-        if [[ -d "${THEME_PATH}.bak" ]]; then
-            mv -T -- "${THEME_PATH}.bak" "${THEME_PATH}" || true
-        fi
-        die "Atomic install failed."
-    fi
-    rm -rf -- "${THEME_PATH}.bak" || true
-    # Staging consumed (cleanup is now a no-op via empty STAGING_DIR).
-    rm -rf -- "${STAGING_DIR}" || true
-    STAGING_DIR=""
 
     [[ -d "${THEME_PATH}" ]] || die "Install verification failed."
     log_success "Installed to ${THEME_PATH}"
 
     # --- Configuration ---
-    # Dusky owns every layer (including the legacy default/index.theme
+    # Dusky owns every layer (including the default/index.theme
     # fallback) once installed: hand off to it first, so a rerun of this
     # installer can never clobber Dusky state. Fully optional: skipped when
-    # Dusky/python3 is absent, and any failure falls back to the standalone
-    # Bibata path below (which then owns the fallback + live apply itself).
+    # Dusky is absent. A failed reconciliation must not overwrite its settings.
     local dusky_script="${HOME}/user_scripts/cursor/color/dusky_cursor.py"
     if [[ -d "${ICON_DIR}/Dusky/cursors" ]] \
-        && [[ -f "${dusky_script}" ]] \
-        && command -v python3 &>/dev/null; then
+        && [[ -f "${dusky_script}" ]]; then
+        command -v python3 &>/dev/null || die "Bibata installed; python3 is required to reconcile Dusky."
         log_info "Dusky theme detected; reconciling via dusky_cursor.py..."
         if python3 "${dusky_script}" --apply --quiet; then
-            log_success "Cursor active (Dusky)."
+            log_success "Cursor settings reconciled via Dusky."
             return 0
         else
-            log_warn "dusky_cursor.py failed; falling back to standalone Bibata apply."
+            die "Bibata installed, but Dusky reconciliation failed; standalone overrides skipped."
         fi
     fi
 
     # Standalone Bibata path (no Dusky installed).
-    # 1. Update legacy fallback
-    update_legacy_index
+    # 1. Update Xcursor fallback
+    update_default_index
 
     # 2. Apply to Hyprland (Live). Persistence across reboots is owned by the
     # Hyprland env config (XCURSOR_THEME/XCURSOR_SIZE), not this installer.
     if command -v hyprctl &>/dev/null && [[ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]]; then
         log_info "Applying to Hyprland..."
-        if hyprctl setcursor "${THEME_NAME}" "${CURSOR_SIZE}" >/dev/null; then
+        # Xcursor loading skips unchanged name+size. Nudge first so updates
+        # reload the installed files, then always attempt the requested size.
+        local size response applied=true
+        for size in "$((CURSOR_SIZE + 2))" "${CURSOR_SIZE}"; do
+            if ! response=$(hyprctl setcursor "${THEME_NAME}" "$size") || [[ $response != ok ]]; then
+                applied=false
+                log_warn "hyprctl setcursor failed at ${size}px: ${response:-no response}"
+            fi
+        done
+        if [[ $applied == true ]]; then
             log_success "Cursor active."
-        else
-            log_warn "hyprctl failed to set cursor (check logs)."
         fi
     else
         log_warn "Hyprland not running/detected. Cursor installed but not active."
