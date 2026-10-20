@@ -24,7 +24,7 @@ SPEC.loader.exec_module(PREPROCESS)
 
 class PreprocessTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(dir='/dev/shm')
+        temporary = tempfile.TemporaryDirectory(dir=os.environ.get('PREPROCESS_TEST_TMPDIR', '/dev/shm'))
         self.addCleanup(temporary.cleanup)
         self.folder = Path(temporary.name)
         self.source = self.folder / 'source.wav'
@@ -63,6 +63,159 @@ class PreprocessTests(unittest.TestCase):
         cached = self.render(cache, 'cached.pcm')
         self.assertEqual(live, cached)
         self.assertEqual(cached[-5 * 48000 * 2 * 4:], bytes(5 * 48000 * 2 * 4))
+
+    def write_tone(self, rate=48000, channels=2):
+        tone = array.array('h', (int(8000 * math.sin(2 * math.pi * 440 * n / rate))
+                                 for n in range(rate)))
+        block = array.array('h', (sample for sample in tone for _ in range(channels)))
+        with wave.open(str(self.source), 'wb') as output:
+            output.setnchannels(channels)
+            output.setsampwidth(2)
+            output.setframerate(rate)
+            for second in range(20):
+                output.writeframes(bytes(rate * channels * 2)
+                                   if 5 <= second < 8 or second >= 15 else block)
+
+    def test_aac_speed_pitch_size_and_decode(self):
+        self.write_tone()
+        baseline = self.folder / 'baseline.wav'
+        result = self.preprocess(baseline)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        trimmed_duration = json.loads(result.stdout)['cached_duration_seconds']
+        for speed, bitrate in ((1, 128), (2.5, 128), (3, 192), (4, 96), (16, 128)):
+            with self.subTest(speed=speed, bitrate=bitrate):
+                cache = self.folder / f'aac-{speed}.m4a'
+                result = self.preprocess(cache, '--speed', str(speed), '--bitrate', str(bitrate))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                report = json.loads(result.stdout)
+                self.assertEqual(report['output_codec'], 'aac')
+                self.assertEqual(report['target_bitrate_kbps'], bitrate)
+                self.assertAlmostEqual(report['cached_duration_seconds'], trimmed_duration / speed, delta=.12)
+                self.assertLess(report['cache_bytes'], baseline.stat().st_size / 10)
+                decoded = subprocess.run(['ffmpeg', '-v', 'error', '-xerror', '-i', str(cache),
+                                          '-f', 'f32le', '-'], capture_output=True, check=True, timeout=20)
+                samples = array.array('f')
+                samples.frombytes(decoded.stdout)
+                if sys.byteorder != 'little':
+                    samples.byteswap()
+                segment = samples[1920:19200:2]  # First tone, 20--200 ms at 48 kHz.
+                crossings = sum(a <= 0 < b for a, b in zip(segment, segment[1:]))
+                self.assertAlmostEqual(crossings * 48000 / len(segment), 440, delta=8)
+                tail_frames = int(48000 * (5 / speed - .15))
+                self.assertLess(max(abs(value) for value in samples[-tail_frames * 2:]), .001)
+
+    def test_aac_rates_channels_and_automatic_resampling(self):
+        for rate, channels in ((16000, 1), (44100, 2), (48000, 6), (192000, 2)):
+            with self.subTest(rate=rate, channels=channels):
+                self.write_tone(rate, channels)
+                cache = self.folder / f'aac-{rate}-{channels}.m4a'
+                result = self.preprocess(cache, '--speed', '2.5')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                report = json.loads(result.stdout)
+                self.assertEqual(report['source_sample_rate'], rate)
+                self.assertEqual(report['channels'], channels)
+                self.assertEqual(report['target_bitrate_kbps'], max(128, channels * 64))
+                self.assertEqual(report['sample_rate'], rate if rate <= 96000 else 96000)
+                subprocess.run(['ffmpeg', '-v', 'error', '-xerror', '-i', str(cache),
+                                '-f', 'null', '-'], check=True, timeout=20)
+
+    def test_descriptive_metadata_preserved_chapters_and_stale_tags_removed(self):
+        self.write_tone()
+        metadata = self.folder / 'tags.txt'
+        metadata.write_text(';FFMETADATA1\ntitle=A podcast\nartist=A speaker\nalbum=A series\n'
+                            'REPLAYGAIN_TRACK_GAIN=10 dB\n'
+                            '[CHAPTER]\nTIMEBASE=1/1000\nSTART=5000\nEND=10000\ntitle=Old chapter\n',
+                            encoding='utf-8')
+        tagged = self.folder / 'tagged.mka'
+        subprocess.run(['ffmpeg', '-v', 'error', '-i', str(self.source), '-i', str(metadata),
+                        '-map', '0:a:0', '-map_metadata', '1', '-map_chapters', '1',
+                        '-c:a', 'copy', str(tagged)], check=True, timeout=20)
+        self.source = tagged
+        for suffix in ('m4a', 'wav'):
+            with self.subTest(suffix=suffix):
+                cache = self.folder / f'metadata-{suffix}.{suffix}'
+                result = self.preprocess(cache, '--start', '2', '--speed', '3')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                data = json.loads(subprocess.check_output([
+                    'ffprobe', '-v', 'error', '-show_format', '-show_streams', '-show_chapters',
+                    '-of', 'json', str(cache)], text=True, timeout=20))
+                tags = {key.lower(): value for key, value in data['format']['tags'].items()}
+                self.assertEqual(tags['title'], 'A podcast')
+                self.assertEqual(tags['artist'], 'A speaker')
+                self.assertEqual(tags['album'], 'A series')
+                self.assertNotIn('replaygain_track_gain', tags)
+                self.assertEqual(data['chapters'], [])
+                self.assertEqual(len(data['streams']), 1)
+
+    def test_aac_fits_budget_that_rejects_wav(self):
+        self.write_tone()
+        for suffix, code in (('m4a', 0), ('wav', 2)):
+            with self.subTest(suffix=suffix):
+                cache = self.folder / f'budget.{suffix}'
+                result = self.preprocess(cache, '--max-cache-gib', '.001')
+                self.assertEqual(result.returncode, code, result.stderr)
+                self.assertEqual(cache.exists(), code == 0)
+
+    def test_runtime_file_limit_discards_partial_output(self):
+        self.write_tone()
+        cache = self.folder / 'limited.m4a'
+        measure = PREPROCESS.measure
+        partial = None
+        limit = 16384
+
+        def exceed_budget(command, log, budget):
+            nonlocal partial
+            partial = Path(command[-1])
+            self.assertEqual(budget, 512 * 1024)
+            # Force the real encoder to hit its byte limit after passing preflight.
+            try:
+                return measure(command, log, limit)
+            finally:
+                self.assertLessEqual(partial.stat().st_size, limit)
+
+        with patch.object(PREPROCESS, 'measure', side_effect=exceed_budget), \
+             patch.object(PREPROCESS, 'cache_budget', return_value=(512 * 1024, 'tmpfs')), \
+             patch.object(sys, 'argv', ['preprocess.py', str(self.source), str(cache)]):
+            with self.assertRaisesRegex(RuntimeError, 'Command failed'):
+                PREPROCESS.main()
+        self.assertIsNotNone(partial)
+        self.assertFalse(cache.exists())
+        self.assertFalse(cache.with_suffix('.json').exists())
+        self.assertFalse(list(self.folder.glob('.preprocess-*')))
+
+    def test_bitrate_and_extension_validation(self):
+        for suffix, extra in (('mp3', []), ('wav', ['--bitrate', '128']),
+                              ('m4a', ['--bitrate', '0']), ('m4a', ['--bitrate', 'nan']),
+                              ('m4a', ['--bitrate', '-1']), ('m4a', ['--bitrate', '128k'])):
+            with self.subTest(suffix=suffix, extra=extra):
+                cache = self.folder / f'invalid.{suffix}'
+                result = self.preprocess(cache, *extra)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertFalse(cache.exists())
+                self.assertFalse(cache.with_suffix('.log').exists())
+
+    def test_default_name_includes_speed_and_uses_aac(self):
+        output = PREPROCESS.default_output(self.source, 2.5)
+        self.assertIsNotNone(output)
+        self.assertEqual(output.name, 'source-max-plus-2.5x.m4a')
+
+    def test_play_starts_at_normal_speed_with_live_trimming_disabled(self):
+        cache = self.folder / 'play.m4a'
+        called = self.folder / 'mpv-args.json'
+        binary = self.folder / 'bin'
+        binary.mkdir()
+        mpv = binary / 'mpv'
+        mpv.write_text(f'#!{sys.executable}\nimport json, sys\n'
+                       f'with open({str(called)!r}, "w") as f:\n'
+                       '    json.dump(sys.argv[1:], f)\n', encoding='utf-8')
+        mpv.chmod(0o755)
+        with patch.dict(os.environ, PATH=f'{binary}:{os.environ["PATH"]}'):
+            result = self.preprocess(cache, '--speed', '2.5', '--play')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        options = json.loads(called.read_text(encoding='utf-8'))
+        self.assertIn('--speed=1', options)
+        self.assertIn('--script-opts-append=dusky_silence-enabled=no', options)
+        self.assertEqual(options[-1], str(cache))
 
     def test_speed_preserves_pitch_channels_rate_and_ending(self):
         for rate, channels, speed in ((16000, 1, 2.5), (44100, 2, 3),
@@ -385,12 +538,12 @@ class PreprocessTests(unittest.TestCase):
         self.assertNotIn('Traceback', result.stderr)
 
     def test_disk_output_rejected_before_creating_directory(self):
-        with tempfile.TemporaryDirectory(dir=Path.home()) as disk:
-            destination = Path(disk) / 'uncreated' / 'cache.wav'
-            result = self.preprocess(destination)
-            self.assertEqual(result.returncode, 2, result.stderr)
-            self.assertIn('disk output is disabled', result.stderr)
-            self.assertFalse(destination.parent.exists())
+        destination = Path.home() / f'.preprocess-rejected-{self.folder.name}' / 'cache.wav'
+        self.assertFalse(destination.parent.exists())
+        result = self.preprocess(destination)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn('disk output is disabled', result.stderr)
+        self.assertFalse(destination.parent.exists())
 
     def test_tmpfs_disk_swap_rejected_and_noswap_accepted(self):
         entries = [(Path('/'), self.folder, 'tmpfs', frozenset())]

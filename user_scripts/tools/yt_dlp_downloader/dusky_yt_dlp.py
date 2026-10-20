@@ -912,12 +912,12 @@ def format_arguments(mode: TargetFormat, height: int | None) -> list[str]:
     cap = f"[height<=?{height}]" if height is not None else ""
     if not mode.is_video:
         audio = {
-            TargetFormat.AUDIO_BEST: ["ba/b", "best"],
-            TargetFormat.AUDIO_OPUS: ["ba[acodec^=opus]/ba/b", "opus"],
-            TargetFormat.AUDIO_MP3: ["ba/b", "mp3"],
-            TargetFormat.AUDIO_FLAC: ["ba/b", "flac"],
-            TargetFormat.AUDIO_M4A: ["ba/b", "m4a"],
-            TargetFormat.AUDIO_WAV: ["ba/b", "wav"],
+            TargetFormat.AUDIO_BEST: ["ba/worst/b", "best"],
+            TargetFormat.AUDIO_OPUS: ["ba[acodec^=opus]/ba/worst/b", "opus"],
+            TargetFormat.AUDIO_MP3: ["ba/worst/b", "mp3"],
+            TargetFormat.AUDIO_FLAC: ["ba/worst/b", "flac"],
+            TargetFormat.AUDIO_M4A: ["ba/worst/b", "m4a"],
+            TargetFormat.AUDIO_WAV: ["ba/worst/b", "wav"],
         }[mode]
         result = ["-f", audio[0], "-x", "--audio-format", audio[1]]
         if mode is TargetFormat.AUDIO_MP3:
