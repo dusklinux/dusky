@@ -3,6 +3,7 @@ import array
 import argparse
 import json
 import importlib.util
+import math
 import os
 import subprocess
 import sys
@@ -62,6 +63,98 @@ class PreprocessTests(unittest.TestCase):
         cached = self.render(cache, 'cached.pcm')
         self.assertEqual(live, cached)
         self.assertEqual(cached[-5 * 48000 * 2 * 4:], bytes(5 * 48000 * 2 * 4))
+
+    def test_speed_preserves_pitch_channels_rate_and_ending(self):
+        for rate, channels, speed in ((16000, 1, 2.5), (44100, 2, 3),
+                                      (48000, 6, 4), (96000, 2, 8),
+                                      (192000, 1, 16)):
+            with self.subTest(rate=rate, channels=channels, speed=speed):
+                tone = array.array('h', (int(8000 * math.sin(2 * math.pi * 440 * n / rate))
+                                         for n in range(rate)))
+                block = array.array('h', (sample for sample in tone for _ in range(channels)))
+                silence = bytes(rate * channels * 2)
+                with wave.open(str(self.source), 'wb') as output:
+                    output.setnchannels(channels)
+                    output.setsampwidth(2)
+                    output.setframerate(rate)
+                    for second in range(20):
+                        output.writeframes(silence if 5 <= second < 8 or second >= 15 else block)
+                baseline = self.folder / f'baseline-{rate}.wav'
+                normal = self.preprocess(baseline)
+                self.assertEqual(normal.returncode, 0, normal.stderr)
+                cache = self.folder / f'speed-{rate}.wav'
+                result = self.preprocess(cache, '--speed', str(speed))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                report = json.loads(result.stdout)
+                self.assertEqual(report['playback_speed'], speed)
+                self.assertEqual(report['sample_rate'], rate)
+                self.assertEqual(report['channels'], channels)
+                self.assertAlmostEqual(report['cached_duration_seconds'],
+                                       json.loads(normal.stdout)['cached_duration_seconds'] / speed,
+                                       delta=0.1)
+                self.assertLess(report['cache_bytes'], json.loads(normal.stdout)['cache_bytes'])
+                decoded = subprocess.run([
+                    'ffmpeg', '-v', 'error', '-i', str(cache), '-f', 'f32le', '-c:a', 'pcm_f32le', '-',
+                ], capture_output=True, timeout=20, check=True).stdout
+                samples = array.array('f')
+                samples.frombytes(decoded)
+                if sys.byteorder != 'little':
+                    samples.byteswap()
+                segment = samples[int(rate * .02) * channels:int(rate * .20) * channels:channels]
+                crossings = sum(a <= 0 < b for a, b in zip(segment, segment[1:]))
+                self.assertAlmostEqual(crossings * rate / len(segment), 440, delta=8)
+                tail_frames = int(rate * (5 / speed - .1))
+                self.assertLess(max(abs(value) for value in samples[-tail_frames * channels:]), 1e-6)
+
+    def test_speed_runs_after_trimming_and_respects_excerpt(self):
+        baseline = self.folder / 'trim-first.wav'
+        result = self.preprocess(baseline, '--start', '2', '--duration', '16')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for speed in (1, 1.001, 2, 2.5, 3, 4, 10):
+            with self.subTest(speed=speed):
+                cache = self.folder / f'trim-speed-{speed}.wav'
+                result = self.preprocess(cache, '--start', '2', '--duration', '16', '--speed', str(speed))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                if speed == 1:
+                    self.assertEqual(cache.read_bytes(), baseline.read_bytes())
+                else:
+                    # Independent two-step rendering must match the single-pass pipeline.
+                    expected = self.folder / f'expected-{speed}.wav'
+                    factors = []
+                    remaining = speed
+                    while remaining > 2:
+                        factors.append('atempo=2')
+                        remaining /= 2
+                    factors.append(f'atempo={remaining!r}')
+                    subprocess.run(['ffmpeg', '-v', 'error', '-i', str(baseline),
+                                    '-af', ','.join(factors) + ',asetpts=N/SR/TB',
+                                    '-c:a', 'pcm_f32le', str(expected)], check=True, timeout=20)
+                    with wave.open(str(cache), 'rb') as actual, wave.open(str(expected), 'rb') as reference:
+                        self.assertEqual(actual.readframes(actual.getnframes()),
+                                         reference.readframes(reference.getnframes()))
+                report = json.loads(result.stdout)
+                self.assertEqual(report['source_start_seconds'], 2)
+                self.assertEqual(report['excerpt_duration_seconds'], 16)
+                self.assertEqual(report['removed_seconds'], 16 - report['cached_duration_seconds'])
+
+    def test_invalid_speed_rejected_before_processing(self):
+        for speed in ('0', '-1', '0.5', 'nan', 'inf', '-inf', '1e999', 'hello'):
+            with self.subTest(speed=speed):
+                cache = self.folder / 'invalid-speed.wav'
+                result = self.preprocess(cache, f'--speed={speed}')
+                self.assertEqual(result.returncode, 2)
+                self.assertIn('Speed must be finite and at least 1', result.stderr)
+                self.assertFalse(cache.exists())
+                self.assertFalse(cache.with_suffix('.log').exists())
+
+    def test_speed_too_short_to_render_fails_cleanly(self):
+        cache = self.folder / 'too-short.wav'
+        result = self.preprocess(cache, '--duration', '0.000001', '--speed', '16')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn('Traceback', result.stderr)
+        self.assertFalse(cache.exists())
+        self.assertFalse(cache.with_suffix('.json').exists())
+        self.assertFalse(list(self.folder.glob('.preprocess-*')))
 
     def test_duration_limits_input_and_short_clip_is_preserved(self):
         cache = self.folder / 'excerpt.wav'

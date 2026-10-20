@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Experimental Max Plus PCM cache; does not change mpv configuration."""
+"""Experimental Max Plus PCM cache with optional pitch-preserving speedup."""
 import argparse
 import ctypes
 import json
@@ -166,6 +166,27 @@ def ask_time(prompt: str, default: float | None, valid) -> float | None:
             print(error)
 
 
+def parse_speed(value: str) -> float:
+    try:
+        speed = float(value)
+        if math.isfinite(speed) and speed >= 1:
+            return speed
+    except ValueError:
+        pass
+    raise argparse.ArgumentTypeError('Speed must be finite and at least 1 (for example 2.5)')
+
+
+def tempo_filters(speed: float) -> list[str]:
+    """Keep each pitch-preserving stage at most 2x to avoid sample skipping."""
+    filters = []
+    while speed > 2:
+        filters.append('atempo=2')
+        speed /= 2
+    if speed != 1:
+        filters.append(f'atempo={speed!r}')
+    return filters
+
+
 def default_output(source: Path) -> Path | None:
     candidates = (Path('/dev/shm'), Path('/mnt/zram1'))
     for candidate in candidates:
@@ -185,6 +206,8 @@ def main() -> None:
     parser.add_argument('--interactive', action='store_true', help='Ask for start time, optional duration and output path')
     parser.add_argument('--start', type=parse_time, default=0, help='Source offset: seconds or HH:MM:SS')
     parser.add_argument('--duration', type=parse_time, help='Optional excerpt length: seconds or HH:MM:SS')
+    parser.add_argument('--speed', type=parse_speed, default=1.0,
+                        help='Pitch-preserving playback speed, at least 1 (default: 1; e.g. 2.5, 3, 4)')
     parser.add_argument('--max-cache-gib', type=float, default=4,
                         help='Cache size ceiling in GiB (default: 4); RAM-backed output also uses at most 1/4 available RAM')
     parser.add_argument('--play', action='store_true', help='Open the completed cache in MPV with live trimming disabled')
@@ -251,6 +274,10 @@ def main() -> None:
         f'stop_mode=all:detection=rms:window={1152 / rate:.9f}:timestamp=copy:'
         f"enable='lt(t,{max(0, duration - 6):.9f})',asetpts=N/SR/TB"
     )
+    # Trim in source time first, including the six-second ending guard. At 1x,
+    # bypass tempo processing entirely to preserve the existing samples.
+    if args.speed != 1:
+        graph += ',' + ','.join([*tempo_filters(args.speed), 'asetpts=N/SR/TB'])
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.preprocess-', dir=output.parent) as temporary:
         cache = Path(temporary) / 'cache.wav'
@@ -261,8 +288,9 @@ def main() -> None:
                    '-af', graph, '-c:a', 'pcm_f32le', '-rf64', 'auto', str(cache)]
         measurement = measure(command, log_path)
         cached = probe(cache)
-        cached_duration = float(cached['format']['duration'])
-        if cached_duration <= 0 or cached_duration > duration + 0.1:
+        cached_duration = float(cached['format'].get('duration') or 0)
+        if (not math.isfinite(cached_duration) or cached_duration <= 0
+                or cached_duration > duration / args.speed + 0.1):
             raise RuntimeError('Unexpected output duration; cache was not installed')
         if cache.stat().st_size > budget:
             raise RuntimeError('Cache exceeded its size budget; cache was not installed')
@@ -277,6 +305,7 @@ def main() -> None:
             'source_duration_seconds': source_duration,
             'excerpt_duration_seconds': duration,
             'cached_duration_seconds': cached_duration,
+            'playback_speed': args.speed,
             'removed_seconds': duration - cached_duration,
             'cache_bytes': cache.stat().st_size,
             'cache_budget_bytes': budget, 'untrimmed_upper_bound_bytes': upper_bound,
