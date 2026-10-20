@@ -80,9 +80,8 @@ trap 'exit 0' HUP INT TERM
 # Query the real services, without unrelated ICMP probes. A failed/partial
 # query is unknown, never evidence of zero pending packages.
 fetch_package_count() {
-    local name=$1 rc=0
-    shift
-    if timeout --kill-after=3 "$TIMEOUT_SEC" "$@" > "$TMP_DIR/$name.output" 2> "$TMP_DIR/$name.error"; then
+    local name=$1 pid=$2 rc=0
+    if wait "$pid"; then
         wc -l < "$TMP_DIR/$name.output" > "$TMP_DIR/$name"
     else
         rc=$?
@@ -98,12 +97,21 @@ fetch_package_count() {
 }
 
 if (( SHOW_PACMAN )); then
-    fetch_package_count pac checkupdates --nocolor &
+    timeout --kill-after=3 "$TIMEOUT_SEC" checkupdates --nocolor > "$TMP_DIR/pac.output" 2> "$TMP_DIR/pac.error" &
+    pac_pid=$!
 fi
 if (( SHOW_AUR )); then
-    fetch_package_count aur paru -Qua &
+    timeout --kill-after=3 "$TIMEOUT_SEC" paru -Qua > "$TMP_DIR/aur.output" 2> "$TMP_DIR/aur.error" &
+    aur_pid=$!
 fi
-wait
+# Keep timeout supervisors as direct jobs so cleanup can terminate them and
+# their query process groups before releasing the cache lock.
+if (( SHOW_PACMAN )); then
+    fetch_package_count pac "$pac_pid"
+fi
+if (( SHOW_AUR )); then
+    fetch_package_count aur "$aur_pid"
+fi
 
 # Read the commit snapshot after package queries so resets/checks completed
 # during network I/O are reflected in the cache we are about to publish.

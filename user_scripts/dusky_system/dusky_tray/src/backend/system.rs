@@ -1302,7 +1302,6 @@ fn parse_updates(cached: &str, behind: &str) -> UpdatesState {
         };
     let counts = [count("pacman"), count("aur"), dusky];
     let total: u64 = counts.iter().flatten().sum();
-    let unknown = counts.iter().any(Option::is_none);
     let details = ["Pacman", "AUR", "Dusky commits (main)"]
         .into_iter()
         .zip(counts)
@@ -1315,10 +1314,9 @@ fn parse_updates(cached: &str, behind: &str) -> UpdatesState {
         .collect::<Vec<_>>()
         .join("\n");
     UpdatesState {
+        // Badges count confirmed updates; unavailable checks belong in the tooltip.
         badge: if total > 0 {
             total.to_string()
-        } else if unknown {
-            "?".into()
         } else {
             String::new()
         },
@@ -1518,11 +1516,43 @@ mod tests {
         let data = r#"{"counts":{"pacman":10,"aur":0,"dusky":999},"tooltip":"Total: 10)"}"#;
         assert_eq!(parse_updates(data, "0").badge, "10");
         assert_eq!(parse_updates(data, "2").badge, "12");
-        assert_eq!(parse_updates("{}", "").badge, "?");
         assert_eq!(
             parse_updates(r#"{"counts":{"pacman":0,"aur":0}}"#, "0").badge,
             ""
         );
+    }
+
+    #[test]
+    fn update_badge_is_empty_without_confirmed_updates() {
+        for cached in [
+            "",
+            "invalid json",
+            "{}",
+            r#"{"counts":{"pacman":null,"aur":null,"dusky":0}}"#,
+            r#"{"counts":{"pacman":0,"aur":null}}"#,
+            r#"{"counts":{"pacman":-1,"aur":"0"}}"#,
+            r#"{"counts":{"pacman":1000000000000000000,"aur":0}}"#,
+        ] {
+            for behind in ["", "0", "invalid", "-1", "1000000000000000000"] {
+                let state = parse_updates(cached, behind);
+                assert!(state.badge.is_empty(), "{cached:?}, {behind:?}");
+                assert!(state.tooltip.contains("unknown"));
+            }
+        }
+        let state = parse_updates(r#"{"counts":{"pacman":0,"aur":0}}"#, "0");
+        assert!(state.badge.is_empty());
+        assert!(!state.tooltip.contains("unknown"));
+    }
+
+    #[test]
+    fn update_badge_keeps_confirmed_counts_when_other_checks_are_unavailable() {
+        let state = parse_updates(r#"{"counts":{"pacman":8,"aur":null}}"#, "0");
+        assert_eq!(state.badge, "8");
+        assert!(state.tooltip.contains("AUR: unknown"));
+        assert_eq!(parse_updates("{}", "2").badge, "2");
+        let state = parse_updates(r#"{"counts":{"pacman":8,"aur":9}}"#, "0");
+        assert_eq!(state.badge, "17");
+        assert!(!state.tooltip.contains("unknown"));
     }
 
     fn net_counter(iface: &str, rx: u64, tx: u64) -> NetworkCounters {

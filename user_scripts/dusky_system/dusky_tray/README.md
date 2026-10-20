@@ -221,6 +221,11 @@ including virtio devices, avoiding duplicate VPN/bridge accounting and a
 Waybar network daemon dependency. The first rate sample is zero; subsequent
 samples use elapsed time. Update counts use the existing package cache plus
 `dusky_update_behind_commit`.
+The update badge shows only a positive total of confirmed counts; zero or
+unavailable counts produce no badge. Unavailable categories remain marked
+`unknown` in the tooltip. `update_counter.sh` collects package counts;
+`update_checker.sh` checks Dusky commits. The existing `update_checker.timer`
+refreshes both when enabled; the tray only reads their caches.
 
 Clock, weather, power, memory/CPU, radio-manager, volume, update, and audio-studio launchers close
 the panel as they hand off to the configured application. Idle and visual
@@ -276,10 +281,12 @@ cargo fmt --check
 
 GPU-dependent tests are ignored by default. On a machine with working adapters,
 also exercise rendering, fractional scaling, and wheel scrolling on both backends:
+Run these GPU tests serially; concurrent headless adapter initialization stalled
+on the development machine, while serial Vulkan and EGL runs both passed.
 
 ```sh
-WGPU_BACKEND=vulkan cargo test --locked --offline -- --include-ignored
-WGPU_BACKEND=gl cargo test --locked --offline -- --ignored
+WGPU_BACKEND=vulkan cargo test --locked --offline -- --include-ignored --test-threads=1
+WGPU_BACKEND=gl cargo test --locked --offline -- --ignored --test-threads=1
 ```
 
 For a first-frame submission timestamp without verbose Wayland logging:

@@ -53,9 +53,9 @@ USER_SERVICES: list[ServiceConfig] = [
     ServiceConfig("$HOME/user_scripts/dusky_system/dusky_polkit/dusky_polkit.service", "enable"),
     # Network Meter (Default: Enable)
     ServiceConfig("$HOME/user_scripts/waybar/network/rust/dusky_network.service", "enable"),
-    # Dusky Update Checker (Default: Disable)
+    # Dusky Update Checker (enable its six-hour timer; service is timer-triggered)
     ServiceConfig("$HOME/user_scripts/update_dusky/update_checker/service/update_checker.service", "disable"),
-    ServiceConfig("$HOME/user_scripts/update_dusky/update_checker/service/update_checker.timer", "disable"),
+    ServiceConfig("$HOME/user_scripts/update_dusky/update_checker/service/update_checker.timer", "enable"),
     # Lock-key and firmware-controlled keyboard-backlight OSD (Default: Enable)
     ServiceConfig("$HOME/user_scripts/mako_osd/osd_router/osd_lock.service", "enable"),
     # Dusky RAM Monitor (Default: Disable)
