@@ -47,6 +47,34 @@ class DuskySitesTests(unittest.TestCase):
             "websitesDir": str(self.sites),
         }), encoding="utf-8")
 
+    def test_missing_palette_is_rejected_before_provisioning(self):
+        template = self.root / ".config/dusky_sites/about.css"
+        template.parent.mkdir(parents=True)
+        template.write_text("/* fixture */", encoding="utf-8")
+        for config in ({}, {"userChromeEnabled": False, "userContentEnabled": False},
+                       {"colorsPath": str(self.root / "custom-missing.css")}):
+            with self.subTest(config=config):
+                config_file = self.root / ".config/dusky/settings/dusky_sites/config.json"
+                config_file.parent.mkdir(parents=True, exist_ok=True)
+                config_file.write_text(json.dumps(config), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "Matugen palette not found"):
+                    setup.load_profile_styles(self.root)
+                self.assertFalse((self.root / ".local/share/dusky-sites").exists())
+
+    def test_existing_scoped_palette_is_accepted(self):
+        template = self.root / ".config/dusky_sites/about.css"
+        template.parent.mkdir(parents=True)
+        template.write_text("/* fixture */", encoding="utf-8")
+        palette = self.root / ".config/matugen/generated/dusky_sites.css"
+        palette.parent.mkdir(parents=True)
+        palette.write_text(setup.INTERNAL_DOCUMENT_RULE + " { :root {"
+                           "--dusky-palette-background: #000000;"
+                           "--dusky-palette-primary: #ffffff;"
+                           "--dusky-palette-on_surface: #ffffff;"
+                           "--dusky-palette-color-scheme: dark; }}", encoding="utf-8")
+        self.assertEqual(setup.load_profile_styles(self.root),
+                         (palette, "/* fixture */", True, True))
+
     def package_fixture(self, name="dusky_sites.xpi", *, matches=False, signed=True, extension_id=None):
         source = self.root / ".config/firefox_extentions/dusky_sites/extension"
         source.mkdir(parents=True, exist_ok=True)

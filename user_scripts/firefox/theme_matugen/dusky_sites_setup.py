@@ -349,6 +349,8 @@ def load_profile_styles(home: Path) -> tuple[Path, str, bool, bool]:
     palette_path = Path(os.path.expanduser(colors_path))
     if not palette_path.is_absolute():
         raise ValueError("colorsPath must be absolute or begin with ~")
+    if not palette_path.is_file():
+        raise ValueError(f"Matugen palette not found: {palette_path}. Apply your Matugen theme, then run Install / Update again.")
     chrome_enabled = config.get("userChromeEnabled", True)
     content_enabled = config.get("userContentEnabled", True)
     if not isinstance(chrome_enabled, bool) or not isinstance(content_enabled, bool):
@@ -356,7 +358,7 @@ def load_profile_styles(home: Path) -> tuple[Path, str, bool, bool]:
 
     template_about = home / ".config/dusky_sites/about.css"
     base_about = template_about.read_text(encoding="utf-8") if chrome_enabled or content_enabled else ""
-    if (chrome_enabled or content_enabled) and palette_path.is_file():
+    if chrome_enabled or content_enabled:
         palette = re.sub(r"/\*.*?\*/", "", palette_path.read_text(encoding="utf-8"), flags=re.DOTALL)
         if (not palette.lstrip().startswith(INTERNAL_DOCUMENT_RULE)
                 or not {"--dusky-palette-background", "--dusky-palette-primary", "--dusky-palette-on_surface", "--dusky-palette-color-scheme"}
