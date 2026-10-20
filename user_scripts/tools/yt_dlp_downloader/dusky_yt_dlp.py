@@ -212,21 +212,16 @@ def memory_target(root: Path, pool: Path, target: Path) -> Path:
 
 def storage_pool(requested: Path | None = None) -> Path:
     if requested is not None:
-        requested = requested.expanduser()
-        if not requested.is_absolute():
-            raise ValueError("--output-dir must be an absolute path inside a Dusky memory pool.")
-        choices = [p for p in POOLS if requested.is_relative_to(p)]
-        if not choices:
-            raise ValueError(f"Output must be within {POOLS[0]} or {POOLS[1]} (no disk fallback).")
+        requested = requested.expanduser().resolve()
+        choices = [requested]
     else:
         choices = list(POOLS)
-    for pool in choices:
-        root = pool.parent
-        if not is_memory_mount(root):
-            continue
-        target = requested or pool
+    for target in choices:
         try:
-            memory_target(root, pool, target)
+            if requested is None:
+                memory_target(target.parent, target, target)
+            else:
+                target.mkdir(parents=True, exist_ok=True)
             fd, name = tempfile.mkstemp(prefix=".dusky-write-test-", dir=target)
             os.close(fd)
             Path(name).unlink()
@@ -904,7 +899,7 @@ def build_jobs(
     destination = initial_pool
     if wizard and args.output_dir is None and jobs:
         while True:
-            requested = ask_text("Memory output directory", history, default=str(initial_pool), paths=True)
+            requested = ask_text("Output directory", history, default=str(initial_pool), paths=True)
             try:
                 destination = storage_pool(Path(requested))
                 break
@@ -1587,8 +1582,6 @@ def execute_job(
         with job_guard(state, job, controller, slot) as identity:
             if controller.cancellation(slot):
                 raise StopRequested
-            pool = POOLS[0] if destination.is_relative_to(POOLS[0]) else POOLS[1]
-            memory_target(pool.parent, pool, destination)
             work_parent = private_dir(destination / ".dusky-work")
             if work_parent.stat().st_dev != destination.stat().st_dev:
                 raise ValueError(f"Work directory is another filesystem: {work_parent}")
@@ -1612,7 +1605,7 @@ def execute_job(
                 if reason == "abort":
                     return Report(title, Status.ABORTED, error="queue aborted")
                 if reason == "skip":
-                    return Report(title, Status.SKIPPED, error="skipped by user; partial data kept in RAM")
+                    return Report(title, Status.SKIPPED, error=f"skipped by user; partial data kept in {work}")
                 errors = list(parser.state.errors) or list(parser.state.tail)
                 message = " | ".join(errors[-3:]) if errors else f"yt-dlp exited {code}"
                 return Report(title, Status.FAILED, error=translate_error(message, job.mode))
@@ -1649,7 +1642,7 @@ def execute_job(
                       error="aborted" if status is Status.ABORTED else "skipped during setup/verification")
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         return Report(parser.state.title or job.title, Status.FAILED,
-                      error=f"{clean_label(exc, 400)}; incomplete work remains in RAM if present")
+                      error=f"{clean_label(exc, 400)}; incomplete work remains in {work or destination / '.dusky-work'} if present")
     finally:
         if scratch_archive is not None:
             try:
@@ -1877,7 +1870,7 @@ def print_reports(reports: list[Report], destination: Path, archive: Path, move_
         table.add_row(escape(report.title), report.status.value,
                       bytes_label(report.size) if report.size else "-", escape(detail))
     console.print(table)
-    console.print(f"Memory pool: {escape(str(destination))}\nArchive: {escape(str(archive))}")
+    console.print(f"Output directory: {escape(str(destination))}\nArchive: {escape(str(archive))}")
     if move_to is not None:
         console.print(f"Final storage: {escape(str(move_to))}")
 
@@ -1978,18 +1971,18 @@ def self_test() -> None:
 
 
 def argument_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Dusky Universal Media Downloader (Arch / memory pool only).")
+    parser = argparse.ArgumentParser(description="Dusky Universal Media Downloader (Arch / RAM-backed output by default).")
     parser.add_argument("target", nargs="*", help="HTTP(S) links, playlists, or batch files in input order")
     parser.add_argument("-f", "--format", choices=[mode.value for mode in TargetFormat])
     parser.add_argument("-q", "--quality", choices=["best", *(str(cap) for cap in QUALITY_CAPS)])
-    parser.add_argument("-o", "--output-dir", type=Path, help="absolute path below a Dusky memory pool")
-    parser.add_argument("--move-to", type=Path, help="move finalized media from memory pool to disk directory")
+    parser.add_argument("-o", "--output-dir", type=Path, help="output directory (default: automatic RAM-backed pool)")
+    parser.add_argument("--move-to", type=Path, help="move finalized media from output directory to another directory")
     parser.add_argument("--update-urls-file", type=Path, help="mark completed URLs with # DOWNLOADED in this file")
     parser.add_argument("--min-free-gb", type=float, default=4.0, help="stop queue if free disk space in GB drops below this (default 4.0)")
     parser.add_argument("-I", "--playlist-items", help="inclusive playlist positions (all, 1-3, -3:, ::-1)")
     parser.add_argument("-N", "--concurrent", type=int, help="parallel jobs (positive; limited by queue length)")
     parser.add_argument("--skip-items", help="skip final queue positions; use --skip-items=-3: for a leading minus")
-    parser.add_argument("--cookies", type=Path, help="Netscape cookie file; copied into RAM per child")
+    parser.add_argument("--cookies", type=Path, help="Netscape cookie file; copied into the work directory per child")
     parser.add_argument("--cookies-from-browser", help="yt-dlp browser selector, e.g. firefox")
     parser.add_argument("--gui", action="store_true", help="launch the GTK downloader")
     parser.add_argument("--self-test", action="store_true", help="run offline parser/selector regression checks")
