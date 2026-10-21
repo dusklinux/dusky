@@ -87,8 +87,9 @@ For a copyable write operation, save this separately as `settings-write.js`:
 ```js
 rpc.exports.run = parameters => onMain(() => {
     if (typeof parameters.key !== 'string') throw Error('Provide a setting key');
-    const roots = controllers().filter(x => x.className === 'EDRootController');
-    if (roots.length !== 1) throw Error('Open the Duskie settings root');
+    const page = parameters.page || 'EDRootController';
+    const roots = controllers().filter(x => x.className === page);
+    if (roots.length !== 1) throw Error('Open the requested Duskie settings page');
     const root = roots[0].object;
     const specs = checked(root, 'specifiers', '@16@0:8'), matches = [];
     for (let i = 0; i < count(specs); i++) {
@@ -117,11 +118,13 @@ rpc.exports.run = parameters => onMain(() => {
 });
 ```
 
-Example, only when USB recording is the intended destination:
+Camera controls live in **Camera & Voice Notes** (`DKCameraPreferences`), rather
+than the root controller. Open that page before writing a camera key. Example,
+only when disabling microphone recording is intended:
 
 ```sh
 ./iphone-control --control-path /tmp/iphone-control-ssh --process DuskieRemoteFTP js ./settings-write.js \
-  --args '{"key":"cameraRemoteTransport","value":"usb"}'
+  --args '{"page":"DKCameraPreferences","key":"cameraAudio","value":false}'
 ```
 
 The template checks unique membership before changing anything. It deliberately
@@ -133,9 +136,8 @@ Useful Duskie keys; inspect the installed controller for its current schema:
 | Key | Value / role |
 |---|---|
 | `nativeCameraRemote` | Native Camera remote-storage switch |
-| `nativeCameraFrameRate` | Regular Camera Video: 0 = Apple default; 24 / 25 / 30 / 50 / 60 fps. Reopen Camera after changing; selected format/lens must support it. Slo-mo is unchanged. |
 | `cameraDestination` | `photos`, `folder`, or `remote` for screen-off capture |
-| `cameraRemoteTransport` | `ftp` (default) or `usb`, shared by both capture paths |
+| `cameraRemoteTransport` | `ftp` or `usb`; selected through Remote connection, which also saves the Files/share connection choice |
 | `cameraRAMBufferMiB` | Configured RAM queue choice: 256 / 512 / 1024 MiB |
 | `cameraVideoMode_back` | Screen-off back-camera format, e.g. `3840x2160@60` / `1920x1080@240` |
 | `cameraCodec` | `auto`, `h264`, `hevc`; hardware capabilities still apply |
@@ -145,11 +147,18 @@ this table is an operational guide, not a full schema. The shared plist is
 `/var/mobile/Library/Preferences/com.dusklinux.edgedock.plist`; settings notification
 is `com.dusklinux.edgedock/settings`. A Darwin post is not proof a listener finished.
 
-Useful root controller actions are `testRecordingConnection`,
+Camera-page actions are `testRecordingConnection`,
 `openUSBPreview`, `retryRAMUploads`, `cameraStatus` and `stopCamera`. They are void,
-no-argument methods (`v16@0:8`); inspect with `methods EDRootController` first and
-invoke with `checked` on the main queue. Testing opens a result alert; retry/stop
+no-argument methods (`v16@0:8`); inspect with `methods DKCameraPreferences` first and
+invoke on the live `DKCameraPreferences` with `checked` on the main queue. Testing opens a result alert; retry/stop
 are mutations. Prefer the SSH worker for capture control when Frida is unnecessary.
+
+The Remote Storage connection page is `DKRemoteController` in the standalone app.
+It preserves Wi-Fi credentials when switching to USB. Connect and Open Files
+checks and saves the shared choice. The **Send to Remote** Share extension can
+select either transport for that share and writes to **Duskie Shares**. Keep the
+sheet open until completion; Retry retains unacknowledged files within that sheet.
+Closing it requires sharing the originals again. Verify actual uploaded bytes.
 
 ## Native Slo-mo and ordinary video
 
@@ -207,8 +216,8 @@ The existing Wi-Fi FTP server/account/Files provider remain separate. A connecte
 cable plus iproxy alone is insufficient: the receiver and reverse forwards must
 also be alive. USB can operate with Wi-Fi off.
 
-On the phone select **Duskie → Remote recording connection → USB / laptop
-receiver**; enable **Camera app → Remote storage** for native Camera or **Save
+On the phone open **Duskie → Camera & Voice Notes → Remote connection (USB /
+Wi-Fi)**, select USB and Connect; enable **Camera app → Remote storage** for native Camera or **Save
 photos & videos to → Remote storage** for screen-off recording. Use **Test
 selected recording connection** before capturing. Selecting Wi-Fi / Remote FTP
 preserves the original FTP method; it does not use this managed receiver.
@@ -216,12 +225,15 @@ preserves the original FTP method; it does not use this managed receiver.
 For preview on the laptop:
 
 ```sh
-mpv http://127.0.0.1:8765/
+mpv --no-resume-playback http://127.0.0.1:8765/
 # Explicit media endpoint:
-mpv http://127.0.0.1:8765/live.m3u8
+mpv --no-resume-playback http://127.0.0.1:8765/live.m3u8
 ```
 
-The receiver redirects media clients to the latest recording playlist.
+The root URL redirects media clients to the latest live playlist or, once
+finalized, its MP4. Disable resume for this changing alias: a saved position from
+an older clip can lie beyond the current recording and trigger HEVC reference
+errors. Duplicate MOOV/SBGP warnings alone do not establish damaged media.
 A browser visiting the root, or `/recordings`, gets the recording index. If a receiver returns HTML to mpv at the bare URL, use `/live.m3u8` and inspect
 its installed version instead of treating the HTML as a movie. Before any segments arrive,
 the media endpoint returns 503 with an explanation. Open after segments arrive.
@@ -229,8 +241,9 @@ Opening selects the newest media by media modification time and pins that movie;
 it does not switch automatically to the next recording. Seek within received
 history. Preview trails capture and is not a zero-latency camera feed.
 
-Per-recording playlists are `.duskie-preview/UUID/index.m3u8`; byte ranges point
-at a hard link of the original media, with no second full copy or re-encoding.
+Per-recording playlists are `.duskie-preview/UUID/index.m3u8`; distinct init and
+fragment URLs read bounded regions of a hard link to the original media, with
+no second full copy or re-encoding.
 Keep that preview directory and media intact during capture. Removing only one
 hard link won't release the inode's space. Browser HEVC support varies; use mpv
 when browser playback is unsupported. The phone can open the same loopback URL

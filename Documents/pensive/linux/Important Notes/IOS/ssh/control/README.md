@@ -258,8 +258,8 @@ Private configuration and frame-rate enums are not human-readable fps values.
 Use displayed labels and inspect the finalized media; do not set guessed enums.
 
 The CLI does not redirect native capture storage. Duskie's installed
-**Camera app → Remote storage** switch and **Remote recording connection**
-selector determine that independently. A standard
+**Camera app → Remote storage** switch in **Camera & Voice Notes**, and the
+**Remote connection (USB / Wi-Fi)** page determine that independently. A standard
 native capture normally requires the Camera app's foreground capture session;
 do not assume locking the display preserves a native recording. Use Duskie's
 worker for its screen-off recording feature.
