@@ -1,3 +1,29 @@
+## Auto-Lock policy recommendation — 2026-10-21, v1.0.32
+
+`com.apple.managedconfiguration.profiled` now defaults **On** (`no` / builtin
+`false`) and is **Recommended On**, outside Critical. **Groups → Auto-Lock and
+configuration policy** controls this service alone, with both On and manual Off
+available. Restart userspace after a group change. Other enrollment, management
+and passcode-prompt jobs retain their existing defaults.
+
+On the supplied iPhone 8 Plus / iOS 16.7.16, profiled was disabled/unregistered.
+The battery-saver client retained `maxInactivity = 30` even with Low Power Mode
+off, Auto-Lock was greyed out, and native writes failed with “Couldn't communicate
+with a helper application.” Enabling and bootstrapping this existing on-demand
+Apple service cleared the stale restriction. It also needs to remain available
+for Duskie's optional normal Auto-Lock timeout during Low Power Mode. See
+[Duskie’s device verification](https://github.com/dusklinux/duskie/blob/main/research/FIXES-0.2.67.md).
+This establishes a functionality dependency, not a bootloop or high-CPU risk.
+
+Current matching config/builtins: **513 targets, 331 Off / 182 On, including
+58 Critical On**. Only profiled's Boolean target changed. Installing the app does
+not apply defaults; explicit custom targets remain authoritative. The existing
+AirDrop helper still restores profiled's prior state, so an already-enabled job
+stays enabled. Historical notes describing profiled Off are superseded by this
+recommendation and the October 21 repair. Future diagnostics should preserve
+its current enabled state rather than restore the old Off profile. No additional
+phone changes, daemon audit, or performance claim accompanies this update.
+
 ## Group Off audit — 2026-10-18, v1.0.31
 
 Defaults remain **513 target entries: 332 Off / 181 On, including 58 Critical On**. Counts include aliases. This revision changes no builtin Boolean target and does not apply defaults during installation. Core storage/filesystem/NAND, cache reclamation, memory/resource management, NAT/network configuration and USB/SSH access remain enabled.
