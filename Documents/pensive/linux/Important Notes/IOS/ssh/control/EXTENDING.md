@@ -275,3 +275,49 @@ error. It does not synthesize general touch/HID streams. Those are separate task
 with different interfaces and validation requirements. Existing typed semantic
 handlers are often enough; add another stack only when the requested interaction
 actually requires it.
+
+
+## Additional lessons from the completed main session (2026-10-21)
+
+- Use BOOTSTRAP.md for the matched server/agent and entitlement-preserving
+  rootless workaround. The control runtime does not install or patch a server.
+  Plain signing of that privileged server caused termination; original signing
+  entitlements were required. This is different from signing an ordinary UI dylib.
+- Frida 17 plain GumJS does not automatically include the ObjC bridge. This raw
+  runtime deliberately does not require it. The REPL's globals are not evidence
+  that an arbitrary Python-loaded script has the same helpers.
+- Keep probe filenames distinct from Python standard-library modules. A local
+  `inspect.py` shadowed stdlib inspect and broke the Frida host import path;
+  renaming it to a task-specific probe name fixed that failure. Check module
+  origin before diagnosing a device crash from a host import failure.
+- Serialize Frida work. A suspended app or concurrently blocked main queue can
+  produce attach/RPC timeouts. Don't foreground another app during native capture
+  merely to make a probe finish. Cancellation is not rollback.
+- Synchronous Objective-C exception tracing from an Interceptor while another
+  NativeFunction waited on the main queue deadlocked an investigative probe.
+  Remove the tracer/use a small compiled diagnostic; do not switch everything to
+  exclusive scheduling to mask it. Frida documents that exclusive NativeFunction
+  scheduling can deadlock; cooperative is the normal default. See the
+  [Frida JavaScript API](https://frida.re/docs/javascript-api/).
+- Use bounded traversal with a seen set. Parent/presented relationships can cycle;
+  SpringBoard can expose legacy UIApplication windows beyond connected scenes.
+  Select a specific active controller, not the first recursive pointer match.
+- Native Camera mode 2 is Slo-mo on this runtime. The wrapper now preserves mode 2
+  during format selection and allows its start/format routes. Select mode first,
+  then verify human-readable resolution/fps and final encoded media. Private
+  enum values are observations, not universal frame rates.
+- Duskie native segmented capture removes the ordinary movie output and therefore
+  requires its explicit viewfinder stop hook. Capture redirection is a product
+  hook, not something the control CLI installs. 0.2.62 full-movie RAM limits are
+  historical; 0.2.63+ reclaims acknowledged segments but still has a backlog limit.
+- A UIAlertController dismissal does not invoke its UIAlertAction handler. For
+  Duskie-owned SpringBoard overlay windows, that handler may also release the
+  retained key window. `_invokeHandler` was absent; no guessed selector or block
+  memory offset belongs in a generic fallback. Use a verified semantic action or
+  a properly typed block/native implementation for that particular app.
+- App-specific settings/table rows need their real controller/selector, not a
+  label treated as a UIControl. RECIPES.md shows shared specifier inspection and
+  lists current Duskie settings actions. Inspect exact encodings before extending.
+- Read fresh connection results by timestamp and transport. FTP login alone is
+  insufficient: passive data connections must work too. Keep worker stop/status
+  independent from an attached long-running start invocation.

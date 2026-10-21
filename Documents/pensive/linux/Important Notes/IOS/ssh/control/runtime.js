@@ -94,7 +94,7 @@ function cameraStatus() {
 }
 function videoFormat() {
     const controller=camera();
-    if(integer(controller,'currentCaptureMode')!==1)throw Error('Select standard Video mode before reading/changing its format');
+    if(![1,2].includes(integer(controller,'currentCaptureMode')))throw Error('Select Video or Slo-mo before reading/changing its format');
     const indicator=checked(controller,'_videoConfigurationStatusIndicator','@16@0:8');
     if(indicator.isNull())throw Error('Camera video indicator is not ready');
     const label=name=>text(send0(checked(indicator,name,'@16@0:8'),'text'));
@@ -208,12 +208,12 @@ const actions = {
     'camera.format':videoFormat,
     'camera.mode':parameters=>{
         const c=camera();if(boolean(c,'isRecording'))throw Error('Stop recording before changing mode');
-        if(parameters.mode!==0&&parameters.mode!==1)throw Error('Only standard Photo (0) and Video (1) are exposed');
+        if(![0,1,2].includes(parameters.mode))throw Error('Only Photo (0), Video (1) and Slo-mo (2) are exposed');
         checked(c,'changeToMode:device:','v32@0:8q16q24','void',['int64','int64'],[parameters.mode,0]);
         return {requestedMode:parameters.mode,device:0,note:'Read camera status after configuration settles'};
     },
     'camera.start':()=>{
-        const c=camera();if(integer(c,'currentCaptureMode')!==1)throw Error('Select standard Video mode first');
+        const c=camera();if(![1,2].includes(integer(c,'currentCaptureMode')))throw Error('Select Video or Slo-mo first');
         if(boolean(c,'isRecording'))return {changed:false,recording:true};
         return {accepted:Boolean(checked(c,'startRecording','B16@0:8','bool'))};
     },

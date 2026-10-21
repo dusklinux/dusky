@@ -23,7 +23,8 @@ CAMERA = "Camera"
 SPRINGBOARD = "SpringBoard"
 RESOLUTIONS = frozendict({"4k":"4k", "1080p":"hd", "720p":"720p"})
 WORKER_ACTIONS = ("start", "stop", "toggle", "photo", "voice-start", "voice-stop",
-                  "voice-toggle", "scan-microphones", "scan-camera", "upload-ram", "stream-ram")
+                  "voice-toggle", "scan-microphones", "scan-camera", "upload-ram", "stream-ram",
+                  "prepare-native", "test-connection")
 
 
 def positive(value):
@@ -95,7 +96,7 @@ def parser():
     cs = s.add_subparsers(dest="camera_action", required=True)
     for name in ("status", "format", "start", "stop", "photo", "fps-next", "resolution-next"):
         cs.add_parser(name)
-    m = cs.add_parser("mode"); m.add_argument("mode", choices=("photo", "video"))
+    m = cs.add_parser("mode"); m.add_argument("mode", choices=("photo", "video", "slowmo"))
     f = cs.add_parser("set-format", help="cycle native controls and verify their displayed labels")
     f.add_argument("--resolution", required=True, choices=("4k", "1080p", "720p"))
     f.add_argument("--fps", required=True, type=int, choices=(24,25,30,50,60,120,240))
@@ -195,7 +196,7 @@ def set_format(phone, resolution, fps):
     state = phone.rpc("camera.status")
     if state["recording"]:
         raise RuntimeError("Stop native recording before changing its format")
-    if state["mode"] != 1:
+    if state["mode"] not in (1, 2):
         phone.rpc("camera.mode", {"mode":1})
         time.sleep(0.6)
     original = phone.rpc("camera.format")
@@ -279,7 +280,7 @@ def run(args):
             if args.camera_action == "set-format":
                 return emit(set_format(phone,args.resolution,args.fps))
             action = "camera."+args.camera_action
-            parameters = {"mode":0 if args.mode == "photo" else 1} if args.camera_action == "mode" else {}
+            parameters = {"mode":{"photo":0,"video":1,"slowmo":2}[args.mode]} if args.camera_action == "mode" else {}
         else:
             action = "custom" if command == "js" else command
             parameters = {key:getattr(args,key) for key in ("bundle_id","max_nodes","identifier","label","class_name","class_methods","matching","name") if hasattr(args,key)}

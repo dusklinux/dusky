@@ -16,11 +16,11 @@ loader.exec_module(control)
 
 
 class FormatPhone:
-    def __init__(self, states):
-        self.states=states;self.index=0;self.actions=[]
+    def __init__(self, states, mode=1):
+        self.mode=mode;self.states=states;self.index=0;self.actions=[]
     def rpc(self,action,parameters=None):
         self.actions.append(action)
-        if action=='camera.status':return {'mode':1,'recording':False}
+        if action=='camera.status':return {'mode':self.mode,'recording':False}
         if action=='camera.format':return self.states[self.index]
         if action=='camera.fps-next':self.index=(self.index+1)%len(self.states)
         return {}
@@ -54,6 +54,16 @@ class ControlTests(unittest.TestCase):
             result=control.set_format(phone,'4k',60)
         self.assertEqual(result['after']['fpsLabel'],'60')
         self.assertEqual(phone.actions.count('camera.fps-next'),2)
+
+    def test_slowmo_format_preserves_mode(self):
+        phone=FormatPhone([state(120,7)|{'resolutionLabel':'HD'},state(240,8)|{'resolutionLabel':'HD'}],mode=2)
+        with patch.object(control.time,'sleep'):
+            result=control.set_format(phone,'1080p',240)
+        self.assertEqual(result['after']['fpsLabel'],'240')
+        self.assertNotIn('camera.mode',phone.actions)
+
+    def test_slowmo_parser(self):
+        self.assertEqual(control.parser().parse_args(['camera','mode','slowmo']).mode,'slowmo')
 
     def test_unsupported_rate_reports_current_and_original(self):
         phone=FormatPhone([state(24,10),state(30,5)])

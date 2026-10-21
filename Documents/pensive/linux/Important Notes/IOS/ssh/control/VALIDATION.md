@@ -1,5 +1,11 @@
 # Validation record
 
+Current review: **2026-10-21**, recorded below. The original 2026-10-20 account
+is retained as dated history; its “no phone commands” and unfinished-test statements
+apply to that original side task, not the later main-session evidence.
+
+## Original 2026-10-20 record
+
 Prepared **2026-10-20** in a side conversation, separate from the active Duskie
 implementation/testing session. No phone SSH command, Frida attach, recording,
 service change, preference change or recovery action was performed to validate
@@ -120,3 +126,73 @@ changes. No device operation was performed. The historical unlock.md is retained
 because it supplies a self-contained compiled recovery helper and detailed
 observations not duplicated in the main CLI. README.md remains the current entry
 point; the old addresses and temporary helper installation paths are historical.
+
+
+## 2026-10-21 notes and tooling review
+
+All nine original source/text files in this directory were read in full.
+Original copies and initial SHA-256 hashes were saved outside this folder at
+`/home/dusk/.codex/iphone-control-review-20261021/` for review. That is an audit
+snapshot, not a runtime dependency. `unlock.md` remains byte-for-byte unchanged.
+
+### Checks performed in this review
+
+- Python 3.15.0rc3: **16 host tests passed**, including Slo-mo format-mode
+  preservation and parsing; all worker action names are checked by the parser.
+- Node 26.12.0: runtime syntax and bridge contracts passed, now including mode 2
+  dispatch, Slo-mo start acceptance and rejection of an unsupported mode.
+- A local ignored Python 3.15 `.venv` was created; installation/import of Frida
+  17.2.17 succeeded and its interpreter's doctor reported the matching package.
+- `./iphone-control ssh -- ...`, `ps`, and `doctor --phone` exercised the real USB
+  SSH route without a Frida attach. Device uname reported iPhone10,2; dpkg-query
+  read back `com.dusklinux.edgedock 0.2.65~duskie1`.
+- Phone command discovery found Python3, ldid and sbreload under `/var/jb/usr/bin`;
+  notifyutil and an installed frida-server were absent. No server was installed,
+  signed, started or attached during this review.
+- Existing iproxy and managed `duskie-usb` receiver were active. A user recording
+  partial was growing. Capture, receiver, UI, radio and preferences were left alone.
+- Cached official Frida DEB matched the SHA-256 published for release 17.2.17.
+  Local GNU ar/tar extraction confirmed the documented payload paths; the agent
+  path replacement matched exactly twice and preserved executable byte length.
+- All inline JavaScript/Python examples passed host syntax checks; Markdown local
+  links and code fences passed consistency checks. These are not execution tests
+  of the inline device examples.
+- README, bootstrap, recipes, extension guidance and links were reviewed against
+  the current CLI/source and dated main-session release evidence.
+
+The consolidated **Frida UI routes**, new Slo-mo wrapper route, screenshot,
+generic UIControl/alert handling and inline JS examples still require live
+acceptance when the phone is available. Mock tests cannot validate private iOS ABI
+or a responsive app main queue. No new recordings or reconnect experiments were
+performed merely to update these notes.
+
+### Completed main-session evidence available by this review
+
+These are earlier underlying product/probe tests, not acceptance of this CLI:
+
+| Capture | Transport | Format | Duration | Bytes |
+|---|---|---|---:|---:|
+| Native Camera | USB, Wi-Fi off | 1080p240 | 18.134785 s | 28,190,435 |
+| Native Camera | USB, Wi-Fi off | 4K60 | 18.065125 s | 97,460,038 |
+| Screen-off | USB | 1080p240 | 24.881667 s | 47,838,933 |
+| Screen-off | Wi-Fi FTP | 4K60 | 42.188333 s | 252,162,195 |
+| Native Camera | Wi-Fi FTP | 4K60 | 17.742222 s | 96,809,992 |
+| Native Camera | USB | 1080p30 | 5.242449 s | 4,123,235 |
+
+All six completed full FFmpeg error-sensitive decode. Screen-off 240 reported
+seven video drops and zero audio-buffer drops; the screen-off 60 sample reported
+zero drops. Do not turn this into a zero-drop guarantee. Native UI start/stop and
+restoration, live USB mpv playback/seek before finalization, phone preview reachability
+and explicit unavailable-endpoint alerts were observed in those main sessions.
+Both actual phone connection-test UI results passed (FTP and USB); unavailable
+USB returned an explicit failure. The managed receiver restarted after its SSH
+child was deliberately terminated. Bare-root mpv playback was tested separately
+against existing received media after the HTML-response fix.
+
+Main source evidence is retained under `/mnt/zram1/duskie/research/`:
+`NATIVE-STREAMING-0.2.63.md`, `USB-PREVIEW-0.2.64.md`,
+`CONNECTION-UI-0.2.65.md`, `PREVIEW-URL-FIX.md`. See RECIPES.md for what each covers.
+Those volatile paths are provenance, not required control-tool dependencies.
+Long final-release recordings, cable removal during active capture, sustained
+full-backlog behavior and battery/heat remain unverified here and were left to
+the user. Keep that distinction when adding future results.

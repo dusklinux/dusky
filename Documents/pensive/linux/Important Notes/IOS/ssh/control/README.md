@@ -6,24 +6,34 @@ The executable is **`iphone-control`** and its self-contained Frida helper is
 Duskie checkout, a saved SpringBoard PID, a phone-specific UUID or an injected
 review dylib. Keep the two files together.
 
-This directory was prepared on **2026-10-20**. It consolidates methods observed
-in the main Duskie session on an **iPhone 8 Plus, iOS 16.7.16 / 20H392, rootless
-jailbreak, ElleKit 1.2**. The host used Python 3.15.0rc3, Node 26.12.0 and OpenSSH
-10.6p1. This is a specific iOS 16 control profile, not a claim of support for every
-iPhone or iOS version. The model identification in older notes differs; use
-`uname -a` and the device's own reported model when the distinction matters.
+Reviewed **2026-10-21** for the owner's **iPhone 8 Plus (iPhone10,2),
+iOS 16.7.16 / 20H392, rootless jailbreak, ElleKit 1.2**. Host: Python
+3.15.0rc3, Node 26.12.0, OpenSSH 10.6p1. This is an observed device profile,
+not a universal iOS automation interface. Discover current PIDs, paths and versions.
 
-**Verification status:** the original underlying probes were exercised during
-that session. This consolidated wrapper has host behavioral tests and JavaScript
-contract/syntax tests, but **has not been run against the phone**. It was created
-in a side conversation while the main conversation was using the device. The
-command reference identifies private calls; they check the live Objective-C
-method encoding before invoking them. A refusal is preferable to guessing the
-ABI. See [VALIDATION.md](VALIDATION.md) for the exact distinction.
+**Start with the procedure you need:**
+
+| Need | Read / do |
+|---|---|
+| Connect, transfer files, read status | Setup below; `./iphone-control doctor --phone` |
+| UI control but no working Frida server | [BOOTSTRAP.md](BOOTSTRAP.md): complete client/server, signing and rootless-path setup |
+| App settings, Wi-Fi, Slo-mo, USB recording or preview | [RECIPES.md](RECIPES.md) |
+| Exact bridge signatures / a new control action | [EXTENDING.md](EXTENDING.md) |
+| What was actually tested | [VALIDATION.md](VALIDATION.md) |
+| Original unlock helper / wake timing | [unlock.md](unlock.md), preserved historical evidence |
+
+**Verification boundary:** this CLI's USB SSH, process discovery and local doctor
+have been exercised on the phone. Its consolidated Frida UI dispatch remains
+host-tested, not device-accepted. The underlying main-session probes supplied
+successful live evidence for individual UI methods; that does not validate every
+wrapper route. Sixteen Python tests and Node contracts cover local behavior.
+The 2026-10-21 review deliberately avoided UI changes while a user capture was
+uploading. Private calls refuse a mismatched Objective-C method encoding.
 
 ## What this actually does
 
-There are two control channels:
+The control tool uses two channels (USB recording is a separate transport,
+explained in [RECIPES.md](RECIPES.md)):
 
 1. **SSH** runs commands, reads files, resolves current PIDs, transfers files and
    invokes the installed Duskie camera worker.
@@ -47,7 +57,9 @@ method on the wrong object, process or argument type can crash that process.
 |---|---|
 | `iphone-control` | Python 3.15+ CLI; executable directly or through an explicitly chosen Python |
 | `runtime.js` | Checked private calls, Objective-C bridge, main-queue scheduling, UI inspection |
-| `README.md` | Setup, every command, workflows, recovery and limitations |
+| `README.md` | Entry point, command reference, recovery and limitations |
+| `BOOTSTRAP.md` | Complete known Frida setup, root privilege, signing and agent-path recovery |
+| `RECIPES.md` | App settings, Wi-Fi, Slo-mo, recording transports and live preview |
 | `EXTENDING.md` | How to add a command, exact signatures, custom JS and failure lessons |
 | `VALIDATION.md` | Tests performed locally and evidence inherited from the original probes |
 | `test_control.py` | Host-only parser, quoting, selection, cleanup and format-loop tests |
@@ -55,7 +67,8 @@ method on the wrong object, process or argument type can crash that process.
 | `.gitignore` | Ignore local Python cache/environment artifacts |
 | `unlock.md` | Pre-existing detailed unlock history and standalone Objective-C recovery helper; unchanged |
 
-No credentials, binaries, SDKs or Python environments are newly bundled here.
+No phone binaries or SDKs are bundled here. A local ignored `.venv` was prepared
+on this host; recreate it if absent. See BOOTSTRAP.md for offline preparation.
 The existing `unlock.md` contains older connection details supplied by the owner;
 its IP address and temporary project paths are historical, not current defaults.
 
@@ -139,12 +152,17 @@ python3 -m venv .venv
 
 `17.2.17` is the historical client/server version used for the source probes,
 not a permanent version requirement. If the installed server differs, choose
-its corresponding client version. Creating this environment and installing that
-package were **not** performed as part of creating this tool. Do not point the
+its corresponding client version. This local `.venv` was created and Frida
+17.2.17 installed successfully during the 2026-10-21 review; local doctor
+confirmed the interpreter and distribution. Do not point the
 script at the earlier Python 3.14 environment: its interpreter cannot parse the
 new Python 3.15 syntax. Do not globally replace another session's environment.
 
 ### Device Frida server
+
+**No Frida server was installed/running at the 2026-10-21 read-only check.**
+Use [BOOTSTRAP.md](BOOTSTRAP.md) when starting from that state; the following
+is the short route for an already working installation.
 
 A correctly installed and signed Frida server and its matching agent are needed
 on the phone. Use the package appropriate to the actual rootless bootstrap and
@@ -328,20 +346,22 @@ used Video. Status is authoritative:
 | Camera subcommand | Behavior |
 |---|---|
 | `status` | Current standard mode enum and recording state |
-| `mode photo` / `mode video` | Standard Photo=0 / Video=1, device selector 0 as observed on this profile |
+| `mode photo` / `mode video` / `mode slowmo` | Photo=0 / Video=1 / Slo-mo=2, device selector 0 as observed on this profile |
 | `format` | Configuration enum, frame-rate/resolution enums and **displayed labels** |
 | `fps-next` | Invoke the native frame-rate-indicator tap handler once |
 | `resolution-next` | Invoke the native resolution-indicator tap handler once |
 | `set-format --resolution ... --fps ...` | Cycle native controls, settle between steps and verify displayed labels |
-| `start` | Start standard Video; leave an already recording capture running |
+| `start` | Start Video or Slo-mo; leave an already recording capture running |
 | `stop` | Stop if recording; otherwise return unchanged |
 | `photo` | Invoke native capturePhoto; actual result may finish asynchronously |
 
 `set-format` accepts resolutions `4k`, `1080p`, `720p` and fps
 `24,25,30,50,60,120,240` as requests, **not promises of device/mode support**.
-The observed profile labels are `4K`, `HD` and a possible `720p` label. Only the
-4K cycle is supported by inherited live evidence; verify other displayed labels
-before extending this mapping. If the UI cannot reach a request, the tool exits
+The observed profile labels are `4K`, `HD` and `720P` (matched without case).
+Choose `mode slowmo` before requesting 120/240 fps: `set-format` preserves an
+existing Video or Slo-mo mode, but chooses Video if starting from Photo. Main-session
+probes exercised HD/30, HD/240 and 4K/60; wrapper acceptance is still separate.
+If the UI cannot reach a request, the tool exits
 with the current and original states rather than inventing a configuration enum.
 A failed cycle may leave the Camera selection changed: use the printed original
 format to restore it. Mode changes and direct cycle commands return a request;
@@ -354,13 +374,17 @@ On the original phone, actual UI observations included:
 | 10 | 1 | 4K / 24 |
 | 5 | 3 | 4K / 30 |
 | 9 | 4 | 4K / 60 |
+| 7 | 3 | HD / 30 (Video) |
+| 6 | 3 | 720P / 30 (Video) |
+| 8 | 6 | HD / 240 (Slo-mo, mode 2) |
 
 These numeric values are **evidence only**. The implementation cycles native
 controls and reads labels; it does not hardcode those video configuration enums.
 A value of `4` in `framerateEnum` is not 4 fps or 60 fps by itself.
 
 The CLI does not redirect native capture storage. Duskie's installed
-**Camera app → Remote FTP** setting determines that independently. A standard
+**Camera app → Remote storage** switch and **Remote recording connection**
+selector determine that independently (Duskie 0.2.65). A standard
 native capture normally requires the Camera app's foreground capture session;
 do not assume locking the display preserves a native recording. Use Duskie's
 worker for its screen-off recording feature.
@@ -392,6 +416,8 @@ Every supported worker action is listed below:
 | `scan-camera` | Refresh supported lens/video-format choices |
 | `upload-ram` | Retry ready RAM files / segmented capture manifests |
 | `stream-ram` | Scan native recording markers; integration action, not a start-video command |
+| `prepare-native` | Prepare selected remote configuration / RAM staging; not read-only |
+| `test-connection` | Test selected FTP/USB endpoint without recording; writes a separate result plist |
 | `status` | Parse status.plist into JSON on the host; read-only |
 
 Override `--path` and `--status-path` after `worker` for a different installation.
@@ -412,9 +438,10 @@ supports every action; pre-streaming releases may reject `stream-ram`.
 The helper defaults to `/var/jb/usr/libexec/duskie-camera`; its settings and status
 conventionally live under `/var/mobile` on this iOS setup. Feature enablement,
 lens, format, audio and destination come from the shared tweak plist. This CLI
-does not silently change them. Duskie 0.2.62's known architecture is described
-in the project release notes; don't assume the still-running main session has
-finished installing or publishing a candidate just because this guide exists.
+does not silently change them. Installed version 0.2.65~duskie1 was read back on
+2026-10-21. Version 0.2.63+ uses segmented native video; the old 0.2.62 full-movie
+RAM cap is historical. See RECIPES.md for transport selection, fresh connection-test
+results and receiver management.
 
 ### Notifications and custom scripts
 
@@ -461,9 +488,10 @@ A 4K60 screen-off source probe in the main session recorded 174.149660 seconds,
 without errors. A separate 18-second outage test continued at 4K60, with zero
 reported dropped video frames/audio buffers. A final snapshot-during-video test
 reported one dropped video frame. Those are finite observed tests, not a guarantee
-for every scene, network, memory pressure level or future release. Native 4K60
-testing was ongoing when this side conversation began; **no final result from
-that unfinished main-thread test is claimed here**.
+for every scene, network, memory pressure level or future release. Later completed
+main-session native USB tests included 4K60 (18.065125 s) and
+1080p240 (18.134785 s), plus native FTP 4K60 (17.742222 s), all fully decoded.
+See VALIDATION.md for the evidence boundary; these are not live tests of this CLI.
 
 ### Preferences: backup, edit deliberately, verify, restore
 
@@ -489,8 +517,11 @@ and ordinary diagnostic output. This does not require a new credential store.
 - The Duskie capture tmpfs path observed was
   `/var/mobile/Library/Duskie/CameraRAM`. Verify its filesystem type and real free
   capacity with df/mount; directory existence alone is insufficient.
-- The observed tmpfs did not support F_PUNCHHOLE prefix reclamation. Native Camera's
-  seekable movie remained in RAM until finalization, even while bytes uploaded.
+- **Historical 0.2.62 behavior:** tmpfs did not support F_PUNCHHOLE prefix
+  reclamation, so a seekable native movie retained its entire RAM file until
+  finalization. **0.2.63+ replaces that video path with segmented writing and
+  deletes acknowledged RAM segments.** A finite RAM backlog limit still applies
+  if the receiver is slower or unavailable. Do not restore the old whole-file cap.
 - `mount_tmpfs -o update -s ...` returned success but did not resize that volume.
   Measure capacity. Never overmount retained captures to make a test look empty.
 - A native movie writer may rewrite its header/index or defragment at close.
@@ -510,12 +541,15 @@ and ordinary diagnostic output. This does not require a new credential store.
 | SSH connection refused | Existing iproxy, attached USB device, jailbreak SSH service and chosen port |
 | SSH key failure | Interactive `shell`, correct account/identity or existing multiplexed connection; don't paste passwords into argv |
 | Frida connection refused | Server process, its listen port and the host SSH forward |
-| Missing frida-agent.dylib | Matching rootless package, signing and actual agent path; don't assume transport is broken |
+| Missing frida-agent.dylib | Follow BOOTSTRAP.md; inspect exact error, matching package and preserved signing entitlements |
+| Plain signed server immediately killed | Preserve the original Frida server entitlements; plain `ldid -S` failed here |
+| mpv rejects preview URL as HTML | Updated receiver accepts bare root or `/live.m3u8`; see RECIPES.md |
+| USB unavailable despite cable | SSH alone is insufficient: managed receiver and reverse forwards must also be active |
 | Expected one running process, found 0 | Launch the app, wait for readiness, then resolve its fresh PID |
 | More than one matching process | Inspect `ps`, use a deliberate fresh `--pid`; don't select the first arbitrarily |
 | ABI mismatch | Stop using that action; inspect methods in this exact runtime and review the typed call |
 | Class unavailable | Wrong process, framework not loaded, different iOS/tweak version or absent injection |
-| Missing video indicator / Photo mode | Select standard Video, wait for configuration, inspect status/format |
+| Missing video indicator / Photo mode | Select Video or Slo-mo, wait for configuration, inspect status/format |
 | accepted=true but no result | Check live state, capture errors, permissions/feature enablement and timestamps |
 | RPC cancellation/timeout | Action may already have run; inspect actual state before repeating a toggle/start/stop |
 | Script destroyed / process gone | Check fresh PID, crash/Safe Mode state and phone responsiveness; don't blindly rerun mutation |
