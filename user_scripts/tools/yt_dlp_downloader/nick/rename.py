@@ -34,7 +34,12 @@ DEFAULT_ALLOWED_EXTENSIONS: frozenset[str] = frozenset(
 )
 
 EP_RE: re.Pattern[str] = re.compile(
-    r"\bamerica\s+(?:first|frist)(?:\s+with\s+nicholas\s+j\.?\s+fuentes)?\s+ep\.?\s*(\d{1,6})(?!\w)", re.IGNORECASE
+    r"(?:"
+    r"\b(?:america\s+(?:first|frist)(?:\s+with\s+nicholas\s+j\.?\s+fuentes)?|af)\s+(?:ep\.?|episode)\s*(\d{1,6})(?!\w)"
+    r"|\b(?:ep\.?|episode)\s*(\d{1,6})(?!\w)"
+    r"|[\|｜]\s*(\d{3,4})(?!\w)"
+    r")",
+    re.IGNORECASE,
 )
 NUMERIC_STEM_RE: re.Pattern[str] = re.compile(r"^(\d{1,6})$")
 
@@ -112,10 +117,13 @@ def extract_episode_id(filename: str) -> int | None:
         match = EP_RE.search(filename)
         if not match:
             return None
-        episode_id = int(match.group(1))
+        for g in match.groups():
+            if g is not None:
+                episode_id = int(g)
+                return episode_id if episode_id > 0 else None
+        return None
     except (ValueError, OverflowError):
         return None
-    return episode_id if episode_id > 0 else None
 
 
 def canonical_name_for_numeric(filename: str, allowed: frozenset[str]) -> str | None:
@@ -166,7 +174,14 @@ def iter_candidate_files(directory: Path, recursive: bool) -> list[Path]:
             entries = list(directory.iterdir())
     except OSError as exc:
         raise OSError(f"cannot list directory '{directory}': {exc.strerror or exc}") from exc
-    entries.sort(key=lambda p: (p.name.casefold(), str(p)))
+    def file_sort_key(p: Path) -> tuple[int, str, str]:
+        try:
+            sz = -p.stat().st_size
+        except OSError:
+            sz = 0
+        return (sz, p.name.casefold(), str(p))
+
+    entries.sort(key=file_sort_key)
     return entries
 
 
