@@ -1,8 +1,7 @@
-# Extending the control tool without repeating the investigation
+# Extend control operations and inspect private APIs
 
 Read the [README](README.md) first. This file explains the implementation and
-records the failure lessons that matter when adding a capability. It is not
-permission to operate a device that belongs to another active session.
+defines the bridge, ABI profile and procedure for adding a capability.
 
 ## Architecture and ownership
 
@@ -65,8 +64,7 @@ the host calls it with the decoded `--args` JSON value.
 | `methodList(className,classMethods,matching)` | Declared methods; superclass methods are separate |
 
 `native`, selector and class wrappers are cached for the script lifetime to avoid
-creating thousands of duplicate wrappers during a view-tree inspection. No
-performance improvement percentage has been measured. Caches do not cross
+creating duplicate wrappers during a view-tree inspection. Caches do not cross
 processes, invocations or resprings. Missing classes are not cached as successes.
 
 ### Minimal read-only extension
@@ -83,7 +81,7 @@ rpc.exports.run = parameters => onMain(() => {
 Run with an explicitly selected live process:
 
 ```sh
-./iphone-control --process Camera js ./controllers-example.js --args '{}'
+./iphone-control --control-path /tmp/iphone-control-ssh --process Camera js ./controllers-example.js --args '{}'
 ```
 
 ### Minimal typed invocation example
@@ -126,21 +124,18 @@ SEL, C string and block are all pointer-shaped but have different meanings.
 
 **A C string is not NSString.** `utf8('com.apple.camera')` returns C bytes suitable
 for sel_registerName or notify_post. Passing it to a method expecting NSString
-caused a SpringBoard restart in the original main-thread diagnostic. Use
-`ns('com.apple.camera')` for the app-launch selector. The new launcher tests cover
-that distinction without touching the phone.
+can crash SpringBoard. Use
+`ns('com.apple.camera')` for the app-launch selector.
 
 **A JavaScript Boolean is not automatically a valid NativeFunction BOOL argument
-in the observed client.** Use 0/1 for explicit native bool arguments. A diagnostic
-first failed with `expected an integer` when it supplied `false`; the corrected
-call uses 0.
+in the observed client.** Use 0/1 for explicit native bool arguments. Use 0 or 1 if a native bool argument rejects a JS Boolean with
+`expected an integer`.
 
 **The launch method returns BOOL.** Actual encoding:
 `B28@0:8@16B24`, not `v28@0:8@16B24`. Even if ignoring a return happened not to
 crash, that is not justification to leave the wrong prototype.
 
-**An absent selector is not a no-op.** The earlier
-`_simulateHomeButtonPress` call was absent and crashed a diagnostic SpringBoard.
+**An absent selector is not a no-op.** `_simulateHomeButtonPress` is absent on this profile.
 The observed selector is `_simulateHomeButtonPressWithCompletion:` with encoding
 `v24@0:8@?16`. Pass nil for its optional completion, after checking it exists.
 
@@ -155,8 +150,7 @@ checks the result is NSString before asking for UTF8String. A custom view can
 have a method named text with a different return type. `responds` alone doesn't
 prove the type of that getter.
 
-**Don't send NSSet directly to JSON serialization.** An older diagnostic tried
-this and raised an Objective-C exception in Camera. Walk the collection and
+**Don't send NSSet directly to JSON serialization.** Walk the collection and
 produce normal JavaScript arrays/objects, converting each item deliberately.
 The new runtime does not serialize arbitrary native collections as JSON.
 
@@ -173,8 +167,7 @@ Int64 values if loss of precision can affect an operation.
 ## Private-method profile used by built-in actions
 
 These are the **expected encodings in the implementation**, not a blanket claim
-that every action has been run in the new wrapper. The reference evidence is in
-[VALIDATION.md](VALIDATION.md). Runtime mismatch stops that action.
+that every action has been run in the new wrapper. Check capability status in [VALIDATION.md](VALIDATION.md). Runtime mismatch stops that action.
 
 | Receiver / selector | Expected encoding |
 |---|---|
@@ -204,21 +197,6 @@ that every action has been run in the new wrapper. The reference evidence is in
 | LSApplicationWorkspace class / defaultWorkspace | `@16@0:8` |
 | NSData / base64EncodedStringWithOptions: | `@24@0:8Q16` |
 
-The main session's typed Camera hooks additionally observed:
-
-| Hook | Actual encoding recorded in the source probes |
-|---|---|
-| CAMCaptureEngine captureOutput:didStartRecordingToOutputFileAtURL:fromConnections: | `v40@0:8@16@24@32` |
-| CAMCaptureEngine captureOutput:didFinishRecordingToOutputFileAtURL:fromConnections:error: | `v48@0:8@16@24@32@40` expected and guarded in the candidate; verify on the live build |
-| CAMViewfinderViewController _captureStillImageWithRequest:error: | `B32@0:8@16^@24` |
-| CAMViewfinderViewController _startCapturingVideoWithRequest: | `B24@0:8@16` |
-| CAMPersistenceController _notifyDelegateOfCompletedStillImageLocalPersistenceForRequest:withResult: | `v32@0:8@16@24` |
-| CAMPersistenceController _notifyDelegateOfCompletedVideoLocalPersistenceForRequest:withResult: | `v32@0:8@16@24` |
-
-These hook signatures are reference notes, not persistent hooks installed by the
-control tool. Capturing/redirecting media storage belongs to Duskie's source and
-needs its own build, installation and regression checks.
-
 ## Adding a built-in operation
 
 1. Find the receiver in the correct live process. Inspect controllers, classes,
@@ -241,83 +219,55 @@ needs its own build, installation and regression checks.
    observes it. Avoid unbounded polling, permanent loops or automatic restarts.
 7. Add a focused host test when there is meaningful host behavior to validate.
    Host tests do not establish the correctness of an iOS private ABI.
-8. Test on the phone only when its owner/main task has made it available. Record
-   the device/OS, method encoding, inputs, actual observed result, side effects
-   and cleanup. Update VALIDATION.md without turning a finite test into a universal
-   reliability claim.
+8. Exercise the operation in the authorized task. Check the actual resulting
+   state and restore temporary changes. Update the capability status if this
+   changes a known limitation; do not add a project diary to the manual.
 
 New commands should be useful actions or observations, not an untyped generic
 `invoke CLASS SELECTOR ARGS` interface that forces every later model to guess ABI
 rules again. `js` remains available for deliberate expert probes.
 
-## Questions future models should resolve before making claims
+## Diagnose a new operation
 
-- Is the current process still the same PID? Did a respring, app relaunch or Safe
-  Mode transition invalidate an earlier pointer or state report?
-- Is the receiver truly in SpringBoard, Camera, Settings or the Duskie app? A class
-  existing in a framework doesn't mean its active UI instance lives here.
-- Did the requested UI transition settle, or did the method merely accept it?
-- Did saved settings propagate into a cached process? Does status have a fresh
-  timestamp/PID and identify this request?
-- Did the actual media encode at the expected resolution/rate, with continuous
-  audio/video, or was only a preference label checked?
-- Did FTP grow before stop? Were acknowledged segments reclaimed, or did the
-  entire native seekable movie remain allocated in RAM?
-- Are failure recovery, original preferences, current Camera format and cleanup
-  accounted for? Does another agent still own the server/tunnel/capture?
+1. Verify the process and fresh PID; a receiver in Camera is not a SpringBoard
+   receiver. Inspect current controllers and loaded modules.
+2. Use `methods CLASS --matching TEXT` and inspect relevant superclasses. If a
+   framework/class is absent, identify the actual lazy-loaded framework before
+   invoking anything. An iOS header dump for another version is not a live ABI.
+3. Read the values that determine the action before writing them. Select table
+   rows by their current data/specifier IDs, not remembered indices. Require one
+   intended match; never select an empty search result.
+4. Convert returned data to plain JS before leaving `onMain`. Keep large integers
+   as strings and handle nil without messaging it as a valid object.
+5. Observe settled state after the request. For delayed callbacks/notifications,
+   distinguish a queued action from its completion. For media, inspect the file.
 
-## Deliberate exclusions
+## Failure patterns to avoid
 
-The tool does not infer future private selectors, modify binary offsets, patch
-Frida server paths, manage jailbreak/bootstrap installation, change injection
-filters, enroll biometrics, bypass a device passcode, or automate recovery on every
-error. It does not synthesize general touch/HID streams. Those are separate tasks
-with different interfaces and validation requirements. Existing typed semantic
-handlers are often enough; add another stack only when the requested interaction
-actually requires it.
+- Wait for injection initialization after a UI restart; see README.md. Serialize
+  Frida operations. A suspended app or blocked main queue may not answer an RPC.
+- Do not call arbitrary private objects’ `description` to dump them. Getters and
+  descriptions can run code, throw KVC exceptions or change state. Read only
+  required typed values; use className for unsupported objects.
+- NativeCallback is a C function pointer, not an ObjC block. For a required block
+  or complex UIKit struct signature use a correctly typed compiled helper; see
+  DEVELOPMENT.md. Do not guess a block layout or use an absent `_invokeHandler`.
+- `dismiss-alert` dismisses the view; it does not run the UIAlertAction handler.
+  App-owned overlay windows may require their actual handler for cleanup.
+- Avoid synchronous ObjC exception tracing inside an Interceptor while another
+  native call waits for the main queue. This can deadlock. Do not switch every
+  NativeFunction to exclusive scheduling to conceal the dependency.
+- Walk UI/controller trees with a seen set and a node bound. Parent/presented
+  relationships can cycle; UIApplication windows can include windows outside
+  connected scenes. Choose the required active controller explicitly.
+- Recompute internal symbol addresses from the exact installed build after each
+  rebuild; compare payload hashes. A previous offset is not an API. Stripped
+  symbols can make that diagnostic unavailable; do not substitute a guessed one.
+- Use task-specific probe module names, not Python standard-library names such
+  as inspect.py. Check host import paths before blaming a device process.
 
-
-## Additional lessons from the completed main session (2026-10-21)
-
-- Use BOOTSTRAP.md for the matched server/agent and entitlement-preserving
-  rootless workaround. The control runtime does not install or patch a server.
-  Plain signing of that privileged server caused termination; original signing
-  entitlements were required. This is different from signing an ordinary UI dylib.
-- Frida 17 plain GumJS does not automatically include the ObjC bridge. This raw
-  runtime deliberately does not require it. The REPL's globals are not evidence
-  that an arbitrary Python-loaded script has the same helpers.
-- Keep probe filenames distinct from Python standard-library modules. A local
-  `inspect.py` shadowed stdlib inspect and broke the Frida host import path;
-  renaming it to a task-specific probe name fixed that failure. Check module
-  origin before diagnosing a device crash from a host import failure.
-- Serialize Frida work. A suspended app or concurrently blocked main queue can
-  produce attach/RPC timeouts. Don't foreground another app during native capture
-  merely to make a probe finish. Cancellation is not rollback.
-- Synchronous Objective-C exception tracing from an Interceptor while another
-  NativeFunction waited on the main queue deadlocked an investigative probe.
-  Remove the tracer/use a small compiled diagnostic; do not switch everything to
-  exclusive scheduling to mask it. Frida documents that exclusive NativeFunction
-  scheduling can deadlock; cooperative is the normal default. See the
-  [Frida JavaScript API](https://frida.re/docs/javascript-api/).
-- Use bounded traversal with a seen set. Parent/presented relationships can cycle;
-  SpringBoard can expose legacy UIApplication windows beyond connected scenes.
-  Select a specific active controller, not the first recursive pointer match.
-- Native Camera mode 2 is Slo-mo on this runtime. The wrapper now preserves mode 2
-  during format selection and allows its start/format routes. Select mode first,
-  then verify human-readable resolution/fps and final encoded media. Private
-  enum values are observations, not universal frame rates.
-- Duskie native segmented capture removes the ordinary movie output and therefore
-  requires its explicit viewfinder stop hook. Capture redirection is a product
-  hook, not something the control CLI installs. 0.2.62 full-movie RAM limits are
-  historical; 0.2.63+ reclaims acknowledged segments but still has a backlog limit.
-- A UIAlertController dismissal does not invoke its UIAlertAction handler. For
-  Duskie-owned SpringBoard overlay windows, that handler may also release the
-  retained key window. `_invokeHandler` was absent; no guessed selector or block
-  memory offset belongs in a generic fallback. Use a verified semantic action or
-  a properly typed block/native implementation for that particular app.
-- App-specific settings/table rows need their real controller/selector, not a
-  label treated as a UIControl. RECIPES.md shows shared specifier inspection and
-  lists current Duskie settings actions. Inspect exact encodings before extending.
-- Read fresh connection results by timestamp and transport. FTP login alone is
-  insufficient: passive data connections must work too. Keep worker stop/status
-  independent from an attached long-running start invocation.
+General coordinate/HID gestures, arbitrary keyboard input, device-passcode unlock
+and biometric enrollment are not bundled operations. Prefer the app’s checked
+semantic handlers. If the requested task needs a missing interface, implement
+and verify that operation deliberately rather than advertise a guessed command.
+For native bridge details use [Frida’s JavaScript API](https://frida.re/docs/javascript-api/).

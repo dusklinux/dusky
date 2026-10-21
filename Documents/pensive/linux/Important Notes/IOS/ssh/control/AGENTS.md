@@ -1,24 +1,24 @@
-# Using this iPhone control directory
+# Use this iPhone control manual
 
-- Read README.md and VALIDATION.md before operating the phone. BOOTSTRAP.md covers
-  missing Frida/root/signing setup; RECIPES.md covers app settings, radios, capture
-  transports and preview. SSH, Frida and the USB recording receiver are separate.
-  Use the bundled iphone-control/runtime.js instead of rebuilding probes from an old transcript.
-- Follow the current user's authorization and the main/side conversation boundary.
-  A side task that writes local tooling must not take over a main task's phone,
-  server, tunnel or recording. No device operation is implied by running local tests.
-- Prefer USB SSH. Discover fresh PIDs. Keep UIKit work on its process's main queue.
-  Check the actual private-method ABI; never guess enums or offsets on mismatch.
-- Use ns() for NSString arguments, utf8() only for C strings, and 0/1 for native
-  BOOL arguments. Keep autorelease/lifetime requirements in EXTENDING.md in mind.
-- A request result, notification post, preference label or stale status file does
-  not prove an action completed. Verify live state and actual media when relevant.
-- SSH/doctor/process discovery have read-only device acceptance. The consolidated
-  Frida UI wrapper remains locally tested; inherited successful probes do not
-  make those routes device-tested. Record future live results in VALIDATION.md
-  with scope/limitations.
-- Do not overwrite unlock.md's historical evidence, embed credentials in new code,
-  broadly kill processes, reboot normally, or clear Safe Mode without diagnosing
-  the incident. Use the established owner recovery preferences and current scope.
-- Local checks: python3 test_control.py; node --check runtime.js;
-  node test_runtime.cjs; ./iphone-control doctor. These don't contact the phone.
+- Read README.md for the operating sequence and VALIDATION.md for readiness and
+  completion checks. Use BOOTSTRAP.md when SSH/Frida is missing, RECIPES.md for
+  tasks, EXTENDING.md for typed APIs, DEVELOPMENT.md for compiled helpers, and
+  unlock.md for the no-Frida unlock fallback.
+- Prefer USB SSH. Reuse existing authenticated connections/server/receiver when
+  available. Do not interrupt another operator’s capture or connection.
+- Discover fresh PIDs and wait for injection readiness before attaching after a
+  restart. Keep UIKit work in its owning process on the main queue.
+- Use the bundled CLI/runtime. Check live private-method encodings; never guess
+  a selector, scalar width, block representation, internal offset or object type.
+  Use ns() for NSString, utf8() for C strings and explicit 0/1 for native BOOL.
+- A successful request, notification or stale report is not completion. Read the
+  actual resulting state and preserve user media/queued uploads.
+- Stop only owned diagnostics. Respring or restart userspace when necessary;
+  never normal-reboot this setup. Diagnose Safe Mode before clearing its marker.
+- Restore temporary settings/keep-awake flags and unload owned callbacks/helpers.
+  Keep passwords out of command arguments and generated source.
+- Maintain this directory as a reusable operating manual: add complete procedures,
+  exact ABI requirements and actionable limits. Do not add project release notes,
+  review narratives, benchmark reports, session PIDs or temporary checkout paths.
+- Local tests: python3 test_control.py; node --check runtime.js;
+  node test_runtime.cjs; ./iphone-control --control-path /tmp/iphone-control-ssh doctor. These do not contact the phone.

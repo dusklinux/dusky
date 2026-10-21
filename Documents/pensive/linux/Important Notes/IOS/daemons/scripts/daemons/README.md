@@ -1,3 +1,11 @@
+# Daemon config notes and historical results
+
+Start with the [daemon operating guide](../../README.md). This directory holds
+the mirrored preset config and historical notes, not the retired standalone
+scripts. Later dated corrections supersede older "current"/"final" sections;
+do not use a past tested profile as the phone's present state. The complete
+dependency record is the [iOS 16 reference](../../daemons%20based%20on%20ios%2016.md).
+
 ## Auto-Lock policy recommendation — 2026-10-21, v1.0.32
 
 `com.apple.managedconfiguration.profiled` now defaults **On** (`no` / builtin

@@ -1,217 +1,105 @@
-# iPhone control from Linux over USB SSH
+# iPhone control manual
 
-Start here when a future agent needs to inspect or control this jailbroken iPhone.
-The executable is **`iphone-control`** and its self-contained Frida helper is
-**`runtime.js`**, both beside this document. It does not depend on the temporary
-Duskie checkout, a saved SpringBoard PID, a phone-specific UUID or an injected
-review dylib. Keep the two files together.
+Use this directory to operate the owner’s jailbroken iPhone from Linux and to
+prepare targeted control helpers or tweaks. Commands are for **iPhone 8 Plus
+(iPhone10,2), iOS 16.7.16 / 20H392, rootless `/var/jb`, ElleKit 1.2**. Confirm the
+live device before applying its private API profile elsewhere. Use **respring or
+userspace restart**, never a normal kernel reboot on this setup.
 
-Reviewed **2026-10-21** for the owner's **iPhone 8 Plus (iPhone10,2),
-iOS 16.7.16 / 20H392, rootless jailbreak, ElleKit 1.2**. Host: Python
-3.15.0rc3, Node 26.12.0, OpenSSH 10.6p1. This is an observed device profile,
-not a universal iOS automation interface. Discover current PIDs, paths and versions.
+Use the active task and latest owner instructions for current connection/state
+facts. This manual supplies procedures and capability limits; a documented
+method is not permission to run it or proof that its server/helper is still
+installed. [Daemon work](../../daemons/README.md) has a separate operating guide
+for presets, native overrides, dependencies and TrollStore installation.
 
-**Start with the procedure you need:**
+## Choose the procedure
 
-| Need | Read / do |
+| Task | Instructions |
 |---|---|
-| Connect, transfer files, read status | Setup below; `./iphone-control doctor --phone` |
-| UI control but no working Frida server | [BOOTSTRAP.md](BOOTSTRAP.md): complete client/server, signing and rootless-path setup |
-| App settings, Wi-Fi, Slo-mo, USB recording or preview | [RECIPES.md](RECIPES.md) |
-| Exact bridge signatures / a new control action | [EXTENDING.md](EXTENDING.md) |
-| What was actually tested | [VALIDATION.md](VALIDATION.md) |
-| Original unlock helper / wake timing | [unlock.md](unlock.md), preserved historical evidence |
+| USB SSH, authentication, root, Frida server and forwarding | [BOOTSTRAP.md](BOOTSTRAP.md) |
+| Commands for display, apps, UI, files and Camera | Command reference below |
+| App settings, screenshots, Wi-Fi, recording and storage | [RECIPES.md](RECIPES.md) |
+| Add a typed operation or inspect private APIs | [EXTENDING.md](EXTENDING.md) |
+| Build, sign, install and remove an iOS control dylib | [DEVELOPMENT.md](DEVELOPMENT.md) |
+| Unlock without Frida using a standalone injected helper | [unlock.md](unlock.md) |
+| Readiness, completion checks and known capability limits | [VALIDATION.md](VALIDATION.md) |
 
-**Verification boundary:** this CLI's USB SSH, process discovery and local doctor
-have been exercised on the phone. Its consolidated Frida UI dispatch remains
-host-tested, not device-accepted. The underlying main-session probes supplied
-successful live evidence for individual UI methods; that does not validate every
-wrapper route. Sixteen Python tests and Node contracts cover local behavior.
-The 2026-10-21 review deliberately avoided UI changes while a user capture was
-uploading. Private calls refuse a mismatched Objective-C method encoding.
+`iphone-control` is the host CLI; `runtime.js` is its injected helper. Keep them
+together: the CLI loads runtime.js from its own directory. Optional recording
+commands require the installed Duskie worker; ordinary UI control uses Frida.
 
-## What this actually does
+## First-use sequence
 
-The control tool uses two channels (USB recording is a separate transport,
-explained in [RECIPES.md](RECIPES.md)):
+1. Work from this directory. Run `./iphone-control --control-path /tmp/iphone-control-ssh doctor` locally. The CLI needs
+   Python **3.15+**; UI commands also need the Frida package in that interpreter.
+2. Follow BOOTSTRAP.md to reuse or establish USB SSH. Verify `./iphone-control --control-path /tmp/iphone-control-ssh ps`
+   before diagnosing Frida. The examples use mobile plus interactive sudo;
+   BOOTSTRAP.md also documents the owner-confirmed direct root route. Match
+   the SSH account and master socket throughout an operation.
+3. For UI control, follow BOOTSTRAP.md for a matching server/agent and SSH forward.
+   If already prepared, activate it with `source .venv/bin/activate`. Examples
+   using `./iphone-control` assume that environment is active when Frida is required.
+4. Complete the injection-readiness check below before attaching after a restart.
+5. Run `status`, then inspect the correct process before requesting an action.
+   Re-read its actual state afterward. An accepted request is not completion.
+6. Restore temporary settings and remove only the helpers/forwards you created.
 
-1. **SSH** runs commands, reads files, resolves current PIDs, transfers files and
-   invokes the installed Duskie camera worker.
-2. **Frida** attaches to the selected process. `runtime.js` uses the Objective-C
-   runtime to inspect its objects and call known methods. UIKit work is dispatched
-   onto that process's main queue. Camera actions run inside Camera; app launching
-   and display/lock actions run inside SpringBoard.
-
-The tool normally invokes the code behind a UI action. `tap` sends a UIControl
-TouchUpInside event to an identified control. It does **not** synthesize a finger
-at screen coordinates. Reading labels is native UI inspection, not OCR. Screenshots
-use an existing UIKit image-export function and return PNG data to Linux.
-
-The jailbreak makes these private interfaces reachable. SSH alone does not make
-a standalone process the owner of SpringBoard's controllers. Calling a private
-method on the wrong object, process or argument type can crash that process.
-
-## Files
-
-| File | Purpose |
-|---|---|
-| `iphone-control` | Python 3.15+ CLI; executable directly or through an explicitly chosen Python |
-| `runtime.js` | Checked private calls, Objective-C bridge, main-queue scheduling, UI inspection |
-| `README.md` | Entry point, command reference, recovery and limitations |
-| `BOOTSTRAP.md` | Complete known Frida setup, root privilege, signing and agent-path recovery |
-| `RECIPES.md` | App settings, Wi-Fi, Slo-mo, recording transports and live preview |
-| `EXTENDING.md` | How to add a command, exact signatures, custom JS and failure lessons |
-| `VALIDATION.md` | Tests performed locally and evidence inherited from the original probes |
-| `test_control.py` | Host-only parser, quoting, selection, cleanup and format-loop tests |
-| `test_runtime.cjs` | Host-only JavaScript bridge contract tests; not an iOS simulator |
-| `.gitignore` | Ignore local Python cache/environment artifacts |
-| `unlock.md` | Pre-existing detailed unlock history and standalone Objective-C recovery helper; unchanged |
-
-No phone binaries or SDKs are bundled here. A local ignored `.venv` was prepared
-on this host; recreate it if absent. See BOOTSTRAP.md for offline preparation.
-The existing `unlock.md` contains older connection details supplied by the owner;
-its IP address and temporary project paths are historical, not current defaults.
-
-## Setup: use existing connections first
-
-From this directory:
-
-```sh
-./iphone-control --help
-./iphone-control doctor
-```
-
-`doctor` is local only. `doctor --phone` also reads `uname -a` and the process list
-over SSH. Neither installs, starts, stops or repairs anything.
-
-Global options go **before** the subcommand:
-
-```sh
-./iphone-control --target mobile@127.0.0.1 --port 2222 ps
-./iphone-control --identity ~/.ssh/iphone --process Camera ui
-./iphone-control --pid 12345 controllers
-```
-
-Default connection settings:
+## Connections and options
 
 | Setting | Default | Override |
 |---|---|---|
-| SSH account/host | `mobile@127.0.0.1` | `--target` / `IPHONE_SSH_TARGET` |
-| USB SSH port | `2222` | `--port` / `IPHONE_SSH_PORT` |
-| Host Frida endpoint | `127.0.0.1:27047` | `--frida` / `IPHONE_FRIDA_ENDPOINT` |
-| Process | SpringBoard; Camera for `camera` | `--process` or `--pid` |
+| SSH | `mobile@127.0.0.1:2222` | `--target`, `--port`, or `IPHONE_SSH_TARGET` / `IPHONE_SSH_PORT` |
+| Frida endpoint on Linux | `127.0.0.1:27047` | `--frida` / `IPHONE_FRIDA_ENDPOINT` |
+| UI process | SpringBoard; Camera for `camera` | `--process` or freshly verified `--pid` |
 | SSH/RPC wait | 30 seconds | `--timeout`, greater than 0 and at most 3600 |
-| SSH identity | normal OpenSSH configuration | `--identity` |
-| Multiplexing socket | none | `--control-path` to reuse an existing socket |
+| SSH identity | OpenSSH configuration | `--identity PATH` |
+| Existing SSH master | None | `--control-path SOCKET` |
 
-Prefer USB over a Wi-Fi address. Noninteractive SSH and scp commands use
-`BatchMode=yes`, so missing key authentication fails clearly instead of waiting
-for a hidden password prompt. `shell` permits normal interactive authentication.
-The tool does not store a password or alter SSH configuration. An existing
-interactive authenticated multiplexed connection can also be reused.
-
-### USB SSH
-
-Reuse an already running iproxy listener. If no listener exists, run in a separate
-terminal and leave it running:
+Put global options **before** the subcommand:
 
 ```sh
-./iphone-control usb
-# Equivalent syntax checked against the installed iproxy --help:
-iproxy -s 127.0.0.1 2222:22
+./iphone-control --control-path /tmp/iphone-control-ssh ps
+./iphone-control --control-path /tmp/iphone-control-ssh --process Preferences controllers
+./iphone-control --control-path /tmp/iphone-control-ssh --process Camera ui --max-nodes 800
 ```
 
-For multiple attached devices, use the installed iproxy's `--udid` option and an
-explicit discovered device ID; the CLI's `usb` command uses iproxy's normal device
-selection. Do not start a second listener on the same port or kill someone else's
-tunnel to make space. USB trust/pairing and an operational jailbreak SSH service
-are prerequisites; this tool does not repair them.
+Examples consistently use the authenticated master at `/tmp/iphone-control-ssh`.
+Use the actual socket you established, or omit `--control-path` with working key
+authentication. The socket is not created by the CLI. BOOTSTRAP.md shows how to create
+one interactively. Noninteractive SSH/scp uses BatchMode: use an authenticated
+master or working key. `shell` permits normal interactive authentication.
+USB SSH, Frida forwarding and USB recording are separate connections. Do not
+replace another running connection or interrupt a capture just to inspect it.
 
-Test SSH independently of Frida:
+## Injection readiness after respring or userspace restart
+
+A new SpringBoard PID is insufficient: attaching before ElleKit/Duskie finishes
+initialization can cause a loader/hook lock wait. With Duskie installed:
 
 ```sh
-./iphone-control ps
-./iphone-control ssh -- uname -a
-./iphone-control shell
+./iphone-control --control-path /tmp/iphone-control-ssh ps
+./iphone-control --control-path /tmp/iphone-control-ssh ssh -- cat /var/mobile/Library/Caches/Duskie-runtime.json
 ```
 
-### Python and Frida
+Wait until the report’s top-level `pid` matches the **current** SpringBoard
+process and relevant initialization/error fields are satisfactory. An old file
+is not readiness evidence. If the report is absent because injection is disabled
+or Duskie is not installed, inspect the current injection/log state rather than
+wait indefinitely. Other tweaks need their own readiness signal. Package version
+comes from `dpkg-query`; a runtime diagnostic label is not a package version.
 
-The CLI targets **Python 3.15+**, including explicit lazy imports. SSH commands,
-local doctor and help work without Frida. UI commands need the `frida` Python
-package in **the interpreter actually running this script**.
+After a userspace restart, also recheck the Frida server and SSH forward: their
+previous PIDs/connections may be gone. Start only missing owned resources using
+BOOTSTRAP.md. A working SSH reconnect alone does not establish Frida readiness.
 
-Create a local environment if needed. Set the version to match the device server
-rather than installing the newest release blindly:
+Foreground the target app before main-queue UI work when appropriate. A suspended
+app or a locked display can prevent its main queue from servicing a probe.
+Do not foreground another app while Camera needs the active capture session.
 
-```sh
-python3 -m venv .venv
-.venv/bin/python -m pip install 'frida==17.2.17'
-.venv/bin/python ./iphone-control doctor
-```
+## Command reference
 
-`17.2.17` is the historical client/server version used for the source probes,
-not a permanent version requirement. If the installed server differs, choose
-its corresponding client version. This local `.venv` was created and Frida
-17.2.17 installed successfully during the 2026-10-21 review; local doctor
-confirmed the interpreter and distribution. Do not point the
-script at the earlier Python 3.14 environment: its interpreter cannot parse the
-new Python 3.15 syntax. Do not globally replace another session's environment.
 
-### Device Frida server
-
-**No Frida server was installed/running at the 2026-10-21 read-only check.**
-Use [BOOTSTRAP.md](BOOTSTRAP.md) when starting from that state; the following
-is the short route for an already working installation.
-
-A correctly installed and signed Frida server and its matching agent are needed
-on the phone. Use the package appropriate to the actual rootless bootstrap and
-architecture; the CLI deliberately does not install or patch it automatically.
-The server needs sufficient privilege to attach to SpringBoard.
-
-From an interactive device shell, become root using the owner's existing login
-or `sudo -s`. Enter a password at its prompt, not in a command argument. Inspect
-the installed executable before starting it:
-
-```sh
-command -v frida-server
-/var/jb/usr/sbin/frida-server --version
-/var/jb/usr/sbin/frida-server --help
-```
-
-The rootless path above is the observed path on this phone, not a universal
-installation location. If no server is already using port 27042, start it in a
-dedicated device terminal:
-
-```sh
-/var/jb/usr/sbin/frida-server -l 127.0.0.1:27042
-```
-
-Leave it running. Use a separate Linux terminal for the forward:
-
-```sh
-./iphone-control tunnel
-# Equivalent:
-ssh -p 2222 -N -o ExitOnForwardFailure=yes \
-  -L 127.0.0.1:27047:127.0.0.1:27042 mobile@127.0.0.1
-```
-
-This foreground tunnel remains active until stopped. The `--frida` option selects
-the client endpoint, while `tunnel --local-port` and `--device-port` select forward
-ports. Configure both consistently. Reuse an existing forward if one is active.
-
-`module not found ... frida-agent.dylib` means transport/server startup succeeded
-but agent placement or the package's rootless path mapping is wrong. It does not
-mean that Camera needs a new hook. The original session encountered both
-`/usr/lib/frida/frida-agent.dylib` and a doubled rootless-prefix path from a
-**locally patched diagnostic binary**. Those are diagnostic history, not paths
-to recreate blindly. Use the current server's actual error and matching package
-layout. A server or agent left in temporary storage by another session may
-already have been removed. The CLI does not rely on those leftovers.
-
-## Every command
-
-All RPC output is JSON. Frida diagnostic events go to stderr. PIDs are resolved
+UI/RPC commands return JSON. `ssh` prints the remote command’s raw output. Frida diagnostic events go to stderr. PIDs are resolved
 from fresh `ps -A -o pid,comm` output on each new invocation. A `--pid` override
 is for deliberate use with a PID you have just checked, not an old cached value.
 
@@ -232,10 +120,10 @@ is for deliberate use with a PID you have just checked, not an old cached value.
 Examples:
 
 ```sh
-./iphone-control ssh -- df -k /var/mobile
-./iphone-control get /var/mobile/Media/DuskieCamera/status.plist ./status.plist
-./iphone-control put './file with spaces.plist' '/var/mobile/Media/file with spaces.plist'
-./iphone-control ssh -- sh -c 'command -v ldid; command -v sbreload'
+./iphone-control --control-path /tmp/iphone-control-ssh ssh -- df -k /var/mobile
+./iphone-control --control-path /tmp/iphone-control-ssh get /var/mobile/Media/DuskieCamera/status.plist ./status.plist
+./iphone-control --control-path /tmp/iphone-control-ssh put './file with spaces.plist' '/var/mobile/Media/file with spaces.plist'
+./iphone-control --control-path /tmp/iphone-control-ssh ssh -- sh -c 'command -v ldid; command -v sbreload'
 ```
 
 `ssh --` passes arguments, not an implicit shell program. Use an explicit `sh -c`
@@ -257,16 +145,15 @@ None of these commands automatically runs sudo, ldid, dpkg or a reboot.
 | `lock` | Request UI locking with source 12; read status afterward |
 | `unlock` | Wake, wait about 340 ms, request the documented no-passcode UI unlock |
 | `duskie-unlock` | Call Duskie's own simulated-lock authentication entry point if installed |
-| `screenshot OUTPUT.png` | Return a screen PNG to the host; no phone-side output path |
+| `screenshot OUTPUT.png` | **Known broken on this profile**; use the explicit alternative in RECIPES.md |
 
 ```sh
-./iphone-control status
-./iphone-control wake
-./iphone-control unlock
-./iphone-control launch com.apple.camera
-./iphone-control screenshot ./screen.png
-./iphone-control sleep
-./iphone-control status
+./iphone-control --control-path /tmp/iphone-control-ssh status
+./iphone-control --control-path /tmp/iphone-control-ssh wake
+./iphone-control --control-path /tmp/iphone-control-ssh unlock
+./iphone-control --control-path /tmp/iphone-control-ssh launch com.apple.camera
+./iphone-control --control-path /tmp/iphone-control-ssh sleep
+./iphone-control --control-path /tmp/iphone-control-ssh status
 ```
 
 `unlock` comes from the owner's no-device-passcode configuration described in
@@ -275,7 +162,7 @@ claim to unlock a different device-passcode configuration. Duskie's simulated
 lock is separate: `duskie-unlock` uses an installed Duskie class and is not required
 on a phone without that feature. Neither command changes a saved passcode or
 Touch ID enrollment. The `lock` and `duskie-unlock` wrappers are ABI-guarded but
-were not independently live-tested in this side conversation.
+need verification on the current device; see VALIDATION.md for capability status.
 
 `status.duskieLoaded=false` is a clue, not a complete Safe Mode diagnosis: injection
 can also be disabled or the payload may be absent. Pair it with the Safe Mode
@@ -285,16 +172,16 @@ is not proof that a requested transition completed.
 ### Inspecting apps and choosing UI controls
 
 ```sh
-./iphone-control --process Camera controllers
-./iphone-control --process Camera ui --max-nodes 800
-./iphone-control --process Camera alerts
-./iphone-control --process Camera dismiss-alert
-./iphone-control --process Preferences methods PSListController --matching specifier
-./iphone-control --process SpringBoard methods SpringBoard --matching launch
-./iphone-control --process SpringBoard methods UIApplication --class-methods --matching shared
-./iphone-control --process Camera modules --matching Duskie
-./iphone-control --process YourApp tap --id unique-accessibility-identifier
-./iphone-control --process YourApp tap --label 'Exact button title'
+./iphone-control --control-path /tmp/iphone-control-ssh --process Camera controllers
+./iphone-control --control-path /tmp/iphone-control-ssh --process Camera ui --max-nodes 800
+./iphone-control --control-path /tmp/iphone-control-ssh --process Camera alerts
+./iphone-control --control-path /tmp/iphone-control-ssh --process Camera dismiss-alert
+./iphone-control --control-path /tmp/iphone-control-ssh --process Preferences methods PSListController --matching specifier
+./iphone-control --control-path /tmp/iphone-control-ssh --process SpringBoard methods SpringBoard --matching launch
+./iphone-control --control-path /tmp/iphone-control-ssh --process SpringBoard methods UIApplication --class-methods --matching shared
+./iphone-control --control-path /tmp/iphone-control-ssh --process Camera modules --matching Duskie
+./iphone-control --control-path /tmp/iphone-control-ssh --process YourApp tap --id unique-accessibility-identifier
+./iphone-control --control-path /tmp/iphone-control-ssh --process YourApp tap --label 'Exact button title'
 ```
 
 | Command | Output / limit |
@@ -329,18 +216,18 @@ process, not the Duskie helper. Camera may reopen in Photo even if the last test
 used Video. Status is authoritative:
 
 ```sh
-./iphone-control unlock
-./iphone-control launch com.apple.camera
-./iphone-control camera status
-./iphone-control camera mode video
-./iphone-control camera format
-./iphone-control camera set-format --resolution 4k --fps 60
-./iphone-control camera format
-./iphone-control camera start
-./iphone-control camera status
+./iphone-control --control-path /tmp/iphone-control-ssh unlock
+./iphone-control --control-path /tmp/iphone-control-ssh launch com.apple.camera
+./iphone-control --control-path /tmp/iphone-control-ssh camera status
+./iphone-control --control-path /tmp/iphone-control-ssh camera mode video
+./iphone-control --control-path /tmp/iphone-control-ssh camera format
+./iphone-control --control-path /tmp/iphone-control-ssh camera set-format --resolution 4k --fps 60
+./iphone-control --control-path /tmp/iphone-control-ssh camera format
+./iphone-control --control-path /tmp/iphone-control-ssh camera start
+./iphone-control --control-path /tmp/iphone-control-ssh camera status
 # Let the desired test run; separately monitor FTP/storage if needed.
-./iphone-control camera stop
-./iphone-control camera status
+./iphone-control --control-path /tmp/iphone-control-ssh camera stop
+./iphone-control --control-path /tmp/iphone-control-ssh camera status
 ```
 
 | Camera subcommand | Behavior |
@@ -359,32 +246,20 @@ used Video. Status is authoritative:
 `24,25,30,50,60,120,240` as requests, **not promises of device/mode support**.
 The observed profile labels are `4K`, `HD` and `720P` (matched without case).
 Choose `mode slowmo` before requesting 120/240 fps: `set-format` preserves an
-existing Video or Slo-mo mode, but chooses Video if starting from Photo. Main-session
-probes exercised HD/30, HD/240 and 4K/60; wrapper acceptance is still separate.
+existing Video or Slo-mo mode, but chooses Video if starting from Photo. Request
+only combinations offered by the current mode and hardware.
 If the UI cannot reach a request, the tool exits
 with the current and original states rather than inventing a configuration enum.
 A failed cycle may leave the Camera selection changed: use the printed original
 format to restore it. Mode changes and direct cycle commands return a request;
 read the settled state afterward.
 
-On the original phone, actual UI observations included:
-
-| Private configuration enum | Frame-rate enum | Displayed labels |
-|---|---|---|
-| 10 | 1 | 4K / 24 |
-| 5 | 3 | 4K / 30 |
-| 9 | 4 | 4K / 60 |
-| 7 | 3 | HD / 30 (Video) |
-| 6 | 3 | 720P / 30 (Video) |
-| 8 | 6 | HD / 240 (Slo-mo, mode 2) |
-
-These numeric values are **evidence only**. The implementation cycles native
-controls and reads labels; it does not hardcode those video configuration enums.
-A value of `4` in `framerateEnum` is not 4 fps or 60 fps by itself.
+Private configuration and frame-rate enums are not human-readable fps values.
+Use displayed labels and inspect the finalized media; do not set guessed enums.
 
 The CLI does not redirect native capture storage. Duskie's installed
 **Camera app → Remote storage** switch and **Remote recording connection**
-selector determine that independently (Duskie 0.2.65). A standard
+selector determine that independently. A standard
 native capture normally requires the Camera app's foreground capture session;
 do not assume locking the display preserves a native recording. Use Duskie's
 worker for its screen-off recording feature.
@@ -394,11 +269,11 @@ worker for its screen-off recording feature.
 These commands need SSH and an installed Duskie release, **not Frida**:
 
 ```sh
-./iphone-control worker status
-./iphone-control worker start
-./iphone-control worker photo
-./iphone-control worker stop
-./iphone-control worker upload-ram
+./iphone-control --control-path /tmp/iphone-control-ssh worker status
+./iphone-control --control-path /tmp/iphone-control-ssh worker start
+./iphone-control --control-path /tmp/iphone-control-ssh worker photo
+./iphone-control --control-path /tmp/iphone-control-ssh worker stop
+./iphone-control --control-path /tmp/iphone-control-ssh worker upload-ram
 ```
 
 Every supported worker action is listed below:
@@ -438,16 +313,14 @@ supports every action; pre-streaming releases may reject `stream-ram`.
 The helper defaults to `/var/jb/usr/libexec/duskie-camera`; its settings and status
 conventionally live under `/var/mobile` on this iOS setup. Feature enablement,
 lens, format, audio and destination come from the shared tweak plist. This CLI
-does not silently change them. Installed version 0.2.65~duskie1 was read back on
-2026-10-21. Version 0.2.63+ uses segmented native video; the old 0.2.62 full-movie
-RAM cap is historical. See RECIPES.md for transport selection, fresh connection-test
-results and receiver management.
+does not silently change them. Inspect the installed package with dpkg-query before assuming a worker action
+is supported. See RECIPES.md for transports, connection tests and receiver control.
 
 ### Notifications and custom scripts
 
 ```sh
-./iphone-control notify com.dusklinux.edgedock/settings
-./iphone-control --process Camera js ./my-probe.js --args '{"label":"test"}'
+./iphone-control --control-path /tmp/iphone-control-ssh notify com.dusklinux.edgedock/settings
+./iphone-control --control-path /tmp/iphone-control-ssh --process Camera js ./my-probe.js --args '{"label":"test"}'
 ```
 
 `notify` posts a Darwin notification through the attached process. Its code 0
@@ -460,177 +333,67 @@ can coalesce. Never depend on a stale status.plist as an acknowledgement.
 and the other helpers. It is an expert extension point, not a guarantee that an
 arbitrary supplied script is safe or ABI-correct. See [EXTENDING.md](EXTENDING.md).
 
-## Verification recipes
+## Failure diagnosis
 
-### Verify 4K60 instead of trusting a preference
-
-1. Read `camera format` for native Camera, or the worker's reported `capture`
-   dimensions/fps. Neither alone proves the final encoded file.
-2. Confirm display state with `status` when testing screen-off worker behavior.
-3. Monitor remote file growth **before** stop when testing streaming. An upload
-   that appears only after stop is a different behavior.
-4. Copy/download the finalized movie or inspect it on the actual FTP server:
-
-```sh
-ffprobe -v error -show_entries \
-  format=duration,size:stream=index,codec_name,width,height,r_frame_rate \
-  -of json recording.mp4
-ffmpeg -v error -i recording.mp4 -f null -
-```
-
-A portrait capture can report 2160×3840 rather than 3840×2160; inspect orientation
-and encoded frame rate rather than treating rotation as lower resolution.
-Nominal 60 fps does not prove no drops. Compare encoded frame counts/timestamps
-and any capture drop counters; inspect audio continuity too.
-
-A 4K60 screen-off source probe in the main session recorded 174.149660 seconds,
-1,170,222,804 bytes, while RAM snapshots stayed around 13–26 MiB; it decoded
-without errors. A separate 18-second outage test continued at 4K60, with zero
-reported dropped video frames/audio buffers. A final snapshot-during-video test
-reported one dropped video frame. Those are finite observed tests, not a guarantee
-for every scene, network, memory pressure level or future release. Later completed
-main-session native USB tests included 4K60 (18.065125 s) and
-1080p240 (18.134785 s), plus native FTP 4K60 (17.742222 s), all fully decoded.
-See VALIDATION.md for the evidence boundary; these are not live tests of this CLI.
-
-### Preferences: backup, edit deliberately, verify, restore
-
-The shared Duskie plist is normally
-`/var/mobile/Library/Preferences/com.dusklinux.edgedock.plist`. Download a byte-for-byte
-backup before changing it. Edit a host copy with `plistlib`, upload that explicit
-copy with correct ownership, then post the settings notification if appropriate.
-Read it back and inspect the live setting. Restore the original when a temporary
-test ends. The CLI exposes transfer/notify primitives but does not invent a
-universal preferences-write command: app domains, cfprefsd caching, sandboxes and
-root-owned files have different persistence paths.
-
-The FTP provider's connection.plist is in an app-group container with a dynamic
-UUID. Discover the container by its metadata identifier
-`group.com.dusklinux.duskie.remoteftp`; do not reuse a UUID from an old transcript.
-Connection files can contain credentials. Keep them out of published artifacts
-and ordinary diagnostic output. This does not require a new credential store.
-
-### Native RAM / FTP behavior worth remembering
-
-- A Files provider can materialize a local cache. Saving through its displayed
-  location is not automatically a kernel mount or proof of avoiding NAND writes.
-- The Duskie capture tmpfs path observed was
-  `/var/mobile/Library/Duskie/CameraRAM`. Verify its filesystem type and real free
-  capacity with df/mount; directory existence alone is insufficient.
-- **Historical 0.2.62 behavior:** tmpfs did not support F_PUNCHHOLE prefix
-  reclamation, so a seekable native movie retained its entire RAM file until
-  finalization. **0.2.63+ replaces that video path with segmented writing and
-  deletes acknowledged RAM segments.** A finite RAM backlog limit still applies
-  if the receiver is slower or unavailable. Do not restore the old whole-file cap.
-- `mount_tmpfs -o update -s ...` returned success but did not resize that volume.
-  Measure capacity. Never overmount retained captures to make a test look empty.
-- A native movie writer may rewrite its header/index or defragment at close.
-  Uploading only an appended tail is not enough to prove a valid finalized movie.
-- FTP control and passive data are separate connections. A fault-injection proxy
-  must relay both or the server can reject passive-source addresses. That failure
-  can otherwise be mistaken for a recording bug.
-- If you need to hash an open RAM recording after its pathname is removed, use a
-  small native helper that retains the file descriptor. `/dev/fd/3` was unavailable
-  in the original phone's SSH test. Hash the **finalized** inode, not an earlier
-  growing prefix. Test helpers are not bundled here.
-
-## Failure diagnosis and recovery
-
-| Symptom | Check / action |
+| Symptom | Next step |
 |---|---|
-| SSH connection refused | Existing iproxy, attached USB device, jailbreak SSH service and chosen port |
-| SSH key failure | Interactive `shell`, correct account/identity or existing multiplexed connection; don't paste passwords into argv |
-| Frida connection refused | Server process, its listen port and the host SSH forward |
-| Missing frida-agent.dylib | Follow BOOTSTRAP.md; inspect exact error, matching package and preserved signing entitlements |
-| Plain signed server immediately killed | Preserve the original Frida server entitlements; plain `ldid -S` failed here |
-| mpv rejects preview URL as HTML | Updated receiver accepts bare root or `/live.m3u8`; see RECIPES.md |
-| USB unavailable despite cable | SSH alone is insufficient: managed receiver and reverse forwards must also be active |
-| Expected one running process, found 0 | Launch the app, wait for readiness, then resolve its fresh PID |
-| More than one matching process | Inspect `ps`, use a deliberate fresh `--pid`; don't select the first arbitrarily |
-| ABI mismatch | Stop using that action; inspect methods in this exact runtime and review the typed call |
-| Class unavailable | Wrong process, framework not loaded, different iOS/tweak version or absent injection |
-| Missing video indicator / Photo mode | Select Video or Slo-mo, wait for configuration, inspect status/format |
-| accepted=true but no result | Check live state, capture errors, permissions/feature enablement and timestamps |
-| RPC cancellation/timeout | Action may already have run; inspect actual state before repeating a toggle/start/stop |
-| Script destroyed / process gone | Check fresh PID, crash/Safe Mode state and phone responsiveness; don't blindly rerun mutation |
-| Duskie missing from modules | Check installation, injection configuration and Safe Mode separately |
-| iPhone storage-full warning with free NAND | Distinguish native phone capacity from a remote capture's RAM/clip limit |
-| Runtime UI labels differ | Inspect the actual labels; do not infer fps from private numeric enums |
+| SSH refused/reset | Check USB device, existing iproxy and jailbreak SSH; allow userspace restart to finish |
+| SSH authentication fails | Check account, matching master/socket or key; use an interactive login from BOOTSTRAP.md before assuming the old root-login failure still applies |
+| Frida connection refused | Check server process, device listen port and host SSH forward |
+| Agent dylib missing | Inspect the exact requested path; follow BOOTSTRAP.md’s conditional path/signing procedure |
+| Signed server immediately killed | Check original server entitlements and the modified binary’s signature |
+| Process count 0 | Launch it, wait for readiness, resolve a fresh PID |
+| Multiple matches | Inspect the process list and choose a fresh explicit PID |
+| ABI mismatch or absent class/selector | Stop that call; inspect process, loaded framework and current method encoding |
+| RPC/attach hangs | Check injection readiness, app suspension and concurrent tracing; do not blindly attach again |
+| Action times out | It may already have run; inspect actual state before repeating a toggle/start/stop |
+| Duskie missing from modules | Check installation, injection filter and Safe Mode separately |
+| Screenshot missing export | Built-in capture is unavailable here; use RECIPES.md’s explicit alternative |
+| Auto-Lock greyed | Check profiled, effective policy and LPM; see RECIPES.md |
+| USB recording unavailable | SSH alone is insufficient; check receiver and reverse forwards |
+| Preview URL returns HTML | Use the media endpoint documented in RECIPES.md |
 
-### Safe Mode / UI restart
+### Recover from a diagnosed UI crash
 
-The original session demonstrated that passing a UTF-8 C string as an NSString
-argument can crash SpringBoard. Another earlier probe called an absent Home
-selector. The wrapper uses NSString construction, the actual completion-selector
-and signature checks to avoid repeating those specific mistakes. This does not
-make arbitrary private calls crash-proof.
-
-If recovery is needed, first stop **only the Frida server/tunnel you own**, using
-its recorded PID or foreground terminal. Do not use a broad killall while another
-agent/session may be attached. Detach diagnostic scripts before a UI restart.
-
-On the documented rootless ElleKit phone, `/var/mobile/.eksafemode` was the marker.
-After identifying the diagnostic cause, an interactive root shell used:
+1. Inspect the current process, crash report and last operation. Private-object
+   `description`, wrong ObjC argument types and absent selectors can execute
+   crashing code. Do not repeatedly invoke the same failed probe.
+2. Detach and stop only your diagnostic server/forward. Do not broadly kill
+   processes or remove another operator’s injection files.
+3. Repair/remove the identified cause. If ElleKit placed the diagnosed incident
+   in Safe Mode, its marker on this phone is `/var/mobile/.eksafemode`.
+4. In an interactive root shell, only for that repaired incident:
 
 ```sh
-# Stop the identified diagnostic Frida server first.
-# Clear this marker only for the diagnosed/repaired incident:
 rm -f /var/mobile/.eksafemode
 /var/jb/usr/bin/sbreload
 ```
 
-Do not erase a marker repeatedly to hide an unresolved production crash loop.
-After respring, wait for a fresh SpringBoard PID, reattach only if needed, read
-status and check that expected tweak injection returned. Follow the owner's
-existing preference for **respring or userspace restart**; this guide does not
-instruct a normal kernel reboot or jailbreak removal. It does not automatically
-run recovery commands on errors.
+5. Reconnect, discover the fresh SpringBoard PID, wait for injection readiness
+   and verify normal operation. Do not clear the marker to conceal an unresolved
+   crash loop. Do not perform a normal kernel reboot.
 
-### Cleanup without disrupting another session
+### Finish an operation
 
-The CLI detaches its own Frida session in `finally`. It installs no dylib, launch
-daemon, notification listener, signing profile or server. Native changes made by
-an action (a running recording, current Camera format, an app launch) persist until
-changed deliberately. There is no undo transaction.
+Read the actual resulting state. Restore temporary preferences/Camera format;
+preserve user media, pending uploads and deliberately retained changes. Frida
+`detach` does not unload a separately dlopened helper or undo native actions.
+Stop only owned server/forward processes and remove their recorded probe paths.
+A process restart is needed to remove live callbacks/hooks from a loaded helper.
 
-Stop only the forwards/server processes you started; remove only your own probe
-files. Restore temporary preferences and Camera format selections. Preserve queued
-RAM captures, user media, existing services, app-group settings and SSH keys.
-Check that recording/upload activity is finished before deleting diagnostic files.
-A parent/main agent may still own a server, tunnel or recording; coordinate in the
-main conversation instead of taking it over from a side conversation.
+## Local tool checks
 
-## Local tests
-
-These commands do not contact or control the phone:
+These commands do not contact the phone:
 
 ```sh
 python3 test_control.py
 node --check runtime.js
 node test_runtime.cjs
-./iphone-control --help
-./iphone-control camera --help
-./iphone-control doctor
+./iphone-control --control-path /tmp/iphone-control-ssh --help
+./iphone-control --control-path /tmp/iphone-control-ssh doctor
 ```
 
-The test suite exercises meaningful host failure paths and raw-bridge contracts,
-not the entire Objective-C runtime. Live acceptance should be done by the main
-operator when the device is available. Start with read-only status/inspection,
-then one clearly observed action, and check the result. See
-[VALIDATION.md](VALIDATION.md) for a reproducible acceptance checklist.
-
-## Primary references and historical sources
-
-- [Frida JavaScript API](https://frida.re/docs/javascript-api/): NativeFunction,
-  NativeCallback, module exports, RPC and script lifetime facilities.
-- [Frida iOS guide](https://frida.re/docs/ios/): the instrumented-process model.
-- [libusbmuxd / iproxy](https://github.com/libimobiledevice/libusbmuxd): USB proxy;
-  the actual installed help is authoritative for the shown `LOCAL:DEVICE` syntax.
-- Apple's shipped iOS SDK headers: Foundation object types and
-  `UIControlEventTouchUpInside = 1 << 6`.
-- [Existing unlock evidence](unlock.md): precise wake/unlock signatures, timing,
-  historical failed approaches and a standalone Objective-C recovery implementation.
-- Parent-session reference sources, if still present:
-  `/mnt/zram1/duskie/build/review/remote.py`, `tools/shot/inspect.js`, and
-  `build/remote-capture/` / `build/streaming/` probes. These are historical
-  provenance only; the new tool does not load them or their temporary dylibs.
+Host tests exercise parser/bridge behavior; they do not emulate UIKit or prove a
+private ABI works. Use VALIDATION.md’s readiness/completion checks on the phone.
+See [Frida’s JavaScript API](https://frida.re/docs/javascript-api/) for its native
+bridge and [iproxy](https://github.com/libimobiledevice/libusbmuxd) for USB proxying.

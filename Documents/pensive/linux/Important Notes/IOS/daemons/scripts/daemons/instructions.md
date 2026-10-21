@@ -1,3 +1,11 @@
+# Daemon usage notes and installation history
+
+Use the [daemon operating guide](../../README.md) for the current procedure and
+the [control manual](../../../ssh/control/README.md) for USB SSH. The dated
+instructions below preserve earlier versions: later explicit corrections take
+precedence over older "current"/"final" sections. Verify source, installed build
+and live state separately. Installation alone does not apply preset targets.
+
 ## Auto-Lock policy recommendation — 2026-10-21, v1.0.32
 
 `com.apple.managedconfiguration.profiled` now defaults **On** (`no` / builtin

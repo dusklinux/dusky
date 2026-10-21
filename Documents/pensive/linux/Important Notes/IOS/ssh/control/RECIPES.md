@@ -1,19 +1,20 @@
-# Operational recipes and evidence boundaries
+# Operational recipes
 
 Use [README.md](README.md) for command syntax and [BOOTSTRAP.md](BOOTSTRAP.md)
 when Frida is unavailable. Commands below can change phone state: use them only
 within the active task, after checking for a recording or another operator.
-The raw snippets are reviewed examples, not newly device-accepted wrapper tests.
+Custom snippets are templates using checked ABIs. Inspect the current runtime
+and verify their result; they are not universal UI automation APIs.
 
 ## Find the right process and inspect before acting
 
 ```sh
-./iphone-control ps
+./iphone-control --control-path /tmp/iphone-control-ssh ps
 # Frida commands require the prepared interpreter and server/forward:
-.venv/bin/python ./iphone-control apps
-.venv/bin/python ./iphone-control launch com.dusklinux.duskie.remoteftp
-.venv/bin/python ./iphone-control --process DuskieRemoteFTP controllers
-.venv/bin/python ./iphone-control --process DuskieRemoteFTP ui
+.venv/bin/python ./iphone-control --control-path /tmp/iphone-control-ssh apps
+.venv/bin/python ./iphone-control --control-path /tmp/iphone-control-ssh launch com.dusklinux.duskie.remoteftp
+.venv/bin/python ./iphone-control --control-path /tmp/iphone-control-ssh --process DuskieRemoteFTP controllers
+.venv/bin/python ./iphone-control --control-path /tmp/iphone-control-ssh --process DuskieRemoteFTP ui
 ```
 
 Known app identities: native Camera `com.apple.camera` / process `Camera`;
@@ -54,14 +55,21 @@ rpc.exports.run = parameters => onMain(() => {
         if (!key) continue;
         const value = checked(root, 'getValue:', '@24@0:8@16',
                               'pointer', ['pointer'], [spec]);
-        rows.push({key, value: value.isNull() ? null : text(send0(value, 'description'))});
+        let valueText = null;
+        if (!value.isNull()) {
+            if (isKind(value, 'NSString')) valueText = text(value);
+            else if (isKind(value, 'NSNumber'))
+                valueText = text(checked(value, 'stringValue', '@16@0:8'));
+            else valueText = '<' + className(value) + '>';
+        }
+        rows.push({key, valueText});
     }
     return rows;
 });
 ```
 
 ```sh
-.venv/bin/python ./iphone-control --process DuskieRemoteFTP js ./settings-probe.js
+.venv/bin/python ./iphone-control --control-path /tmp/iphone-control-ssh --process DuskieRemoteFTP js ./settings-probe.js
 ```
 
 For a deliberate write, find the **actual specifier by its key**, construct an
@@ -74,7 +82,53 @@ and check the live behavior. This uses the page's own persistence/notification
 logic, which is preferable to assuming a direct plist replacement invalidates all
 cfprefsd or application caches. Back up before temporary changes and restore them.
 
-Key settings in the reviewed 0.2.65 source:
+For a copyable write operation, save this separately as `settings-write.js`:
+
+```js
+rpc.exports.run = parameters => onMain(() => {
+    if (typeof parameters.key !== 'string') throw Error('Provide a setting key');
+    const roots = controllers().filter(x => x.className === 'EDRootController');
+    if (roots.length !== 1) throw Error('Open the Duskie settings root');
+    const root = roots[0].object;
+    const specs = checked(root, 'specifiers', '@16@0:8'), matches = [];
+    for (let i = 0; i < count(specs); i++) {
+        const spec = at(specs, i);
+        const key = text(checked(spec, 'propertyForKey:', '@24@0:8@16',
+                                 'pointer', ['pointer'], [ns('key')]));
+        if (key === parameters.key) matches.push(spec);
+    }
+    if (matches.length !== 1) throw Error('Expected exactly one setting');
+    let value;
+    if (typeof parameters.value === 'boolean')
+        value = checked(classNamed('NSNumber'), 'numberWithBool:', '@20@0:8B16',
+                        'pointer', ['bool'], [parameters.value ? 1 : 0]);
+    else if (typeof parameters.value === 'string') value = ns(parameters.value);
+    else if (Number.isSafeInteger(parameters.value))
+        value = checked(classNamed('NSNumber'), 'numberWithInteger:', '@24@0:8q16',
+                        'pointer', ['int64'], [parameters.value]);
+    else throw Error('This template accepts Boolean, string or safe integer');
+    checked(root, 'setValue:specifier:', 'v32@0:8@16@24', 'void',
+            ['pointer', 'pointer'], [value, matches[0]]);
+    const saved = checked(root, 'getValue:', '@24@0:8@16',
+                          'pointer', ['pointer'], [matches[0]]);
+    const savedText = saved.isNull() ? null : isKind(saved, 'NSString') ? text(saved) :
+        isKind(saved, 'NSNumber') ? text(checked(saved, 'stringValue', '@16@0:8')) : null;
+    return {key: parameters.key, savedText, note: 'Verify the feature state too'};
+});
+```
+
+Example, only when USB recording is the intended destination:
+
+```sh
+./iphone-control --control-path /tmp/iphone-control-ssh --process DuskieRemoteFTP js ./settings-write.js \
+  --args '{"key":"cameraRemoteTransport","value":"usb"}'
+```
+
+The template checks unique membership before changing anything. It deliberately
+rejects unsupported value types; for a different type inspect that setting and
+add its actual typed factory, rather than force every value through a string.
+
+Useful Duskie keys; inspect the installed controller for its current schema:
 
 | Key | Value / role |
 |---|---|
@@ -90,7 +144,7 @@ this table is an operational guide, not a full schema. The shared plist is
 `/var/mobile/Library/Preferences/com.dusklinux.edgedock.plist`; settings notification
 is `com.dusklinux.edgedock/settings`. A Darwin post is not proof a listener finished.
 
-Useful root controller actions in 0.2.65 are `testRecordingConnection`,
+Useful root controller actions are `testRecordingConnection`,
 `openUSBPreview`, `retryRAMUploads`, `cameraStatus` and `stopCamera`. They are void,
 no-argument methods (`v16@0:8`); inspect with `methods EDRootController` first and
 invoke with `checked` on the main queue. Testing opens a result alert; retry/stop
@@ -98,20 +152,19 @@ are mutations. Prefer the SSH worker for capture control when Frida is unnecessa
 
 ## Native Slo-mo and ordinary video
 
-These are format choices, not a whitelist restricting recording to stress formats.
-1080p30 was recorded successfully. Only request combinations offered by the phone.
+Only request format combinations offered by the current mode and hardware.
 
 ```sh
-.venv/bin/python ./iphone-control launch com.apple.camera
-.venv/bin/python ./iphone-control camera mode slowmo
+.venv/bin/python ./iphone-control --control-path /tmp/iphone-control-ssh launch com.apple.camera
+.venv/bin/python ./iphone-control --control-path /tmp/iphone-control-ssh camera mode slowmo
 # Wait for mode change to settle, then:
-.venv/bin/python ./iphone-control camera status
-.venv/bin/python ./iphone-control camera set-format --resolution 1080p --fps 240
-.venv/bin/python ./iphone-control camera format
-.venv/bin/python ./iphone-control camera start
+.venv/bin/python ./iphone-control --control-path /tmp/iphone-control-ssh camera status
+.venv/bin/python ./iphone-control --control-path /tmp/iphone-control-ssh camera set-format --resolution 1080p --fps 240
+.venv/bin/python ./iphone-control --control-path /tmp/iphone-control-ssh camera format
+.venv/bin/python ./iphone-control --control-path /tmp/iphone-control-ssh camera start
 # In a separate invocation, after the intended interval:
-.venv/bin/python ./iphone-control camera stop
-.venv/bin/python ./iphone-control camera status
+.venv/bin/python ./iphone-control --control-path /tmp/iphone-control-ssh camera stop
+.venv/bin/python ./iphone-control --control-path /tmp/iphone-control-ssh camera status
 ```
 
 For normal Video, use `camera mode video` and then `set-format --resolution 4k
@@ -121,21 +174,20 @@ in Photo; a saved preference or private numeric enum is insufficient. Slo-mo mod
 is 2 on this device; its high-frame-rate source is not automatically a slowed
 playback file. Use player speed controls for slow motion.
 
-Duskie's native hooks own the remote writer. Its explicit viewfinder stop hook
-is required after removing the ordinary movie output; stopping only the removed
-output was insufficient. Use Camera's own start/stop methods and confirm stopped
-state. Do not run a second native session or change mode/format mid-recording.
+Duskie's native hooks own the remote writer. Use Camera's own start/stop
+methods and confirm stopped state rather than stopping an output the tweak
+has replaced. Do not run a second native session or change mode/format mid-recording.
 For screen-off capture, use the worker with its saved format/destination; locking
 native Camera is not a substitute for that separate feature.
 
 ## USB receiver and preview
 
-These paths refer to the existing laptop checkout; if relocated, use the actual
-checkout. The control CLI does not contain the receiver implementation.
+This optional receiver belongs to the Duskie checkout, not this CLI. Replace the
+two example paths below with the actual checkout and desired receive directory.
 
 ```sh
-cd /mnt/zram1/duskie
-bash laptop/start-receiver.sh --directory /mnt/zram1
+cd /absolute/path/to/duskie
+bash laptop/start-receiver.sh --directory /absolute/path/to/receive-parent
 systemctl --user status duskie-usb
 journalctl --user -u duskie-usb -n 30
 ```
@@ -148,7 +200,7 @@ boot service. `systemctl --user restart duskie-usb` and `stop duskie-usb` affect
 active uploads, so do not use them merely to inspect a working service.
 
 `--directory` is the **parent** of `Duskie Captures`. Current received media is
-under **`/mnt/zram1/Duskie Captures`**. This receiver uses its own loopback FTP
+under **`RECEIVE_PARENT/Duskie Captures`**. This receiver uses its own loopback FTP
 2240 and passive ports 2241–2248, reverse-forwarded over SSH, and HTTP 8765.
 The existing Wi-Fi FTP server/account/Files provider remain separate. A connected
 cable plus iproxy alone is insufficient: the receiver and reverse forwards must
@@ -168,10 +220,9 @@ mpv http://127.0.0.1:8765/
 mpv http://127.0.0.1:8765/live.m3u8
 ```
 
-The updated receiver redirects media clients to the latest recording playlist.
-A browser visiting the root, or `/recordings`, gets the recording index. An older
-receiver returned HTML to mpv at the bare URL, causing “Failed to recognize file
-format”; that was fixed in repository commit `bda9d3b`. Before any segments arrive,
+The receiver redirects media clients to the latest recording playlist.
+A browser visiting the root, or `/recordings`, gets the recording index. If a receiver returns HTML to mpv at the bare URL, use `/live.m3u8` and inspect
+its installed version instead of treating the HTML as a movie. Before any segments arrive,
 the media endpoint returns 503 with an explanation. Open after segments arrive.
 Opening selects the newest media by media modification time and pins that movie;
 it does not switch automatically to the next recording. Seek within received
@@ -180,8 +231,9 @@ history. Preview trails capture and is not a zero-latency camera feed.
 Per-recording playlists are `.duskie-preview/UUID/index.m3u8`; byte ranges point
 at a hard link of the original media, with no second full copy or re-encoding.
 Keep that preview directory and media intact during capture. Removing only one
-hard link won't release the inode's space. Browser HEVC support varies; mpv was
-the tested player. The phone can open the same loopback URL while its preview
+hard link won't release the inode's space. Browser HEVC support varies; use mpv
+when browser playback is unsupported. The phone can open the same loopback URL
+while its preview
 reverse forward is active; its USB settings provide copy/open controls.
 
 ## Test selected connection without recording
@@ -189,8 +241,8 @@ reverse forward is active; its USB settings provide copy/open controls.
 From the control directory:
 
 ```sh
-./iphone-control worker test-connection
-./iphone-control get /var/mobile/Library/Duskie/connection-test.plist ./connection-test.plist
+./iphone-control --control-path /tmp/iphone-control-ssh worker test-connection
+./iphone-control --control-path /tmp/iphone-control-ssh get /var/mobile/Library/Duskie/connection-test.plist ./connection-test.plist
 ```
 
 Read the result with host `plistlib`. Check **time >= request start**, the expected
@@ -240,128 +292,133 @@ connection.plist. Never reuse a UUID from a transcript. Parse binary plists with
 host plistlib and keep credentials out of ordinary output. Check both configured
 host and FTP control/passive connectivity, not just a successful TCP port probe.
 
-Duskie 0.2.63+ native and screen-off video write RAM segments, upload acknowledged
-data, then reclaim segments. A 1-GiB buffer is a **pending backlog**, not a total
-movie allowance. If transfer cannot keep up, RAM can still fill and stop capture;
-a larger queue cannot fix permanently insufficient throughput. Normal Photos/
-local-folder destinations still write locally; temporary RAM/remote capture
-paths avoid a full local video staging file, not every iOS system/cache write.
-No NAND-write counter or write-amplification reduction was measured.
+For a segmented Duskie capture, RAM is a pending-upload backlog, not the total
+movie allowance. Transfer must keep up over time; a larger RAM queue cannot fix
+permanently insufficient throughput. Normal Photos/local destinations still write
+locally. A remote capture path does not eliminate every system/cache write.
 
-The old native 0.2.62 seekable-file path could stop around 827 MB despite free
-phone NAND; the RAM staging limit was separate. Do not use that old limitation
-as an explanation for every modern failure. Check installed version, active
-transport, status/error, mount type/capacity, pending acknowledgements, RAM free
-space and actual server growth. `mount_tmpfs -o update -s ...` did not resize this
-phone's mounted volume even when it returned success. Never overmount retained
-captures or delete pending media to hide the failure.
+When storage errors occur, inspect installed worker version, active transport,
+status/error, mount type/capacity, pending acknowledgements and actual receiver
+file growth. Distinguish free NAND from a full RAM staging queue. On this setup,
+`mount_tmpfs -o update -s ...` did not resize an existing volume despite returning
+success; measure with df/mount. Never overmount retained media or delete pending
+captures to hide a failure. A File Provider location can materialize a local cache.
 
-## Tool availability, signing and recovery
+## Screenshot when the built-in command is unavailable
 
-Use host tools to parse device output. This phone has `/var/jb/usr/bin/python3`,
-ldid and sbreload; `notifyutil` and an installed frida-server were absent at the
-review. Don't assume Linux rg/awk/pgrep/plutil are on the phone PATH. The known
-process query is `ps -A -o pid,comm`. `./iphone-control ssh -- sh -c 'command -v python3'` checks availability explicitly. A noninteractive PATH may differ from a
-root login shell; use confirmed absolute paths when needed.
+The bundled `screenshot OUTPUT.png` currently looks up `UICreateScreenUIImage`,
+which is absent on this profile. Do not loop that command or rely on
+idevicescreenshot when screenshotr/developer-disk-image support is unavailable.
+The installed Duskie capture path uses `_UICreateScreenUIImageWithRotation(BOOL)`.
+The following explicit adapter uses that known C signature and PNG conversion;
+verify its image/orientation on the current runtime before relying on it.
 
-`notify` can use Frida; the historical unlock note also supplies a phone Python
-ctypes/libnotify route when notifyutil is absent. For compiled helpers use the
-host iOS SDK/cross toolchain, not a nonexistent device compiler. Inspect SDK
-metadata: a directory named iPhoneOS16.5 contained real SDK version 16.4 in the
-main setup. Sign modified Mach-O payloads with their required original
-entitlements; privileged CLI helpers and UIKit-injected dylibs have different
-requirements. Install/package only within the active task; this notes review
-needed no deployment. The Duskie repo's build/research notes hold release-specific
-build flags and signing policy; do not reconstruct them from old command history.
-
-A generic `dismiss-alert` does not run UIAlertAction handlers. A Duskie-owned
-SpringBoard alert window can remain retained/key until its actual handler cleans
-it up. `_invokeHandler` was absent on this runtime; `handler` returned a block
-with encoding `@?16@0:8`. Executing a block needs a correctly typed ObjC.Block
-bridge/native helper and known callback signature; a guessed block memory offset
-is not a universal action API. Use supported semantic methods or review that
-specific handler rather than blindly poking a label or private offset.
-
-If Safe Mode occurs, collect the actual process/crash state and identify your
-last mutation. Wrong NSString/C-string arguments and absent-selector diagnostic
-calls caused earlier recoverable incidents. Stop owned Frida before respring;
-see README's marker/recovery procedure and unlock.md. After a controlled respring,
-SSH may drop briefly; reconnect and resolve all process/object addresses again.
-Don't normal-reboot the phone or repeatedly clear a marker to mask a crash loop.
-
-## Compiled helper injection and tweak action probes
-
-Earlier main-session probes also used small signed Objective-C dylibs loaded into
-the **target app**, via Frida `dlopen`/`dlsym`. This lets compiled UIKit code handle
-blocks and complex signatures without recreating an entire bridge. The preserved
-unlock.md supplies a complete minimal source/build/install alternative using a
-SpringBoard-filtered tweak and Darwin notifications; that route requires a
-controlled respring and explicit removal afterward. The minimal helper has only
-unlock/snapshot listeners, not all functions from the larger historical helper.
-
-For an already built/signed helper whose reviewed interface is
-`const char *DKReview(const char *operation)`, a custom runtime extension can use:
+Save as `screen-capture.js` in your work directory:
 
 ```js
-rpc.exports.run = parameters => onMain(() => {
-    if (typeof parameters.path !== 'string' || typeof parameters.operation !== 'string')
-        throw Error('Provide the reviewed helper path and operation');
-    const handle = native('dlopen', 'pointer', ['pointer', 'int'])(utf8(parameters.path), 2);
-    if (handle.isNull()) throw Error('Diagnostic dlopen failed; inspect dlerror/signing');
-    const symbol = native('dlsym', 'pointer', ['pointer', 'pointer'])(handle, utf8('DKReview'));
-    if (symbol.isNull()) throw Error('DKReview symbol missing');
-    const result = new NativeFunction(symbol, 'pointer', ['pointer'])(utf8(parameters.operation));
-    if (result.isNull()) throw Error('Diagnostic returned no result');
-    return JSON.parse(result.readUtf8String());
+rpc.exports.run = () => onMain(() => {
+    const image = native('_UICreateScreenUIImageWithRotation', 'pointer', ['bool'])(1);
+    if (image.isNull()) throw Error('Screen capture unavailable; check display state');
+    const data = native('UIImagePNGRepresentation', 'pointer', ['pointer'])(image);
+    if (data.isNull()) throw Error('PNG encoding failed');
+    const encoded = checked(data, 'base64EncodedStringWithOptions:',
+                            '@24@0:8Q16', 'pointer', ['uint64'], [0]);
+    return {pngBase64: text(encoded)};
 });
 ```
 
-Only use that ABI for a helper whose source actually defines it. Copy the returned
-C string before the next invocation can replace its backing storage. An async
-helper may return only “queued” and later write a result plist: check its real
-completion/timestamp. Different helpers, such as gesture probes, use different
-entry signatures. No diagnostic dylib is bundled or assumed still installed.
-Detaching Frida **does not unload a dlopen library** or undo hooks; a fresh process
-may be required to remove it. Don't dlclose code with live callbacks/objects.
-Use a new filename for a rebuilt helper or restart its process deliberately;
-dlopen of the same path may reuse the already loaded image.
+Run in SpringBoard after readiness, then decode on Linux:
 
-The earlier `LiveProbe.m` called real table/collection delegates, bar-button
-`sendAction:to:from:forEvent:`, FileProvider domain enumeration, native view
-inspection and UIKit window screenshot capture. Its source is historical under
-`/mnt/zram1/duskie/build/review/`; old row indices and unbounded traversal from a
-diagnostic are not reusable control APIs. A framework's domain enumeration callback
-also needs a live process/event loop; the initial queued response isn't the result.
-The bundled screenshot route uses UICreateScreenUIImage and returns PNG to the
-host; that wrapper still needs live acceptance. `idevicescreenshot` failed here
-because screenshotr/developer-disk-image support was unavailable. Repeatedly
-retrying it is not a substitute for the known UIKit capture route.
+```sh
+./iphone-control --control-path /tmp/iphone-control-ssh --process SpringBoard js ./screen-capture.js > ./screen-capture.json
+python3 - <<'PYPNG'
+import base64, json
+from pathlib import Path
+result = json.loads(Path('screen-capture.json').read_text())['result']
+Path('screen.png').write_bytes(base64.b64decode(result['pngBase64'], validate=True))
+PYPNG
+```
 
-For tweak actions, a main-session probe resolved `DKExecuteAction` from
-`Duskie.dylib`'s **symbol table**, then called it as `BOOL(NSString *, BOOL dryRun)`
-on SpringBoard's main queue. `lowPower` with dryRun=0 toggled the setting; dryRun=1
-only checks supported actions. The function is static/internal, not a guaranteed
-export: use source `src/HomeButtons.m`, the actual module's enumerateSymbols and
-its current signature, never a fixed address or guessed fallback. New builds may
-strip it. For capture actions prefer the durable worker interface. Gesture tests
-used a compiled UIPanGestureRecognizer subclass with controlled touch count and
-translation to exercise `DKThreeFingerHandler`; that verifies routing, not physical
-three-finger input delivery. Don't claim a successful handler test proves HID.
+Inspect the resulting PNG dimensions/orientation. Do not publish screen contents.
+The adapter is not a claim that the unchanged built-in screenshot route works.
 
-## Evidence to carry forward
+## Auto-Lock and Low Power Mode policy
 
-Installed package read back 2026-10-21: `com.dusklinux.edgedock 0.2.65~duskie1`.
-Source checkout: `/mnt/zram1/duskie`, upstream
-[https://github.com/dusklinux/duskie](https://github.com/dusklinux/duskie).
-Release-specific evidence, if the checkout is still present:
+Keep `com.apple.managedconfiguration.profiled` available when native Auto-Lock
+or managed feature settings are needed. A disabled/unregistered service can leave
+a stale battery-saver `maxInactivity = 30` policy even with Low Power Mode off,
+grey out Auto-Lock and make native writes fail with “Couldn't communicate with a
+helper application.” Check the current override, loaded job and effective
+`MCProfileConnection` settings before attributing every grey row to that cause.
 
-- `research/NATIVE-STREAMING-0.2.63.md`: native segmented writer / Slo-mo.
-- `research/USB-PREVIEW-0.2.64.md`: finite stress-format captures / live seek.
-- `research/CONNECTION-UI-0.2.65.md`: receiver reconnect, phone test controls, HD30.
-- `research/PREVIEW-URL-FIX.md`: bare mpv URL repair.
-- `laptop/README.md`: receiver dependencies / controls.
+The existing job file is
+`/System/Library/LaunchDaemons/com.apple.managedconfiguration.profiled.plist`.
+Inspect first from an appropriately privileged phone shell:
 
-These files substantiate earlier main-session tests; no claim is made that every
-example in these new notes has since been live-operated. Long final-release
-recordings, sustained full-backlog/cable-loss recovery and battery/heat testing
-remain the user's planned tests. Keep new results dated and scoped in VALIDATION.
+```sh
+/var/jb/bin/launchctl print-disabled system
+/var/jb/bin/launchctl print system/com.apple.managedconfiguration.profiled
+```
+
+For a repair that requires the service, enable it; bootstrap only if unregistered:
+
+```sh
+/var/jb/bin/launchctl enable system/com.apple.managedconfiguration.profiled
+/var/jb/bin/launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.managedconfiguration.profiled.plist
+```
+
+Check command results and re-read the effective policy/row. Other management,
+enrollment and passcode-prompt jobs are separate. Daemon Manager exposes this
+service under Auto-Lock and configuration policy with manual Off, outside Critical.
+
+Low Power Mode itself also disables the row through Display & Brightness’s UI
+check. Duskie's optional normal-timeout feature handles that check and the
+battery-saver client without changing other policy clients or range restrictions.
+Read the actual installed feature state before altering system policy directly.
+
+The native picker setter’s Never value is **-1**; the saved policy/idle monitor
+can report **2147483647**. Do not pass a stored sentinel blindly to a UI setter.
+Use the current specifier and checked setter ABI, then verify the saved setting,
+enabled row and native idle descriptor. Do not leave `setIdleTimerDisabled:YES`
+behind: it prevents normal timeout behavior and invalidates timeout tests.
+
+## Verify media and restore temporary settings
+
+```sh
+ffprobe -v error -show_entries \
+  format=duration,size:stream=index,codec_name,width,height,r_frame_rate \
+  -of json recording.mp4
+ffmpeg -v error -i recording.mp4 -f null -
+```
+
+Inspect the actual encoded frame rate, dimensions, orientation, audio and decode
+result. A label or nominal frame rate does not prove continuous capture. For live
+streaming, confirm receiver growth before stop, then inspect the finalized media.
+
+Before a temporary preference edit, save the original plist bytes. Parse with
+host plistlib; preserve its owner/mode on the phone. Prefer the owning controller’s
+setter or CFPreferences API to direct replacement when caching matters. If direct
+Duskie plist replacement is appropriate, post `com.dusklinux.edgedock/settings`,
+then verify the live listener state. A successful Darwin post is not completion.
+Restore the original bytes/state after the test unless the change is intended.
+
+## Invoke a compiled helper or tweak action
+
+Use DEVELOPMENT.md to build/sign/stage an owned helper. A reviewed dylib can be
+loaded into its target app through Frida’s dlopen/dlsym on the main queue, with
+its exact exported ABI. Complex blocks and struct arguments are often simpler in
+compiled ObjC. Detaching Frida does not unload that dylib or undo its hooks.
+Do not dlclose code with live callbacks; deliberately restart the target process
+when unloading is required. Use a new filename for rebuilt diagnostic libraries
+or a fresh process so dlopen does not silently reuse an older image.
+
+For an internal tweak dispatcher, read its actual source signature and locate the
+symbol in the **matching installed binary**. Recompute after every build; never
+reuse an old offset. Synthetic handler invocation checks routing, not physical
+HID input. Prefer an existing durable worker command for capture operations.
+
+Phone tools differ from Linux: inspect command -v and installed --help. Use host
+rg/plistlib to filter/parse downloaded output rather than assume rg/plutil/notifyutil
+exists on the phone. Noninteractive PATH can differ from the interactive root
+shell; use confirmed absolute paths. If notifyutil is absent, unlock.md shows a
+phone Python ctypes call to libnotify without needing Frida.

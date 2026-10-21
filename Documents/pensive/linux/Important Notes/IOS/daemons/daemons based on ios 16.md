@@ -1,3 +1,12 @@
+# iOS 16 daemon reference and historical evidence
+
+Start with the [daemon operating guide](README.md) for current entry points,
+state definitions, backup/verification steps and source locations. The dated
+sections below preserve history: a later explicit correction supersedes an older
+claim on the same topic, including sections called "current" or "final". Preset
+targets and past observations are not a live snapshot or instructions to reapply
+an old phone profile. Use the [control manual](../ssh/control/README.md) for USB SSH.
+
 ## Auto-Lock policy recommendation — 2026-10-21, v1.0.32
 
 `com.apple.managedconfiguration.profiled` now defaults **On** (`no` / builtin
