@@ -41,7 +41,7 @@ EP_RE: re.Pattern[str] = re.compile(
     r")",
     re.IGNORECASE,
 )
-NUMERIC_STEM_RE: re.Pattern[str] = re.compile(r"^(\d{1,6})$")
+NUMERIC_STEM_RE: re.Pattern[str] = re.compile(r"^(\d{1,6}(?:_\d+)?)$")
 
 EXIT_OK = 0
 EXIT_RUNTIME_FAILURE = 1
@@ -137,13 +137,20 @@ def canonical_name_for_numeric(filename: str, allowed: frozenset[str]) -> str | 
     match = NUMERIC_STEM_RE.fullmatch(stem)
     if not match:
         return None
+    parts = stem.split("_")
     try:
-        episode_id = int(match.group(1))
+        base_id = int(parts[0])
+        if base_id <= 0:
+            return None
+        if len(parts) == 1:
+            canonical = f"{base_id}{lowered}"
+        else:
+            sub_id = int(parts[1])
+            if sub_id <= 0:
+                return None
+            canonical = f"{base_id}_{sub_id}{lowered}"
     except (ValueError, OverflowError):
         return None
-    if episode_id <= 0:
-        return None
-    canonical = f"{episode_id}{lowered}"
     return None if canonical == filename else canonical
 
 
@@ -155,11 +162,19 @@ def is_canonical(filename: str, allowed: frozenset[str]) -> bool:
     match = NUMERIC_STEM_RE.fullmatch(stem)
     if not match:
         return False
+    parts = stem.split("_")
     try:
-        episode_id = int(match.group(1))
+        base_id = int(parts[0])
+        if base_id <= 0:
+            return False
+        if len(parts) == 1:
+            return stem == str(base_id) and filename == f"{base_id}{suffix.lower()}"
+        sub_id = int(parts[1])
+        if sub_id <= 0:
+            return False
+        return stem == f"{base_id}_{sub_id}" and filename == f"{stem}{suffix.lower()}"
     except (ValueError, OverflowError):
         return False
-    return episode_id > 0 and filename == f"{episode_id}{suffix.lower()}"
 
 
 def iter_candidate_files(directory: Path, recursive: bool) -> list[Path]:
