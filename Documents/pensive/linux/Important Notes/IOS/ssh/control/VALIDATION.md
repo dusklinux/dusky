@@ -28,6 +28,7 @@ phone in the intended state.
 | Wake/unlock/sleep | Fresh PID, screenIsOn and isUILocked; not just request return |
 | Launch/navigate | Correct app process and destination controller/view |
 | UIControl event | Resulting app state; event dispatch alone is insufficient |
+| Gesture / keyboard editor | Real hold/pressure/swipe, editor presentation, text focus, Save/Cancel and persisted data |
 | Table/setting selection | Correct specifier/value/checkmark and live behavior |
 | Notification | Listener’s fresh acknowledgement/state, not notify_post’s code |
 | Saved preferences | Readback, correct owner/mode and cache propagation |
@@ -56,7 +57,10 @@ Do not sum process footprints or infer battery/NAND savings from a control actio
 - Camera mode/recording/format methods have the expected profile in EXTENDING.md.
   Verify each wrapper operation’s actual result; a host mock does not execute iOS.
 - `tap` delivers UIControl TouchUpInside, not coordinate/HID input. A synthetic
-  gesture-handler invocation does not verify physical touches.
+  gesture-handler invocation does not verify physical touches. Standalone UIKit
+  fixtures without an application event dispatcher cannot establish real control
+  delivery or scene presentation; test those in the running app or mark them
+  unverified. When the owner defers UI testing, report that limit explicitly.
 - Generic keyboard input, arbitrary swipe/drag streams, biometric enrollment and
   device-passcode unlock are not bundled. The unlock procedure applies to the
   owner’s no-device-passcode configuration, separate from its SSH password.
@@ -72,6 +76,11 @@ probe rather than immediately repeat a mutation. Follow README.md’s diagnosed
 recovery procedure. Clear Safe Mode only after identifying/removing the cause;
 never normal-reboot this jailbreak setup as a generic recovery step.
 
+For a frozen foreground app, use [DIAGNOSTICS.md](DIAGNOSTICS.md) to capture a
+short targeted stack sample over SSH before repeatedly attaching Frida or
+enabling more services. A successful password exchange does not prove the next
+verification page rendered; a received modem SMS does not prove Messages stored it.
+
 ## Before leaving the phone
 
 - Stop/finalize only your intended captures; preserve pending media/uploads.
@@ -79,6 +88,9 @@ never normal-reboot this jailbreak setup as a generic recovery step.
   intentionally changes them. Remove any diagnostic keep-awake assertion.
 - Stop owned server/forward processes and remove owned probe files. Preserve
   pre-existing SSH/receiver services and user files.
+- Stop owned log relays and restore temporarily enabled diagnostic collectors
+  to their saved override and registration states. Compare final service state
+  with the immediate pre-test backup, preserving intentional repairs.
 - After a required restart, verify the current PID, expected modules and final
   state. Use userspace restart when already-running app processes all need a new
   injection; a respring alone does not restart every app process.

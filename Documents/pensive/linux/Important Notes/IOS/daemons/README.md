@@ -17,6 +17,16 @@ and sudo/su are installed before diagnosing app command failures. Native mode
 means the retired daemonmanager script is optional, not that Python or jailbreak
 tools are unnecessary. Do not apply the Linux host's Python floor to the phone.
 
+## Clipboard editing reverted — 2026-10-21
+
+At the owner's request, Duskie is restored to **0.2.71**, source tree exactly
+matching `c31da60`, before both clipboard-editing attempts. Hold/3D Touch editing
+and the pencil button are removed; ordinary paste and swipe pin/delete remain.
+The original package's 62 installed payload files matched, and clipboard,
+preferences and daemon overrides were preserved. The Apple Account sign-in fix
+remains. Daemon Manager 1.0.38 and its daemon changes are unaffected. Older clipboard
+editing sections below describe superseded versions, not the current installation.
+
 ## Resolve current facts before acting
 
 The owner's latest instruction and the authorized task take precedence. Read
@@ -39,16 +49,60 @@ At the documentation/source check on 2026-10-21:
 
 | Item | Reference value and meaning |
 |---|---|
-| Daemon Manager checkout | `/mnt/zram1/daemon_manager`, source version 1.0.32/build 33; installed build must be checked separately |
+| Daemon Manager checkout | `/mnt/zram1/daemon_manager`, v1.0.38/build 39 installed; source 0874a76 verified against the built IPA |
 | TrollStore reference checkout | `/mnt/zram1/TrollStore-main`; contains separate full and Lite build paths |
-| Presets | 513 entries, 331 Off / 182 On, including 58 Critical On; aliases mean these are not unique installed jobs |
+| Presets | installed source/config: 513 entries, 329 Off / 184 On, including 58 Critical On; heard, DragUI.druid and cmfsyncagent target On; AccessibilityUIServer targets Off; aliases are not unique installed jobs |
 | `profiled` | Recommended On, builtin enabled; preserves native Auto-Lock/configuration policy functionality |
-| SSH | Owner reported root and mobile password login working over USB port 2222; older root-login failures are historical |
+| SSH | During this work mobile key SSH + interactive sudo works over USB port 2222; direct root password authentication failed; discover rather than rewrite credentials |
 
 Both checkouts are on temporary storage. If absent, locate the intended source
 again; old `/home/.../daemon_manager`, `daemon_manager-review` and
 `/mnt/zram1/ios/...` paths are historical locations. The app repository is
 [dusklinux/daemon_manager](https://github.com/dusklinux/daemon_manager).
+
+## Siri voices and optional controls — 2026-10-21
+
+The owner verified Siri US English Voice 5 works after enabling only triald, and
+regular functions still work with the optional accessibility batch Off. Trial stays
+optional/default Off and is included in Siri. AccessibilityUIServer now defaults
+Off; Background Sounds/heard stays On. New groups cover AssistiveTouch, Speak Screen,
+CarPlay, Handoff, Watch and nearby/AirPods helpers, retaining shared dependencies.
+
+Daemon Manager 1.0.38/build 39 and Duskie 0.2.72 are installed/published. Services
+supports mixed-state multiselection; result controls are Apply Now / Restart
+Userspace / Dismiss. Optional two-GiB inflation uses the installed Duskie worker;
+Release is explicit. Pinned clipboard editing uses hold/3D Touch → Edit. The owner
+will test these new UI controls after returning; native/build checks passed.
+Current targets: **513 entries, 329 Off / 184 On, 58 Critical On**. Final task-specific
+native changes are triald On and AccessibilityUIServer Off. Installation/restart
+preserved preferences and clipboard data; diagnosticd is restored Off/unregistered.
+The [latest reference section](daemons%20based%20on%20ios%2016.md) records evidence,
+state distinctions and deployment provenance. Older results below remain dated history.
+
+## Latest focused recovery — 2026-10-21
+
+Keep cmfsyncagent On for the user-verified carrier SMS and recent-call/contact info
+paths. A 12-service batch was narrowed to three; all three Off reproduced the
+fault, and restoring only cmfsyncagent restored SMS/contact details with the other
+11 candidates Off. It is now Recommended On and a shared messaging/account group
+prerequisite, outside Critical. Wi-Fi info is responsive but its original intermittent
+delay was not independently isolated.
+
+Apple sign-in separately needed a Duskie Settings **code fix**, not an account-daemon
+toggle. The bundle-load observer deadlocked with the rendering/main queues. A native
+fixture failed with the old library and passed with the fix; the owner completed
+code entry and sign-in successfully. Duskie 0.2.71 is installed and published.
+
+Background Sounds/heard and drag/drop now default On and have optional groups in
+Daemon Manager 1.0.34. The only lasting native override change from the immediate
+pre-batch backup is cmfsyncagent On. Existing user account/store/drag settings were
+preserved. Temporary diagnosticd is disabled/unregistered; owned captures stopped.
+The app audit `audit/2026-10-21-feature-repair.md` and Duskie research
+`research/FIXES-0.2.71.md` record provenance; private raw evidence stays out of Git.
+
+The owner's standing instruction is to publish and install completed iPhone updates
+without repeated confirmation. Preserve this preference alongside later instructions;
+Linux reference-note staging remains separate from publishing the iPhone projects.
 
 ## Keep the different states separate
 

@@ -120,6 +120,15 @@ UI process/main queue. Avoid broad filters and periodic work when an existing
 notification or method hook supplies the event. See EXTENDING.md for object,
 block, scalar and lifetime rules.
 
+An NSNotificationCenter block observer registered on NSOperationQueue.mainQueue
+can make a background poster wait for main. For bundle-load notifications this
+can deadlock when main is waiting for the rendering/loader queue that posted it.
+Receive that notification with `queue:nil`, then dispatch UI work asynchronously
+to main; keep coalescing state on main too. Do not replace the wait with
+dispatch_sync to main. A bounded fixture should reproduce the actual callback
+while main waits for its worker. See [DIAGNOSTICS.md](DIAGNOSTICS.md) for capturing
+and symbolizing a live wait before changing a hook.
+
 ## 5. Verify and remove
 
 Check installed file hashes and the **fresh target process’s** loaded module,
@@ -139,3 +148,25 @@ files. Detaching Frida or deleting a file does not unload live callbacks. Use
 README.md’s diagnosed recovery procedure if a hook causes a UI failure. For a
 release tweak use the project’s package/build/install workflow; this procedure
 is a minimal helper workflow, not a Debian package manager replacement.
+
+## 6. Validate UI delivery and perform a targeted rollback
+
+For keyboard-hosted controls, inspect the actual app/keyboard windows, scenes and
+text responder before choosing a presenter. Verify gesture delivery, presentation
+and text focus in the running app. Calling a handler in an isolated fixture tests
+that handler's logic; it does not establish physical gestures or a usable editor.
+See [VALIDATION.md](VALIDATION.md) for completion evidence.
+
+For a requested rollback, identify the commit before the unwanted feature from
+its file history; documentation-only commits can make “two commits ago” ambiguous.
+Record current diffs, preserve unrelated changes and back up affected preferences,
+user data and daemon state. Revert the feature's code, tests and packaging together;
+for an exact baseline request, compare the resulting source tree with that baseline.
+Keep ignored signed libraries/object caches consistent if they may be reused.
+
+Use the project's installer with the original verified signed package when
+available. Rebuild/sign only when necessary. Reload affected processes, using a
+userspace restart when existing app/keyboard clients all need replacement. Verify
+installed version/payload hashes and preserved user data/settings after reconnecting.
+Do not reset daemon overrides or apply preset defaults as part of a tweak rollback.
+Record project versions/results in their separate notes, not in this manual.

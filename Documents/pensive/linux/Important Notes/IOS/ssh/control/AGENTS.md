@@ -4,6 +4,9 @@
   completion checks. Use BOOTSTRAP.md when SSH/Frida is missing, RECIPES.md for
   tasks, EXTENDING.md for typed APIs, DEVELOPMENT.md for compiled helpers, and
   unlock.md for the no-Frida unlock fallback.
+- Use DIAGNOSTICS.md for focused logs, frozen-app stack samples and grouped
+  service isolation. Keep project-specific dependency/release results in their
+  separate notes rather than turning this manual into a session transcript.
 - Prefer USB SSH. Reuse existing authenticated connections/server/receiver when
   available. Do not interrupt another operator’s capture or connection.
 - Discover fresh PIDs and wait for injection readiness before attaching after a

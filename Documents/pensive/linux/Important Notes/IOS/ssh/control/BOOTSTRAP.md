@@ -26,13 +26,25 @@ phone address; do not reuse an old address from a transcript.
 
 ## 2. Authenticate with the intended account
 
-The owner reported on 2026-10-21 that **both root and mobile password SSH login
-work**, including USB at `127.0.0.1:2222`. This supersedes the older root-login
-failures; this documentation pass did not re-test authentication. The CLI still
-defaults to mobile, and examples below use mobile plus interactive sudo. Direct
-root is also available when the task requires it. The owner-supplied password is
-recorded in the local [unlock guide](unlock.md#connection); enter it at prompts,
-not in command arguments or generated scripts.
+The owner reported both root and mobile password login working on 2026-10-21.
+Later live checks that day found **mobile key SSH plus interactive sudo working**,
+while direct root password authentication failed. Use the working mobile route
+first; neither report guarantees a future authentication state. The CLI defaults
+to mobile. The owner-supplied password is recorded in the local
+[unlock guide](unlock.md#connection); enter it at prompts, not in command
+arguments or generated scripts. Do not rewrite credentials to repair a diagnostic.
+
+With working mobile key authentication, an agent can open a root shell directly:
+
+```sh
+ssh -tt -o BatchMode=yes -o ConnectTimeout=8 -p 2222 \
+  mobile@127.0.0.1 '/var/jb/usr/bin/sudo -s'
+# Enter the sudo password at its prompt; verify id inside this shell.
+```
+
+Allocate a host PTY (`tty=true`) for this interactive command. BatchMode requires
+an already-working key or authenticated master; omit it for an interactive SSH
+password login when needed. A sudo password prompt is separate from SSH login.
 
 Create an authenticated SSH master in a terminal:
 
@@ -62,7 +74,8 @@ mobile; they do not inherit `sudo -s` from another channel. Use the open root
 terminal for root commands. Do not change passwd/master.passwd or SSH keys just
 to make a diagnostic work.
 
-For direct root, create or reuse a **root** master instead:
+If direct root authentication has been verified for the current session, create
+or reuse a **root** master instead:
 
 ```sh
 ssh -M -S /tmp/iphone-control-root-ssh -o ControlPersist=600 \
@@ -82,6 +95,10 @@ consistently if using this route.
 
 SSH/help work without Frida. UI commands require Frida in the interpreter that
 actually runs the CLI. It uses Python **3.15+** syntax.
+
+This host requirement does not apply to the phone's separate Python runtime,
+observed as 3.9.9 on the documented device. Check the interpreter where a script
+will actually execute before choosing syntax or diagnosing a version failure.
 
 ```sh
 python3 --version

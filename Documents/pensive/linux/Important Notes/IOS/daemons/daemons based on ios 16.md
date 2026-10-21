@@ -7,6 +7,120 @@ claim on the same topic, including sections called "current" or "final". Preset
 targets and past observations are not a live snapshot or instructions to reapply
 an old phone profile. Use the [control manual](../ssh/control/README.md) for USB SSH.
 
+## Clipboard editing reverted — 2026-10-21
+
+At the owner's request, Duskie is restored to **0.2.71**, source tree exactly
+matching `c31da60`, before both clipboard-editing attempts. Hold/3D Touch editing
+and the pencil button are removed; ordinary paste and swipe pin/delete remain.
+The original package's 62 installed payload files matched, and clipboard,
+preferences and daemon overrides were preserved. The Apple Account sign-in fix
+remains. Daemon Manager 1.0.38 and its daemon changes are unaffected. Older clipboard
+editing sections below describe superseded versions, not the current installation.
+
+## Siri voices and optional controls — 2026-10-21, v1.0.38 installed
+
+Siri US English Voice 5 (Quinn) queued its `com.apple.siri.tts.voice.en_US.quinn.gryphon.premium`
+Trial asset with no download while **com.apple.triald was disabled**. mobileassetd
+was already On. Enabling/bootstrap-loading only triald started the download without
+reboot; the owner confirmed the voice downloaded and works. Trial is now described
+as feature/asset delivery as well as experimentation and is included in Siri.
+It remains default Off, restored when Siri is needed. The phone currently retains
+Trial On and the owner's other manually enabled Siri services.
+
+Optional accessibility now covers AssistiveTouch, VoiceOver, voice assets, Voice
+Control, Full Keyboard Access, recognition, remote accessibility and captions.
+There are focused AssistiveTouch and Speak Screen/spoken-content groups. Their
+Settings feature switches remain separate from daemon state. AccessibilityUIServer
+now defaults Off, including inherited legacy full-copy targets; explicit custom
+choices remain authoritative. The 11-job optional accessibility Off batch completed
+with all selected jobs absent after deregistration settled. The owner confirmed
+normal typing, app switching, contact info, SMS and Background Sounds still work.
+**heard stays On** in its separate Background Sounds group for sleep use.
+
+CarPlay, Handoff, Apple Watch helpers and nearby/AirPods helpers have their own groups;
+the optional jobs already default Off. The actual Watch preference-sync job label
+is `com.apple.nanoprefsyncd.2`, despite the plist filename lacking `.2`; the group
+includes it. Shared registry/Bluetooth/discovery/sharing/audio/core UI dependencies
+retain their existing policies. No new Critical service was disabled.
+
+Services/Critical now support multiselection with explicit On/Off for a mixed-state
+selection. Apply results offer one row: **Apply Now · Restart Userspace · Dismiss**.
+Apply Now attempts the saved jobs' live load/unload with bounded registration
+verification; clients can still require reopening/restart. It never automatically
+reboots. Pending actions are kept for the current app process; saved launchd
+overrides persist. Tools → Execution Log reopens the controls after dismissal.
+
+Manual 100 MiB memory controls remain. A new one-tap 2 GiB control uses the installed
+Duskie worker's separate process/allowance and reports its allocation/progress.
+That worker stays allocated across app switching/sheet dismissal until **Release**;
+manual app allocations still clear when the sheet closes/backgrounds. It is induced
+memory pressure, not additional RAM or measured multitasking/battery improvement.
+
+Current config/source: **513 targets, 329 Off / 184 On, including 58 Critical On**.
+Daemon Manager **1.0.38/build 39**, source `0874a76adb20512dd1b107b3b0cb6b735bd2869b`,
+was built/published by Actions **39610063658** and installed through TrollStore Lite.
+All 34 Python checks, native Swift checks (including the worker protocol), build,
+signing and packaging passed. IPA SHA256:
+`398404366d661cfb8dee3d125c1408db103161a0b9ee39294d5a8bb59d5514e1`.
+Release/download/phone hashes and installed identity match. Preferences and overrides
+were preserved by installation; Apply Defaults was not used.
+
+Duskie **0.2.72** adds a pinned-row long-press/3D Touch Edit menu and multiline
+Save/Cancel editor. Pins are preserved, duplicate destinations merge, and stale
+or over-capacity requests are rejected. Existing swipes are unchanged. Native
+clipboard persistence tests passed in an isolated fixture; the owner will test
+physical gestures/editor/UI after returning. Both packages are installed and a
+userspace restart loaded the new hooks. Clipboard content and preferences compare
+equal before/after installation and restart. Raw evidence/backups remain private.
+
+The final semantic override changes from this task's start are exactly **triald On**
+and **AccessibilityUIServer Off**. Temporary diagnosticd returned Off/unregistered;
+owned captures stopped. The short accessibility-Off resource observation had Normal
+pressure in three intervals and stable sampled core PIDs; it is not an overnight,
+thermal or battery test. New app UI, live-apply interaction, 2 GiB button and physical
+clipboard editing await the owner's requested manual tests. See project audits
+`audit/2026-10-21-voice-ui.md` and Duskie `research/FIXES-0.2.72.md` for details.
+
+## SMS/contact recovery and regular-use defaults — 2026-10-21, v1.0.34 installed
+
+`com.apple.accessibility.heard` and `com.apple.DragUI.druid` now default **On**
+(`no` / builtin `false`) in the working source and mirrored config, at the owner's
+request. **Background sounds and hearing** and **Drag and drop** are separate
+optional Groups entries; manual Off remains available. They are outside Critical
+and the live-unload allowlist, so group changes require userspace restart. Hearing
+On restores the shared audio prerequisite; Hearing Off preserves that prerequisite.
+
+`com.apple.cmfsyncagent` also now defaults **On**, Recommended On, outside
+Critical. Disabling it in the tested iOS 16.7.16 profile reproduced missing carrier
+SMS and an unresponsive recent-call/contact ⓘ. A 12-service On batch worked; six
+then three candidates still worked; restoring all three Off reproduced the fault;
+restoring only cmfsyncagent restored SMS and contact details, user-confirmed with
+the other 11 candidates Off. Calls and SMS, Messages and FaceTime, and Apple Account
+On restore it as a shared prerequisite; their Off actions preserve it. Individual
+manual Off remains available. Wi-Fi ⓘ was responsive in the restored profile;
+its original intermittent delay was not independently isolated to this service.
+
+Matching source/config: **513 targets, 328 Off / 185 On, including 58 Critical On**.
+Only these three Boolean targets changed. Existing explicit custom choices remain
+authoritative. The historical full-copy preference migration retains its original
+builtin reference values. Installing the app does not apply defaults.
+The phone now runs **v1.0.34/build 35**, installed through TrollStore Lite after the
+[macOS workflow](https://github.com/dusklinux/daemon_manager/actions/runs/39599823153)
+passed Python/native Swift checks and built/signed the IPA. Release, downloaded and
+phone IPA hashes matched. App preferences and saved overrides were unchanged by
+installation; the source commit is `060c7f33288d9b04e892d2a9478f3bc0f552b8b4`.
+Older sections listing these three jobs Off
+are superseded as intended targets, not rewritten as historical test results.
+
+The separate Apple sign-in stall was a Duskie Settings code deadlock, not a
+missing account daemon: its bundle-load observer waited for main while main waited
+for the rendering queue loading that bundle. A native fixture failed with the
+installed library and passed with the corrected one. The focused signed library
+fix was installed and then packaged/published as Duskie 0.2.71; the owner confirmed
+code entry and successful sign-in. The installed package and library hash were verified.
+Temporary diagnosticd was restored disabled/unregistered and owned captures stopped.
+See the app audit `audit/2026-10-21-feature-repair.md` for the batch and build record.
+
 ## Auto-Lock policy recommendation — 2026-10-21, v1.0.32
 
 `com.apple.managedconfiguration.profiled` now defaults **On** (`no` / builtin
@@ -206,7 +320,7 @@ The table below follows the current builtin override for matching targets. It is
 | 3   | absd                           | Absinthe/NAC authentication dependency; restoring it removed -44303 initialization errors | no |
 | 4   | accessibility.axassetsd        | Accessibility asset downloads, such as voices                                                | yes                      |
 | 5   | accessibility.axremoted        | Remote accessibility services                                                                | yes                      |
-| 6   | accessibility.heard            | HearingCore service for hearing features, including background sounds and sound-detection notifications. Disabling can break hearing features/accessories even with Bluetooth enabled.                                             | yes                             |
+| 6   | accessibility.heard            | HearingCore service for hearing features, including background sounds and sound-detection notifications. Disabling can break hearing features/accessories even with Bluetooth enabled.                                             | no                              |
 | 7   | accessibility.motiontrackingd  | Accessibility motion/head-tracking support                                                   | yes                      |
 | 8   | accessoryupdaterd              | Firmware updates for Apple/supported accessories                                             | yes                      |
 | 9   | accountsd                      | System accounts database and access management                                               | no                             |
@@ -285,7 +399,7 @@ The table below follows the current builtin override for matching targets. It is
 | 82  | cloudpaird                     | iCloud-based pairing info sync                                                               | yes                      |
 | 83  | cloudphotod                    | iCloud Photos background sync                                                                | yes                      |
 | 84  | CloudSettingsSyncAgent         | iCloud settings sync agent                                                                   | yes                      |
-| 85  | cmfsyncagent                   | CommunicationsFilter synchronization agent with key-value-store and external-store-change triggers. Disabling loses this synchronization; complete blocked-contact synchronization was not tested.                                                | yes                             |
+| 85  | cmfsyncagent | CommunicationsFilter sync and blocked-contact queries. Off reproduced missing carrier SMS and unresponsive recent-call/contact info; restoring only this candidate plus userspace restart restored both on iOS 16.7.16. Recommended On; full cross-device filter sync untested. | no |
 | 86  | commandandcontrol              | Voice Control accessibility daemon                                                           | yes                      |
 | 87  | CommCenter                     | Core cellular/telephony; shared SpringBoard prerequisite. Off caused repeated CoreTelephony connection failures. | no                             |
 | 88  | CommCenter-noncellular         | Network-service variant for non-cellular devices                                             | no                             |
@@ -337,7 +451,7 @@ The table below follows the current builtin override for matching targets. It is
 | 134 | DMHelper                       | Device-management helper                                                                     | yes                      |
 | 135 | donotdisturbd                  | Do Not Disturb / Focus management                                                            | no                             |
 | 136 | dprivacyd                      | Differential Privacy telemetry service                                                       | yes                            |
-| 137 | DragUI.druid                   | Drag-and-drop UI broker exporting source, destination and paste-announcement services. Disabling intentionally loses those UI paths; ordinary Home, typing and media checks passed.                                                                     | yes                             |
+| 137 | DragUI.druid                   | Drag-and-drop UI broker exporting source, destination and paste-announcement services. Disabling intentionally loses those UI paths; ordinary Home, typing and media checks passed.                                                                     | no                              |
 | 138 | driverkitd                     | DriverKit user-space driver host service                                                     | no                             |
 | 139 | dt.automationmode-writer       | Developer Automation Mode support task                                                       | yes                            |
 | 140 | dt.AutomationModeUI            | Developer Automation Mode UI service                                                         | yes                            |
@@ -627,7 +741,7 @@ The table below follows the current builtin override for matching targets. It is
 | 424 | translationd                   | System translation framework daemon                                                          | yes                      |
 | 425 | transparencyd                  | Apple transparency verification daemon for security features                                 | no                             |
 | 426 | transparencyStaticKey          | Static key/support component for transparency services                                       | no                             |
-| 427 | triald                         | Feature-flag and experimentation daemon                                                      | yes                            |
+| 427 | triald | Trial feature/experiment and asset delivery; required for the verified US English Siri Voice 5 download. Default Off; Siri group On restores it. | yes |
 | 428 | trustd                         | Certificate trust-evaluation daemon                                                          | NO                             |
 | 429 | tvremoted                      | Apple TV Remote support daemon                                                               | yes                      |
 | 430 | tzlinkd                        | Private time-zone helper daemon                                                              | no                             |
@@ -696,7 +810,7 @@ The table below follows the current builtin override for matching targets. It is
 | 493 | syslogd                        | Core BSD system log socket daemon                                                            | yes                             |
 | 494 | tipsd                          | Tips app content sync and notification service                                               | yes                            |
 | 495 | voiced                         | VoiceOver speech synthesis audio daemon                                                      | yes                      |
-| 496 | AccessibilityUIServer | Optional accessibility UI host; basic usage tested with it off; no Recommended On classification | no |
+| 496 | AccessibilityUIServer | Shared optional accessibility UI host, now default Off; restore through accessibility/AssistiveTouch/spoken-content groups before use. Background Sounds/heard remains separate. | yes |
 | 497 | PosterBoard | Wallpaper/Lock Screen host and tested media-panel rendering dependency; default Off, enable with liveactivitiesd for that feature | yes |
 | 498 | PaperBoard | Wallpaper-related UI host; not required for tested Lock Screen playback controls | yes |
 | 499 | ShortcutsUI | Interactive Shortcuts UI host; kept On on the tested phone, freely switchable | yes |

@@ -6,6 +6,35 @@ instructions below preserve earlier versions: later explicit corrections take
 precedence over older "current"/"final" sections. Verify source, installed build
 and live state separately. Installation alone does not apply preset targets.
 
+## Siri voices and optional controls — 2026-10-21
+
+The owner verified Siri US English Voice 5 works after enabling only triald, and
+regular functions still work with the optional accessibility batch Off. Trial stays
+optional/default Off and is included in Siri. AccessibilityUIServer now defaults
+Off; Background Sounds/heard stays On. New groups cover AssistiveTouch, Speak Screen,
+CarPlay, Handoff, Watch and nearby/AirPods helpers, retaining shared dependencies.
+
+Daemon Manager 1.0.38/build 39 and Duskie 0.2.72 are installed/published. Services
+supports mixed-state multiselection; result controls are Apply Now / Restart
+Userspace / Dismiss. Optional two-GiB inflation uses the installed Duskie worker;
+Release is explicit. Pinned clipboard editing uses hold/3D Touch → Edit. The owner
+will test these new UI controls after returning; native/build checks passed.
+Current targets: **513 entries, 329 Off / 184 On, 58 Critical On**. Final task-specific
+native changes are triald On and AccessibilityUIServer Off. Installation/restart
+preserved preferences and clipboard data; diagnosticd is restored Off/unregistered.
+The [latest reference section](../../daemons%20based%20on%20ios%2016.md) records evidence,
+state distinctions and deployment provenance. Older results below remain dated history.
+
+## Latest focused repair — 2026-10-21
+
+See the [operating guide](../../README.md) and newest [reference section](../../daemons%20based%20on%20ios%2016.md).
+The prepared source/config now defaults heard, DragUI.druid and cmfsyncagent On;
+older Off lists below are historical. cmfsyncagent alone restored the tested SMS
+and contact-info paths after batch isolation. Apple sign-in separately required
+a Duskie Settings bundle-notification deadlock fix, not another account daemon.
+The owner confirmed successful sign-in after that code fix. Deployment provenance
+is tracked separately from source targets; installing the app does not apply defaults.
+
 ## Auto-Lock policy recommendation — 2026-10-21, v1.0.32
 
 `com.apple.managedconfiguration.profiled` now defaults **On** (`no` / builtin

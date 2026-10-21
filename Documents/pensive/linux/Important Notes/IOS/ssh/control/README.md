@@ -23,6 +23,7 @@ for presets, native overrides, dependencies and TrollStore installation.
 | Build, sign, install and remove an iOS control dylib | [DEVELOPMENT.md](DEVELOPMENT.md) |
 | Unlock without Frida using a standalone injected helper | [unlock.md](unlock.md) |
 | Readiness, completion checks and known capability limits | [VALIDATION.md](VALIDATION.md) |
+| Focused logs, frozen apps and daemon batch isolation without Frida | [DIAGNOSTICS.md](DIAGNOSTICS.md) |
 
 `iphone-control` is the host CLI; `runtime.js` is its injected helper. Keep them
 together: the CLI loads runtime.js from its own directory. Optional recording
@@ -34,7 +35,7 @@ commands require the installed Duskie worker; ordinary UI control uses Frida.
    Python **3.15+**; UI commands also need the Frida package in that interpreter.
 2. Follow BOOTSTRAP.md to reuse or establish USB SSH. Verify `./iphone-control --control-path /tmp/iphone-control-ssh ps`
    before diagnosing Frida. The examples use mobile plus interactive sudo;
-   BOOTSTRAP.md also documents the owner-confirmed direct root route. Match
+   BOOTSTRAP.md also documents direct root when its authentication is verified. Match
    the SSH account and master socket throughout an operation.
 3. For UI control, follow BOOTSTRAP.md for a matching server/agent and SSH forward.
    If already prepared, activate it with `source .venv/bin/activate`. Examples
@@ -338,7 +339,7 @@ arbitrary supplied script is safe or ABI-correct. See [EXTENDING.md](EXTENDING.m
 | Symptom | Next step |
 |---|---|
 | SSH refused/reset | Check USB device, existing iproxy and jailbreak SSH; allow userspace restart to finish |
-| SSH authentication fails | Check account, matching master/socket or key; use an interactive login from BOOTSTRAP.md before assuming the old root-login failure still applies |
+| SSH authentication fails | Check account, matching master/socket or key; try the verified mobile-plus-sudo route in BOOTSTRAP.md; do not assume direct root works |
 | Frida connection refused | Check server process, device listen port and host SSH forward |
 | Agent dylib missing | Inspect the exact requested path; follow BOOTSTRAP.md’s conditional path/signing procedure |
 | Signed server immediately killed | Check original server entitlements and the modified binary’s signature |
@@ -346,6 +347,7 @@ arbitrary supplied script is safe or ABI-correct. See [EXTENDING.md](EXTENDING.m
 | Multiple matches | Inspect the process list and choose a fresh explicit PID |
 | ABI mismatch or absent class/selector | Stop that call; inspect process, loaded framework and current method encoding |
 | RPC/attach hangs | Check injection readiness, app suspension and concurrent tracing; do not blindly attach again |
+| Foreground app freezes or a sign-in page never appears | Collect a targeted, symbolicated stack sample using DIAGNOSTICS.md; distinguish a main-thread wait from a missing daemon |
 | Action times out | It may already have run; inspect actual state before repeating a toggle/start/stop |
 | Duskie missing from modules | Check installation, injection filter and Safe Mode separately |
 | Screenshot missing export | Built-in capture is unavailable here; use RECIPES.md’s explicit alternative |

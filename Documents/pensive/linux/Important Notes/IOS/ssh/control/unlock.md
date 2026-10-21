@@ -7,12 +7,13 @@ passcode or change passcode/Touch ID enrollment.
 ## Connection
 
 Use USB SSH as described in [BOOTSTRAP.md](BOOTSTRAP.md): mobile with interactive
-sudo, or the owner's confirmed direct root login. Keep the CLI target and master
+sudo, or direct root only when authentication is verified. Keep the CLI target and master
 socket matched to that account. The owner-supplied SSH/sudo password for this setup is
 **2345**; enter it at the prompt, never in command arguments or source files.
-The owner's 2026-10-21 confirmation supersedes older root-login failures; live
-authentication was not re-tested during this documentation pass. Do not change
-account authentication to make this helper usable.
+Later live checks on 2026-10-21 verified mobile key SSH plus sudo; direct root
+password authentication failed despite an earlier owner report that it worked.
+Use the working route and recheck current facts. Do not change account
+authentication to make this helper usable.
 
 ## Prefer the CLI when Frida is ready
 

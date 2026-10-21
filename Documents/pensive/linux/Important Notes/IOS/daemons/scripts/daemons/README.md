@@ -6,6 +6,65 @@ scripts. Later dated corrections supersede older "current"/"final" sections;
 do not use a past tested profile as the phone's present state. The complete
 dependency record is the [iOS 16 reference](../../daemons%20based%20on%20ios%2016.md).
 
+## Siri voices and optional controls — 2026-10-21
+
+The owner verified Siri US English Voice 5 works after enabling only triald, and
+regular functions still work with the optional accessibility batch Off. Trial stays
+optional/default Off and is included in Siri. AccessibilityUIServer now defaults
+Off; Background Sounds/heard stays On. New groups cover AssistiveTouch, Speak Screen,
+CarPlay, Handoff, Watch and nearby/AirPods helpers, retaining shared dependencies.
+
+Daemon Manager 1.0.38/build 39 and Duskie 0.2.72 are installed/published. Services
+supports mixed-state multiselection; result controls are Apply Now / Restart
+Userspace / Dismiss. Optional two-GiB inflation uses the installed Duskie worker;
+Release is explicit. Pinned clipboard editing uses hold/3D Touch → Edit. The owner
+will test these new UI controls after returning; native/build checks passed.
+Current targets: **513 entries, 329 Off / 184 On, 58 Critical On**. Final task-specific
+native changes are triald On and AccessibilityUIServer Off. Installation/restart
+preserved preferences and clipboard data; diagnosticd is restored Off/unregistered.
+The [latest reference section](../../daemons%20based%20on%20ios%2016.md) records evidence,
+state distinctions and deployment provenance. Older results below remain dated history.
+
+## SMS/contact recovery and regular-use defaults — 2026-10-21, v1.0.34 installed
+
+`com.apple.accessibility.heard` and `com.apple.DragUI.druid` now default **On**
+(`no` / builtin `false`) in the working source and mirrored config, at the owner's
+request. **Background sounds and hearing** and **Drag and drop** are separate
+optional Groups entries; manual Off remains available. They are outside Critical
+and the live-unload allowlist, so group changes require userspace restart. Hearing
+On restores the shared audio prerequisite; Hearing Off preserves that prerequisite.
+
+`com.apple.cmfsyncagent` also now defaults **On**, Recommended On, outside
+Critical. Disabling it in the tested iOS 16.7.16 profile reproduced missing carrier
+SMS and an unresponsive recent-call/contact ⓘ. A 12-service On batch worked; six
+then three candidates still worked; restoring all three Off reproduced the fault;
+restoring only cmfsyncagent restored SMS and contact details, user-confirmed with
+the other 11 candidates Off. Calls and SMS, Messages and FaceTime, and Apple Account
+On restore it as a shared prerequisite; their Off actions preserve it. Individual
+manual Off remains available. Wi-Fi ⓘ was responsive in the restored profile;
+its original intermittent delay was not independently isolated to this service.
+
+Matching source/config: **513 targets, 328 Off / 185 On, including 58 Critical On**.
+Only these three Boolean targets changed. Existing explicit custom choices remain
+authoritative. The historical full-copy preference migration retains its original
+builtin reference values. Installing the app does not apply defaults.
+The phone now runs **v1.0.34/build 35**, installed through TrollStore Lite after the
+[macOS workflow](https://github.com/dusklinux/daemon_manager/actions/runs/39599823153)
+passed Python/native Swift checks and built/signed the IPA. Release, downloaded and
+phone IPA hashes matched. App preferences and saved overrides were unchanged by
+installation; the source commit is `060c7f33288d9b04e892d2a9478f3bc0f552b8b4`.
+Older sections listing these three jobs Off
+are superseded as intended targets, not rewritten as historical test results.
+
+The separate Apple sign-in stall was a Duskie Settings code deadlock, not a
+missing account daemon: its bundle-load observer waited for main while main waited
+for the rendering queue loading that bundle. A native fixture failed with the
+installed library and passed with the corrected one. The focused signed library
+fix was installed and then packaged/published as Duskie 0.2.71; the owner confirmed
+code entry and successful sign-in. The installed package and library hash were verified.
+Temporary diagnosticd was restored disabled/unregistered and owned captures stopped.
+See the app audit `audit/2026-10-21-feature-repair.md` for the batch and build record.
+
 ## Auto-Lock policy recommendation — 2026-10-21, v1.0.32
 
 `com.apple.managedconfiguration.profiled` now defaults **On** (`no` / builtin
