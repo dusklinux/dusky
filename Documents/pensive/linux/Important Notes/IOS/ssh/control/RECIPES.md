@@ -133,6 +133,7 @@ Useful Duskie keys; inspect the installed controller for its current schema:
 | Key | Value / role |
 |---|---|
 | `nativeCameraRemote` | Native Camera remote-storage switch |
+| `nativeCameraFrameRate` | Regular Camera Video: 0 = Apple default; 24 / 25 / 30 / 50 / 60 fps. Reopen Camera after changing; selected format/lens must support it. Slo-mo is unchanged. |
 | `cameraDestination` | `photos`, `folder`, or `remote` for screen-off capture |
 | `cameraRemoteTransport` | `ftp` (default) or `usb`, shared by both capture paths |
 | `cameraRAMBufferMiB` | Configured RAM queue choice: 256 / 512 / 1024 MiB |

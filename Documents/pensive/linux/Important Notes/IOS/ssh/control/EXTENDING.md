@@ -120,6 +120,7 @@ SEL, C string and block are all pointer-shaped but have different meanings.
 | `NSUInteger` / options bitmask | `uint64` | AArch64 unsigned integer |
 | C `int` | `int` | 32-bit source argument, not int64 |
 | `void` | `void` | No return value |
+| `CMTime` (`{?=qiIq}`) | `['int64', 'int', 'uint', 'int64']` | Struct fields: value, timescale, flags, epoch; use the array as the NativeFunction struct type |
 | pointer to a completion block | `pointer` | nil can be ptr(0) only if the method accepts nil |
 
 **A C string is not NSString.** `utf8('com.apple.camera')` returns C bytes suitable
@@ -203,7 +204,9 @@ that every action has been run in the new wrapper. Check capability status in [V
    declared methods and relevant superclass methods. Read authoritative SDK/API
    documentation for public interfaces. For private interfaces, confirm the
    actual runtime and relevant call sites; iOS 17 header dumps alone do not prove
-   an iOS 16 encoding.
+   an iOS 16 encoding. Confirm that the selector actually executes during the
+   target operation; existence and matching ABI alone do not establish the active
+   call path.
 2. Write a read-only probe for the values that determine the operation. Observe
    the real environment rather than assigning an enum from memory.
 3. Specify the exact Objective-C encoding and explicit NativeFunction argument
