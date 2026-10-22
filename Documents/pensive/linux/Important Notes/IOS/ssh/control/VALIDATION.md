@@ -54,6 +54,10 @@ Do not sum process footprints or infer battery/NAND savings from a control actio
   explicit adapter for the different native API used by the installed capture
   path. Inspect that adapter’s output/orientation; it is not a tested replacement
   built into the CLI.
+- Native dark PIN controls may be omitted by the screenshot adapter even while
+  the owner sees them correctly on the display. A black capture alone does not
+  prove a blank panel. Check the live view tree/style and physical display before
+  changing rendering or authentication code to fix the capture.
 - Camera mode/recording/format methods have the expected profile in EXTENDING.md.
   Verify each wrapper operation’s actual result; a host mock does not execute iOS.
 - `tap` delivers UIControl TouchUpInside, not coordinate/HID input. A synthetic
