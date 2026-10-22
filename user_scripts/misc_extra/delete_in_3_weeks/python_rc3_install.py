@@ -6,13 +6,23 @@ Run with the distro Python 3.14+; /usr/bin/python* is never modified.
     python_rc3_install.py install [--reinstall] [--no-default] [--force] [--tarball PATH]
     python_rc3_install.py --undo [--purge]
 
-Installation shadows python and python3 in /usr/local/bin. That directory
+By default, installation shadows python and python3 in /usr/local/bin. That directory
 must precede /usr/bin in users' PATH for /usr/bin/env python3 shebangs.
+--no-default restores recorded prior links and leaves unrelated links alone.
+--reinstall replaces the recorded payload; --force also permits replacement of
+unrecorded payload files. On undo, --force removes known trees and implies --purge.
 After upgrading the distro Python to stable 3.15+, run --undo.
 Undo removes recorded files and restores prior shadow symlinks; files added
 later (including installed packages) are retained unless --purge is specified.
 Recreate 3.14 virtual environments with 3.15; their interpreters and packages
 are not migrated.
+
+The archive must contain a complete /usr/local runtime, including Python 3.15
+builds of PyGObject and pycairo. Installation never invokes pip or downloads
+dependencies. GTK 4 and the native libraries required by the build must already
+be installed. Absolute /usr/bin/python3 launchers keep using the distro Python.
+Keep this bootstrap script parseable by Python 3.14 so install and undo work
+before the distro upgrade; Python 3.15-only syntax belongs in the payload.
 """
 
 import argparse
@@ -20,6 +30,7 @@ import contextlib
 import errno
 import fcntl
 import hashlib
+import http.client
 import json
 import logging
 import os
@@ -32,6 +43,7 @@ import sys
 import tarfile
 import tempfile
 import urllib.request
+import zlib
 from collections.abc import Iterator
 from pathlib import Path
 from typing import NoReturn
@@ -57,7 +69,22 @@ OWNED_FILES = {
     f"share/man/man1/python{PY_XY}.1",
 }
 SHARED_DIRS = {"bin", "lib", "include", "lib/pkgconfig", "share", "share/man", "share/man/man1"}
-REQUIRED_PACKAGES = ("pycairo", "PyGObject")
+STDLIB_PROBE = """\
+import ssl, sqlite3, lzma, bz2, zlib, ctypes, readline
+import decimal, multiprocessing, compression.zstd
+from contextlib import closing
+
+ssl.create_default_context()
+with closing(sqlite3.connect(':memory:')) as db:
+    assert db.execute('select 1').fetchone() == (1,)
+"""
+DESKTOP_PROBE = (
+    "import gi, cairo; gi.require_version('Gtk', '4.0'); "
+    "gi.require_foreign('cairo'); from gi.repository import Gtk; "
+    "assert Gtk.get_major_version() == 4; "
+    "cairo.Context(cairo.ImageSurface(cairo.FORMAT_ARGB32, 1, 1)); "
+    "print(gi.__version__)"
+)
 log = logging.getLogger("dusky-python")
 
 
@@ -76,7 +103,7 @@ def owned(rel: str) -> bool:
 
 def managed_path(rel: str) -> Path:
     path = Path(rel)
-    if path.is_absolute() or not path.parts or ".." in path.parts:
+    if path.is_absolute() or not path.parts or ".." in path.parts or str(path) != rel:
         die(f"Invalid manifest path: {rel!r}")
     if not owned(rel) and rel not in SHARED_DIRS:
         die(f"Unexpected manifest path: {rel!r}")
@@ -89,13 +116,15 @@ def managed_path(rel: str) -> Path:
 
 def read_marker() -> dict | None:
     try:
-        data = json.loads(MARKER.read_text())
+        data = json.loads(MARKER.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return None
     except ValueError as exc:
         die(f"Invalid installation marker {MARKER}: {exc}")
     if not isinstance(data, dict) or not isinstance(data.get("files"), list):
         die(f"Invalid installation marker: {MARKER}")
+    if data.get("version") != VERSION or data.get("arch") != ARCH_TAG:
+        die(f"Installation marker belongs to a different build: {MARKER}")
     for rel in data["files"]:
         if not isinstance(rel, str):
             die("Manifest entries must be strings.")
@@ -103,6 +132,11 @@ def read_marker() -> dict | None:
     shadow = data.get("shadow", {})
     if not isinstance(shadow, dict):
         die("Invalid shadow metadata.")
+    links = shadow.get("links", [])
+    if not isinstance(links, list) or any(
+        not isinstance(name, str) or name not in SHADOW_LINKS for name in links
+    ):
+        die("Invalid shadow link metadata.")
     backups = shadow.get("backed_up", {})
     if not isinstance(backups, dict) or any(
         name not in SHADOW_LINKS or not isinstance(target, str)
@@ -115,8 +149,10 @@ def read_marker() -> dict | None:
 def run_python(path: Path, code: str) -> str:
     result = subprocess.run(
         [str(path), "-I", "-B", "-c", code], capture_output=True, text=True,
-        timeout=60, check=True,
+        encoding="utf-8", errors="replace", timeout=60, check=True,
     )
+    if result.stderr:
+        log.debug("%s: %s", path, result.stderr.rstrip())
     return result.stdout.strip()
 
 
@@ -127,38 +163,15 @@ def probe_bin(path: Path = WANT_BIN) -> str | None:
         return None
 
 
-def ensure_packages(path: Path = WANT_BIN) -> None:
-    """Ensure essential packages (e.g. PyGObject) are available in the testing runtime."""
-    try:
-        run_python(path, "import gi, cairo; gi.require_version('Gtk', '4.0')")
-        return
-    except (OSError, subprocess.SubprocessError):
-        pass
-
-    log.info("Installing essential packages (%s) into %s...", ", ".join(REQUIRED_PACKAGES), path)
-    try:
-        subprocess.run(
-            [str(path), "-m", "pip", "install", "--upgrade", *REQUIRED_PACKAGES],
-            check=True, timeout=180, capture_output=True, text=True,
-        )
-    except subprocess.CalledProcessError as exc:
-        log.warning("Failed to install packages via pip: %s\n%s", exc, exc.stderr.strip() if exc.stderr else "")
-    except Exception as exc:
-        log.warning("Could not bootstrap packages: %s", exc)
-
-
-def verify_runtime() -> None:
-    if probe_bin(WANT_BIN) != VERSION:
-        die(f"Installed interpreter does not report {VERSION}.")
-    run_python(WANT_BIN,
-               "import ssl, sqlite3, lzma, bz2, zlib, ctypes, readline, "
-               "decimal, multiprocessing, compression.zstd; "
-               "ssl.create_default_context(); "
-               "sqlite3.connect(':memory:').execute('select 1').fetchone()")
-    if probe_bin(SYSTEM_PYTHON) is None:
-        die("Distro Python failed verification.")
-    ensure_packages(WANT_BIN)
-    run_python(WANT_BIN, "import gi, cairo")
+def verify_runtime(path: Path) -> None:
+    """Verify the staged or installed runtime without changing its packages."""
+    if probe_bin(path) != VERSION:
+        die(f"{path} does not report {VERSION}.")
+    prefix = run_python(path, "import sys; print(sys.prefix)")
+    if Path(prefix).resolve() != path.parent.parent.resolve():
+        die(f"{path} loaded another installation's standard library: {prefix}")
+    run_python(path, STDLIB_PROBE)
+    run_python(path, DESKTOP_PROBE)
 
 
 def check_path() -> None:
@@ -172,7 +185,8 @@ def check_path() -> None:
 @contextlib.contextmanager
 def install_lock() -> Iterator[None]:
     LOCKFILE.parent.mkdir(parents=True, exist_ok=True)
-    with LOCKFILE.open("a") as lock:
+    # Closing releases flock; keep the pathname so concurrent opens share it.
+    with LOCKFILE.open("ab") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
@@ -202,8 +216,6 @@ class Transaction:
     def save(self, path: Path) -> None:
         if path in self.touched:
             return
-        if path.is_dir() and not path.is_symlink():
-            die(f"Expected a file, found directory: {path}")
         saved = None
         if exists(path):
             saved = self.backup / path.relative_to(PREFIX)
@@ -225,12 +237,26 @@ class Transaction:
         path.symlink_to(target)
 
     def rollback(self) -> None:
+        errors = []
         for path, saved in reversed(self.touched.items()):
-            path.unlink(missing_ok=True)
-            if saved is not None:
-                saved.rename(path)
+            try:
+                if path.is_dir() and not path.is_symlink():
+                    shutil.rmtree(path)
+                else:
+                    path.unlink(missing_ok=True)
+                if saved is not None:
+                    saved.rename(path)
+            except OSError as exc:
+                errors.append(f"{path}: {exc}")
         for path in reversed(self.created_dirs):
-            path.rmdir()
+            try:
+                path.rmdir()
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                errors.append(f"{path}: {exc}")
+        if errors:
+            die("Rollback errors:\n" + "\n".join(errors))
 
 
 @contextlib.contextmanager
@@ -256,7 +282,7 @@ def write_marker(marker: dict, tx: Transaction) -> None:
     tx.mkdir(MARKER.parent)
     temporary = MARKER.with_suffix(".json.new")
     try:
-        temporary.write_text(json.dumps(marker, indent=2) + "\n")
+        temporary.write_text(json.dumps(marker, indent=2) + "\n", encoding="utf-8")
         tx.save(MARKER)
         temporary.replace(MARKER)
     finally:
@@ -264,19 +290,24 @@ def write_marker(marker: dict, tx: Transaction) -> None:
 
 
 def set_shadow(marker: dict, enabled: bool, tx: Transaction) -> None:
-    backups = dict(marker.get("shadow", {}).get("backed_up", {}))
+    shadow = marker.get("shadow", {})
+    recorded = shadow.get("links", [])
+    backups = dict(shadow.get("backed_up", {}))
     for name, target in SHADOW_LINKS.items():
         link = PREFIX / "bin" / name
         ours = link.is_symlink() and os.readlink(link) == target
         if enabled:
-            if ours:
+            if ours and name in recorded:
                 continue
             if exists(link):
                 if not link.is_symlink():
                     die(f"Refusing to overwrite real file: {link}")
                 backups[name] = os.readlink(link)
-            tx.link(link, target)
+            if not ours:
+                tx.link(link, target)
         else:
+            if name not in recorded and name not in backups:
+                continue
             if ours or (not exists(link) and name in backups):
                 tx.save(link)
                 if name in backups:
@@ -317,6 +348,39 @@ def manifest(src: Path) -> list[str]:
     return sorted(paths, key=lambda rel: (len(Path(rel).parts), rel), reverse=True)
 
 
+def extract_archive(tarball: Path, stage: Path) -> Path:
+    """Reject layout mistakes before touching the destination installation."""
+    with tarfile.open(tarball, "r:gz") as archive:
+        members = archive.getmembers()
+        for member in members:
+            path = Path(member.name)
+            if path.is_absolute() or ".." in path.parts:
+                die(f"Invalid archive path: {member.name!r}")
+            if path in (Path("usr"), Path("usr/local")):
+                if not member.isdir():
+                    die(f"Expected archive directory: {member.name}")
+                continue
+            if not path.is_relative_to("usr/local"):
+                die(f"Unexpected archive path: {member.name}")
+            rel = str(path.relative_to("usr/local"))
+            managed_path(rel)
+            if rel in SHARED_DIRS or Path(rel) in OWNED_TREES:
+                if not member.isdir():
+                    die(f"Expected archive directory: {member.name}")
+            elif not (member.isdir() or member.isfile() or member.issym() or member.islnk()):
+                die(f"Unsupported archive member: {member.name}")
+        expanded = sum(member.size for member in members if member.isfile() or member.islnk())
+        # Files are renamed from staging into place on the same filesystem.
+        needed = expanded + 64 * 1024 * 1024
+        if shutil.disk_usage(PREFIX).free < needed:
+            die(f"Need {needed // (1024 * 1024)} MiB free under {PREFIX}.")
+        archive.extractall(stage, members=members, filter="data")
+    src = stage / "usr/local"
+    if not (src / f"bin/python{PY_XY}").is_file():
+        die(f"Archive is missing usr/local/bin/python{PY_XY}.")
+    return src
+
+
 def prune_dirs(paths: list[str]) -> None:
     for rel in sorted(set(paths), key=lambda rel: len(Path(rel).parts), reverse=True):
         path = managed_path(rel)
@@ -324,8 +388,8 @@ def prune_dirs(paths: list[str]) -> None:
             try:
                 path.rmdir()
             except OSError as exc:
-                if exc.errno != errno.ENOTEMPTY:
-                    raise
+                if exc.errno not in (errno.ENOTEMPTY, errno.EEXIST):
+                    log.warning("Could not prune %s: %s", path, exc)
 
 
 def cmd_install(args: argparse.Namespace) -> int:
@@ -340,8 +404,8 @@ def cmd_install(args: argparse.Namespace) -> int:
     if (int(major), int(minor)) >= (3, 15) and level == "final":
         die("Distro Python is already stable 3.15+. Run --undo to use it.")
     marker = read_marker()
-    if marker and marker.get("version") == VERSION and marker.get("arch") == ARCH_TAG and not args.reinstall:
-        verify_runtime()
+    if marker and not args.reinstall:
+        verify_runtime(WANT_BIN)
         with transaction() as tx:
             set_shadow(marker, not args.no_default, tx)
             write_marker(marker, tx)
@@ -350,10 +414,10 @@ def cmd_install(args: argparse.Namespace) -> int:
         log.info("Already installed; default links updated.")
         log.info("Note: Restart your user session or reboot if running services need to pick up changes.")
         return 0
-    allow_force = bool(getattr(args, "reinstall", False) or getattr(args, "force", False))
+    allow_force = args.force
     if marker is None and exists(WANT_BIN):
         if not allow_force:
-            die(f"Unmanaged {WANT_BIN}; pass --force (or --reinstall) to replace, or move the existing build aside first.")
+            die(f"Unmanaged {WANT_BIN}; pass --force to replace, or move the existing build aside first.")
         log.warning("Unmanaged %s detected; replacing under --force.", WANT_BIN)
 
     # Stage on the destination filesystem, not /tmp (often a small tmpfs).
@@ -383,36 +447,26 @@ def cmd_install(args: argparse.Namespace) -> int:
             shutil.copy2(local_src, tarball)
             expected = args.checksum or ""
             if not expected:
-                sha_file = local_src.with_suffix(local_src.suffix + ".sha256")
-                if not sha_file.is_file():
-                    sha_file = local_src.with_name(local_src.name + ".sha256")
+                sha_file = local_src.with_name(local_src.name + ".sha256")
                 if sha_file.is_file():
-                    fields = sha_file.read_text().split()
+                    fields = sha_file.read_text(encoding="ascii").split()
                     if fields:
                         expected = fields[0]
-            actual = sha256_of(tarball)
-            if expected and actual.lower() != expected.lower():
-                die(f"Checksum mismatch: expected {expected}, got {actual}")
         else:
             url = f"{args.base_url.rstrip('/')}/{args.repo}/releases/download/{args.tag}/{ASSET}"
             expected = args.checksum or fetch_checksum(url)
-            if not re.fullmatch(r"[0-9a-fA-F]{64}", expected):
-                die("Expected SHA-256 must contain exactly 64 hexadecimal digits.")
+        if expected and not re.fullmatch(r"[0-9a-fA-F]{64}", expected):
+            die("Expected SHA-256 must contain exactly 64 hexadecimal digits.")
+        if local_src is None:
             download(url, tarball)
-            actual = sha256_of(tarball)
+        actual = sha256_of(tarball)
+        if expected:
             if actual.lower() != expected.lower():
                 die(f"Checksum mismatch: expected {expected}, got {actual}")
-        stage = work / "stage"
-        with tarfile.open(tarball, "r:gz") as archive:
-            expanded = sum(member.size for member in archive if member.isfile())
-            # Extraction plus destination copy; prior files are renamed, not copied.
-            needed = 2 * expanded + 64 * 1024 * 1024
-            if shutil.disk_usage(PREFIX).free < needed:
-                die(f"Need {needed // (1024 * 1024)} MiB free under {PREFIX}.")
-            archive.extractall(stage, filter="data")
-        src = stage / "usr/local"
-        if not (src / "bin/python3.15").is_file():
-            die("Archive is missing usr/local/bin/python3.15.")
+        else:
+            log.warning("Local archive has no checksum; SHA-256: %s", actual)
+        src = extract_archive(tarball, work / "stage")
+        verify_runtime(src / f"bin/python{PY_XY}")
         files = manifest(src)
         old_files = set(marker["files"] if marker else [])
         for rel in files:
@@ -421,8 +475,10 @@ def cmd_install(args: argparse.Namespace) -> int:
             if source.is_dir() and not source.is_symlink():
                 if exists(dest) and (not dest.is_dir() or (dest.is_symlink() and rel not in SHARED_DIRS)):
                     die(f"Directory conflict: {dest}")
-            elif exists(dest) and rel not in old_files:
-                if not allow_force:
+            else:
+                if dest.is_dir() and not dest.is_symlink():
+                    die(f"File conflicts with directory: {dest}")
+                if exists(dest) and rel not in old_files and not allow_force:
                     die(f"Refusing to overwrite unmanaged file: {dest}. Pass --force to replace.")
         new_marker = {
             "version": VERSION, "arch": ARCH_TAG, "repo": args.repo,
@@ -443,11 +499,10 @@ def cmd_install(args: argparse.Namespace) -> int:
                 else:
                     tx.mkdir(dest.parent)
                     tx.save(dest)
-                    if source.is_symlink():
-                        dest.symlink_to(os.readlink(source))
-                    else:
-                        shutil.copy2(source, dest)
-            verify_runtime()
+                    source.rename(dest)
+            verify_runtime(WANT_BIN)
+            if probe_bin(SYSTEM_PYTHON) is None:
+                die("Distro Python failed verification.")
             set_shadow(new_marker, not args.no_default, tx)
             write_marker(new_marker, tx)
         prune_dirs(list(old_files - set(files)))
@@ -462,34 +517,41 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
     if probe_bin(SYSTEM_PYTHON) is None:
         die("Distro Python is missing or broken; cannot undo.")
     marker = read_marker()
-    allow_force = bool(getattr(args, "force", False))
-    purge = bool(getattr(args, "purge", False) or allow_force)
+    purge = args.purge or args.force
     if marker is None:
-        if exists(WANT_BIN):
-            if not allow_force:
-                die("No installation marker; refusing to guess which files belong to this build. Pass --force to clean known trees.")
-            with transaction() as tx:
-                for name, target in SHADOW_LINKS.items():
-                    link = PREFIX / "bin" / name
-                    if link.is_symlink() and os.readlink(link) == target:
-                        tx.save(link)
-                for rel in OWNED_FILES:
-                    path = PREFIX / rel
-                    if exists(path) and (path.is_symlink() or not path.is_dir()):
-                        tx.save(path)
-                for tree in OWNED_TREES:
-                    path = PREFIX / tree
-                    if path.is_dir() and not path.is_symlink():
-                        shutil.rmtree(path, ignore_errors=True)
-            log.info("Force undo complete. Distro Python untouched.")
-            log.info("Note: Restart your user session or reboot so running services pick up changes.")
+        leftovers = any(exists(PREFIX / rel) for rel in (*OWNED_FILES, *OWNED_TREES))
+        leftovers |= any(
+            (PREFIX / "bin" / name).is_symlink()
+            and os.readlink(PREFIX / "bin" / name) == target
+            for name, target in SHADOW_LINKS.items()
+        )
+        if not leftovers:
+            log.info("No managed installation. Nothing to undo.")
             return 0
-        log.info("No managed installation. Nothing to undo.")
-        return 0
+        if not args.force:
+            if exists(WANT_BIN):
+                die("No installation marker; pass --force to remove known files and trees.")
+            log.info("No managed installation. Unrecorded remnants retained (use --force to remove known trees).")
+            return 0
+    files = marker["files"] if marker else sorted(OWNED_FILES)
     with transaction() as tx:
-        set_shadow(marker, False, tx)
-        for rel in marker["files"]:
-            if rel in SHARED_DIRS:
+        if marker:
+            set_shadow(marker, False, tx)
+        else:
+            for name, target in SHADOW_LINKS.items():
+                link = PREFIX / "bin" / name
+                if link.is_symlink() and os.readlink(link) == target:
+                    tx.save(link)
+        if purge:
+            # Save whole trees first; never save their individual children too.
+            for tree in OWNED_TREES:
+                path = managed_path(str(tree))
+                if exists(path):
+                    tx.save(path)
+        for rel in files:
+            if rel in SHARED_DIRS or (purge and any(
+                Path(rel) == tree or tree in Path(rel).parents for tree in OWNED_TREES
+            )):
                 continue
             path = managed_path(rel)
             if exists(path) and (path.is_symlink() or not path.is_dir()):
@@ -497,15 +559,11 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
         tx.save(MARKER)
         if probe_bin(SYSTEM_PYTHON) is None:
             die("Distro Python failed verification during undo.")
-    prune_dirs(marker["files"])
-    for tree in OWNED_TREES:
-        t_path = PREFIX / tree
-        if t_path.exists():
-            if purge:
-                shutil.rmtree(t_path, ignore_errors=True)
-                log.info("Purged %s.", t_path)
-            else:
-                log.info("Retained unrecorded files under %s (pass --purge to remove).", t_path)
+    if not purge:
+        prune_dirs(files)
+        for tree in OWNED_TREES:
+            if exists(PREFIX / tree):
+                log.info("Retained unrecorded files under %s (pass --purge to remove).", PREFIX / tree)
     log.info("Undo complete. Distro Python untouched.")
     log.info("Note: Restart your user session or reboot so running services pick up changes.")
     return 0
@@ -513,7 +571,8 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
 
 def cmd_check(_args: argparse.Namespace) -> int:
     marker = read_marker()
-    print(f"system_python: {probe_bin(SYSTEM_PYTHON) or 'unavailable'} ({SYSTEM_PYTHON})")
+    system_version = probe_bin(SYSTEM_PYTHON)
+    print(f"system_python: {system_version or 'unavailable'} ({SYSTEM_PYTHON})")
     version = probe_bin(WANT_BIN)
     print(f"python{PY_XY}: {version or 'unavailable'}")
     print(f"marker: {'present' if marker is not None else 'absent'}")
@@ -522,15 +581,22 @@ def cmd_check(_args: argparse.Namespace) -> int:
     for name in SHADOW_LINKS:
         path = shutil.which(name)
         print(f"PATH {name}: {path or 'not found'} ({probe_bin(Path(path)) if path else 'unavailable'})")
-    gi_status = "unavailable"
     target_bin = WANT_BIN if exists(WANT_BIN) else SYSTEM_PYTHON
     try:
-        gi_ver = run_python(target_bin, "import gi; print(gi.__version__)")
+        gi_ver = run_python(target_bin, DESKTOP_PROBE)
         gi_status = f"available (PyGObject {gi_ver})"
-    except Exception:
+    except (OSError, ValueError, subprocess.SubprocessError):
         gi_status = "missing"
     print(f"desktop_gi: {gi_status}")
-    return 0
+    if marker is not None or exists(WANT_BIN):
+        verify_runtime(WANT_BIN)
+        print("runtime: verified")
+    if marker:
+        for name in marker.get("shadow", {}).get("links", []):
+            link = PREFIX / "bin" / name
+            if not link.is_symlink() or os.readlink(link) != SHADOW_LINKS[name]:
+                die(f"Managed default link changed or missing: {link}")
+    return 0 if system_version is not None else 1
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -543,7 +609,8 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument("--checksum", help="Expected SHA-256; otherwise fetch asset.sha256.")
     common.add_argument("-v", "--verbose", action="store_true")
     common.add_argument("--undo", action="store_true", help="Same as uninstall.")
-    common.add_argument("--force", action="store_true", help="Force action on unmanaged files.")
+    common.add_argument("--force", action="store_true",
+                        help="Replace unmanaged files on install; remove known trees on undo (implies --purge).")
     common.add_argument("--purge", action="store_true", help="Purge all files under owned trees on undo.")
     common.add_argument("--tarball", help="Use local archive instead of downloading.")
     # Parent arguments must be attached before creating subparsers.
@@ -559,7 +626,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    cli_args = sys.argv[1:] if argv is None else argv
+    parser = build_parser()
+    args = parser.parse_args(cli_args)
     defaults = {
         "repo": REPO, "tag": TAG, "base_url": BASE_URL, "checksum": "",
         "verbose": False, "undo": False, "force": False, "purge": False,
@@ -571,18 +640,27 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(levelname)s: %(message)s")
     action = "uninstall" if args.undo or args.cmd in ("undo", "uninstall") else args.cmd
+    if args.undo and args.cmd in ("install", "check"):
+        parser.error("--undo cannot be combined with install or check")
+    if args.purge and action != "uninstall":
+        parser.error("--purge requires uninstall or --undo")
     try:
         if action not in ("install", "uninstall"):
             return cmd_check(args)
         # Always mutate under distro Python, including when invoked from a venv.
-        if Path(sys.executable).resolve() != SYSTEM_PYTHON.resolve() or sys.prefix != sys.base_prefix:
-            os.execv(str(SYSTEM_PYTHON), [str(SYSTEM_PYTHON), str(Path(__file__).resolve()), *sys.argv[1:]])
+        command = [str(SYSTEM_PYTHON), "-I", "-B", str(Path(__file__).resolve()), *cli_args]
+        if (Path(sys.executable).resolve() != SYSTEM_PYTHON.resolve()
+                or sys.prefix != sys.base_prefix or not sys.flags.isolated):
+            os.execv(str(SYSTEM_PYTHON), command)
         if os.geteuid() != 0:
-            os.execvp("sudo", ["sudo", str(SYSTEM_PYTHON), str(Path(__file__).resolve()), *sys.argv[1:]])
+            os.execv("/usr/bin/sudo", ["sudo", *command])
+        # System-wide directories must remain traversable for ordinary users.
+        os.umask(0o022)
         PREFIX.mkdir(parents=True, exist_ok=True)
         with install_lock():
             return cmd_install(args) if action == "install" else cmd_uninstall(args)
-    except (OSError, ValueError, RuntimeError, tarfile.TarError, subprocess.SubprocessError) as exc:
+    except (OSError, ValueError, RuntimeError, EOFError, zlib.error,
+            http.client.HTTPException, tarfile.TarError, subprocess.SubprocessError) as exc:
         detail = getattr(exc, "stderr", None)
         log.error("%s%s", exc, f"\n{detail.strip()}" if detail else "")
         return 1
