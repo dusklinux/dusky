@@ -89,7 +89,7 @@ INSTALL_SEQUENCE=(
 
     "U | 140_fc_cache_fv.sh"
     "U | 145_matugen_directories.py"
-    "U | 150_wallpapers_download.sh"
+    "U | 146_wallpapers_download.sh"
     "U | 155_blur_shadow_opacity.sh"
     "U | 160_theme_ctl.py"
     "U | 165_qtct_config.sh"

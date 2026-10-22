@@ -98,7 +98,7 @@ tasks = [
     "U | once | 137_snapper_isolation_subvolume.sh --auto",
     "U | once | 140_dusky_font_configurator.py",
     "U | once | 145_matugen_directories.py",
-    # "U | 150_wallpapers_download.sh",
+    # "U | 146_wallpapers_download.sh",
     # "U | 155_blur_shadow_opacity.sh",
     # "U | ignore-fail | 160_theme_ctl.py",
     "U | once | 165_qtct_config.sh",

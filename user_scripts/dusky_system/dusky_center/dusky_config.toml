@@ -4621,7 +4621,7 @@ description = "Download ~2 GB of wallpapers"
 icon = "image-x-generic-symbolic"
 [pages.layout.items.on_press]
 type = "exec"
-command = "kitty --class 150_wallpapers_download.sh --hold sh -c \"$HOME/user_scripts/arch_setup_scripts/scripts/150_wallpapers_download.sh\""
+command = "kitty --class 146_wallpapers_download.sh --hold sh -c \"$HOME/user_scripts/arch_setup_scripts/scripts/146_wallpapers_download.sh\""
 terminal = false
 
 # [[pages.layout.items]]

@@ -74,7 +74,7 @@ scripts = [
     "U | 140_dusky_font_configurator.py",
     "U | tui_matugen.py --smart",
     "U | 145_matugen_directories.py",
-    # "U | 150_wallpapers_download.sh",
+    # "U | 146_wallpapers_download.sh",
     "U | 151_dusky_papers_setup.py --update-cache",
     "U | 152_dusky_tray_setup.py",
     "U | 153_dusky_center_setup.py",
