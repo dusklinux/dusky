@@ -1,5 +1,6 @@
 mod capture;
 mod document;
+mod focus;
 mod gpu;
 mod input;
 mod output;

@@ -73,12 +73,19 @@ struct Client {
     floating: bool,
     #[serde(default, rename = "focusHistoryID")]
     order: i64,
+    #[serde(default, rename = "stableId")]
+    identifier: String,
+}
+#[derive(Clone, Debug)]
+pub struct Window {
+    pub rect: Rect,
+    pub identifier: String,
 }
 #[derive(Clone)]
 pub struct Capture {
     pub document: Document,
     pub monitor: Monitor,
-    pub windows: Vec<Rect>,
+    pub windows: Vec<Window>,
     pub pointer: Option<Point>,
 }
 
@@ -103,13 +110,13 @@ fn pointer_to_source(pointer: Point, sx: f64, sy: f64, monitor: &Monitor) -> Poi
     )
 }
 
-fn window_rects(
+fn window_targets(
     mut clients: Vec<Client>,
     monitor: &Monitor,
     sx: f64,
     sy: f64,
     bounds: Rect,
-) -> Vec<Rect> {
+) -> Vec<Window> {
     // Hyprland hit-tests pinned windows before ordinary floating/tiled windows.
     // Focus history alone can put a focused tiled window above its pinned overlay.
     clients.sort_by_key(|c| (!c.pinned, !c.floating, c.order));
@@ -122,19 +129,61 @@ fn window_rects(
         .into_iter()
         .filter(|c| !c.hidden && (c.pinned || c.workspace.address == *workspace))
         .map(|c| {
-            Rect {
+            let rect = Rect {
                 x: (c.at[0] - monitor.x as f64) * sx,
                 y: (c.at[1] - monitor.y as f64) * sy,
                 w: c.size[0] * sx,
                 h: c.size[1] * sy,
             }
-            .intersect(bounds)
+            .intersect(bounds);
+            Window {
+                rect,
+                identifier: c.identifier,
+            }
         })
-        .filter(|r| r.w > 0.0 && r.h > 0.0)
+        .filter(|w| w.rect.w > 0.0 && w.rect.h > 0.0)
         .collect()
 }
 
 pub use crate::process::command;
+
+pub fn window(identifier: &str, cursor: bool) -> Result<Option<RgbaImage>> {
+    if identifier.is_empty() {
+        return Ok(None);
+    }
+    let conn = libwayshot::WayshotConnection::new()?;
+    if !conn.toplevel_capture_support() {
+        return Ok(None);
+    }
+    // Closed click-away popups remain selectable in the frozen desktop.
+    let Some(window) = conn
+        .get_all_toplevels()
+        .iter()
+        .find(|w| w.active && w.identifier == identifier)
+    else {
+        return Ok(None);
+    };
+    let mut image = conn.screenshot_toplevel(window, cursor)?.into_rgba8();
+    straight_alpha(&mut image);
+    Ok(Some(image))
+}
+
+fn straight_alpha(image: &mut RgbaImage) {
+    // Wayland buffers carry premultiplied electrical RGB values;
+    // our document and PNG encoder require straight alpha.
+    for pixel in image.pixels_mut() {
+        let alpha = pixel[3] as u16;
+        match alpha {
+            0 => pixel.0[..3].fill(0),
+            255 => {}
+            _ => {
+                for channel in &mut pixel.0[..3] {
+                    *channel = ((*channel as u16 * 255) / alpha).min(255) as u8;
+                }
+            }
+        }
+    }
+}
 
 pub fn take(o: &Options) -> Result<Capture> {
     // One compositor snapshot, before our own window can affect focus/history.
@@ -162,7 +211,7 @@ pub fn take(o: &Options) -> Result<Capture> {
         w: source.width() as f64,
         h: source.height() as f64,
     };
-    let windows = window_rects(clients, &monitor, sx, sy, bounds);
+    let windows = window_targets(clients, &monitor, sx, sy, bounds);
     let pointer = pointer_to_source(pointer, sx, sy, &monitor);
     Ok(Capture {
         document: Document::new(source),
@@ -409,11 +458,23 @@ mod workspace_regression {
     use super::*;
 
     #[test]
+    fn window_capture_converts_premultiplied_alpha_for_documents() {
+        let mut image =
+            RgbaImage::from_raw(3, 1, vec![200, 100, 50, 255, 64, 32, 16, 128, 0, 0, 0, 0])
+                .unwrap();
+        straight_alpha(&mut image);
+        assert_eq!(
+            image.into_raw(),
+            vec![200, 100, 50, 255, 127, 63, 31, 128, 0, 0, 0, 0]
+        );
+    }
+
+    #[test]
     fn pinned_windows_win_over_focused_windows_across_workspaces() {
         for workspace in ["1", "2", "special:magic"] {
             let clients: Vec<Client> = serde_json::from_value(serde_json::json!([
                 {"at":[0,0],"size":[640,480],"workspace":{"address":workspace},"focusHistoryID":0},
-                {"at":[100,80],"size":[200,150],"workspace":{"address":"1"},"floating":true,"pinned":true,"focusHistoryID":9},
+                {"at":[100,80],"size":[200,150],"workspace":{"address":"1"},"floating":true,"pinned":true,"focusHistoryID":9,"stableId":"pin-id"},
                 {"at":[90,70],"size":[240,180],"workspace":{"address":workspace},"floating":true,"focusHistoryID":1},
                 {"at":[0,0],"size":[640,480],"workspace":{"address":"other"},"floating":true,"pinned":true,"hidden":true,"focusHistoryID":0},
                 {"at":[900,900],"size":[200,150],"workspace":{"address":"other"},"floating":true,"pinned":true,"focusHistoryID":0},
@@ -432,7 +493,7 @@ mod workspace_regression {
                 },
                 ..Default::default()
             };
-            let windows = window_rects(
+            let windows = window_targets(
                 clients,
                 &monitor,
                 1.0,
@@ -445,9 +506,13 @@ mod workspace_regression {
                 },
             );
             assert_eq!(windows.len(), 3);
+            assert_eq!(windows[0].identifier, "pin-id");
             let hover = Point::new(150.0, 120.0);
             assert_eq!(
-                windows.iter().find(|r| r.contains(hover)).copied(),
+                windows
+                    .iter()
+                    .find(|w| w.rect.contains(hover))
+                    .map(|w| w.rect),
                 Some(Rect {
                     x: 100.0,
                     y: 80.0,
@@ -456,7 +521,7 @@ mod workspace_regression {
                 })
             );
             assert_eq!(
-                windows[1],
+                windows[1].rect,
                 Rect {
                     x: 90.0,
                     y: 70.0,
@@ -487,7 +552,10 @@ mod workspace_regression {
             h: 1080.0,
         };
         assert_eq!(
-            window_rects(clients, &monitor, 1.5, 1.5, bounds),
+            window_targets(clients, &monitor, 1.5, 1.5, bounds)
+                .into_iter()
+                .map(|w| w.rect)
+                .collect::<Vec<_>>(),
             vec![Rect {
                 x: 0.0,
                 y: 45.0,

@@ -27,6 +27,7 @@ use std::{
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Phase {
     Pick,
+    Preparing,
     Edit,
     Preview,
     Scroll,
@@ -96,6 +97,7 @@ enum Message {
     AutoSave(u64),
     Finished(std::result::Result<Finish, String>),
     Loaded(std::result::Result<Capture, String>),
+    SelectionReady(std::result::Result<(Document, Option<picture::Handle>), String>),
     Ocr(std::result::Result<String, String>),
     Notice(std::result::Result<(), String>),
     ScrollFrame(std::result::Result<::image::RgbaImage, String>),
@@ -152,6 +154,7 @@ struct App {
     zoom: f32,
     pan: Vector,
     window: Option<window::Id>,
+    editor_size: Option<Size>,
     more: bool,
     history: bool,
     picker_controls: bool,
@@ -510,6 +513,7 @@ impl App {
             zoom: 1.0,
             pan: Vector::ZERO,
             window: None,
+            editor_size: None,
             more: false,
             history: false,
             picker_controls: false,
@@ -549,6 +553,9 @@ impl App {
     }
     fn close(&mut self) -> Task<Message> {
         self.scroll_stop.store(true, Ordering::Relaxed);
+        if self.phase == Phase::Preparing {
+            return iced::exit();
+        }
         if self.busy {
             return Task::none();
         }
@@ -587,6 +594,30 @@ impl App {
             ),
             delay(Duration::from_millis(400), Message::AutoSave(revision)),
         ])
+    }
+    fn export(&mut self, doc: Document, action: Action) -> Task<Message> {
+        self.busy = true;
+        self.status = "Preparing screenshot…".into();
+        let config = self.config.clone();
+        let path = self.options.output.clone();
+        let is_preview = self.phase == Phase::Preview;
+        let copy = matches!(action, Action::Copy | Action::Both);
+        let save = matches!(action, Action::Save | Action::Both);
+        let pin = matches!(action, Action::Pin);
+        let preview = !is_preview && pin;
+        job(
+            move || {
+                let (path, doc) = finish(&doc, &config, copy, save, path)?;
+                Ok(Finish {
+                    path,
+                    doc,
+                    close: !is_preview,
+                    preview,
+                    pin,
+                })
+            },
+            Message::Finished,
+        )
     }
     fn act(&mut self, action: Action) -> Task<Message> {
         if matches!(action, Action::ScrollStop) {
@@ -671,29 +702,7 @@ impl App {
                         Task::batch([task, delay(self.remaining, Message::Expire(self.expiry))])
                     };
                 }
-                self.busy = true;
-                self.status = "Preparing screenshot…".into();
-                let doc = self.doc().clone();
-                let config = self.config.clone();
-                let path = self.options.output.clone();
-                let is_preview = self.phase == Phase::Preview;
-                let copy = matches!(action, Action::Copy | Action::Both);
-                let save = matches!(action, Action::Save | Action::Both);
-                let pin = matches!(action, Action::Pin);
-                let preview = !is_preview && pin;
-                return job(
-                    move || {
-                        let (path, doc) = finish(&doc, &config, copy, save, path)?;
-                        Ok(Finish {
-                            path,
-                            doc,
-                            close: !is_preview,
-                            preview,
-                            pin,
-                        })
-                    },
-                    Message::Finished,
-                );
+                return self.export(self.doc().clone(), action);
             }
             Action::Ocr => {
                 self.busy = true;
@@ -766,6 +775,12 @@ impl App {
             // Also handle a user-requested fullscreen editor before resizing.
             window::set_mode(id, window::Mode::Windowed)
                 .chain(job(move || resize_window(size), Message::Notice))
+                // An unchanged size need not produce a Wayland resize event.
+                .chain(
+                    window::size(id).map(|size| {
+                        Message::Event(iced::Event::Window(window::Event::Resized(size)))
+                    }),
+                )
         } else {
             Task::none()
         }
@@ -776,16 +791,23 @@ impl App {
             Message::Opened(id) => {
                 self.window = Some(id);
                 crate::trace(self.start, "window-opened");
-                let positioning = if self.phase == Phase::Pick {
-                    let monitor = self.capture.monitor.clone();
-                    job(move || position_picker(&monitor), Message::Notice)
+                let opening = if self.phase != Phase::Preview {
+                    window::run(id, |window| {
+                        Message::Notice(crate::focus::handoff(window).map_err(|e| e.to_string()))
+                    })
                 } else {
                     Task::none()
                 };
+                let opening = if self.phase == Phase::Pick {
+                    let monitor = self.capture.monitor.clone();
+                    opening.chain(job(move || position_picker(&monitor), Message::Notice))
+                } else {
+                    opening
+                };
                 if self.options.smoke {
-                    return positioning.chain(delay(Duration::from_millis(150), Message::Smoke));
+                    return opening.chain(delay(Duration::from_millis(150), Message::Smoke));
                 }
-                return positioning;
+                return opening;
             }
             Message::Drag => {
                 self.expiry += 1;
@@ -914,6 +936,40 @@ impl App {
                     Err(e) => self.status = e,
                 }
             }
+            Message::SelectionReady(result) => {
+                self.busy = false;
+                match result {
+                    Ok((doc, image)) => {
+                        if let Some(image) = image {
+                            self.capture.document = doc;
+                            self.image = image;
+                            self.image_size = im_dimensions(self.doc());
+                            let size = window_size(self.doc(), Phase::Edit, &self.capture.monitor);
+                            self.editor_size =
+                                Some(Size::new(size.width.round(), size.height.round()));
+                            self.phase = Phase::Preparing;
+                            self.busy = true;
+                            return self.resize();
+                        }
+                        return self.export(
+                            doc,
+                            if self.options.save {
+                                if self.options.copy {
+                                    Action::Both
+                                } else {
+                                    Action::Save
+                                }
+                            } else {
+                                Action::Copy
+                            },
+                        );
+                    }
+                    Err(e) => {
+                        self.phase = Phase::Pick;
+                        self.status = e;
+                    }
+                }
+            }
             Message::Rendered(serial, result) => {
                 if serial == self.render_serial {
                     self.rendering = false;
@@ -963,7 +1019,13 @@ impl App {
                     Err(e) => self.status = e,
                 }
             }
-            Message::Notice(Err(e)) => self.status = e,
+            Message::Notice(Err(e)) => {
+                self.status = e;
+                if self.phase == Phase::Preparing && self.editor_size.take().is_some() {
+                    self.phase = Phase::Edit;
+                    self.busy = false;
+                }
+            }
             Message::Ocr(r) => {
                 self.busy = false;
                 self.status = match r {
@@ -976,6 +1038,18 @@ impl App {
             Message::Event(iced::Event::Window(window::Event::Closed)) => return iced::exit(),
             Message::Event(iced::Event::Window(window::Event::CloseRequested)) => {
                 return self.close();
+            }
+            Message::Event(iced::Event::Window(window::Event::Resized(size))) => {
+                if self.phase == Phase::Preparing
+                    && self.editor_size.is_some_and(|target| {
+                        (size.width - target.width).abs() <= 1.0
+                            && (size.height - target.height).abs() <= 1.0
+                    })
+                {
+                    self.editor_size = None;
+                    self.phase = Phase::Edit;
+                    self.busy = false;
+                }
             }
             Message::Event(iced::Event::Keyboard(keyboard::Event::KeyPressed {
                 key,
@@ -1279,40 +1353,56 @@ impl App {
             let rect = Rect::between(g.start, p).pixel_bounds();
             if self.phase == Phase::Pick {
                 let bounds = self.doc().state.crop;
-                let rect = if rect.w < 4.0 && rect.h < 4.0 {
+                let window = if rect.w < 4.0 && rect.h < 4.0 {
                     self.capture
                         .windows
                         .iter()
-                        .find(|r| r.contains(p))
-                        .copied()
-                        .unwrap_or(bounds)
+                        .find(|w| w.rect.contains(p))
+                        .cloned()
+                } else {
+                    None
+                };
+                let rect = if rect.w < 4.0 && rect.h < 4.0 {
+                    window.as_ref().map_or(bounds, |w| w.rect)
                 } else {
                     rect.intersect(bounds)
                 };
                 if rect.w < 1.0 || rect.h < 1.0 {
                     return Task::none();
                 }
-                self.doc_mut().checkpoint();
-                self.doc_mut().state.crop = rect;
                 if self.options.mode == "scroll" {
+                    self.doc_mut().checkpoint();
+                    self.doc_mut().state.crop = rect;
                     self.scroll_origin = Some(rect);
                     self.phase = Phase::Scroll;
                     self.status = "Scroll the page, then Add frame; or start Auto".into();
                     return self.resize().chain(self.scroll_frame());
                 }
-                self.phase = Phase::Edit;
+                let mut doc = self.doc().clone();
+                doc.checkpoint();
+                doc.state.crop = rect;
+                let editor = self.options.editor;
+                let cursor = self.options.cursor;
+                self.busy = true;
                 if self.options.editor {
-                    return self.resize().chain(self.render());
+                    self.phase = Phase::Preparing;
                 }
-                return self.act(if self.options.save {
-                    if self.options.copy {
-                        Action::Both
-                    } else {
-                        Action::Save
-                    }
-                } else {
-                    Action::Copy
-                });
+                return job(
+                    move || {
+                        if let Some(window) = window
+                            && let Some(image) = capture::window(&window.identifier, cursor)?
+                        {
+                            doc = Document::new(image);
+                        }
+                        let image = if editor {
+                            Some(owned_handle(doc.render()?))
+                        } else {
+                            None
+                        };
+                        Ok((doc, image))
+                    },
+                    Message::SelectionReady,
+                );
             }
             match self.tool {
                 Tool::Select => {
@@ -1435,6 +1525,14 @@ impl App {
         )
     }
     fn view(&self) -> Element<'_, Message> {
+        if self.phase == Phase::Preparing {
+            // Reveal only after both cropped pixels and the final configure
+            // exist. Never draw the desktop texture inside the editor layout.
+            return widget::Space::new()
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into();
+        }
         if matches!(self.phase, Phase::Pick | Phase::Edit) {
             return widget::responsive(|size| self.overlay(size)).into();
         }
@@ -2658,7 +2756,13 @@ impl canvas::Program<Message> for Surface<'_> {
                 .as_ref()
                 .map(|g| Rect::between(g.start, g.last))
                 .or_else(|| {
-                    hover.and_then(|p| app.capture.windows.iter().find(|r| r.contains(p)).copied())
+                    hover.and_then(|p| {
+                        app.capture
+                            .windows
+                            .iter()
+                            .find(|w| w.rect.contains(p))
+                            .map(|w| w.rect)
+                    })
                 });
             if let Some(r) = selection {
                 let b = view.bounds(r);
@@ -2977,6 +3081,126 @@ impl iced::Executor for BackgroundExecutor {
 mod tests {
     use super::*;
 
+    fn picker(options: Options) -> App {
+        let cap = Capture {
+            document: Document::new(::image::RgbaImage::from_pixel(
+                320,
+                240,
+                ::image::Rgba([80, 120, 160, 255]),
+            )),
+            monitor: Monitor {
+                width: 320,
+                height: 240,
+                scale: 1.0,
+                ..Default::default()
+            },
+            windows: vec![],
+            pointer: None,
+        };
+        App::boot(options, Config::default(), cap, Phase::Pick, Instant::now()).0
+    }
+
+    #[test]
+    fn quick_selection_never_enters_editor_and_failure_keeps_picker() {
+        for options in [
+            Options {
+                copy: true,
+                ..Options::default()
+            },
+            Options {
+                save: true,
+                ..Options::default()
+            },
+        ] {
+            let mut app = picker(options);
+            let original = app.doc().state.crop;
+            let _ = app.pointer(Motion::Down, Point::new(80.0, 60.0));
+            let _ = app.pointer(Motion::Up, Point::new(240.0, 160.0));
+            assert_eq!(app.phase, Phase::Pick);
+            assert!(app.busy);
+            assert_eq!(app.doc().state.crop, original);
+            let mut doc = app.doc().clone();
+            doc.state.crop = Rect {
+                x: 80.0,
+                y: 60.0,
+                w: 160.0,
+                h: 100.0,
+            };
+            let _ = app.update(Message::SelectionReady(Ok((doc, None))));
+            assert_eq!(
+                app.phase,
+                Phase::Pick,
+                "clipboard/save worker must not display editor"
+            );
+            assert!(app.busy);
+            assert_eq!(
+                app.doc().state.crop,
+                original,
+                "export owns selection; picker remains unchanged"
+            );
+            let _ = app.update(Message::Finished(Err("clipboard unavailable".into())));
+            assert!(!app.busy);
+            assert_eq!(app.doc().state.crop, original);
+        }
+        let mut app = picker(Options {
+            editor: true,
+            ..Options::default()
+        });
+        let original = app.doc().state.crop;
+        let _ = app.pointer(Motion::Down, Point::new(80.0, 60.0));
+        let _ = app.pointer(Motion::Up, Point::new(240.0, 160.0));
+        let _ = app.update(Message::SelectionReady(Err("window capture failed".into())));
+        assert_eq!(app.phase, Phase::Pick);
+        assert!(!app.busy);
+        assert_eq!(app.doc().state.crop, original);
+    }
+
+    #[test]
+    fn editor_waits_for_cropped_pixels_and_final_configure() {
+        let mut app = picker(Options {
+            editor: true,
+            ..Options::default()
+        });
+        let _ = app.pointer(Motion::Down, Point::new(80.0, 60.0));
+        let _ = app.pointer(Motion::Up, Point::new(240.0, 160.0));
+        assert_eq!(app.phase, Phase::Preparing);
+        let mut doc = app.doc().clone();
+        doc.state.crop = Rect {
+            x: 80.0,
+            y: 60.0,
+            w: 160.0,
+            h: 100.0,
+        };
+        let image = owned_handle(doc.render().unwrap());
+        let _ = app.update(Message::Event(iced::Event::Window(window::Event::Resized(
+            Size::new(288.0, 208.0),
+        ))));
+        assert_eq!(
+            app.phase,
+            Phase::Preparing,
+            "configure alone cannot expose uncropped pixels"
+        );
+        let _ = app.update(Message::SelectionReady(Ok((doc, Some(image)))));
+        assert_eq!(app.phase, Phase::Preparing);
+        assert!(app.busy);
+        assert_eq!(app.image_size, (160, 100));
+        let _ = app.update(Message::Event(iced::Event::Window(window::Event::Resized(
+            Size::new(320.0, 240.0),
+        ))));
+        assert_eq!(
+            app.phase,
+            Phase::Preparing,
+            "old picker size cannot expose editor"
+        );
+        let size = app.editor_size.unwrap();
+        let _ = app.update(Message::Event(iced::Event::Window(window::Event::Resized(
+            size,
+        ))));
+        assert_eq!(app.phase, Phase::Edit);
+        assert!(!app.busy);
+        assert_eq!(app.image_size, (160, 100));
+    }
+
     #[test]
     fn picker_pixels_share_source_allocation_and_outlive_the_document() {
         let source = Arc::new(::image::RgbaImage::from_pixel(
@@ -3015,11 +3239,14 @@ mod tests {
                 scale: 1.0,
                 ..Default::default()
             },
-            windows: vec![Rect {
-                x: 80.0,
-                y: 60.0,
-                w: 160.0,
-                h: 100.0,
+            windows: vec![capture::Window {
+                rect: Rect {
+                    x: 80.0,
+                    y: 60.0,
+                    w: 160.0,
+                    h: 100.0,
+                },
+                identifier: String::new(),
             }],
             pointer: Some(Point::new(140.0, 110.0)),
         };

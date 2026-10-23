@@ -496,6 +496,7 @@ dependencies = [
  "tiny-skia",
  "wayland-client",
  "wayland-protocols-wlr",
+ "wayland-scanner",
  "wgpu",
 ]
 

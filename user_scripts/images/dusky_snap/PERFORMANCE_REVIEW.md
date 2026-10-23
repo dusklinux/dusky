@@ -272,3 +272,119 @@ layer priority; this is not an exclusive layer-shell screenshot surface.
 Physical multiple-output and fractional-scale UI sessions remain untested;
 coordinate conversion has automated fixture coverage. No new startup speedup
 is claimed for this correctness change; it adds one post-map IPC command.
+
+## Dusky Tray focus-grab follow-up
+
+Tray is a regular pinned Wayland window, not a layer-shell panel. Its shared
+click-away helper holds a Hyprland focus grab restricting input to Tray's own
+surface. A live baseline reproduced the report: the picker mapped above Tray,
+but received no hover motion outside it, and Tray kept its grab.
+
+After capture, the interactive picker/editor now briefly commits a focus grab
+for its own Winit surface and immediately destroys it. Hyprland clears the old
+grab; Tray's existing cleared callback dismisses the live popup. Its image and
+window rectangle were already captured, so the frozen Tray remains visible and
+selectable in Snap. The picker then uses ordinary pointer input. Preview/pin
+windows do not claim focus this way, and quick fullscreen output still avoids
+all GUI initialization. Tray and its shared C helper require no changes.
+
+The handoff runs through Iced's documented window callback. A guest Wayland
+backend borrows the live display only for that callback; no borrowed handle
+escapes it, no surface event handler is replaced, and no extra reader thread,
+polling, compositor configuration or named-process dismissal is added. Two
+one-time Wayland round trips perform registry discovery and request completion.
+The existing focus-grab v1 XML is vendored with its copyright intact.
+`wayland-scanner` was already locked/cached and is now a direct compile-time
+dependency; the required system-backend feature is explicit. No crate versions
+or additional packages were introduced, and the build remains frozen/offline.
+
+Default-renderer and Tiny Skia live checks both received hover motion over
+different parts of the frozen desktop, selected Tray with a real pointer click,
+persisted its exact **320×532** crop and transitioned to an unpinned editor.
+The full **38-test** suite, formatting and Clippy with warnings denied pass.
+No startup improvement is claimed: this is a one-time input handoff fixing an
+observed defect, with no ongoing work after the handoff.
+
+The verified native release is installed. Its live default-renderer/software
+picker and fullscreen-editor checks pass. The second pass also verified:
+
+- Five consecutive native cycles: Tray starts with an active grab, Snap receives
+  hover motion, a real click selects the exact Tray rectangle, the editor unpins,
+  and both applications exit cleanly.
+- With the pointer stationary outside the fullscreen editor's bounds, Snap
+  retains keyboard focus after Tray dismisses; no mouse motion is needed.
+- A regular pinned screenshot preview stays alive and selects its exact
+  324×227 client rectangle; the handoff does not close ordinary pinned windows.
+- Opening a passive pinned preview leaves the existing Tray and its active
+  focus grab intact. Only interactive Snap windows perform the handoff.
+- Tracing places the handoff after the picker's first surface-buffer attachment.
+  The borrowed-display API and proxy construction match the locked Wayland
+  library's documented FFI interface. The grab and manager are destroyed within
+  the callback, and no protocol state or raw handle is retained in application
+  state. Earlier physical multiple-output/layer-shell limitations still apply.
+
+## Quick-copy flash, editor readiness and individual windows
+
+The quick-selection handler unconditionally changed to `Phase::Edit` before
+checking whether annotation was requested. Its clipboard worker then ran while
+the editor layout displayed the original desktop texture. Annotation likewise
+resized the window before its asynchronous cropped render completed. These
+were real state/asset ordering defects, not a requested preview.
+
+Quick output now exports an owned selected document while retaining the original
+picker state and texture. It never switches to the editor. This also preserves
+the original picker for retry if clipboard/save fails. The existing editor and
+quick paths share the same export helper without duplicated persistence logic.
+
+Annotation uses an explicit transparent preparation state. A worker first
+produces the selected document and its correctly cropped pixels; the editor
+appears only after its final logical window size is confirmed. The final size
+is also queried once: an experimentally reproduced same-size transition need
+not emit a resize event. No timer, arbitrary sleep, polling loop or extra process
+is needed. Escape can cancel preparation. Capture/render errors return to the
+intact picker; resize errors show the correctly cropped editor with the error.
+
+The previous window-click path cropped the already composited monitor image,
+which necessarily included pinned windows in front. Individual-window capture
+is available on this compositor through the existing locked libwayshot API.
+Targets now retain Hyprland's stable ID, matched exactly against the standard
+foreign-toplevel identifier. A window click captures that window's **current
+surface**, including portions obscured by other windows. It does not infer
+hidden pixels, move/unpin the other windows or match ambiguous titles/classes.
+There are no new dependencies or external capture commands in the application.
+
+Dragging and scroll selection continue to use the frozen monitor pixels, with
+all visible overlap included. A closed popup, absent identifier or unavailable
+window-capture capability uses the frozen crop; this preserves the captured
+Tray after its live click-away window dismisses. Window frame capture errors
+leave the picker available for retry. Individual window capture happens only
+after a click, adding no per-window image capture to startup.
+
+Live comparisons caught premultiplied RGB in the returned transparent window
+buffers. Window capture now converts this to the straight alpha required by
+the document/PNG pipeline, following the installed Wayland buffer specification.
+Opaque pixels remain unchanged. Tests cover opaque, partial and zero alpha.
+
+Verification includes **41 passing tests**, zero failures/ignored, frozen Clippy
+with warnings denied and formatting checks. Regression tests exercise quick
+copy/save without an editor phase, failed export retries, configure arriving
+before pixels, old picker-size events and final editor readiness. Existing
+initial-frame, pinned-window, raster, export and stress regressions still pass.
+
+An overlapping-window fixture uses a red 700×500 client and a blue pinned client
+in front. Clipboard pixels match the isolated red window; a 630×380 dragged
+region matches the composited desktop crop exactly, including the blue overlap.
+Annotation opens with the isolated window document. Real screenshot previews
+also matched all opaque pixels; a few partially transparent edge channels
+differed from grim's float-based unpremultiplication by at most one level.
+The original clipboard payload and pointer position were restored, and fixture
+windows/rules were removed or disabled after testing. Multi-output hardware and
+fractional-scale UI limitations remain as documented above.
+
+The final native build is installed and its source/CPU fingerprints are verified.
+The complete clipboard/editor/drag pixel checks pass on that installed binary
+with both automatic GPU selection and explicit Tiny Skia. The same-size editor
+transition and closed-Tray snapshot selection also pass. Quick-copy's live
+Wayland trace retains picker dimensions until exit; it does not configure an
+editor-sized window. No general startup speedup or calibrated numeric quality
+score is claimed for these correctness changes.
