@@ -217,10 +217,17 @@ fn spawn_preview(path: &std::path::Path, pin: bool) -> Result<()> {
         .spawn()?;
     Ok(())
 }
+const EDITOR_TITLE: &str = "Dusky Snap - Annotate";
+
 fn float_rules(picker: Option<&Monitor>) -> Result<()> {
     let mut rules = String::from(
-        r#"hl.window_rule({name="dusky_snap_native",match={class="^dusky-snap(-(pin|pick))?$"},float=true,center=true,no_dim=true,opacity="1.0 override 1.0 override",persistent_size=false,border_size=0,no_shadow=true,decorate=false,rounding=0}); hl.window_rule({name="dusky_snap_pin",match={class="^dusky-snap-(pin|pick)$"},pin=true})"#,
+        r#"hl.window_rule({name="dusky_snap_native",match={class="^dusky-snap(-(pin|pick))?$"},float=true,center=true,no_dim=true,no_blur=true,opacity="1.0 override 1.0 override",persistent_size=false,border_size=0,no_shadow=true,decorate=false,rounding=0}); hl.window_rule({name="dusky_snap_pin",match={class="^dusky-snap-(pin|pick)$"},pin=true})"#,
     );
+    // Only the ready, unpinned editor participates in compositor blur.
+    rules.push_str(&format!(
+        r#"; hl.window_rule({{name="dusky_snap_editor_blur",match={{class="^dusky-snap(-(pin|pick))?$",title={},pin=false}},no_blur=false,no_anim=true}})"#,
+        serde_json::to_string(&format!("^{EDITOR_TITLE}$"))?
+    ));
     if let Some(monitor) = picker {
         // A normal fullscreen surface loses pointer events to pinned windows.
         // Map the picker as the top pinned float, covering the captured output.
@@ -392,7 +399,14 @@ pub fn run(options: Options, start: Instant) -> Result<()> {
         App::view,
     )
     .window(settings)
-    .title("Dusky Snap")
+    .title(|app: &App| {
+        if app.phase == Phase::Edit {
+            EDITOR_TITLE
+        } else {
+            "Dusky Snap"
+        }
+        .to_owned()
+    })
     .default_font(iced::Font::with_name("Atkinson Hyperlegible"))
     .executor::<BackgroundExecutor>()
     .subscription(App::subscription)
@@ -409,24 +423,20 @@ fn window_size(doc: &Document, phase: Phase, monitor: &Monitor) -> Size {
     let [left, top, right, bottom] = monitor.reserved;
     let maxw = (mw - left - right - 32).max(1) as f32;
     let maxh = (mh - top - bottom - 32).max(1) as f32;
-    if phase == Phase::Scroll {
-        return Size::new(480.0_f32.min(maxw), 220.0_f32.min(maxh));
+    match phase {
+        Phase::Pick | Phase::Preparing | Phase::Edit => Size::new(mw as f32, mh as f32),
+        Phase::Scroll => Size::new(480.0_f32.min(maxw), 220.0_f32.min(maxh)),
+        Phase::Preview => {
+            let r = doc.canvas();
+            let scale = ((maxw - 24.0).min(720.0) / r.w as f32)
+                .min((maxh - 92.0).max(1.0) / r.h as f32)
+                .min(1.0);
+            Size::new(
+                (r.w as f32 * scale + 24.0).max(324.0).min(maxw),
+                (r.h as f32 * scale + 92.0).min(maxh),
+            )
+        }
     }
-    let r = doc.canvas();
-    if phase == Phase::Preview {
-        let scale = ((maxw - 24.0).min(720.0) / r.w as f32)
-            .min((maxh - 92.0).max(1.0) / r.h as f32)
-            .min(1.0);
-        return Size::new(
-            (r.w as f32 * scale + 24.0).max(324.0).min(maxw),
-            (r.h as f32 * scale + 92.0).min(maxh),
-        );
-    }
-    let width = maxw.min(1100.0);
-    let scale = ((width - 24.0) / r.w as f32)
-        .min((maxh - 170.0).max(1.0) / r.h as f32)
-        .min(1.0);
-    Size::new(width, (r.h as f32 * scale + 170.0).max(260.0).min(maxh))
 }
 fn finish(
     doc: &Document,
@@ -772,9 +782,11 @@ impl App {
                 return Task::none();
             }
             let size = window_size(self.doc(), self.phase, &self.capture.monitor);
+            let position = matches!(self.phase, Phase::Preparing | Phase::Edit)
+                .then_some((self.capture.monitor.x, self.capture.monitor.y));
             // Also handle a user-requested fullscreen editor before resizing.
             window::set_mode(id, window::Mode::Windowed)
-                .chain(job(move || resize_window(size), Message::Notice))
+                .chain(job(move || resize_window(size, position), Message::Notice))
                 // An unchanged size need not produce a Wayland resize event.
                 .chain(
                     window::size(id).map(|size| {
@@ -798,9 +810,9 @@ impl App {
                 } else {
                     Task::none()
                 };
-                let opening = if self.phase == Phase::Pick {
+                let opening = if matches!(self.phase, Phase::Pick | Phase::Edit) {
                     let monitor = self.capture.monitor.clone();
-                    opening.chain(job(move || position_picker(&monitor), Message::Notice))
+                    opening.chain(job(move || position_overlay(&monitor), Message::Notice))
                 } else {
                     opening
                 };
@@ -1756,8 +1768,8 @@ impl App {
     }
     fn editor(&self, size: Size) -> Element<'_, Message> {
         let ink = self.theme.palette().text;
-        let mut canvas_size =
-            Size::new((size.width - 24.0).max(1.0), (size.height - 170.0).max(1.0));
+        let content_width = (size.width - 24.0).clamp(1.0, 1076.0);
+        let mut canvas_size = Size::new(content_width, (size.height - 170.0).max(1.0));
         // Keep spare window height outside the image-and-toolbar group.
         let fit = (canvas_size.width / self.image_size.0 as f32)
             .min(canvas_size.height / self.image_size.1 as f32)
@@ -1800,7 +1812,7 @@ impl App {
             (Tool::Eyedropper, "dropper", "Pick color"),
             (Tool::Ocr, "ocr", "Read text in a region · O"),
         ];
-        let bar_width = (size.width - 24.0).max(1.0);
+        let bar_width = content_width;
         let mut toolbar = widget::Row::new()
             .spacing(2)
             .align_y(iced::Alignment::Center);
@@ -1866,7 +1878,7 @@ impl App {
         .spacing(2)
         .align_y(iced::Alignment::Center);
         let bar_height = 54.0;
-        let x = 12.0;
+        let x = (size.width - bar_width) / 2.0;
         let y = ((size.height - canvas_size.height - 170.0) / 2.0).max(0.0) + 8.0;
         let top = container(compact_card(top)).center_x(Length::Fill);
         let mut colors = widget::Row::new()
@@ -1959,11 +1971,15 @@ impl App {
         let body = column![top, image_canvas, bottom, status]
             .spacing(8)
             .padding(12)
-            .width(Length::Fill)
+            .width(content_width + 24.0)
             .height(Length::Shrink);
-        let mut stack = widget::stack![container(body).center_y(Length::Fill)]
-            .width(Length::Fill)
-            .height(Length::Fill);
+        let mut stack = widget::stack![
+            container(body)
+                .center_x(Length::Fill)
+                .center_y(Length::Fill)
+        ]
+        .width(Length::Fill)
+        .height(Length::Fill);
         if self.more {
             let extras = row![
                 button("Backdrop").on_press(Message::Act(Action::Backdrop)),
@@ -2342,7 +2358,7 @@ fn own_window() -> Result<serde_json::Value> {
         .cloned()
         .ok_or_else(|| "Screenshot window disappeared".into())
 }
-fn position_picker(monitor: &Monitor) -> Result<()> {
+fn position_overlay(monitor: &Monitor) -> Result<()> {
     // Hyprland's new_float_force_onscreen can override the initial move rule.
     // Correct after mapping, when the borderless window's final extents exist.
     let script = format!(
@@ -2359,7 +2375,7 @@ fn position_picker(monitor: &Monitor) -> Result<()> {
     )?;
     Ok(())
 }
-fn resize_window(size: Size) -> Result<()> {
+fn resize_window(size: Size, position: Option<(i32, i32)>) -> Result<()> {
     let deadline = Instant::now() + Duration::from_secs(2);
     let client = loop {
         let client = own_window()?;
@@ -2378,8 +2394,13 @@ fn resize_window(size: Size) -> Result<()> {
     } else {
         ""
     };
+    let place = if let Some((x, y)) = position {
+        format!("hl.dispatch(hl.dsp.window.move({{window=w,x={x},y={y},relative=false}}))")
+    } else {
+        "hl.dispatch(hl.dsp.window.center({window=w}))".into()
+    };
     let script = format!(
-        "local w={selector}; {unpin}hl.dispatch(hl.dsp.window.resize({{window=w,x={},y={},relative=false}})); hl.dispatch(hl.dsp.window.center({{window=w}}))",
+        "local w={selector}; {unpin}hl.dispatch(hl.dsp.window.resize({{window=w,x={},y={},relative=false}})); {place}",
         size.width.round() as i32,
         size.height.round() as i32
     );
@@ -3185,12 +3206,12 @@ mod tests {
         assert!(app.busy);
         assert_eq!(app.image_size, (160, 100));
         let _ = app.update(Message::Event(iced::Event::Window(window::Event::Resized(
-            Size::new(320.0, 240.0),
+            Size::new(288.0, 208.0),
         ))));
         assert_eq!(
             app.phase,
             Phase::Preparing,
-            "old picker size cannot expose editor"
+            "a size outside the monitor cannot expose editor"
         );
         let size = app.editor_size.unwrap();
         let _ = app.update(Message::Event(iced::Event::Window(window::Event::Resized(

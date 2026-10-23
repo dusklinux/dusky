@@ -388,3 +388,42 @@ transition and closed-Tray snapshot selection also pass. Quick-copy's live
 Wayland trace retains picker dimensions until exit; it does not configure an
 editor-sized window. No general startup speedup or calibrated numeric quality
 score is claimed for these correctness changes.
+
+## Full-monitor annotation blur and sharp pinned previews
+
+The user selected blur across the entire monitor behind annotation mode.
+The previous annotation window was capped at 1100 logical pixels wide and
+content-dependent height. Hyprland could blur only that window rectangle.
+Annotation and its preparation state now cover the captured monitor's full
+logical size, positioned at its global origin rather than centered in the
+reserved work area. Controls/image remain centered in a compact content group.
+Preview and scroll-control sizing remain bounded as before.
+
+Snap's default window rule now disables compositor blur. A dynamic rule allows
+blur only for a ready annotation window that is not pinned, identified by the
+application's annotation title and class. This respects the user's global blur
+setting and disables blur again when the editor itself is pinned. Pinned image
+previews and the picker have no blur. Annotation transitions also disable window
+animation, avoiding an expanding partial blur rectangle. No global Hyprland
+setting, image pixels or dependencies changed. Initial file/fullscreen editors
+receive one post-map move to the monitor origin; picker transitions reuse the
+existing positioning and resize IPC. There is no blur-setting query or polling.
+
+All **41 tests** pass, including updated monitor-size readiness expectations,
+and frozen Clippy/formatting pass. A live GPU checkerboard fixture confirms the
+editor at **[0,0], 1280×720**, with all 3600 pixels in each of four 60×60 corner
+patches changed by blur. Pinning the editor restores exact sharp background
+pixels; unpinning restores blur. The pinned preview's transparent padding also
+matches the sharp background exactly. The fixture changes only owned windows
+and temporary rules; the user's enabled global blur setting is retained.
+
+The explicit Tiny Skia fallback cannot provide this translucent backdrop:
+locked softbuffer 0.4.8 uses opaque XRGB8888 Wayland buffers. Its editor remains
+usable with an opaque background. Replacing that backend solely for compositor
+blur is outside this focused change; full-monitor glass blur requires the GPU
+renderer. Physical multi-output and fractional-scale UI caveats still apply.
+
+The final verified native build is installed. Its checkerboard/pin/unpin checks,
+clipboard/editor/region pixel comparisons and closed-Tray workflow all pass.
+The user's global blur remains enabled. No blur-performance benchmark is
+claimed: extending the requested blur area naturally increases its pixel work.
