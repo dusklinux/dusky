@@ -282,7 +282,23 @@ class HyprlandLuaEngine(BaseEngine):
 
                     if not is_ident_key then
                         local new_scope = scope == "" and str_k or (scope .. "/" .. str_k)
-                        if type(v) == "table" then 
+                        local workspace_gap = scope:match("^workspace_rule/")
+                            and (k == "gaps_in" or k == "gaps_out" or k == "float_gaps")
+                        if workspace_gap and type(v) == "table" then
+                            local parts = {}
+                            for _, edge in ipairs({"top", "left", "right", "bottom"}) do
+                                if v[edge] ~= nil then parts[#parts + 1] = edge .. " = " .. tostring(v[edge]) end
+                            end
+                            seen_keys[new_scope] = true
+                            table.insert(out_state, escape_str(new_scope) .. ':' .. escape_str("{" .. table.concat(parts, ", ") .. "}"))
+                        elseif scope:match("^workspace_rule/") and (k == "no_border" or k == "no_rounding" or k == "no_shadow" or k == "decorate") and type(v) == "boolean" then
+                            -- These optional overrides use nil/true/false cycles.
+                            seen_keys[new_scope] = true
+                            table.insert(out_state, escape_str(new_scope) .. ':' .. escape_str(tostring(v)))
+                        elseif scope:match("^workspace_rule/") and (workspace_gap or k == "border_size") and type(v) == "number" then
+                            seen_keys[new_scope] = true
+                            table.insert(out_state, escape_str(new_scope) .. ':' .. escape_str(tostring(v)))
+                        elseif type(v) == "table" then
                             walk(v, new_scope, seen, type(k) == "number")
                         else 
                             seen_keys[new_scope] = true
@@ -440,11 +456,14 @@ class HyprlandLuaEngine(BaseEngine):
             return i
         end
 
-        local active_config_lines = {}
+        local active_table_lines = {}
         for _, call in ipairs(calls) do
-            if call.method == "config" then
-                active_config_lines[call.file] = active_config_lines[call.file] or {}
-                active_config_lines[call.file][call.line] = true
+            if call.method == "config" or call.method == "workspace_rule" then
+                active_table_lines[call.file] = active_table_lines[call.file] or {}
+                local site = call.line .. "\0" .. call.method
+                local ids = active_table_lines[call.file][site] or {}
+                ids[#ids + 1] = call.id
+                active_table_lines[call.file][site] = ids
             end
         end
         for _, fpath in ipairs(loaded_files) do
@@ -462,18 +481,22 @@ class HyprlandLuaEngine(BaseEngine):
                     end
                     tokens[i].line = line
                     if tokens[i].val == "hl" and tokens[i+1] and tokens[i+1].type == "DOT"
-                       and tokens[i+2] and tokens[i+2].val == "config" then
-                        source_counts[line] = (source_counts[line] or 0) + 1
+                       and tokens[i+2] and (tokens[i+2].val == "config" or tokens[i+2].val == "workspace_rule") then
+                        local site = line .. "\0" .. tokens[i+2].val
+                        source_counts[site] = (source_counts[site] or 0) + 1
                     end
                 end
                 for i = 1, #tokens - 4 do
                     local line = tokens[i].line
-                    local executed = active_config_lines[fpath] and active_config_lines[fpath][line]
-                    if executed and source_counts[line] == 1 and tokens[i].val == "hl" and tokens[i+1].type == "DOT" and tokens[i+2].val == "config" then
+                    local method = tokens[i+2].val
+                    local site = line .. "\0" .. method
+                    local ids = active_table_lines[fpath] and active_table_lines[fpath][site]
+                    if ids and #ids == 1 and source_counts[site] == 1 and tokens[i].val == "hl" and tokens[i+1].type == "DOT" then
+                        local scope = method == "config" and {} or {method, ids[1]}
                         if tokens[i+3].type == "LPAREN" and tokens[i+4].type == "LBRACE" then
-                            scan_table(tokens, text, i+4, {})
+                            scan_table(tokens, text, i+4, scope)
                         elseif tokens[i+3].type == "LBRACE" then
-                            scan_table(tokens, text, i+3, {})
+                            scan_table(tokens, text, i+3, scope)
                         end
                     end
                 end
@@ -613,6 +636,14 @@ class HyprlandLuaEngine(BaseEngine):
                 if item_type == 'color' and (match := re.fullmatch(r'([A-Za-z_][A-Za-z0-9_]*)@([0-9a-fA-F]{2})', value)):
                     role, alpha = match.groups()
                     value = f'string.gsub({role}, "..%)$", "{alpha.lower()})")'
+            elif item_type == 'string' and scope.startswith('workspace_rule/') and key in {'border_size', 'gaps_in', 'gaps_out', 'float_gaps'}:
+                value = str(new_value).strip()
+                integer = r'[+-]?[0-9]+'
+                edge = rf'(?:top|left|right|bottom)\s*=\s*{integer}'
+                if re.fullmatch(integer, value):
+                    value = str(int(value))
+                elif key == 'border_size' or not re.fullmatch(rf'\{{\s*(?:{edge}(?:\s*[,;]\s*{edge})*\s*[,;]?)?\s*\}}', value):
+                    raise ValueError(f'{key}: use nil, an integer, or named integer gap edges such as {{top=4, left=8, right=8, bottom=4}}')
             elif item_type == 'bool':
                 value = 'true' if str(new_value).strip().lower() in {'true', '1', 'yes', 'on', 't', 'y'} else 'false'
             elif item_type in ('int', 'float'):
@@ -748,8 +779,12 @@ class HyprlandLuaEngine(BaseEngine):
                 return "expr"
             end
 
-            local function format_replacement(old_raw, new_value)
+            local function format_replacement(old_raw, new_value, lookup_key)
                 if new_value == "__DELETE__" then return "nil" end
+                local scope, key = lookup_key:match("^(.-)%z(.*)$")
+                if scope:match("^workspace_rule/") and (key == "gaps_in" or key == "gaps_out" or key == "float_gaps") then
+                    return new_value
+                end
                 local kind = classify_raw(old_raw)
                 if kind == "nil" then
                     return new_value
@@ -817,7 +852,11 @@ class HyprlandLuaEngine(BaseEngine):
                     local key, rhs = key_at(tokens, i)
                     if key then
                         local rhs_end, next_i = find_rhs_end(tokens, rhs)
-                        if tokens[rhs] and tokens[rhs].type == "LBRACE" then
+                        local curr_scope = scope_string(scope_parts)
+                        local lookup_key = curr_scope .. "\0" .. tostring(key)
+                        local whole_gap = curr_scope:match("^workspace_rule/")
+                            and (key == "gaps_in" or key == "gaps_out" or key == "float_gaps") and batch_lookup[lookup_key]
+                        if tokens[rhs] and tokens[rhs].type == "LBRACE" and not whole_gap then
                             scope_parts[#scope_parts + 1] = key
                             parse_table(tokens, text, rhs, scope_parts, matches)
                             scope_parts[#scope_parts] = nil
@@ -1043,7 +1082,7 @@ class HyprlandLuaEngine(BaseEngine):
                 
                 io.stderr:write("[Telemetry] Match " .. j .. ": " .. m.raw .. " -> " .. tostring(m.new_val) .. "\n")
                 
-                local ok, repl_or_err = pcall(format_replacement, m.raw, m.new_val)
+                local ok, repl_or_err = pcall(format_replacement, m.raw, m.new_val, m.lookup_key)
                 if not ok then
                     io.stderr:write(tostring(repl_or_err), "\n")
                     os.exit(3)

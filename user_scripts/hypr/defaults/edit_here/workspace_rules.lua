@@ -37,6 +37,7 @@
 -- the UI without needing any complex Lua loops or Bash arrays!
 --
 -- Full list of supported keys (all optional except `workspace`):
+-- nil inherits; gaps accept an integer or {top=4, left=8, right=8, bottom=4}.
 --   workspace       (string)  -- REQUIRED. Identifier or selector (see above).
 --   monitor         (string)  -- Bind to monitor by name ("DP-1") or desc.
 --   default         (bool)    -- Make this the default workspace on its monitor.
@@ -45,9 +46,9 @@
 --   on_created_empty(string)  -- Shell command to run when workspace is first created.
 --   layout          (string)  -- Override layout: "dwindle" | "master" | "scrolling" | "monocle"
 --   layout_opts     (table)   -- Layout-specific options (see §8 for details).
---   gaps_in         (number)  -- Inner gap override (px).
---   gaps_out        (number)  -- Outer gap override (px).
---   float_gaps      (number)  -- Gaps for floating windows (px).
+--   gaps_in         (number/table)  -- Inner gap override (px).
+--   gaps_out        (number/table)  -- Outer gap override (px).
+--   float_gaps      (number/table)  -- Gaps for floating windows (px).
 --   no_border       (bool)    -- Disable all window borders on this workspace.
 --   border_size     (number)  -- Override border thickness (px).
 --   no_rounding     (bool)    -- Disable corner rounding on this workspace.
@@ -55,16 +56,56 @@
 --   no_shadow       (bool)    -- Disable window shadows on this workspace.
 --   animation       (string)  -- Override workspace switch animation style.
 -- ==============================================================================
-hl.workspace_rule({ workspace = "1", layout = nil, persistent = false, monitor = "", default = false, default_name = "", on_created_empty = "" })
-hl.workspace_rule({ workspace = "2", layout = nil, persistent = false, monitor = "", default = false, default_name = "", on_created_empty = "" })
-hl.workspace_rule({ workspace = "3", layout = nil, persistent = false, monitor = "", default = false, default_name = "", on_created_empty = "" })
-hl.workspace_rule({ workspace = "4", layout = nil, persistent = false, monitor = "", default = false, default_name = "", on_created_empty = "" })
-hl.workspace_rule({ workspace = "5", layout = nil, persistent = false, monitor = "", default = false, default_name = "", on_created_empty = "" })
-hl.workspace_rule({ workspace = "6", layout = nil, persistent = false, monitor = "", default = false, default_name = "", on_created_empty = "" })
-hl.workspace_rule({ workspace = "7", layout = nil, persistent = false, monitor = "", default = false, default_name = "", on_created_empty = "" })
-hl.workspace_rule({ workspace = "8", layout = nil, persistent = false, monitor = "", default = false, default_name = "", on_created_empty = "" })
-hl.workspace_rule({ workspace = "9", layout = nil, persistent = false, monitor = "", default = false, default_name = "", on_created_empty = "" })
-hl.workspace_rule({ workspace = "10", layout = "scrolling", persistent = true, monitor = "", default = false, default_name = "", on_created_empty = "" })
+hl.workspace_rule({ workspace = "1", layout = nil, persistent = false, monitor = "", default = false, default_name = "", on_created_empty = "",
+    border_size = nil, gaps_in = nil, gaps_out = nil, float_gaps = nil,
+    no_border = nil, no_rounding = nil, no_shadow = nil, decorate = nil, animation = nil,
+    layout_opts = { orientation = nil, direction = nil },
+})
+hl.workspace_rule({ workspace = "2", layout = nil, persistent = false, monitor = "", default = false, default_name = "", on_created_empty = "",
+    border_size = nil, gaps_in = nil, gaps_out = nil, float_gaps = nil,
+    no_border = nil, no_rounding = nil, no_shadow = nil, decorate = nil, animation = nil,
+    layout_opts = { orientation = nil, direction = nil },
+})
+hl.workspace_rule({ workspace = "3", layout = nil, persistent = false, monitor = "", default = false, default_name = "", on_created_empty = "",
+    border_size = nil, gaps_in = nil, gaps_out = nil, float_gaps = nil,
+    no_border = nil, no_rounding = nil, no_shadow = nil, decorate = nil, animation = nil,
+    layout_opts = { orientation = nil, direction = nil },
+})
+hl.workspace_rule({ workspace = "4", layout = nil, persistent = false, monitor = "", default = false, default_name = "", on_created_empty = "",
+    border_size = nil, gaps_in = nil, gaps_out = nil, float_gaps = nil,
+    no_border = nil, no_rounding = nil, no_shadow = nil, decorate = nil, animation = nil,
+    layout_opts = { orientation = nil, direction = nil },
+})
+hl.workspace_rule({ workspace = "5", layout = nil, persistent = false, monitor = "", default = false, default_name = "", on_created_empty = "",
+    border_size = nil, gaps_in = nil, gaps_out = nil, float_gaps = nil,
+    no_border = nil, no_rounding = nil, no_shadow = nil, decorate = nil, animation = nil,
+    layout_opts = { orientation = nil, direction = nil },
+})
+hl.workspace_rule({ workspace = "6", layout = nil, persistent = false, monitor = "", default = false, default_name = "", on_created_empty = "",
+    border_size = nil, gaps_in = nil, gaps_out = nil, float_gaps = nil,
+    no_border = nil, no_rounding = nil, no_shadow = nil, decorate = nil, animation = nil,
+    layout_opts = { orientation = nil, direction = nil },
+})
+hl.workspace_rule({ workspace = "7", layout = nil, persistent = false, monitor = "", default = false, default_name = "", on_created_empty = "",
+    border_size = nil, gaps_in = nil, gaps_out = nil, float_gaps = nil,
+    no_border = nil, no_rounding = nil, no_shadow = nil, decorate = nil, animation = nil,
+    layout_opts = { orientation = nil, direction = nil },
+})
+hl.workspace_rule({ workspace = "8", layout = nil, persistent = false, monitor = "", default = false, default_name = "", on_created_empty = "",
+    border_size = nil, gaps_in = nil, gaps_out = nil, float_gaps = nil,
+    no_border = nil, no_rounding = nil, no_shadow = nil, decorate = nil, animation = nil,
+    layout_opts = { orientation = nil, direction = nil },
+})
+hl.workspace_rule({ workspace = "9", layout = nil, persistent = false, monitor = "", default = false, default_name = "", on_created_empty = "",
+    border_size = nil, gaps_in = nil, gaps_out = nil, float_gaps = nil,
+    no_border = nil, no_rounding = nil, no_shadow = nil, decorate = nil, animation = nil,
+    layout_opts = { orientation = nil, direction = nil },
+})
+hl.workspace_rule({ workspace = "10", layout = "scrolling", persistent = true, monitor = "", default = false, default_name = "", on_created_empty = "",
+    border_size = nil, gaps_in = nil, gaps_out = nil, float_gaps = nil,
+    no_border = nil, no_rounding = nil, no_shadow = nil, decorate = nil, animation = nil,
+    layout_opts = { orientation = nil, direction = nil },
+})
 
 
 -- ==============================================================================
@@ -73,7 +114,7 @@ hl.workspace_rule({ workspace = "10", layout = "scrolling", persistent = true, m
 -- or when a window is in fullscreen/maximized state.
 --
 -- NOTE: The "Smart Gaps" feature has been moved to appearance.lua.
--- The Python TUI automatically reroutes the toggle there using `target_file_override`.
+-- Use the Appearance TUI → Smart tab to manage it.
 -- ==============================================================================
 
 
@@ -130,6 +171,10 @@ for _, ws in ipairs(named_workspaces) do
         layout_opts      = ws.layout_opts,
         gaps_in          = ws.gaps_in,
         gaps_out         = ws.gaps_out,
+        float_gaps       = ws.float_gaps,
+        no_shadow        = ws.no_shadow,
+        persistent       = ws.persistent,
+        default          = ws.default,
         no_border        = ws.no_border,
         border_size      = ws.border_size,
         no_rounding      = ws.no_rounding,
@@ -230,11 +275,12 @@ hl.config({
 
     -- §10b Dwindle layout
     dwindle = {
-        -- 0 = last window direction, 1 = always right/down, 2 = always left/up
+        special_scale_factor = 1.0,
+        -- 0 = follows mouse, 1 = always left/up, 2 = always right/down
         force_split                  = 0,
         -- keep the split direction when toggling — KEEP THIS TRUE for togglesplit
         preserve_split               = true,
-        -- split based on window dimensions instead of count
+        -- choose split direction using cursor-position triangles
         smart_split                  = false,
         -- resize the smaller side on manual resize
         smart_resizing               = true,
@@ -248,6 +294,7 @@ hl.config({
 
     -- §10c Master layout
     master = {
+        special_scale_factor = 1.0,
         -- "master" | "slave" | "inherit" — where new windows go
         new_status                    = "slave",
         -- insert new slave windows at the TOP of the stack
@@ -275,7 +322,7 @@ hl.config({
         -- single-column workspace fills screen
         fullscreen_on_one_column = true,
         column_width             = 0.9,
-        -- 0 = center (previews adjacent windows on both left & right) | 1 = fit (preview right only)
+        -- 0 = center (previews adjacent windows on both left & right) | 1 = fit with minimal scrolling
         focus_fit_method         = 0,
         follow_focus             = true,
         -- Require 40% window visibility before mouse hover auto-scrolls; prevents runaway scrolling on edge previews
@@ -291,9 +338,9 @@ hl.config({
         close_special_on_empty     = true,
         -- steal focus on activation
         focus_on_activate          = true,
-        -- 0 = stay behind | 1 = take over | 2 = swap fs
+        -- 0 = keep fullscreen focus | 1 = take over | 2 = unfullscreen/unmaximize
         on_focus_under_fullscreen  = 2,
-        -- Force new windows to spawn on the current workspace
+        -- Open new windows on the workspace they were invoked from
         initial_workspace_tracking = 1,
     },
 
@@ -322,6 +369,11 @@ hl.config({
         focus_preferred_method = 0,
         movefocus_cycles_groupfirst = false,
         ignore_group_lock = false,
+        pass_mouse_when_bound = false,
+        scroll_event_delay = 300,
+        disable_keybind_grabbing = false,
+        drag_threshold = 0,
+        drag_center_window = true,
     },
     misc = {
         initial_workspace_token_timeout = 10,
@@ -329,6 +381,12 @@ hl.config({
         float_force_onscreen = 0,
         new_float_force_onscreen = 2,
         size_limits_tiled = false,
+        mouse_move_focuses_monitor = true,
+        always_follow_on_dnd = true,
+        layers_hog_keyboard_focus = true,
+        enable_swallow = false,
+        swallow_regex = "",
+        swallow_exception_regex = "",
     },
     general = {
         modal_parent_blocking = true,
@@ -342,6 +400,10 @@ hl.config({
         drag_into_group = 1,
         group_on_movetoworkspace = false,
         insert_after_current = true,
+        focus_removed_window = true,
+        merge_groups_on_drag = true,
+        merge_groups_on_groupbar = true,
+        merge_floated_into_tiled_on_groupbar = false,
     },
 })
 
