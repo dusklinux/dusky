@@ -35,15 +35,25 @@ end
 ---@param y number
 ---@param size number
 ---@param name string
----@param opts? {color?: string; border?: number; border_color?: string; opacity?: number; clip?: string; align?: number}
+---@param opts? {color?: string; border?: number; border_color?: string; opacity?: number; clip?: string; align?: number; rotate?: number}
 local icon_path = require('lib/icons')
 function ass_mt:icon(x, y, size, name, opts)
 	opts = opts or {}
+	local align = opts.align or 5
+	local pos_x = (align == 1 or align == 4 or align == 7) and x
+		or (align == 3 or align == 6 or align == 9) and (x - size)
+		or (x - size / 2)
+	local pos_y = (align == 7 or align == 8 or align == 9) and y
+		or (align == 1 or align == 2 or align == 3) and (y - size)
+		or (y - size / 2)
+
 	local scale = size / 24 * 100
-	local tags = string.format('\\pos(%f,%f)\\rDefault\\an5\\blur0\\p1\\fscx%f\\fscy%f\\bord%f\\shad0\\1c&H%s\\3c&H%s',
-		x, y, scale, scale, opts.border or 0, opts.color or bgt, opts.border_color or bg)
+	local tags = string.format('\\pos(%f,%f)\\rDefault\\an7\\blur0\\p1\\fscx%f\\fscy%f\\bord%f\\shad0\\1c&H%s\\3c&H%s',
+		pos_x, pos_y, scale, scale, opts.border or 0, opts.color or bgt, opts.border_color or bg)
 	if opts.opacity then tags = tags .. self.opacity(nil, opts.opacity) end
-	if opts.rotate then tags = tags .. '\\frz' .. opts.rotate end
+	if opts.rotate then
+		tags = tags .. string.format('\\org(%f,%f)\\frz%f', pos_x + size / 2, pos_y + size / 2, opts.rotate)
+	end
 	if opts.clip then tags = tags .. opts.clip end
 	self:new_event()
 	self:append('{' .. tags .. '}' .. icon_path(name) .. '{\\p0}')
