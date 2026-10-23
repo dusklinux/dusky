@@ -35,6 +35,13 @@ pub struct Monitor {
     pub special_workspace: Workspace,
 }
 impl Monitor {
+    pub fn workspace(&self) -> &str {
+        if self.special_workspace.address.is_empty() {
+            &self.active_workspace.address
+        } else {
+            &self.special_workspace.address
+        }
+    }
     pub fn logical_size(&self) -> (i32, i32) {
         let scale = self.scale.max(0.1);
         let (w, h) = if self.transform % 2 == 1 {
@@ -120,14 +127,10 @@ fn window_targets(
     // Hyprland hit-tests pinned windows before ordinary floating/tiled windows.
     // Focus history alone can put a focused tiled window above its pinned overlay.
     clients.sort_by_key(|c| (!c.pinned, !c.floating, c.order));
-    let workspace = if monitor.special_workspace.address.is_empty() {
-        &monitor.active_workspace.address
-    } else {
-        &monitor.special_workspace.address
-    };
+    let workspace = monitor.workspace();
     clients
         .into_iter()
-        .filter(|c| !c.hidden && (c.pinned || c.workspace.address == *workspace))
+        .filter(|c| !c.hidden && (c.pinned || c.workspace.address == workspace))
         .map(|c| {
             let rect = Rect {
                 x: (c.at[0] - monitor.x as f64) * sx,
@@ -456,6 +459,25 @@ mod process_regression {
 #[cfg(test)]
 mod workspace_regression {
     use super::*;
+
+    #[test]
+    fn invocation_workspace_prefers_the_visible_special_workspace() {
+        for normal in ["1", "name:work"] {
+            let mut monitor = Monitor {
+                active_workspace: Workspace {
+                    address: normal.into(),
+                },
+                ..Default::default()
+            };
+            assert_eq!(monitor.workspace(), normal);
+            for special in ["special:magic", "special:another"] {
+                monitor.special_workspace.address = special.into();
+                assert_eq!(monitor.workspace(), special);
+            }
+            monitor.special_workspace.address.clear();
+            assert_eq!(monitor.workspace(), normal);
+        }
+    }
 
     #[test]
     fn window_capture_converts_premultiplied_alpha_for_documents() {

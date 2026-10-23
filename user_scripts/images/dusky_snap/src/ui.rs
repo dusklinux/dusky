@@ -784,9 +784,13 @@ impl App {
             let size = window_size(self.doc(), self.phase, &self.capture.monitor);
             let position = matches!(self.phase, Phase::Preparing | Phase::Edit)
                 .then_some((self.capture.monitor.x, self.capture.monitor.y));
+            let workspace = self.capture.monitor.workspace().to_owned();
             // Also handle a user-requested fullscreen editor before resizing.
             window::set_mode(id, window::Mode::Windowed)
-                .chain(job(move || resize_window(size, position), Message::Notice))
+                .chain(job(
+                    move || resize_window(size, position, &workspace),
+                    Message::Notice,
+                ))
                 // An unchanged size need not produce a Wayland resize event.
                 .chain(
                     window::size(id).map(|size| {
@@ -812,7 +816,11 @@ impl App {
                 };
                 let opening = if matches!(self.phase, Phase::Pick | Phase::Edit) {
                     let monitor = self.capture.monitor.clone();
-                    opening.chain(job(move || position_overlay(&monitor), Message::Notice))
+                    let editor = self.phase == Phase::Edit;
+                    opening.chain(job(
+                        move || position_overlay(&monitor, editor),
+                        Message::Notice,
+                    ))
                 } else {
                     opening
                 };
@@ -2358,24 +2366,33 @@ fn own_window() -> Result<serde_json::Value> {
         .cloned()
         .ok_or_else(|| "Screenshot window disappeared".into())
 }
-fn position_overlay(monitor: &Monitor) -> Result<()> {
+fn position_overlay(monitor: &Monitor, editor: bool) -> Result<()> {
     // Hyprland's new_float_force_onscreen can override the initial move rule.
     // Correct after mapping, when the borderless window's final extents exist.
+    let workspace = if editor {
+        format!(
+            "hl.dispatch(hl.dsp.window.move({{window=w,workspace={},follow=false}})); ",
+            serde_json::to_string(monitor.workspace())?
+        )
+    } else {
+        String::new()
+    };
+    let focus = if editor {
+        "hl.dispatch(hl.dsp.focus({window=w}))"
+    } else {
+        // Focusing must not move the picker's initial selection off the cursor.
+        "local cursor=hl.get_cursor_pos(); hl.dispatch(hl.dsp.focus({window=w})); if cursor then hl.dispatch(hl.dsp.cursor.move({x=cursor.x,y=cursor.y})) end"
+    };
     let script = format!(
-        "hl.dsp.window.move({{window=\"pid:{}\",x={},y={},relative=false}})",
+        "local w=\"pid:{}\"; {workspace}hl.dispatch(hl.dsp.window.move({{window=w,x={},y={},relative=false}})); {focus}",
         std::process::id(),
         monitor.x,
         monitor.y,
     );
-    capture::command(
-        "hyprctl",
-        &["dispatch", &script],
-        None,
-        Duration::from_secs(2),
-    )?;
+    capture::command("hyprctl", &["eval", &script], None, Duration::from_secs(2))?;
     Ok(())
 }
-fn resize_window(size: Size, position: Option<(i32, i32)>) -> Result<()> {
+fn resize_window(size: Size, position: Option<(i32, i32)>, workspace: &str) -> Result<()> {
     let deadline = Instant::now() + Duration::from_secs(2);
     let client = loop {
         let client = own_window()?;
@@ -2389,10 +2406,22 @@ fn resize_window(size: Size, position: Option<(i32, i32)>) -> Result<()> {
     };
     let address = client["address"].as_str().ok_or("Window has no address")?;
     let selector = serde_json::to_string(&format!("address:{address}"))?;
-    let unpin = if client["pinned"].as_bool() == Some(true) {
+    let pinned = client["pinned"].as_bool() == Some(true);
+    let unpin = if pinned {
         "hl.dispatch(hl.dsp.window.pin({window=w})); "
     } else {
         ""
+    };
+    // Hyprland unpins onto the monitor's normal active workspace, even when
+    // a special workspace is visible. Restore the invocation workspace first.
+    let restore_workspace = if pinned || client["workspace"]["address"].as_str() != Some(workspace)
+    {
+        format!(
+            "hl.dispatch(hl.dsp.window.move({{window=w,workspace={},follow=true}})); ",
+            serde_json::to_string(workspace)?
+        )
+    } else {
+        String::new()
     };
     let place = if let Some((x, y)) = position {
         format!("hl.dispatch(hl.dsp.window.move({{window=w,x={x},y={y},relative=false}}))")
@@ -2400,7 +2429,7 @@ fn resize_window(size: Size, position: Option<(i32, i32)>) -> Result<()> {
         "hl.dispatch(hl.dsp.window.center({window=w}))".into()
     };
     let script = format!(
-        "local w={selector}; {unpin}hl.dispatch(hl.dsp.window.resize({{window=w,x={},y={},relative=false}})); {place}",
+        "local w={selector}; {unpin}{restore_workspace}hl.dispatch(hl.dsp.window.resize({{window=w,x={},y={},relative=false}})); {place}",
         size.width.round() as i32,
         size.height.round() as i32
     );

@@ -427,3 +427,32 @@ The final verified native build is installed. Its checkerboard/pin/unpin checks,
 clipboard/editor/region pixel comparisons and closed-Tray workflow all pass.
 The user's global blur remains enabled. No blur-performance benchmark is
 claimed: extending the requested blur area naturally increases its pixel work.
+
+## Special-workspace annotation placement
+
+The live baseline reproduced an annotation jump from a named special workspace
+to its underlying normal workspace. Hyprland's pin dispatcher explicitly assigns
+an unpinned window to the monitor's normal active workspace. Snap's pinned picker
+therefore lost the special-workspace context when becoming an editor.
+
+The captured monitor already records both workspace addresses. A shared borrowed
+`Monitor::workspace()` selector now prefers the visible special workspace and
+otherwise uses the normal workspace. Resizing/unpinning restores that invocation
+workspace before applying the final geometry. The move follows the editor so
+keyboard focus is retained: a silent move was experimentally shown to leave
+focus behind. Initial file/fullscreen editors also receive explicit workspace
+placement and focus. Picker startup focus preserves the pointer's original
+position, avoiding a new cursor/selection jump from Hyprland's focus dispatch.
+
+This uses the existing geometry/startup IPC batches and captured metadata, with
+no new query process, polling or workspace-name-specific rule. Workspace strings
+are JSON-quoted for Lua, and the chosen scope is the capture's invocation scope.
+
+All **42 tests** pass, including a regression for normal/named normal workspaces,
+Magic and other named special workspaces. Formatting and frozen Clippy with
+warnings denied pass. Live region, window-click, direct fullscreen annotation
+and file-editor paths retain the special workspace, visibility and keyboard
+focus. The underlying normal workspace remains unchanged; the picker does not
+close the special workspace or move the initial cursor. Ordinary-workspace
+annotation also passes. Fixtures restore the previous special-workspace
+visibility and cursor and use isolated temporary screenshot history.
