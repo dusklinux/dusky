@@ -103,24 +103,37 @@ CATEGORIES = {
     )),
 }
 
-MIMES = {
+# Keep these categories aligned with the defaults in .config/mimeapps.list.
+# Include file(1) spellings as well as shared-mime-info names: xdg-open uses both.
+MIMES = frozendict({
     "file-manager": ("inode/directory",),
     "browser": (
         "x-scheme-handler/http", "x-scheme-handler/https", "x-scheme-handler/about",
         "x-scheme-handler/unknown", "x-scheme-handler/chrome", "text/html",
-        "application/x-extension-htm", "application/x-extension-html",
-        "application/x-extension-shtml", "application/xhtml+xml",
-        "application/x-extension-xhtml", "application/x-extension-xht",
+        "application/xhtml+xml",
     ),
     "text-editor": (
         "text/plain", "text/markdown", "text/x-shellscript", "application/x-shellscript",
-        "text/x-python", "text/x-script.python", "text/x-go", "text/x-rust", "text/x-c",
-        "text/x-c++", "text/x-lua", "text/x-java", "text/x-makefile", "application/json",
-        "application/toml", "application/x-yaml", "text/yaml", "application/x-config",
-        "application/x-conf", "text/css", "text/javascript", "application/javascript",
-        "text/xml", "application/xml", "application/x-zerosize",
+        "text/x-python", "text/x-script.python", "text/x-go", "text/rust", "text/x-c",
+        "text/x-c++", "text/x-csrc", "text/x-chdr", "text/x-c++src", "text/x-c++hdr",
+        "text/x-lua", "text/x-java", "text/x-makefile", "text/x-moc", "text/x-pascal",
+        "text/tcl", "text/x-tcl", "text/x-awk", "text/x-tex", "application/json",
+        "application/toml", "application/yaml", "application/x-yaml", "text/yaml",
+        "text/css", "text/javascript", "application/javascript", "text/xml",
+        "application/xml", "application/x-zerosize", "inode/x-empty",
+        "text/csv", "text/tab-separated-values", "text/calendar", "text/vcard",
+        "application/ld+json", "application/json5", "application/schema+json",
+        "application/json-patch+json", "application/x-ndjson", "application/rss+xml",
+        "application/atom+xml", "application/rdf+xml", "application/sql",
+        "application/typescript", "application/x-perl", "application/x-ruby",
+        "application/x-php", "text/x-perl", "text/x-ruby", "text/x-php",
+        "application/x-desktop", "text/x-log", "text/x-patch", "text/x-diff",
+        "text/x-cmake", "text/x-meson", "text/x-systemd-unit", "text/x-dbus-service",
+        "text/x-csharp", "text/x-objcsrc", "text/x-objc++src", "text/x-scala",
+        "text/x-kotlin", "text/x-sass", "text/x-scss", "text/vnd.trolltech.linguist",
+        "application/x-tiled-tsx",
     ),
-}
+})
 
 PRIMARY_MIME = {
     "file-manager": "inode/directory",
