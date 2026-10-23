@@ -523,25 +523,25 @@ hl.bind(
 
 hl.bind(
     "SUPER + S",
-    hl.dsp.exec_cmd(dusky_scripts .. "images/dusky_screenshot.sh --region --freeze --no-notify"),
+    hl.dsp.exec_cmd("dusky_snap --region --copy"),
     { description = "Quick Screenshot" }
 )
 
 hl.bind(
     "SHIFT + Print",
-    hl.dsp.exec_cmd([[grim - | wl-copy && notify-send "Fullscreen Screenshot in Clipboard"]]),
+    hl.dsp.exec_cmd("dusky_snap --fullscreen --copy"),
     { description = "Full Screen Quick Screenshot", locked = true }
 )
 
 hl.bind(
     "SUPER + SHIFT + S",
-    hl.dsp.exec_cmd(dusky_scripts .. "images/dusky_screenshot.sh --region --freeze --annotate --no-notify --tool arrow"),
+    hl.dsp.exec_cmd("dusky_snap --region"),
     { description = "Screenshot and Annotation" }
 )
 
 hl.bind(
     "Print",
-    hl.dsp.exec_cmd("pgrep -x swappy || (grim - | satty -f -)"),
+    hl.dsp.exec_cmd("dusky_snap --fullscreen"),
     { description = "Fullscreen Screenshot and Annotation" }
 )
 

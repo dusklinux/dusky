@@ -40,3 +40,6 @@ ufw
 wayvnc
 rnnoise
 pamixer
+
+# CPU-native builds for Dusky Rust apps; rust supplies cargo and rustc.
+rust

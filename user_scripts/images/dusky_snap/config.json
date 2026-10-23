@@ -1,0 +1,6 @@
+{
+  "filename": "Screenshot_%Y-%m-%d_%H-%M-%S-%f.png",
+  "ocr_languages": "eng",
+  "line_width": 3.0,
+  "colors": ["#f7768e", "#ff9e64", "#e0af68", "#9ece6a", "#7aa2f7", "#bb9af7", "#000000", "#ffffff"]
+}

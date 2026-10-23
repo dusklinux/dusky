@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Dusky Snap
+Comment=Capture and annotate screenshots
+Exec=dusky_snap
+Icon=camera-photo
+Terminal=false
+Categories=Graphics;Utility;
+StartupNotify=false

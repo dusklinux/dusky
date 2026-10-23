@@ -258,12 +258,13 @@ ALL_GROUPS: dict[str, list[str]] = {
         "iperf3", "pkgstats", "libqalculate", "moreutils", "zoxide", "man-db", "lsof", "khal",
     ],
     "dev": [
+        "rust",
         "neovim", "git", "git-delta", "lazygit", "meson", "cmake", "clang", "uv", "rq", "jq",
         "pv", "bc", "viu", "chafa", "ueberzugpp", "ccache", "mold", "shellcheck", "shfmt",
         "stylua", "prettier", "tree-sitter-cli", "nano", "lua51", "luarocks",
     ],
     "multimedia": [
-        "ffmpeg", "mpv", "mpv-mpris", "satty", "swayimg", "resvg", "imagemagick", "libheif",
+        "ffmpeg", "mpv", "mpv-mpris", "swayimg", "resvg", "imagemagick", "libheif",
         "ffmpegthumbnailer", "grim", "slurp", "wl-clipboard", "wl-clip-persist", "cliphist",
         "tesseract-data-eng", "gpu-screen-recorder-ui", "ddcutil",
     ],

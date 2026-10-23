@@ -247,6 +247,7 @@ man-db
 lsof
 khal
 # Group 9: Development
+rust
 neovim
 git
 git-delta
@@ -279,7 +280,6 @@ luarocks
 ffmpeg
 mpv
 mpv-mpris
-satty
 swayimg
 resvg
 imagemagick

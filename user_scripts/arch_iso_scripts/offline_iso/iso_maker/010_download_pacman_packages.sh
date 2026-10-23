@@ -70,11 +70,12 @@ declare -ar pkgs_terminal=(
 )
 
 declare -ar pkgs_dev=(
+  "rust"
   "neovim" "git" "git-delta" "lazygit" "meson" "cmake" "clang" "uv" "rq" "jq" "pv" "bc" "viu" "chafa" "ueberzugpp" "ccache" "mold" "shellcheck" "fd" "ripgrep" "fzf" "shfmt" "stylua" "prettier" "tree-sitter-cli" "nano" "luarocks"
 )
 
 declare -ar pkgs_multimedia=(
-  "ffmpeg" "mpv" "mpv-mpris" "satty" "swayimg" "resvg" "imagemagick" "libheif" "ffmpegthumbnailer" "grim" "slurp" "wl-clipboard" "wl-clip-persist" "cliphist" "tesseract-data-eng" "gpu-screen-recorder-ui" "ddcutil"
+  "ffmpeg" "mpv" "mpv-mpris" "swayimg" "resvg" "imagemagick" "libheif" "ffmpegthumbnailer" "grim" "slurp" "wl-clipboard" "wl-clip-persist" "cliphist" "tesseract-data-eng" "gpu-screen-recorder-ui" "ddcutil"
 )
 
 declare -ar pkgs_sysadmin=(

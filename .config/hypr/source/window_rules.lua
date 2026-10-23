@@ -1786,17 +1786,6 @@ hl.window_rule({
     size = {816, 537}
 })
 
--- -- satty ---
-hl.window_rule({
-    name = "comgabmsatty",
-    match = { class = "^(com\\.gabm\\.satty)$" },
-    center = true,
-    float = true,
-    opaque = true,
-    animation = "slide down",
-    size = {1115, 624}
-})
-
 -- -----------------------------------------------------------------------------
 -- Layer Rules like rofi, awww, wlogout (check using `hyprctl layers`)
 -- -----------------------------------------------------------------------------

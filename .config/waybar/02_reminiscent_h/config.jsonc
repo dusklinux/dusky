@@ -188,8 +188,8 @@
         "format": "󰆞",
         "tooltip": true,
         "tooltip-format": "Screenshot",
-        "on-click": "dusky-run ~/user_scripts/images/dusky_screenshot.sh --region --freeze --no-notify --smart",
-        "on-click-right": "dusky-run ~/user_scripts/images/dusky_screenshot.sh --region --freeze --annotate --no-notify --tool arrow --smart"
+        "on-click": "dusky_snap --region --copy",
+        "on-click-right": "dusky_snap --region"
     },
 
     "custom/clip": {

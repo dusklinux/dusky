@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =====================================================================
 # dusky_shot - Rofi/Wayland Screenshot Interactive Utility
-# Architecture: Bash 5.3+ | Native Grim/Satty Pipeline
+# Architecture: Bash 5.3+ | Dusky Snap / Grim for all displays and active windows
 # =====================================================================
 
 set -euo pipefail
@@ -20,7 +20,7 @@ readonly SAVE_DIR="${BASE_PICS}/Screenshots"
 mkdir -p "$SAVE_DIR"
 
 # --- Base Dependencies ---
-declare -a REQ_CMDS=("rofi" "grim" "notify-send")
+declare -a REQ_CMDS=("rofi" "notify-send")
 for cmd in "${REQ_CMDS[@]}"; do
     command -v "$cmd" >/dev/null || {
         printf '%s: missing dependency: %s\n' "$APP_NAME" "$cmd" >&2
@@ -40,7 +40,7 @@ declare -Ar ACTION_MAP=(
     ["Copy"]="copy"
     ["Save"]="save"
     ["Copy & Save"]="copysave"
-    ["Annotate (Satty)"]="edit"
+    ["Annotate (Dusky Snap)"]="edit"
 )
 
 declare -ar TARGET_KEYS=(
@@ -54,7 +54,7 @@ declare -ar ACTION_KEYS=(
     "Copy"
     "Save"
     "Copy & Save"
-    "Annotate (Satty)"
+    "Annotate (Dusky Snap)"
 )
 
 # --- Helper Functions ---
@@ -91,7 +91,7 @@ _rofi_menu() {
     local prompt="$1"
     local output=""
     local status=0
-    local config_path="$HOME/.config/rofi/config.rasi"
+    local config_path="${XDG_CONFIG_HOME:-$HOME/.config}/rofi/config.rasi"
     local -a rofi_args=(-dmenu -i -no-show-icons -no-custom -p "$prompt")
     shift
 
@@ -132,114 +132,52 @@ _run_timer() {
     notify-send -a "$APP_NAME" -C "$NOTIFY_SYNC_ID" 2>/dev/null || true
 }
 
-# --- Core Capture Logic (Native Implementation) ---
+# --- Capture: native Snap for region/display; Grim retains all-display/window capture. ---
 _execute_capture() {
-    local action="$1"
-    local target="$2"
-    local geom=""
-    local target_path=""
-    local slurp_status=0
-    local cmd_output=""
-    local cmd_status=0
-    local jq_status=0
-
-    case "$target" in
-        output|active) _require_cmds hyprctl jq ;;
-        area) _require_cmds slurp ;;
-    esac
-
-    case "$action" in
-        copy|copysave) _require_cmds wl-copy ;;
-        edit) _require_cmds satty wl-copy ;;
-    esac
-
+    local action="$1" target="$2" target_path geom
     target_path=$(_make_target_path)
-
-    # Allow Wayland compositors to clear the Rofi surface completely.
+    # Let Rofi's surface disappear before sampling the desktop.
     sleep 0.2
 
+    if [[ "$target" == area || "$target" == output ]]; then
+        _require_cmds dusky_snap
+        local -a args=(--region)
+        [[ "$target" == output ]] && args=(--fullscreen)
+        case "$action" in
+            copy) args+=(--copy) ;;
+            save) args+=(--output "$target_path") ;;
+            copysave) args+=(--copy --output "$target_path") ;;
+            edit) ;; # Default capture opens the editor directly.
+        esac
+        dusky_snap "${args[@]}"
+        return
+    fi
+
+    _require_cmds grim
+    case "$action" in
+        copy|copysave) _require_cmds wl-copy ;;
+        edit) _require_cmds dusky_snap ;;
+    esac
     case "$target" in
         screen)
-            ;;
-        output)
-            set +e
-            cmd_output=$(hyprctl monitors -j)
-            cmd_status=$?
-            set -e
-            (( cmd_status == 0 )) || {
-                _notify "Capture Failed" "Unable to query monitors from Hyprland."
-                exit 1
-            }
-
-            set +e
-            geom=$(jq -r '.[] | select(.focused == true) | "\(.x),\(.y) \(.width)x\(.height)"' <<<"$cmd_output")
-            jq_status=$?
-            set -e
-            (( jq_status == 0 )) || {
-                _notify "Capture Failed" "Unable to parse focused display geometry."
-                exit 1
-            }
-
-            [[ -n "$geom" ]] || {
-                _notify "Capture Failed" "Unable to determine the focused display."
-                exit 1
-            }
+            grim "$target_path"
             ;;
         active)
-            set +e
-            cmd_output=$(hyprctl activewindow -j)
-            cmd_status=$?
-            set -e
-            (( cmd_status == 0 )) || {
-                _notify "Capture Failed" "Unable to query the active window from Hyprland."
-                exit 1
-            }
-
-            set +e
-            geom=$(jq -r 'select(.at and .size) | "\(.at[0]),\(.at[1]) \(.size[0])x\(.size[1])"' <<<"$cmd_output")
-            jq_status=$?
-            set -e
-            (( jq_status == 0 )) || {
-                _notify "Capture Failed" "Unable to parse active window geometry."
-                exit 1
-            }
-
-            [[ -n "$geom" ]] || {
+            _require_cmds hyprctl jq
+            geom=$(hyprctl activewindow -j | jq -er '
+                select(.mapped and .at and .size and .size[0] > 0 and .size[1] > 0)
+                | "\(.at[0]),\(.at[1]) \(.size[0])x\(.size[1])"
+            ') || {
                 _notify "Capture Failed" "Unable to determine the active window."
-                exit 1
+                return 1
             }
-            ;;
-        area)
-            command -v hyprctl >/dev/null && \
-                hyprctl keyword layerrule "match:namespace ^selection$, no_anim on" >/dev/null 2>&1 || true
-
-            set +e
-            geom=$(slurp)
-            slurp_status=$?
-            set -e
-
-            [[ $slurp_status -ne 0 || -z "$geom" ]] && exit 0
+            grim -g "$geom" "$target_path"
             ;;
     esac
-
-    if [[ -n "$geom" ]]; then
-        grim -g "$geom" "$target_path" || {
-            _notify "Capture Failed" "Grim encountered an error."
-            exit 1
-        }
-    else
-        grim "$target_path" || {
-            _notify "Capture Failed" "Grim encountered an error."
-            exit 1
-        }
-    fi
 
     case "$action" in
         copy)
-            wl-copy --type image/png < "$target_path" || {
-                _notify "Copy Failed" "wl-copy encountered an error."
-                exit 1
-            }
+            wl-copy --type image/png < "$target_path"
             rm -f -- "$target_path"
             _notify "Screenshot Copied" "Saved directly to clipboard."
             ;;
@@ -247,18 +185,11 @@ _execute_capture() {
             _notify "Screenshot Saved" "$target_path"
             ;;
         copysave)
-            wl-copy --type image/png < "$target_path" || {
-                _notify "Copy Failed" "wl-copy encountered an error."
-                exit 1
-            }
+            wl-copy --type image/png < "$target_path"
             _notify "Screenshot Copied & Saved" "$target_path"
             ;;
         edit)
-            satty --filename "$target_path" --output-filename "$target_path" \
-                  --actions-on-enter "save-to-clipboard" \
-                  --actions-on-escape "save-to-clipboard" \
-                  --save-after-copy \
-                  --copy-command "wl-copy" & disown
+            dusky_snap --file "$target_path"
             ;;
     esac
 }

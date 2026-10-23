@@ -48,12 +48,13 @@ declare -ar pkgs_terminal=(
 
 # Group 9: Development
 declare -ar pkgs_dev=(
+  "rust"
   "neovim" "git" "git-delta" "lazygit" "meson" "cmake" "clang" "uv" "rq" "jq" "pv" "bc" "viu" "chafa" "ueberzugpp" "ccache" "mold" "shellcheck" "fd" "ripgrep" "fzf" "shfmt" "stylua" "prettier" "tree-sitter-cli" "nano" "lua51" "luarocks"
 )
 
 # Group 10: Multimedia
 declare -ar pkgs_multimedia=(
-  "ffmpeg" "mpv" "mpv-mpris" "satty" "swayimg" "resvg" "imagemagick" "libheif" "ffmpegthumbnailer" "grim" "slurp" "wl-clipboard" "wl-clip-persist" "cliphist" "tesseract-data-eng" "gpu-screen-recorder-ui" "ddcutil"
+  "ffmpeg" "mpv" "mpv-mpris" "swayimg" "resvg" "imagemagick" "libheif" "ffmpegthumbnailer" "grim" "slurp" "wl-clipboard" "wl-clip-persist" "cliphist" "tesseract-data-eng" "gpu-screen-recorder-ui" "ddcutil"
 )
 
 # Group 11: Sys Admin
