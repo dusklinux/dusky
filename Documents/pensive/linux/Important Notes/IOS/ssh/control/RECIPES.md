@@ -137,7 +137,7 @@ Useful Duskie keys; inspect the installed controller for its current schema:
 |---|---|
 | `nativeCameraRemote` | Native Camera remote-storage switch |
 | `cameraDestination` | `photos`, `folder`, or `remote` for screen-off capture |
-| `cameraRemoteTransport` | `ftp` or `usb`; selected through Remote connection, which also saves the Files/share connection choice |
+| `cameraRemoteTransport` | `ftp` or `usb`; selected through Remote connection, which also saves the Files connection choice; direct sharing starts with Wi-Fi independently |
 | `cameraRAMBufferMiB` | Configured RAM queue choice: 256 / 512 / 1024 MiB |
 | `cameraVideoMode_back` | Screen-off back-camera format, e.g. `3840x2160@60` / `1920x1080@240` |
 | `cameraCodec` | `auto`, `h264`, `hevc`; hardware capabilities still apply |
@@ -155,10 +155,22 @@ are mutations. Prefer the SSH worker for capture control when Frida is unnecessa
 
 The Remote Storage connection page is `DKRemoteController` in the standalone app.
 It preserves Wi-Fi credentials when switching to USB. Connect and Open Files
-checks and saves the shared choice. The **Send to Remote** Share extension can
-select either transport for that share and writes to **Duskie Shares**. Keep the
-sheet open until completion; Retry retains unacknowledged files within that sheet.
-Closing it requires sharing the originals again. Verify actual uploaded bytes.
+checks and saves the recording/Files choice. Opening **Send to Remote** starts
+sending over the saved Wi-Fi FTP connection automatically, independently of that
+choice. After failure, tap **USB** to send through the laptop receiver or
+**Wi-Fi** to retry; both buttons send directly. There is no separate Send or
+Close control. Files go to **Duskie Shares**. Keep the sheet open until completion;
+retries retain unacknowledged files within that sheet. Swipe down to dismiss;
+sharing again afterward requires the originals. Verify actual uploaded bytes.
+
+The extension runs in **DuskieRemoteShare** (bundle identifier
+`com.dusklinux.duskie.remoteftp.share`), separately from the Duskie app. Multiple
+extension processes can coexist: use `ps` and select the active sheet's freshly
+verified `--pid` before UI inspection or tapping. Its direct buttons have
+accessibility identifiers `share-wifi` and `share-usb`, usable with `tap --id`
+when enabled. Standalone controller fixtures can test preparation and transfer
+logic, but button delivery requires a running UIKit application; see
+[the validation limits](VALIDATION.md#known-capability-boundaries).
 
 ## Native Slo-mo and ordinary video
 
