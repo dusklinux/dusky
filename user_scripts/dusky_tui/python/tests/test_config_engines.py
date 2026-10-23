@@ -16,6 +16,7 @@ from python.engines.flatdotconfig import FlatDotConfigEngine
 from python.engines.matugen import MatugenEngine
 from python.engines.toml import TomlEngine
 from python.engines.lua import HyprlandLuaEngine
+from python.frontend.core_types import ConfigItem
 
 FIXTURES = (
     (IniConfigEngine, '[main]\nx=1\n', 'x', 'main', 'main/x', '2', 'int'),
@@ -364,6 +365,30 @@ input_path = "b"
         self.assertTrue(engine.cache['general/snap/enabled'])
         self.assertEqual(engine.cache['general/snap/window_gap'], 15)
         self.assertIn('hl.dsp.exec_cmd("must-not-run")', self.path.read_text(encoding='utf-8'))
+
+    def test_lua_palette_alpha_round_trips_through_standard_color_item(self):
+        item = ConfigItem(label='Glow', key='color', scope='decoration/glow',
+                          type_='color', default='primary@66')
+        engine = self.fixture(HyprlandLuaEngine, 'hl.config({decoration={glow={color=primary}}})\n')
+        for value in ('primary@66', 'secondary@22', 'rgba(11223344)', 'primary@00', 'tertiary'):
+            result = engine.write_value(item.key, item.scope, item.serialize(value), item.type_)
+            self.assertTrue(result[0], result)
+            self.assertEqual(item.deserialize(engine.load_state()['decoration/glow/color']), value)
+            if '@' in value:
+                self.assertIn('string.gsub(', self.path.read_text(encoding='utf-8'))
+
+    def test_lua_palette_changes_update_rgb_without_changing_alpha(self):
+        palette = self.path.parent / 'palette.lua'
+        palette.write_text('primary="rgba(112233ff)"\n', encoding='utf-8')
+        source = 'dofile("palette.lua")\nhl.config({decoration={glow={color=string.gsub(primary, "..%)$", "66)")}}})\n'
+        engine = self.fixture(HyprlandLuaEngine, source)
+        self.assertEqual(engine.cache['decoration/glow/color'], 'rgba(11223366)')
+        palette.write_text('primary="rgba(aabbccff)"\n', encoding='utf-8')
+        self.assertEqual(engine.load_state()['decoration/glow/color'], 'rgba(aabbcc66)')
+        self.assertEqual(self.path.read_text(encoding='utf-8'), source)
+        result = engine.write_value('color', 'decoration/glow', '__VAR__primary@22', 'color')
+        self.assertTrue(result[0], result)
+        self.assertEqual(engine.cache['decoration/glow/color'], 'rgba(aabbcc22)')
 
     def test_lua_runtime_identity_tracks_include_execution_order(self):
         child = self.path.parent / 'child.lua'

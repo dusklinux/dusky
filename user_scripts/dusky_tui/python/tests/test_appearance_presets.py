@@ -3,7 +3,6 @@ from contextlib import redirect_stdout
 import io
 import os
 from pathlib import Path
-import re
 import runpy
 import shutil
 import sys
@@ -53,25 +52,15 @@ class AppearancePresetTests(unittest.TestCase):
         self.assertEqual(variants, set(self.items['decoration/blur.variant'].options))
         self.assertEqual(len(signatures), len(self.schema['SCHEMA'][0]) - 1)
 
-    def test_opaque_groupbar_palettes_keep_titles_readable(self):
-        def luminance(value):
-            match = re.fullmatch(r'rgb\(([0-9a-fA-F]{6})\)', value)
-            if match is None:
-                return None  # Theme variables and translucent fills depend on the backdrop.
-            channels = [int(match[1][i:i + 2], 16) / 255 for i in (0, 2, 4)]
-            linear = [v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4 for v in channels]
-            return sum(v * weight for v, weight in zip(linear, (0.2126, 0.7152, 0.0722)))
-
+    def test_all_presets_follow_matugen_and_generic_font_selections(self):
         for preset in self.schema['SCHEMA'][0]:
-            for suffix, text in (('active', 'text_color'), ('inactive', 'text_color_inactive'),
-                                 ('locked_active', 'text_color_locked_active'),
-                                 ('locked_inactive', 'text_color_locked_inactive')):
-                colors = [preset.preset_payload.get('group/groupbar.' + key, self.items['group/groupbar.' + key].default)
-                          for key in ('col.' + suffix, text)]
-                foreground, background = map(luminance, colors)
-                if foreground is not None and background is not None:
-                    ratio = (max(foreground, background) + 0.05) / (min(foreground, background) + 0.05)
-                    self.assertGreaterEqual(ratio, 4.5, (preset.label, suffix, ratio))
+            for uid, item in self.items.items():
+                value = preset.preset_payload.get(uid, item.default)
+                if item.type_ == 'color' and value != 'nil':
+                    self.assertRegex(value, r'^[A-Za-z_][A-Za-z0-9_]*(?:@[0-9a-f]{2})?$', (preset.label, uid))
+                    self.assertIn(value.partition('@')[0], self.schema['COLOR_ALIASES'])
+                if item.key == 'font_family':
+                    self.assertIn(value, ('', 'Sans', 'sans', 'sans-serif', 'serif', 'monospace'))
 
     def test_fresh_setup_deploys_factory_defaults_and_preserves_existing_edits(self):
         setup_path = ROOT / 'arch_setup_scripts/scripts/005_hypr_custom_config_setup.py'

@@ -80,7 +80,7 @@ hl.config({
             range = 6, -- Shadow range ("size") in layout px
             render_power = 1, -- Falloff power (more power = faster falloff) [1 - 4]
             sharp = false, -- Make shadows sharp, akin to infinite render power
-            color = "rgba(1a1a1aee)", -- Shadow's color. Alpha dictates opacity
+            color = string.gsub(shadow, "..%)$", "ee)"), -- Shadow's color. Alpha dictates opacity
             offset = {0, 0}, -- Shadow's rendering offset
             scale = 1.0 -- Shadow's scale [0.0 - 1.0]
         },
@@ -317,11 +317,11 @@ hl.config({
                 bulb = 48.0,
                 clarity = 0.82,
                 refraction = 24.0,
-                tint = "rgba(eef5ff14)",
+                tint = string.gsub(surface_tint, "..%)$", "14)"),
             },
             aurora = {
-                color1 = "rgba(f0a0ff29)",
-                color2 = "rgba(4dffff7a)",
+                color1 = string.gsub(primary, "..%)$", "29)"),
+                color2 = string.gsub(tertiary, "..%)$", "7a)"),
                 intensity = 0.35,
                 speed = 1.0,
             },
@@ -329,7 +329,7 @@ hl.config({
                 speed = 3.0,
             },
             fluid_jar = {
-                color = "rgba(3399ffcc)",
+                color = string.gsub(primary, "..%)$", "cc)"),
                 distortion = 8.0,
                 fill_amount = 0.5,
                 mass = 1.4,
@@ -397,7 +397,7 @@ hl.config({
         session_lock_xray = false,
         session_lock_blur = false,
         col = {
-            splash = "rgba(ffffff55)",
+            splash = string.gsub(on_surface, "..%)$", "55)"),
         },
         vrr = 0,
     },

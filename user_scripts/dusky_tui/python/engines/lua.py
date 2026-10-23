@@ -175,8 +175,19 @@ class HyprlandLuaEngine(BaseEngine):
             end
         })
 
-        local safe_env = { 
-            hl = hl, math = math, string = string, table = table, type = type, 
+        local function palette_gsub(value, pattern, replacement, limit)
+            -- Preserve an unresolved Matugen role plus alpha as a Lua expression.
+            -- Real palette values still use Lua's normal string substitution.
+            if type(value) == "string" and value:match("^__VAR__[A-Za-z_][A-Za-z0-9_]*$")
+               and pattern == "..%)$" and type(replacement) == "string"
+               and replacement:match("^%x%x%)$") and limit == nil then
+                return value .. '@' .. replacement:sub(1, 2):lower(), 1
+            end
+            return string.gsub(value, pattern, replacement, limit)
+        end
+        local safe_string = setmetatable({gsub = palette_gsub}, {__index = string})
+        local safe_env = {
+            hl = hl, math = math, string = safe_string, table = table, type = type,
             pairs = pairs, ipairs = ipairs, tostring = tostring, tonumber = tonumber, 
             HOME = os.getenv("HOME") or "",
             os = {getenv = os.getenv},
@@ -599,6 +610,9 @@ class HyprlandLuaEngine(BaseEngine):
                 value = 'nil'
             elif isinstance(new_value, str) and new_value.startswith('__VAR__'):
                 value = new_value[7:]
+                if item_type == 'color' and (match := re.fullmatch(r'([A-Za-z_][A-Za-z0-9_]*)@([0-9a-fA-F]{2})', value)):
+                    role, alpha = match.groups()
+                    value = f'string.gsub({role}, "..%)$", "{alpha.lower()})")'
             elif item_type == 'bool':
                 value = 'true' if str(new_value).strip().lower() in {'true', '1', 'yes', 'on', 't', 'y'} else 'false'
             elif item_type in ('int', 'float'):
@@ -742,6 +756,9 @@ class HyprlandLuaEngine(BaseEngine):
                 elseif kind == "ident" then
                     return new_value
                 elseif kind == "bool" or kind == "number" or kind == "string" then
+                    return new_value
+                elseif old_raw:match('^string%.gsub%([A-Za-z_][A-Za-z0-9_]*, "%.%.%%%)%$", "%x%x%)"%)$') then
+                    -- Canonical palette-alpha expressions are editable color values.
                     return new_value
                 end
                 error("Target value is a complex expression: [" .. tostring(old_raw) .. "]")

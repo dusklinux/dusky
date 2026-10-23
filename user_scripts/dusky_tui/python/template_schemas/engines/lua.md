@@ -22,7 +22,7 @@ hl.config({
 })
 hl.window_rule({ name = "my_rule", rounding = 0 })
 hl.workspace_rule({ workspace = "w[tv1]", border_size = 2 })
-hl.bind("SUPER", "Q", { run = "killactive" })
+hl.bind("SUPER+Q", hl.dsp.exec_cmd(terminal), { repeatable = false })
 ```
 
 ## Scope / key mapping
@@ -35,7 +35,7 @@ hl.bind("SUPER", "Q", { run = "killactive" })
   - `hl.window_rule({ name = "my_rule", ... })` → `scope="window_rule/my_rule"`
   - `hl.workspace_rule({ workspace = "w[tv1]", ... })` → `scope="workspace_rule/w[tv1]"`
   - `hl.monitor({ output = "eDP-1", ... })` → `scope="monitor/eDP-1"`
-  - `hl.bind("SUPER", "Q", {...})` → `scope="bind/SUPER"` (first argument only; flags table keys like `run` become the item key)
+  - `hl.bind("SUPER+Q", dispatcher, {...})` → `scope="bind/SUPER+Q"` (flags such as `repeatable` become the item key)
   - If no identifier field exists, the engine uses its runtime insertion index.
 - Legacy `tui_*_data` tables (`tui_window_data`, `tui_workspace_data`,
   `tui_layer_data`) map to `window_rule`, `workspace_rule`, `layer_rule`.
@@ -51,7 +51,13 @@ hl.bind("SUPER", "Q", { run = "killactive" })
 - Strings use Lua byte escapes, including control characters and Unicode.
 - `hl.env(name, value)` exposes `key` and `value` under `scope="env/<index>"`.
 - `"__DELETE__"` → `nil` (the key is removed from the table).
-- Color/theme variables arrive as `__VAR__...` and are re-emitted verbatim.
+- Color/theme variables arrive as `__VAR__...` and are re-emitted as references.
+- Standard `ConfigItem(type_="color", ...)` supports `primary`, `on_surface`,
+  and other palette variables without an extra UI adapter. For a fixed alpha,
+  use `primary@66`: the Lua engine writes
+  `string.gsub(primary, "..%)$", "66)")`, replacing only the alpha in Matugen's
+  `rgba(RRGGBBAA)` value. Palette reloads change RGB while alpha stays fixed.
+  The main configuration must load the generated palette before the target.
 
 ## Quirks
 
