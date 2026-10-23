@@ -2379,6 +2379,10 @@ impl DuskyPapersApp {
         let entrance = self.entrance_progress();
         let accent = self.theme.accent;
         let card_radius = 12.0 + 2.0 * emphasis;
+        // Recede gently into the flanks using layout geometry, so drawing and
+        // pointer bounds stay aligned without a separate transform or animation.
+        let depth = (distance * 0.5).min(1.0);
+        let card_height = CARD_HEIGHT * (1.0 - 0.10 * depth);
 
         // Native carousel falloff: 1.0, 1.0, 0.95, 0.40, 0.10, then to transparent.
         let edge_fade = (if distance <= 1.0 {
@@ -2530,7 +2534,7 @@ impl DuskyPapersApp {
 
         let card_container = container(card_stack)
             .width(Length::Fixed(width))
-            .height(Length::Fixed(CARD_HEIGHT))
+            .height(Length::Fixed(card_height))
             .style(move |_| container::Style {
                 background: Some(Background::Color(if emphasis > 0.5 {
                     Color::from_rgba8(15, 17, 24, entrance)
@@ -2543,12 +2547,16 @@ impl DuskyPapersApp {
                     width: border_width,
                 },
                 shadow: Shadow {
+                    // Keep the focused accent glow; blend into a downward
+                    // neutral shadow as the same card recedes into the flanks.
                     color: Color {
-                        a: 0.30 * emphasis * edge_fade,
-                        ..accent
+                        r: accent.r * emphasis,
+                        g: accent.g * emphasis,
+                        b: accent.b * emphasis,
+                        a: 0.30 * edge_fade,
                     },
-                    offset: iced_core::Vector::ZERO,
-                    blur_radius: 16.0 * edge_fade,
+                    offset: Vector::new(0.0, 5.0 * (1.0 - emphasis)),
+                    blur_radius: 12.0 + 4.0 * emphasis,
                 },
                 ..container::Style::default()
             });
