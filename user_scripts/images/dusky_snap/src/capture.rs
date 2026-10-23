@@ -210,15 +210,7 @@ pub fn stitch(previous: &RgbaImage, next: &RgbaImage) -> Result<RgbaImage> {
     }
     let max_overlap = previous.height().min(next.height());
     if previous.height() >= next.height()
-        && image::imageops::crop_imm(
-            previous,
-            0,
-            previous.height() - next.height(),
-            next.width(),
-            next.height(),
-        )
-        .to_image()
-            == *next
+        && previous.as_raw()[previous.as_raw().len() - next.as_raw().len()..] == *next.as_raw()
     {
         return Ok(previous.clone());
     }
@@ -266,9 +258,10 @@ pub fn stitch(previous: &RgbaImage, next: &RgbaImage) -> Result<RgbaImage> {
         return Err("Scroll capture reached its 160 megapixel budget".into());
     }
     let mut out = RgbaImage::new(next.width(), h);
-    image::imageops::replace(&mut out, previous, 0, 0);
-    let tail = image::imageops::crop_imm(next, 0, best.1, next.width(), next.height() - best.1);
-    image::imageops::replace(&mut out, &tail.to_image(), 0, previous.height() as i64);
+    let previous_bytes = previous.as_raw().len();
+    out.as_mut()[..previous_bytes].copy_from_slice(previous.as_raw());
+    out.as_mut()[previous_bytes..]
+        .copy_from_slice(&next.as_raw()[best.1 as usize * next.width() as usize * 4..]);
     Ok(out)
 }
 #[cfg(test)]
@@ -322,17 +315,25 @@ impl Stitcher {
         let bottom = (0..h / 4)
             .take_while(|&offset| same_row(h - 1 - offset))
             .count() as u32;
-        let old = image::imageops::crop_imm(&self.image, 0, 0, w, self.image.height() - bottom)
-            .to_image();
-        let content = image::imageops::crop_imm(&next, 0, top, w, h - top - bottom).to_image();
-        let joined = stitch(&old, &content)?;
-        let mut image = RgbaImage::new(w, joined.height() + bottom);
-        image::imageops::replace(&mut image, &joined, 0, 0);
-        if bottom > 0 {
-            let footer = image::imageops::crop_imm(&next, 0, h - bottom, w, bottom).to_image();
-            image::imageops::replace(&mut image, &footer, 0, joined.height() as i64);
-        }
-        self.image = image;
+        let old = (bottom > 0).then(|| {
+            image::imageops::crop_imm(&self.image, 0, 0, w, self.image.height() - bottom).to_image()
+        });
+        let content = (top > 0 || bottom > 0)
+            .then(|| image::imageops::crop_imm(&next, 0, top, w, h - top - bottom).to_image());
+        let joined = stitch(
+            old.as_ref().unwrap_or(&self.image),
+            content.as_ref().unwrap_or(&next),
+        )?;
+        self.image = if bottom == 0 {
+            joined
+        } else {
+            let mut image = RgbaImage::new(w, joined.height() + bottom);
+            let bytes = joined.as_raw().len();
+            image.as_mut()[..bytes].copy_from_slice(joined.as_raw());
+            image.as_mut()[bytes..]
+                .copy_from_slice(&next.as_raw()[(h - bottom) as usize * w as usize * 4..]);
+            image
+        };
         self.last = next;
         Ok(true)
     }

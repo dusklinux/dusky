@@ -175,8 +175,15 @@ struct App {
     scroll_stop: Arc<AtomicBool>,
     scroll_origin: Option<Rect>,
 }
-fn handle(im: &::image::RgbaImage) -> picture::Handle {
-    picture::Handle::from_rgba(im.width(), im.height(), im.as_raw().clone())
+struct SharedPixels(Arc<::image::RgbaImage>);
+impl AsRef<[u8]> for SharedPixels {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_raw()
+    }
+}
+fn handle(im: &Arc<::image::RgbaImage>) -> picture::Handle {
+    let pixels = iced::advanced::graphics::core::Bytes::from_owner(SharedPixels(im.clone()));
+    picture::Handle::from_rgba(im.width(), im.height(), pixels)
 }
 fn owned_handle(im: ::image::RgbaImage) -> picture::Handle {
     picture::Handle::from_rgba(im.width(), im.height(), im.into_raw())
@@ -421,7 +428,10 @@ fn finish(
     save: bool,
     path: Option<PathBuf>,
 ) -> Result<(PathBuf, Document)> {
-    let png = output::encode(&doc.render()?)?;
+    let (png, thumbnail) = {
+        let image = doc.render()?;
+        (output::encode(&image)?, output::thumbnail(&image, 240, 160))
+    };
     let mut doc = doc.clone();
     if save {
         let mut path = path
@@ -443,7 +453,7 @@ fn finish(
     if copy {
         output::copy(png, "image/png")?;
     }
-    let path = output::persist(&doc)?;
+    let path = output::persist(&doc, Some(thumbnail))?;
     Ok((path, doc))
 }
 impl App {
@@ -542,7 +552,7 @@ impl App {
         let doc = self.doc().clone();
         job(
             move || {
-                let path = output::persist(&doc)?;
+                let path = output::persist(&doc, None)?;
                 Ok(Finish {
                     path,
                     doc,
@@ -2934,6 +2944,27 @@ impl iced::Executor for BackgroundExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn picker_pixels_share_source_allocation_and_outlive_the_document() {
+        let source = Arc::new(::image::RgbaImage::from_pixel(
+            32,
+            24,
+            ::image::Rgba([12, 34, 56, 78]),
+        ));
+        let pointer = source.as_raw().as_ptr();
+        let picture::Handle::Rgba { pixels, .. } = handle(&source) else {
+            panic!("RGBA handle");
+        };
+        assert_eq!(
+            pointer,
+            pixels.as_ptr(),
+            "picker must not copy source pixels"
+        );
+        drop(source);
+        assert_eq!(pixels.len(), 32 * 24 * 4);
+        assert_eq!(&pixels[..4], &[12, 34, 56, 78]);
+    }
 
     #[test]
     #[ignore = "requires a working Wayland GPU or software renderer"]

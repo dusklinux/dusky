@@ -294,7 +294,7 @@ impl Document {
         if self.state.bands.is_empty() {
             return Ok(self.source.clone());
         }
-        let mut image = (*self.source).clone();
+        let mut image = self.source.clone();
         for band in &self.state.bands {
             let y = band.y.min(image.height());
             let amount = if band.insert {
@@ -314,17 +314,16 @@ impl Document {
                 return Err("Band exceeds the canvas budget".into());
             }
             let mut out = RgbaImage::new(image.width(), height);
-            let top = image::imageops::crop_imm(&image, 0, 0, image.width(), y).to_image();
-            image::imageops::replace(&mut out, &top, 0, 0);
+            let row_bytes = image.width() as usize * 4;
+            let top = y as usize * row_bytes;
+            out.as_mut()[..top].copy_from_slice(&image.as_raw()[..top]);
             let from = if band.insert { y } else { y + amount };
             let to = if band.insert { y + amount } else { y };
-            let bottom =
-                image::imageops::crop_imm(&image, 0, from, image.width(), image.height() - from)
-                    .to_image();
-            image::imageops::replace(&mut out, &bottom, 0, to as i64);
-            image = out;
+            out.as_mut()[to as usize * row_bytes..]
+                .copy_from_slice(&image.as_raw()[from as usize * row_bytes..]);
+            image = Arc::new(out);
         }
-        Ok(Arc::new(image))
+        Ok(image)
     }
     pub fn apply_band(&mut self, a: Point, b: Point, insert: bool) {
         let y =

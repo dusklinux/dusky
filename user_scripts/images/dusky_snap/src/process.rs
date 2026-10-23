@@ -190,6 +190,68 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "stress test; run in an isolated test process"]
+    fn concurrent_commands_preserve_results_deadlines_and_descriptor_count() {
+        let descriptors = || std::fs::read_dir("/proc/self/fd").unwrap().count();
+        let before = descriptors();
+        let start = Instant::now();
+        let workers: Vec<_> = (0..8)
+            .map(|_| {
+                std::thread::spawn(|| {
+                    for i in 0..40 {
+                        match i % 4 {
+                            0 => {
+                                let input = vec![b'x'; 128 * 1024];
+                                assert_eq!(
+                                    command(
+                                        "cat",
+                                        &[],
+                                        Some(input.clone()),
+                                        Duration::from_secs(3)
+                                    )
+                                    .unwrap(),
+                                    input
+                                );
+                            }
+                            1 => assert!(
+                                command("sh", &["-c", "exit 7"], None, Duration::from_secs(3))
+                                    .is_err()
+                            ),
+                            2 => assert!(
+                                command(
+                                    "sh",
+                                    &["-c", "sleep 30 & exit 0"],
+                                    None,
+                                    Duration::from_millis(15)
+                                )
+                                .is_err()
+                            ),
+                            _ => assert!(
+                                command(
+                                    "sh",
+                                    &["-c", "while :; do printf 'continuous output\\n'; done"],
+                                    None,
+                                    Duration::from_millis(15)
+                                )
+                                .is_err()
+                            ),
+                        }
+                    }
+                })
+            })
+            .collect();
+        for worker in workers {
+            worker.join().unwrap();
+        }
+        assert_eq!(descriptors(), before, "file descriptors leaked");
+        assert!(start.elapsed() < Duration::from_secs(20));
+        eprintln!(
+            "320 concurrent command cases: {:?}; {before} descriptors before/after",
+            start.elapsed()
+        );
+    }
+
+    #[test]
     fn exchanges_large_input_while_draining_both_output_pipes() {
         let input = vec![b'x'; 2 * 1024 * 1024];
         let out = command(

@@ -137,3 +137,99 @@ scroll interaction were not exercised. The ISO has not shipped, so its final
 baseline cannot be certified from this machine. Existing annotation behavior
 outside the touched paths was reviewed, not redesigned. Green light applies
 to the tested changes and local build, not a guarantee of zero possible defects.
+
+## Follow-up audit and stress pass
+
+The second pass used clean commit `b2a20ea6` as its baseline. Its results below
+supersede the earlier test count. No dependencies or package versions changed.
+
+Additional changes:
+
+- Iced's existing `Bytes::from_owner` API now shares the immutable screenshot
+  through its existing `Arc`, removing the remaining picker source copy. A
+  pointer-identity/lifetime test verifies the handle uses the same allocation
+  and keeps it alive after the document is dropped. This avoids a 31.6 MiB pixel
+  allocation for a 3840×2160 image; application-wide RSS was not measured.
+- Raster source copying uses contiguous row copies. Alpha values and original
+  RGB bytes remain untouched; actual blending still uses the existing blend
+  implementation. Crop clipping, fractional coordinates, negative grown origins
+  and empty source intersections have explicit regression coverage.
+- Cut/insert replay borrows the original source until a transformed image is
+  needed and copies whole row ranges, removing the initial full-source clone
+  and temporary top/bottom images.
+- Scroll stitching compares existing tail bytes without allocating a viewport
+  copy, copies output spans directly, and avoids trimming/re-copying the entire
+  growing image when there is no sticky footer. Existing overlap scoring,
+  alignment thresholds, footer behavior and size limits remain intact.
+- Final output makes its thumbnail from the image already rendered for PNG
+  export. The full rendered image is dropped before persistence; persistence
+  receives only the small thumbnail rather than rendering the document again.
+- A demonstrated autosave ordering defect is fixed under the existing global
+  document lock: revision 2 followed by a late revision 1 previously restored
+  revision 1. Existing working revisions now reject equal/older snapshots.
+  Concurrent saves and completed-document suppression have regression coverage.
+- The redundant second persistence lock was removed; `documents.lock` continues
+  to serialize working/completed writes and history pruning. Private storage
+  helpers accept a root path so concurrency fixtures use isolated directories.
+- GPU comments were corrected: Snap uses Iced's normal backend discovery and
+  software fallback, not Center's custom Vulkan-first compositor wrapper.
+
+Optimized CPU fixture benchmarks used the same compiler options/dependencies
+before and after, with native CPU optimization. These are isolated render/
+stitch timings, not end-to-end capture or UI latency. Render rows use the median
+of 15 iterations; scroll rows use five 12-frame sequences at 1280 pixels wide.
+
+| Fixture | Before (ms) | After (ms) |
+| --- | ---: | ---: |
+| 4K plain render | 38.345 | 12.993 |
+| 4K arrow render | 127.198 | 73.089 |
+| 4K redaction render | 71.290 | 14.722 |
+| 4K four-operation cut/insert replay and render | 435.058 | 153.017 |
+| Twelve scroll frames, no sticky UI | 593.072 | 95.196 |
+| Twelve scroll frames, sticky header/footer | 585.292 | 293.022 |
+
+All benchmark output dimensions and pixel hashes match the baseline. A separate
+**336-case** comparison also matches the baseline across fractional/negative
+crops, grown canvases, backdrops, inserted bands, arrows, pen, redaction, blur,
+pixelation, spotlight and text, including varying pixel alpha.
+
+Final verification:
+
+- **36 tests passed**, zero failures/ignored, including the rendered picker and
+  command stress tests, in the isolated complete-suite run. Formatting and
+  frozen/offline Clippy with warnings denied pass.
+- **20 ordinary-suite cycles: 680 passing test executions in 42.76 seconds.**
+  The two environment/stress tests excluded by the ordinary harness were run
+  separately in the complete suite.
+- **Three additional isolated command stress runs: 960 cases total.** Each uses
+  eight concurrent workers covering 128 KiB input/output, nonzero exits,
+  descendants retaining pipes, and continuous-output timeouts. Each retained
+  exactly **four open descriptors** before and after; runs took 0.63–0.75 seconds.
+- Injected `pidfd_open/EMFILE` and `poll/EINVAL` failures both clean up and allow
+  the next command to succeed, with four descriptors before/after. An injected
+  `poll/EINTR` preserves the large simultaneous pipe exchange.
+- Storage stress submits 32 revisions through eight concurrent threads, checks
+  the newest revision survives, verifies old autosaves cannot recreate a
+  completed working copy, and checks history remains five loadable documents
+  after twelve additional completions, without leftover temporary files.
+- The final native release was installed using the existing offline setup path;
+  its source, binary and CPU fingerprints match. **Twenty live picker cycles**
+  pass: five each with automatic GPU selection, explicit EGL, explicit software
+  rendering and forced Vulkan failure falling back to software. Five additional
+  ordinary fullscreen/duplicate-dismiss cycles pass, as do file/pin smoke paths
+  and a fullscreen PNG save. Live test history uses isolated runtime directories.
+
+| Area | Before score | After score | Assessment |
+| --- | --- | --- | --- |
+| Rendering/stitching | N/A | N/A | Better in matched CPU fixtures above |
+| Picker memory copying | N/A | N/A | Better by allocation identity and ownership test |
+| Autosave reliability | N/A | N/A | Better: reproduced stale-write defect now covered and fixed |
+| Startup/backend architecture | N/A | N/A | Retained on-demand lifecycle; no resident daemon or custom renderer added |
+
+Remaining cost includes GPU initialization, font discovery, PNG compression,
+full-canvas vector compositing and copying the growing scroll result. Replacing
+those with a resident process, dirty-region renderer, incremental encoder or
+segmented document storage would substantially expand the design. This pass
+does not establish a need for those changes. Hardware and ISO limitations from
+the first review still apply; no claim that every possible optimization or
+every possible system configuration has been exhausted is made.

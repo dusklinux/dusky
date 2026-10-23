@@ -16,23 +16,6 @@ pub fn render(doc: &Document) -> Result<RgbaImage> {
     if w == 0 || h == 0 || u64::from(w) * u64::from(h) > 160_000_000 {
         return Err("Canvas exceeds the 160 megapixel render budget".into());
     }
-    if doc.state.backdrop == 0 && doc.state.layers.is_empty() && !doc.state.grow {
-        let source = doc.composed_source()?;
-        if canvas.x >= 0.0
-            && canvas.y >= 0.0
-            && canvas.x + canvas.w <= source.width() as f64
-            && canvas.y + canvas.h <= source.height() as f64
-        {
-            return Ok(image::imageops::crop_imm(
-                source.as_ref(),
-                canvas.x as u32,
-                canvas.y as u32,
-                w,
-                h,
-            )
-            .to_image());
-        }
-    }
     let mut out = RgbaImage::new(w, h);
     if doc.state.backdrop > 0 {
         let colors = [[31, 33, 43], [71, 56, 135], [15, 97, 110], [140, 61, 82]];
@@ -67,15 +50,31 @@ pub fn render(doc: &Document) -> Result<RgbaImage> {
     });
     let dx = pad as i32 - canvas.x as i32;
     let dy = pad as i32 - canvas.y as i32;
-    for y in crop.y as u32..(crop.y + crop.h) as u32 {
-        for x in crop.x as u32..(crop.x + crop.w) as u32 {
-            let (ox, oy) = (x as i32 + dx, y as i32 + dy);
-            if ox >= 0 && oy >= 0 && ox < w as i32 && oy < h as i32 {
-                let p = *source.get_pixel(x, y);
-                if doc.state.backdrop == 0 {
-                    *out.get_pixel_mut(ox as u32, oy as u32) = p;
-                } else {
-                    image::Pixel::blend(out.get_pixel_mut(ox as u32, oy as u32), &p);
+    if doc.state.backdrop == 0 {
+        let region = crop.intersect(Rect {
+            x: -dx as f64,
+            y: -dy as f64,
+            w: w as f64,
+            h: h as f64,
+        });
+        if region.w > 0.0 && region.h > 0.0 {
+            let bytes = region.w as usize * 4;
+            for y in region.y as u32..(region.y + region.h) as u32 {
+                let from = (y as usize * source.width() as usize + region.x as usize) * 4;
+                let to =
+                    ((y as i32 + dy) as usize * w as usize + (region.x as i32 + dx) as usize) * 4;
+                out.as_mut()[to..to + bytes].copy_from_slice(&source.as_raw()[from..from + bytes]);
+            }
+        }
+    } else {
+        for y in crop.y as u32..(crop.y + crop.h) as u32 {
+            for x in crop.x as u32..(crop.x + crop.w) as u32 {
+                let (ox, oy) = (x as i32 + dx, y as i32 + dy);
+                if ox >= 0 && oy >= 0 && ox < w as i32 && oy < h as i32 {
+                    image::Pixel::blend(
+                        out.get_pixel_mut(ox as u32, oy as u32),
+                        source.get_pixel(x, y),
+                    );
                 }
             }
         }
@@ -461,6 +460,73 @@ fn text(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn row_copies_preserve_transparency_crops_and_grown_origins() {
+        let mut source = RgbaImage::new(17, 13);
+        for (x, y, p) in source.enumerate_pixels_mut() {
+            *p = Rgba([x as u8, y as u8, 73, ((x + y) * 7) as u8]);
+        }
+        for crop in [
+            Rect {
+                x: 2.25,
+                y: 1.5,
+                w: 9.5,
+                h: 7.25,
+            },
+            Rect {
+                x: -3.0,
+                y: -2.0,
+                w: 12.0,
+                h: 10.0,
+            },
+            Rect {
+                x: 14.0,
+                y: 11.0,
+                w: 8.0,
+                h: 6.0,
+            },
+            Rect {
+                x: 22.0,
+                y: 20.0,
+                w: 4.0,
+                h: 3.0,
+            },
+        ] {
+            for grow in [false, true] {
+                let mut doc = Document::new(source.clone());
+                doc.state.crop = crop;
+                doc.state.grow = grow;
+                doc.state.layers.push(Layer {
+                    tool: Tool::Select,
+                    points: vec![Point::new(-4.0, -3.0), Point::new(-1.0, -1.0)],
+                    color: [0.0; 4],
+                    width: 1.0,
+                    filled: false,
+                    text: String::new(),
+                    font: "Sans".into(),
+                    text_style: 0,
+                });
+                let canvas = doc.canvas();
+                let out = doc.render().unwrap();
+                for (x, y, p) in out.enumerate_pixels() {
+                    let sx = canvas.x as i32 + x as i32;
+                    let sy = canvas.y as i32 + y as i32;
+                    let expected = if (0..17).contains(&sx)
+                        && (0..13).contains(&sy)
+                        && crop
+                            .pixel_bounds()
+                            .contains(Point::new(sx as f64, sy as f64))
+                    {
+                        *source.get_pixel(sx as u32, sy as u32)
+                    } else {
+                        Rgba([0; 4])
+                    };
+                    assert_eq!(*p, expected, "crop={crop:?}, grow={grow}, at {sx},{sy}");
+                }
+            }
+        }
+    }
     #[test]
     fn untouched_rgba_pixels_survive_without_premultiplication_loss() {
         let mut source = RgbaImage::new(17, 13);

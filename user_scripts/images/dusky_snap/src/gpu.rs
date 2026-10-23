@@ -81,8 +81,8 @@ pub fn inherit_session_environment(command: &mut Command) {
 
 fn configure_environment() -> Vec<&'static str> {
     let mut keys = Vec::with_capacity(4);
-    // With no backend override, our compositor tries Vulkan, then EGL only
-    // if Vulkan initialization fails. Pin drivers before starting any threads.
+    // Iced discovers the enabled WGPU backends unless explicitly overridden.
+    // Filter driver discovery before starting any threads.
     let power_overridden = env::var_os("WGPU_POWER_PREF").is_some();
     if !power_overridden {
         unsafe { env::set_var("WGPU_POWER_PREF", "low") };
@@ -198,7 +198,7 @@ fn driver_candidates(vendor: &str, driver: &str) -> &'static [&'static str] {
             "/usr/share/vulkan/icd.d/virtio_icd.x86_64.json",
             "/usr/share/vulkan/icd.d/virtio_icd.json",
         ],
-        // Other unknown/virtual drivers use Vulkan-first compositor fallback.
+        // Other unknown/virtual drivers retain normal backend discovery.
         _ => &[],
     }
 }

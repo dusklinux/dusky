@@ -154,8 +154,10 @@ pub fn destination(config: &Config) -> Result<PathBuf> {
     }
     Ok(directory.join(name))
 }
-pub fn persist(doc: &Document) -> Result<PathBuf> {
-    let base = runtime()?;
+pub fn persist(doc: &Document, thumbnail: Option<RgbaImage>) -> Result<PathBuf> {
+    persist_in(doc, &runtime()?, thumbnail)
+}
+fn persist_in(doc: &Document, base: &Path, preview: Option<RgbaImage>) -> Result<PathBuf> {
     let global = fs::OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -173,22 +175,18 @@ pub fn persist(doc: &Document) -> Result<PathBuf> {
         return Ok(state);
     }
 
-    let lock = fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(dir.join(".lock"))?;
-    lock.lock()?;
     let source = dir.join(format!("{}.png", doc.id));
     if !source.exists() {
         atomic_write(&source, &encode(&doc.source)?)?;
     }
     let state = dir.join(format!("{}.json", doc.id));
     atomic_write(&state, &serde_json::to_vec(&doc.saved())?)?;
-    let thumb = doc.render()?;
-    let thumb = thumbnail(&thumb, 240, 160);
+    let thumb = match preview {
+        Some(thumb) => thumb,
+        None => thumbnail(&doc.render()?, 240, 160),
+    };
     atomic_write(&dir.join(format!("{}-thumb.png", doc.id)), &encode(&thumb)?)?;
-    let mut recents = recent_paths()?;
+    let mut recents = recent_paths_in(base)?;
     recents.retain(|p| p.file_stem() != state.file_stem());
     recents.insert(0, state.clone());
     for p in recents.iter().skip(5) {
@@ -201,16 +199,14 @@ pub fn persist(doc: &Document) -> Result<PathBuf> {
         }
     }
     for ext in ["png", "json"] {
-        let _ = fs::remove_file(
-            runtime()?
-                .join("working")
-                .join(format!("{}.{}", doc.id, ext)),
-        );
+        let _ = fs::remove_file(base.join("working").join(format!("{}.{}", doc.id, ext)));
     }
     Ok(state)
 }
 pub fn recent_paths() -> Result<Vec<PathBuf>> {
-    let root = runtime()?;
+    recent_paths_in(&runtime()?)
+}
+fn recent_paths_in(root: &Path) -> Result<Vec<PathBuf>> {
     let mut entries = Vec::new();
     for dir in [root.join("recents"), root.join("working")] {
         if !dir.exists() {
@@ -253,7 +249,9 @@ pub fn ocr(doc: &Document, config: &Config) -> Result<String> {
 }
 
 pub fn working(doc: &Document) -> Result<PathBuf> {
-    let base = runtime()?;
+    working_in(doc, &runtime()?)
+}
+fn working_in(doc: &Document, base: &Path) -> Result<PathBuf> {
     let global = fs::OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -275,6 +273,13 @@ pub fn working(doc: &Document) -> Result<PathBuf> {
         atomic_write(&source, &encode(&doc.source)?)?;
     }
     let path = dir.join(format!("{}.json", doc.id));
+    if fs::read(&path)
+        .ok()
+        .and_then(|b| serde_json::from_slice::<SavedDocument>(&b).ok())
+        .is_some_and(|s| s.revision >= doc.revision)
+    {
+        return Ok(path);
+    }
     atomic_write(&path, &serde_json::to_vec(&doc.saved())?)?;
     Ok(path)
 }
@@ -282,6 +287,65 @@ pub fn working(doc: &Document) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn late_autosave_does_not_overwrite_a_newer_revision() {
+        let root = std::env::temp_dir().join(format!("snap-save-order-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let old = Document::new(RgbaImage::new(24, 16));
+        let mut new = old.clone();
+        new.checkpoint();
+        new.state.backdrop = 1;
+        working_in(&new, &root).unwrap();
+        let path = working_in(&old, &root).unwrap();
+        let loaded = load_document(&path).unwrap();
+        fs::remove_dir_all(&root).unwrap();
+        assert_eq!(loaded.revision, new.revision);
+        assert_eq!(loaded.state.backdrop, 1);
+    }
+
+    #[test]
+    fn concurrent_autosaves_keep_latest_state_and_completed_history_stays_bounded() {
+        let root = std::env::temp_dir().join(format!("snap-save-stress-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let mut doc = Document::new(RgbaImage::new(24, 16));
+        let versions: Vec<_> = (0..32)
+            .map(|_| {
+                doc.checkpoint();
+                doc.clone()
+            })
+            .collect();
+        std::thread::scope(|scope| {
+            for chunk in versions.chunks(4) {
+                let root = &root;
+                scope.spawn(move || {
+                    for snapshot in chunk.iter().rev() {
+                        working_in(snapshot, root).unwrap();
+                    }
+                });
+            }
+        });
+        let path = root.join("working").join(format!("{}.json", doc.id));
+        assert_eq!(load_document(&path).unwrap().revision, doc.revision);
+        let completed = persist_in(&doc, &root, None).unwrap();
+        assert_eq!(working_in(&versions[0], &root).unwrap(), completed);
+        assert!(!path.exists());
+        for _ in 0..12 {
+            persist_in(&Document::new(RgbaImage::new(24, 16)), &root, None).unwrap();
+        }
+        let paths = recent_paths_in(&root).unwrap();
+        assert_eq!(paths.len(), 5);
+        for path in paths {
+            assert!(load_document(&path).is_ok());
+        }
+        assert!(!fs::read_dir(root.join("recents")).unwrap().any(|e| {
+            e.unwrap()
+                .path()
+                .extension()
+                .is_some_and(|ext| ext == "tmp")
+        }));
+        fs::remove_dir_all(&root).unwrap();
+    }
     #[test]
     fn previews_preserve_aspect_ratio_without_upscaling() {
         for (source, expected) in [
