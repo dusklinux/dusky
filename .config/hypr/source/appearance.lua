@@ -22,7 +22,14 @@ hl.config({
         extend_border_grab_area = 15, -- Extends click/drag area around the border (needs resize_on_border)
         hover_icon_on_border = true, -- Shows cursor icon when hovering over borders (needs resize_on_border)
         allow_tearing = true, -- Master switch for allowing tearing to occur
-        resize_corner = 0 -- Forces floating windows to use specific corner when resized (1-4, 0 to disable)
+        resize_corner = 0, -- Forces floating windows to use specific corner when resized (1-4, 0 to disable)
+        snap = {
+            enabled = false,
+            window_gap = 10,
+            monitor_gap = 10,
+            border_overlap = false,
+            respect_gaps = false,
+        }
     },
 
     -- ==========================================
@@ -143,7 +150,7 @@ hl.config({
         animate_manual_resizes = false, -- Animate manual window resizes/moves
         animate_mouse_windowdragging = false, -- Animate windows being dragged by mouse
         background_color = background, -- Custom background color
-        render_unfocused_fps = 5, -- Max FPS limit for unfocused background windows
+        render_unfocused_fps = 5, -- FPS cap for windows with the render_unfocused rule
         enable_anr_dialog = true -- Enable "App Not Responding" dialog
     },
 
@@ -247,11 +254,11 @@ hl.window_rule({
 -- "magic"  → toggled with SUPER+Z  (hl.dsp.workspace.toggle_special("magic"))
 --
 -- A special workspace is a floating overlay that appears on top of your current workspace.
--- The background dims according to decoration.dim_special (currently 0.8 in hl.config()).
+-- The background dims according to decoration.dim_special (currently 0.7 in hl.config()).
 -- The blur *behind* the overlay is controlled by decoration.blur.special (currently false).
 --
 -- WHAT CANNOT BE SET PER SPECIAL WORKSPACE (global hl.config() only):
---   • dim_special   → decoration.dim_special        ← already 0.8 in your hl.config()
+--   • dim_special   → decoration.dim_special        ← already 0.7 in your hl.config()
 --   • blur.special  → decoration.blur.special       ← currently false; set true to blur behind it
 --   • col.active_border / col.inactive_border       ← global only; use border_color in window_rule
 -- -------------------------------------------------------------------------------------------------
@@ -273,13 +280,13 @@ hl.window_rule({
     rounding       = 6,
     rounding_power = 2.0,
 
-    -- OPACITY: more opaque than your global 0.85 so it pops against the dimmed background
+    -- OPACITY: multiplies the global opacity; 1.0 leaves it unchanged
     opacity        = 0.92,
 
-    -- BORDER COLOR: secondary instead of primary so you can visually tell this isn't a normal window
+    -- BORDER COLOR: outline distinguishes the scratchpad from normal windows
     border_color   = outline,
 
-    -- BLUR: keep enabled to match your global blur.enabled = true
+    -- BLUR: disable blur for scratchpad windows
     no_blur        = true,
 })
 
@@ -379,6 +386,7 @@ hl.config({
     },
     misc = {
         anr_missed_pings = 5,
+        screencopy_force_8b = true, -- Keep capture buffers at Hyprland's default 8-bit depth.
         session_lock_xray = false,
         session_lock_blur = false,
         col = {

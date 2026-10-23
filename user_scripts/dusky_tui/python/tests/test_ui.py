@@ -967,6 +967,44 @@ class UITests(unittest.IsolatedAsyncioTestCase):
 
 
 class UtilityTests(unittest.TestCase):
+    def test_partial_preset_preserves_omitted_settings_and_match_ratio(self):
+        visual, hardware = item('visual'), item('hardware')
+        preset = item('style', type_='preset', default=None,
+                      preset_payload={'visual': 2}, preset_partial=True)
+        app = app_for({0: [visual, hardware, preset]})
+        app._states[app.default_engine_key] = {'visual': '1', 'hardware': '9'}
+        app._loaded_engines.add(app.default_engine_key)
+        app._apply_states_to_tab(0, app._states)
+        app._mark_boot_complete_if_done()
+        app.apply_preset(preset)
+        self.assertEqual((visual.value, hardware.value), (2, 9))
+        self.assertEqual(set(app.pending_commits), {(0, 0)})
+        self.assertEqual(app._get_preset_match_ratio(preset), 1.0)
+        hardware.value = 13
+        app._preset_matrix.on_item_changed(hardware)
+        self.assertEqual(app._get_preset_match_ratio(preset), 1.0)
+        app._preset_matrix.ingest_items([hardware])
+        self.assertEqual(app._get_preset_match_ratio(preset), 1.0)
+        visual.value = 1
+        app._preset_matrix.on_item_changed(visual)
+        self.assertEqual(app._get_preset_match_ratio(preset), 0.0)
+
+    def test_snapshot_and_factory_presets_still_reset_omitted_values(self):
+        for payload, partial in (({'visual': 2}, False), ({'__ALL_DEFAULTS__': True}, True)):
+            with self.subTest(payload=payload):
+                visual, hardware = item('visual'), item('hardware')
+                preset = item('style', type_='preset', default=None,
+                              preset_payload=payload, preset_partial=partial)
+                app = app_for({0: [visual, hardware, preset]})
+                app._states[app.default_engine_key] = {'visual': '1', 'hardware': '9'}
+                app._loaded_engines.add(app.default_engine_key)
+                app._apply_states_to_tab(0, app._states)
+                app._mark_boot_complete_if_done()
+                app.apply_preset(preset)
+                self.assertEqual(hardware.value, 0)
+                self.assertEqual(visual.value, 0 if partial else 2)
+                self.assertEqual(app._get_preset_match_ratio(preset), 1.0)
+
     def test_boot_readiness_initializes_hidden_model_before_lazy_rendering(self):
         visible, hidden = item('x'), item('hidden')
         preset = item('preset', type_='preset', default=None, preset_payload={'x': 1, 'hidden': 9})

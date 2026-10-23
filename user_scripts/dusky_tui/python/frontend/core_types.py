@@ -89,6 +89,8 @@ class ConfigItem:
     _initial_loaded: bool = False
     
     preset_payload: dict[str, Any] | None = None
+    # Partial presets change only payload keys; ordinary snapshots reset omissions.
+    preset_partial: bool = False
     
     is_parent: bool = False
     parent_ref: str | None = None

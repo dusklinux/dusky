@@ -162,7 +162,9 @@ class HyprlandLuaEngine(BaseEngine):
                             record_call(key, #config_root["env"], debug.getinfo(2, "Sl"))
                         end
                     end
-                elseif key == "layout" then
+                elseif key == "layout" or key == "dsp" then
+                    -- Dispatcher builders are nested namespaces, not config calls.
+                    -- Leave them inert while evaluating binds without Hyprland.
                     return inert_proxy
                 else
                     return function(tbl)

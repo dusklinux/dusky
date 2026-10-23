@@ -348,6 +348,23 @@ input_path = "b"
         self.assertIn('hl.env("IGNORE","a")', self.path.read_text(encoding="utf-8"))
         self.assertEqual(engine.cache['env/1/value'], 'new')
 
+    def test_lua_dispatcher_namespaces_do_not_abort_configuration(self):
+        engine = self.fixture(HyprlandLuaEngine,
+            'hl.bind("SUPER+Q", hl.dsp.exec_cmd("must-not-run"), {repeatable=false})\n'
+            'hl.bind("SUPER+M", hl.dsp.window.move({direction="l"}), {locked=false})\n'
+            'hl.config({general={snap={enabled=false,window_gap=10}}})\n')
+        self.assertFalse(engine.cache['general/snap/enabled'])
+        result = engine.write_batch([
+            ('repeatable', 'bind/SUPER+Q', 'true', 'bool'),
+            ('enabled', 'general/snap', 'true', 'bool'),
+            ('window_gap', 'general/snap', '15', 'int'),
+        ])
+        self.assertTrue(result[0], result)
+        self.assertTrue(engine.cache['bind/SUPER+Q/repeatable'])
+        self.assertTrue(engine.cache['general/snap/enabled'])
+        self.assertEqual(engine.cache['general/snap/window_gap'], 15)
+        self.assertIn('hl.dsp.exec_cmd("must-not-run")', self.path.read_text(encoding='utf-8'))
+
     def test_lua_runtime_identity_tracks_include_execution_order(self):
         child = self.path.parent / 'child.lua'
         child.write_text('hl.env("CHILD","child")\n', encoding='utf-8')

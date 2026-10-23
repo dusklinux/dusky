@@ -171,7 +171,7 @@ class PresetMatchMatrix:
     """
     __slots__ = (
         "_app", "_current", "_exists", "_defaults", "_expected",
-        "_all_defaults", "_matches", "_totals", "_preset_uids",
+        "_all_defaults", "_partial", "_matches", "_totals", "_preset_uids",
         "_configurable_uids", "_uid_set"
     )
 
@@ -182,6 +182,7 @@ class PresetMatchMatrix:
         self._defaults: dict[str, str] = {}
         self._expected: dict[str, dict[str, str]] = {}
         self._all_defaults: dict[str, bool] = {}
+        self._partial: set[str] = set()
         self._matches: dict[str, int] = {}
         self._totals: dict[str, int] = {}
         self._preset_uids: list[str] = []
@@ -194,6 +195,7 @@ class PresetMatchMatrix:
         self._defaults.clear()
         self._expected.clear()
         self._all_defaults.clear()
+        self._partial.clear()
         self._matches.clear()
         self._totals.clear()
         self._preset_uids.clear()
@@ -231,6 +233,8 @@ class PresetMatchMatrix:
             payload = p.preset_payload or {}
             all_def = bool(payload.get("__ALL_DEFAULTS__", False))
             self._all_defaults[puid] = all_def
+            if p.preset_partial and not all_def:
+                self._partial.add(puid)
             exp: dict[str, str] = {}
             for key_path, raw in payload.items():
                 if key_path == "__ALL_DEFAULTS__":
@@ -287,12 +291,14 @@ class PresetMatchMatrix:
         self._current[uid] = new_ser
         self._exists[uid] = new_exists
 
-        # Settings omitted from a payload are matched against their defaults,
-        # so every setting can affect every preset's ratio.
+        # Snapshots match omitted settings against defaults. Partial presets
+        # count only settings they change.
         affected_presets = self._preset_uids
         if not old_exists and not new_exists:
             return
         for puid in affected_presets:
+            if puid in self._partial and uid not in self._expected[puid]:
+                continue
             exp = self._expected_for(puid, uid)
             if old_exists and not new_exists:
                 self._totals[puid] = max(0, self._totals.get(puid, 0) - 1)
@@ -366,6 +372,8 @@ class PresetMatchMatrix:
         total = 0
         for uid in self._configurable_uids:
             if not self._exists.get(uid, False):
+                continue
+            if puid in self._partial and uid not in self._expected[puid]:
                 continue
             total += 1
             if self._current.get(uid) == self._expected_for(puid, uid):
@@ -7603,11 +7611,12 @@ Tooltip {
                 # overrides sharing the same UID must not be changed by one.
                 if self._get_item_engine_info(target_item) != self.default_engine_key:
                     continue
+                key_path = self._get_item_uid(target_item)
+                if preset_item.preset_partial and not is_all_defaults and key_path not in payload:
+                    continue
                 if not target_item.exists_in_target:
                     skipped += 1
                     continue
-
-                key_path = self._get_item_uid(target_item)
 
                 if is_all_defaults:
                     target_val = target_item.default
