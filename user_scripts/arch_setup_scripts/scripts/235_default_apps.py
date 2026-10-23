@@ -4,9 +4,12 @@
 
 Menus: --file-manager, --browser, --text-editor, --terminal.
 Direct selection: --terminal --set foot. Restore: --apply-state (alias --auto).
+Selections synchronize Hyprland bindings, user MIME defaults, terminal launchers,
+and installed FileManager1 providers. Existing file-manager windows stay open.
 """
 
 import argparse
+from configparser import ConfigParser, Error as ConfigError
 from contextlib import contextmanager
 from dataclasses import dataclass
 import fcntl
@@ -94,7 +97,7 @@ CATEGORIES = {
     )),
     'terminal': Category('terminal', 'Launch Terminal', 'SUPER + Q', 'terminal_switch', ('kitty', 'foot'), (
         App('kitty', 'kitty.desktop', 'Kitty', False),
-        App('foot', 'org.codeberg.dnkl.foot.desktop', 'Foot', False),
+        App('foot', 'foot.desktop', 'Foot', False),
         App('alacritty', 'Alacritty.desktop', 'Alacritty', False),
         App('wezterm', 'org.wezfurlong.wezterm.desktop', 'WezTerm', False),
         App('ghostty', 'com.mitchellh.ghostty.desktop', 'Ghostty', False),
@@ -389,13 +392,99 @@ def run_command(argv: list[str]) -> str:
     return result.stdout
 
 
+def data_roots(data_home: Path) -> tuple[Path, ...]:
+    return (data_home, *(Path(p) for p in os.environ.get(
+        "XDG_DATA_DIRS", "/usr/local/share:/usr/share").split(":") if p))
+
+
+def desktop_file(app: App, data_home: Path) -> Path | None:
+    return next((root / "applications" / app.desktop for root in data_roots(data_home)
+                 if (root / "applications" / app.desktop).is_file()), None)
+
+
+def mime_defaults(text: str, updates: dict[str, str]) -> str:
+    """Update just defaults, preserving comments, other groups, and MIME case."""
+    parser = ConfigParser(interpolation=None)
+    parser.optionxform = str
+    try:
+        parser.read_string(text)
+    except ConfigError as error:
+        raise ValueError(f"Invalid MIME configuration: {error}") from error
+    pending = dict(updates)
+    output = []
+    section = ""
+    found = False
+    for line in text.splitlines(keepends=True):
+        stripped = line.strip()
+        header = re.prefixmatch(r"\[([^]]+)\]", stripped)
+        if header:
+            if section == "Default Applications":
+                output.extend(f"{key}={value}\n" for key, value in pending.items())
+                pending.clear()
+            section = header[1]
+            found |= section == "Default Applications"
+        if section == "Default Applications" and not stripped.startswith(("#", ";")) and "=" in line:
+            key = line.split("=", 1)[0].strip()
+            if key in updates:
+                line = f"{key}={updates[key]}\n"
+                pending.pop(key, None)
+        output.append(line if line.endswith("\n") else line + "\n")
+    if not found:
+        output.append("\n[Default Applications]\n")
+    output.extend(f"{key}={value}\n" for key, value in pending.items())
+    return "".join(output)
+
+
+def terminal_desktop(kind: str, app: App) -> bytes:
+    """Use the selected default terminal for file/URI launches as well as keys."""
+    argument = "%U" if kind == "browser" else "%F"
+    categories = {"file-manager": "System;FileManager;", "browser": "Network;WebBrowser;",
+                  "text-editor": "Utility;TextEditor;"}
+    return ("[Desktop Entry]\nType=Application\n"
+            f"Name={app.label}\nIcon={app.key}\nTryExec={app.command}\n"
+            f"Exec=xdg-terminal-exec --app-id={app.key} -- {app.command} {argument}\n"
+            f"Terminal=false\nCategories={categories[kind]}\n"
+            f"MimeType={';'.join(MIMES[kind])};\n").encode()
+
+
+def file_manager_service(app: App, data_home: Path) -> bytes | None:
+    """Use the installed provider's activation command and systemd unit.
+
+    Firefox's Show in Folder uses FileManager1, independently of MIME defaults.
+    Terminal managers generally do not implement this interface; retain the
+    existing GUI provider for them rather than invent an incompatible command.
+    """
+    destination = data_home / "dbus-1/services/org.freedesktop.FileManager1.service"
+    commands = {name.casefold() for name in (app.key, *app.commands)}
+    for root in data_roots(data_home):
+        for path in sorted((root / "dbus-1/services").glob("*.service")):
+            if path == destination:
+                continue  # Do not mistake our previous selection for a vendor provider.
+            parser = ConfigParser(interpolation=None)
+            try:
+                parser.read(path, encoding="utf-8")
+            except ConfigError:
+                continue  # An unrelated malformed service must not break selection.
+            if not parser.has_section("D-BUS Service"):
+                continue
+            service = parser["D-BUS Service"]
+            if service.get("Name") != "org.freedesktop.FileManager1":
+                continue
+            command = shlex.split(service.get("Exec", ""))
+            if command and Path(command[0]).name.casefold() in commands:
+                return path.read_bytes()
+    return None
+
+
 class Switcher:
     def __init__(self, home: Path | None = None):
-        # Keep the existing Dusky config/state locations used by the updater.
-        self.config = (home or Path.home()) / ".config"
+        # Keep Dusky's config/state layout, including relocated XDG directories.
+        self.config = Path(os.environ.get("XDG_CONFIG_HOME", str((home or Path.home()) / ".config")))
         self.variables = self.config / "hypr/edit_here/source/default_apps.lua"
         self.bindings = self.config / "hypr/edit_here/source/keybinds.lua"
         self.settings = self.config / "dusky/settings"
+        self.data_home = Path(os.environ.get("XDG_DATA_HOME", str(
+            (home or Path.home()) / ".local/share")))
 
     def current(self) -> dict[str, str]:
         return defaults(self.variables.read_text(encoding="utf-8"))
@@ -422,6 +511,23 @@ class Switcher:
             if not requested:
                 return ["No saved choices found; nothing changed."]
             selected = {kind: CATEGORIES[kind].app(key) for kind, key in requested.items()}
+            for app in selected.values():
+                if not shutil.which(app.command):
+                    raise ValueError(f"{app.label} is not installed ({app.command})")
+                if not app.terminal:
+                    path = desktop_file(app, self.data_home)
+                    if path is None:
+                        raise ValueError(f"Desktop entry is unavailable: {app.desktop}")
+                    entry = ConfigParser(interpolation=None)
+                    try:
+                        entry.read(path, encoding="utf-8")
+                        desktop = entry["Desktop Entry"]
+                        if desktop.getboolean("Hidden", fallback=False):
+                            raise ValueError(f"Desktop entry is hidden: {path}")
+                        if desktop.get("TryExec") and not shutil.which(desktop["TryExec"]):
+                            raise ValueError(f"Desktop entry requires an unavailable command: {path}")
+                    except (ConfigError, KeyError) as error:
+                        raise ValueError(f"Invalid desktop entry {path}: {error}") from error
             # Read and validate both inputs before making any writes.
             variables = self.variables.read_text(encoding="utf-8")
             bindings = self.bindings.read_text(encoding="utf-8")
@@ -449,19 +555,92 @@ class Switcher:
                 changes[state] = (str(legacy).lower() + "\n").encode()
             changes[self.variables] = variables.encode()
             changes[self.bindings] = bindings.encode()
+            desktop_names = tuple(name.lower() for name in os.environ.get(
+                "XDG_CURRENT_DESKTOP", "Hyprland").split(":") if name)
+            updates = {mime: app.desktop for kind, app in selected.items()
+                       for mime in MIMES.get(kind, ())}
+            if updates:
+                path = self.config / "mimeapps.list"
+                text = path.read_text(encoding="utf-8") if path.exists() else ""
+                changes[path] = mime_defaults(text, updates).encode()
+                # Desktop-specific user overrides take precedence over mimeapps.list.
+                for name in desktop_names:
+                    path = self.config / f"{name}-mimeapps.list"
+                    if path.exists():
+                        text = path.read_text(encoding="utf-8")
+                        parser = ConfigParser(interpolation=None)
+                        parser.optionxform = str
+                        try:
+                            parser.read_string(text)
+                        except ConfigError as error:
+                            raise ValueError(f"Invalid MIME configuration in {path}: {error}") from error
+                        existing = parser["Default Applications"] if parser.has_section("Default Applications") else {}
+                        overrides = {mime: value for mime, value in updates.items() if mime in existing}
+                        if overrides:
+                            changes[path] = mime_defaults(text, overrides).encode()
+            terminal_apps = {kind: app for kind, app in binding_apps.items() if app.terminal}
+            if terminal_apps:
+                for command in ("xdg-terminal-exec", "update-desktop-database"):
+                    if not shutil.which(command):
+                        raise ValueError(f"{command} is required for terminal application launchers")
+                for kind, app in terminal_apps.items():
+                    changes[self.data_home / "applications" / app.desktop] = terminal_desktop(kind, app)
+            if "terminal" in selected or terminal_apps:
+                command = Path(shlex.split(current["terminal"])[0]).name
+                terminal_app = CATEGORIES["terminal"].app(command)
+                paths = [self.config / "xdg-terminals.list"]
+                paths.extend(self.config / f"{name}-xdg-terminals.list" for name in desktop_names
+                             if (self.config / f"{name}-xdg-terminals.list").exists())
+                for path in paths:
+                    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+                    lines = [line for line in lines if line.strip().lstrip("+-") != terminal_app.desktop]
+                    changes[path] = (terminal_app.desktop + "\n" + "\n".join(lines).rstrip("\n") + "\n").encode()
+            provider = None
+            notes = []
+            if "file-manager" in selected:
+                provider = file_manager_service(selected["file-manager"], self.data_home)
+                if provider is not None:
+                    changes[self.data_home / "dbus-1/services/org.freedesktop.FileManager1.service"] = provider
+                else:
+                    notes.append("This file manager has no installed FileManager1 provider; Show in Folder keeps its existing GUI provider.")
             write_batch(changes)
             failures = []
+            if "terminal" in selected or terminal_apps:
+                try:
+                    # Its cache hashes file listings, so reordering equal-sized
+                    # terminal lists can otherwise leave the previous choice cached.
+                    cache = Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache")))
+                    (cache / "xdg-terminal-exec").unlink(missing_ok=True)
+                except OSError as error:
+                    failures.append(str(error))
+            if terminal_apps:
+                try:
+                    run_command(["update-desktop-database", str(self.data_home / "applications")])
+                except OSError as error:
+                    failures.append(str(error))
             for kind, app in selected.items():
                 if kind in MIMES:
-                    # xdg-mime accepts all MIME types in one invocation.
                     try:
-                        run_command(["xdg-mime", "default", app.desktop, *MIMES[kind]])
                         mime = PRIMARY_MIME[kind]
                         actual = run_command(["xdg-mime", "query", "default", mime]).strip()
                         if actual != app.desktop:
                             failures.append(f"{mime}: expected {app.desktop}, got {actual or 'no handler'}; check installed desktop entries and MIME overrides")
                     except OSError as error:
                         failures.append(str(error))
+            if provider is not None and os.environ.get("DBUS_SESSION_BUS_ADDRESS"):
+                try:
+                    bus = ["busctl", "--user", "call", "org.freedesktop.DBus",
+                           "/org/freedesktop/DBus", "org.freedesktop.DBus"]
+                    run_command([*bus, "ReloadConfig"])
+                    run_command([*bus, "StartServiceByName", "su", "org.freedesktop.FileManager1", "0"])
+                    pid = int(run_command([*bus, "GetConnectionUnixProcessID", "s",
+                                           "org.freedesktop.FileManager1"]).split()[1])
+                    executable = Path(f"/proc/{pid}/exe").resolve().name.casefold()
+                    app = selected["file-manager"]
+                    if executable not in {name.casefold() for name in (app.key, *app.commands)}:
+                        notes.append("Another file manager still owns Show in Folder; close it or log in again to activate the selected provider.")
+                except OSError as error:
+                    failures.append(str(error))
             # xdg-settings has no Hyprland backend; its generic handler repeats
             # the MIME updates above. Avoid this redundant subprocess.
             if os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
@@ -471,7 +650,7 @@ class Switcher:
                     failures.append(str(error))
             if failures:
                 raise ValueError("Choices saved, but application is incomplete: " + "; ".join(failures))
-            return [f"{CATEGORIES[kind].description}: {app.label}" for kind, app in selected.items()]
+            return [f"{CATEGORIES[kind].description}: {app.label}" for kind, app in selected.items()] + notes
 
 
 def menu(switcher: Switcher, category: str | None) -> tuple[int, str]:
