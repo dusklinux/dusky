@@ -2838,25 +2838,6 @@ impl canvas::Program<Message> for Surface<'_> {
                     dim,
                 );
                 outline(&mut frame, r);
-                for t in [1.0 / 3.0, 2.0 / 3.0] {
-                    let stroke = canvas::Stroke::default()
-                        .with_color(Color::WHITE.scale_alpha(0.3))
-                        .with_width(1.0);
-                    frame.stroke(
-                        &canvas::Path::line(
-                            iced::Point::new(b.x + b.width * t, b.y),
-                            iced::Point::new(b.x + b.width * t, b.y + b.height),
-                        ),
-                        stroke,
-                    );
-                    frame.stroke(
-                        &canvas::Path::line(
-                            iced::Point::new(b.x, b.y + b.height * t),
-                            iced::Point::new(b.x + b.width, b.y + b.height * t),
-                        ),
-                        stroke,
-                    );
-                }
                 for (x, y) in [
                     (b.x, b.y),
                     (b.x + b.width, b.y),
