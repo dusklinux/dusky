@@ -67,6 +67,10 @@ struct Client {
     workspace: Workspace,
     #[serde(default)]
     hidden: bool,
+    #[serde(default)]
+    pinned: bool,
+    #[serde(default)]
+    floating: bool,
     #[serde(default, rename = "focusHistoryID")]
     order: i64,
 }
@@ -99,6 +103,37 @@ fn pointer_to_source(pointer: Point, sx: f64, sy: f64, monitor: &Monitor) -> Poi
     )
 }
 
+fn window_rects(
+    mut clients: Vec<Client>,
+    monitor: &Monitor,
+    sx: f64,
+    sy: f64,
+    bounds: Rect,
+) -> Vec<Rect> {
+    // Hyprland hit-tests pinned windows before ordinary floating/tiled windows.
+    // Focus history alone can put a focused tiled window above its pinned overlay.
+    clients.sort_by_key(|c| (!c.pinned, !c.floating, c.order));
+    let workspace = if monitor.special_workspace.address.is_empty() {
+        &monitor.active_workspace.address
+    } else {
+        &monitor.special_workspace.address
+    };
+    clients
+        .into_iter()
+        .filter(|c| !c.hidden && (c.pinned || c.workspace.address == *workspace))
+        .map(|c| {
+            Rect {
+                x: (c.at[0] - monitor.x as f64) * sx,
+                y: (c.at[1] - monitor.y as f64) * sy,
+                w: c.size[0] * sx,
+                h: c.size[1] * sy,
+            }
+            .intersect(bounds)
+        })
+        .filter(|r| r.w > 0.0 && r.h > 0.0)
+        .collect()
+}
+
 pub use crate::process::command;
 
 pub fn take(o: &Options) -> Result<Capture> {
@@ -109,7 +144,7 @@ pub fn take(o: &Options) -> Result<Capture> {
         None,
         Duration::from_secs(3),
     )?;
-    let (monitor, mut clients, pointer) = parse_snapshot(&snapshot)?;
+    let (monitor, clients, pointer) = parse_snapshot(&snapshot)?;
     let conn = libwayshot::WayshotConnection::new()?;
     let output = conn
         .get_all_outputs()
@@ -127,26 +162,7 @@ pub fn take(o: &Options) -> Result<Capture> {
         w: source.width() as f64,
         h: source.height() as f64,
     };
-    clients.sort_by_key(|c| c.order);
-    let workspace = if monitor.special_workspace.address.is_empty() {
-        &monitor.active_workspace.address
-    } else {
-        &monitor.special_workspace.address
-    };
-    let windows = clients
-        .into_iter()
-        .filter(|c| !c.hidden && c.workspace.address == *workspace)
-        .map(|c| {
-            Rect {
-                x: (c.at[0] - monitor.x as f64) * sx,
-                y: (c.at[1] - monitor.y as f64) * sy,
-                w: c.size[0] * sx,
-                h: c.size[1] * sy,
-            }
-            .intersect(bounds)
-        })
-        .filter(|r| r.w > 0.0 && r.h > 0.0)
-        .collect();
+    let windows = window_rects(clients, &monitor, sx, sy, bounds);
     let pointer = pointer_to_source(pointer, sx, sy, &monitor);
     Ok(Capture {
         document: Document::new(source),
@@ -391,6 +407,95 @@ mod process_regression {
 #[cfg(test)]
 mod workspace_regression {
     use super::*;
+
+    #[test]
+    fn pinned_windows_win_over_focused_windows_across_workspaces() {
+        for workspace in ["1", "2", "special:magic"] {
+            let clients: Vec<Client> = serde_json::from_value(serde_json::json!([
+                {"at":[0,0],"size":[640,480],"workspace":{"address":workspace},"focusHistoryID":0},
+                {"at":[100,80],"size":[200,150],"workspace":{"address":"1"},"floating":true,"pinned":true,"focusHistoryID":9},
+                {"at":[90,70],"size":[240,180],"workspace":{"address":workspace},"floating":true,"focusHistoryID":1},
+                {"at":[0,0],"size":[640,480],"workspace":{"address":"other"},"floating":true,"pinned":true,"hidden":true,"focusHistoryID":0},
+                {"at":[900,900],"size":[200,150],"workspace":{"address":"other"},"floating":true,"pinned":true,"focusHistoryID":0},
+                {"at":[0,0],"size":[640,480],"workspace":{"address":"other"},"focusHistoryID":0}
+            ])).unwrap();
+            let monitor = Monitor {
+                active_workspace: Workspace {
+                    address: workspace.into(),
+                },
+                special_workspace: Workspace {
+                    address: if workspace.starts_with("special:") {
+                        workspace.into()
+                    } else {
+                        String::new()
+                    },
+                },
+                ..Default::default()
+            };
+            let windows = window_rects(
+                clients,
+                &monitor,
+                1.0,
+                1.0,
+                Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 640.0,
+                    h: 480.0,
+                },
+            );
+            assert_eq!(windows.len(), 3);
+            let hover = Point::new(150.0, 120.0);
+            assert_eq!(
+                windows.iter().find(|r| r.contains(hover)).copied(),
+                Some(Rect {
+                    x: 100.0,
+                    y: 80.0,
+                    w: 200.0,
+                    h: 150.0
+                })
+            );
+            assert_eq!(
+                windows[1],
+                Rect {
+                    x: 90.0,
+                    y: 70.0,
+                    w: 240.0,
+                    h: 180.0
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn pinned_window_geometry_uses_monitor_offsets_scale_and_clipping() {
+        let clients: Vec<Client> = serde_json::from_str(r#"[
+            {"at":[-1350,150],"size":[200,100],"workspace":{"address":"other"},"pinned":true,"floating":true}
+        ]"#).unwrap();
+        let monitor = Monitor {
+            x: -1280,
+            y: 120,
+            active_workspace: Workspace {
+                address: "1".into(),
+            },
+            ..Default::default()
+        };
+        let bounds = Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 1920.0,
+            h: 1080.0,
+        };
+        assert_eq!(
+            window_rects(clients, &monitor, 1.5, 1.5, bounds),
+            vec![Rect {
+                x: 0.0,
+                y: 45.0,
+                w: 195.0,
+                h: 150.0
+            }]
+        );
+    }
     #[test]
     fn special_workspace_clients_do_not_need_numeric_ids() {
         let client: Client = serde_json::from_str(r#"{"at":[0,0],"size":[640,480],"workspace":{"address":"special:magic","type":"special","name":"special:magic"}}"#).unwrap();

@@ -14,8 +14,9 @@ converts global logical coordinates into screenshot pixels using the output's
 actual logical size. Canvas drawing also uses Wayland's pointer-enter position
 when available. No cursor warp or continuous compositor polling is needed.
 
-The picker now requests fullscreen in its initial window settings. Previously
-it opened windowed and submitted a separate fullscreen request after opening.
+The initial startup pass requested fullscreen in the initial window settings.
+The pinned-window fix below supersedes that approach: ordinary fullscreen
+windows sit below pinned windows for pointer hit-testing in Hyprland.
 
 Iced's existing global font discovery starts on one named thread while capture
 runs. The same font system, system font list and configured family are retained;
@@ -233,3 +234,41 @@ segmented document storage would substantially expand the design. This pass
 does not establish a need for those changes. Hardware and ISO limitations from
 the first review still apply; no claim that every possible optimization or
 every possible system configuration has been exhausted is made.
+
+## Pinned-window follow-up
+
+Two independent defects caused pinned windows to be missed. Capture filtered
+out pins assigned to a different workspace, and focus history could place the
+underlying tiled window ahead of the pin. Selection now includes pins across
+workspaces and ranks pinned, floating and tiled windows in that order, retaining
+focus order within each group. Hidden and off-output rectangles stay excluded.
+Two regression tests cover these cases, special workspaces, negative monitor
+origins, scaling and clipping. The complete suite now passes **38 tests**, with
+zero failures/ignored; formatting and frozen Clippy with warnings denied pass.
+
+A live Wayland trace also reproduced pointer-leave events when hovering the
+pinned player: Hyprland directed input above the ordinary fullscreen picker.
+The picker now opens as a borderless, monitor-sized pinned float using its own
+application class. It unpins before resizing into the editor or scroll controls.
+Static monitor/size/position rules use the captured output, and one asynchronous
+post-map move corrects Hyprland's `new_float_force_onscreen` positioning override.
+That setting empirically shifted the initial surface by two pixels here. The
+fix changes only Snap's own window and requires no global compositor setting,
+continuous polling, resident process or new dependency.
+
+The verified native build is installed. Live checks passed with the existing
+pinned player on workspace 1 while capturing workspace 2: Wayland motion stayed
+in Snap without pointer-leave events over the player; a real virtual-pointer
+click selected its exact **237×134** rectangle. Default rendering and explicit
+Tiny Skia both passed the editor transition, unpin and persisted-crop checks.
+Quick-save wrote a valid 237×134 PNG with the same crop. An ordinary tiled window
+still selected its exact 1264×704 bounds, and duplicate invocation dismissed the
+pinned picker cleanly. Test documents/output used isolated temporary runtime
+directories, and the original pointer position was restored.
+
+The pinned-float approach covers ordinary application windows, including
+fullscreen applications. Layer-shell panels/overlays retain their compositor
+layer priority; this is not an exclusive layer-shell screenshot surface.
+Physical multiple-output and fractional-scale UI sessions remain untested;
+coordinate conversion has automated fixture coverage. No new startup speedup
+is claimed for this correctness change; it adds one post-map IPC command.

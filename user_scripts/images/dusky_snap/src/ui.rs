@@ -214,16 +214,19 @@ fn spawn_preview(path: &std::path::Path, pin: bool) -> Result<()> {
         .spawn()?;
     Ok(())
 }
-fn float_rules() -> Result<()> {
-    capture::command(
-        "hyprctl",
-        &[
-            "eval",
-            r#"hl.window_rule({name="dusky_snap_native",match={class="^dusky-snap(-pin)?$"},float=true,center=true,no_dim=true,opacity="1.0 override 1.0 override",persistent_size=false,border_size=0,no_shadow=true,decorate=false,rounding=0}); hl.window_rule({name="dusky_snap_pin",match={class="^dusky-snap-pin$"},pin=true})"#,
-        ],
-        None,
-        Duration::from_secs(3),
-    )?;
+fn float_rules(picker: Option<&Monitor>) -> Result<()> {
+    let mut rules = String::from(
+        r#"hl.window_rule({name="dusky_snap_native",match={class="^dusky-snap(-(pin|pick))?$"},float=true,center=true,no_dim=true,opacity="1.0 override 1.0 override",persistent_size=false,border_size=0,no_shadow=true,decorate=false,rounding=0}); hl.window_rule({name="dusky_snap_pin",match={class="^dusky-snap-(pin|pick)$"},pin=true})"#,
+    );
+    if let Some(monitor) = picker {
+        // A normal fullscreen surface loses pointer events to pinned windows.
+        // Map the picker as the top pinned float, covering the captured output.
+        rules.push_str(&format!(
+            r#"; hl.window_rule({{name="dusky_snap_pick",match={{class="^dusky-snap-pick$"}},monitor={},size="monitor_w monitor_h",move="0 0",center=false,no_anim=true}})"#,
+            serde_json::to_string(&monitor.name)?
+        ));
+    }
+    capture::command("hyprctl", &["eval", &rules], None, Duration::from_secs(3))?;
     Ok(())
 }
 static CANCEL: AtomicBool = AtomicBool::new(false);
@@ -334,7 +337,7 @@ pub fn run(options: Options, start: Instant) -> Result<()> {
     } else {
         Phase::Pick
     };
-    float_rules()?;
+    float_rules((phase == Phase::Pick).then_some(&capture.monitor))?;
     let (mw, mh) = capture.monitor.logical_size();
     let initial_size = if phase == Phase::Pick {
         Size::new(mw as f32, mh as f32)
@@ -343,7 +346,6 @@ pub fn run(options: Options, start: Instant) -> Result<()> {
     };
     let settings = window::Settings {
         size: initial_size,
-        fullscreen: phase == Phase::Pick,
         min_size: Some(Size::new(
             (if phase == Phase::Preview {
                 280.0_f32
@@ -362,7 +364,9 @@ pub fn run(options: Options, start: Instant) -> Result<()> {
         transparent: true,
         exit_on_close_request: false,
         platform_specific: window::settings::PlatformSpecific {
-            application_id: if options.pin {
+            application_id: if phase == Phase::Pick {
+                "dusky-snap-pick".into()
+            } else if options.pin {
                 "dusky-snap-pin".into()
             } else {
                 "dusky-snap".into()
@@ -756,11 +760,10 @@ impl App {
     fn resize(&mut self) -> Task<Message> {
         if let Some(id) = self.window {
             if self.phase == Phase::Pick {
-                return window::set_mode(id, window::Mode::Fullscreen);
+                return Task::none();
             }
             let size = window_size(self.doc(), self.phase, &self.capture.monitor);
-            // Winit ignores size requests until the fullscreen configure has
-            // arrived. Let Hyprland send the final windowed configure itself.
+            // Also handle a user-requested fullscreen editor before resizing.
             window::set_mode(id, window::Mode::Windowed)
                 .chain(job(move || resize_window(size), Message::Notice))
         } else {
@@ -773,9 +776,16 @@ impl App {
             Message::Opened(id) => {
                 self.window = Some(id);
                 crate::trace(self.start, "window-opened");
+                let positioning = if self.phase == Phase::Pick {
+                    let monitor = self.capture.monitor.clone();
+                    job(move || position_picker(&monitor), Message::Notice)
+                } else {
+                    Task::none()
+                };
                 if self.options.smoke {
-                    return delay(Duration::from_millis(150), Message::Smoke);
+                    return positioning.chain(delay(Duration::from_millis(150), Message::Smoke));
                 }
+                return positioning;
             }
             Message::Drag => {
                 self.expiry += 1;
@@ -2234,6 +2244,23 @@ fn own_window() -> Result<serde_json::Value> {
         .cloned()
         .ok_or_else(|| "Screenshot window disappeared".into())
 }
+fn position_picker(monitor: &Monitor) -> Result<()> {
+    // Hyprland's new_float_force_onscreen can override the initial move rule.
+    // Correct after mapping, when the borderless window's final extents exist.
+    let script = format!(
+        "hl.dsp.window.move({{window=\"pid:{}\",x={},y={},relative=false}})",
+        std::process::id(),
+        monitor.x,
+        monitor.y,
+    );
+    capture::command(
+        "hyprctl",
+        &["dispatch", &script],
+        None,
+        Duration::from_secs(2),
+    )?;
+    Ok(())
+}
 fn resize_window(size: Size) -> Result<()> {
     let deadline = Instant::now() + Duration::from_secs(2);
     let client = loop {
@@ -2248,8 +2275,13 @@ fn resize_window(size: Size) -> Result<()> {
     };
     let address = client["address"].as_str().ok_or("Window has no address")?;
     let selector = serde_json::to_string(&format!("address:{address}"))?;
+    let unpin = if client["pinned"].as_bool() == Some(true) {
+        "hl.dispatch(hl.dsp.window.pin({window=w})); "
+    } else {
+        ""
+    };
     let script = format!(
-        "local w={selector}; hl.dispatch(hl.dsp.window.resize({{window=w,x={},y={},relative=false}})); hl.dispatch(hl.dsp.window.center({{window=w}}))",
+        "local w={selector}; {unpin}hl.dispatch(hl.dsp.window.resize({{window=w,x={},y={},relative=false}})); hl.dispatch(hl.dsp.window.center({{window=w}}))",
         size.width.round() as i32,
         size.height.round() as i32
     );
