@@ -3,9 +3,11 @@ mod document;
 mod gpu;
 mod input;
 mod output;
+mod process;
 mod raster;
 mod theme;
 mod ui;
+mod worker;
 
 use std::{path::PathBuf, time::Instant};
 

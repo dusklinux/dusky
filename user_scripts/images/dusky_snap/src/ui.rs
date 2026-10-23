@@ -155,7 +155,6 @@ struct App {
     more: bool,
     history: bool,
     picker_controls: bool,
-    scene: Option<picture::Handle>,
     busy: bool,
     status: String,
     text_draft: String,
@@ -179,11 +178,14 @@ struct App {
 fn handle(im: &::image::RgbaImage) -> picture::Handle {
     picture::Handle::from_rgba(im.width(), im.height(), im.as_raw().clone())
 }
+fn owned_handle(im: ::image::RgbaImage) -> picture::Handle {
+    picture::Handle::from_rgba(im.width(), im.height(), im.into_raw())
+}
 fn job<T: Send + 'static>(
     work: impl FnOnce() -> Result<T> + Send + 'static,
     done: impl FnOnce(std::result::Result<T, String>) -> Message + Send + 'static,
 ) -> Task<Message> {
-    Task::perform(async move { work().map_err(|e| e.to_string()) }, done)
+    crate::worker::perform(move || done(work().map_err(|e| e.to_string())))
 }
 fn delay(duration: Duration, message: Message) -> Task<Message> {
     Task::perform(
@@ -278,8 +280,25 @@ pub fn run(options: Options, start: Instant) -> Result<()> {
         Err(e) if e.to_string() == "Overlay dismissed" => return Ok(()),
         Err(e) => return Err(e),
     };
+    // Environment mutation must precede capture, graphics and worker threads.
+    crate::gpu::optimize_environment();
     let config = output::config()?;
     let loaded = options.file.is_some() || options.clipboard || options.preview.is_some();
+    // Iced otherwise scans system fonts on the graphics startup path. Start
+    // the same global font system while Wayland captures the screen. Its
+    // OnceLock synchronizes the renderer if discovery is still in progress.
+    let _fonts = if loaded || options.editor || options.mode != "fullscreen" {
+        Some(
+            std::thread::Builder::new()
+                .name("snap-fonts".into())
+                .spawn(move || {
+                    let _ = iced::advanced::graphics::text::font_system();
+                    crate::trace(start, "fonts-ready");
+                })?,
+        )
+    } else {
+        None
+    };
     let capture = if let Some(p) = &options.preview {
         capture::load(&Options {
             file: Some(p.clone()),
@@ -309,7 +328,6 @@ pub fn run(options: Options, start: Instant) -> Result<()> {
         Phase::Pick
     };
     float_rules()?;
-    crate::gpu::optimize_environment();
     let (mw, mh) = capture.monitor.logical_size();
     let initial_size = if phase == Phase::Pick {
         Size::new(mw as f32, mh as f32)
@@ -318,6 +336,7 @@ pub fn run(options: Options, start: Instant) -> Result<()> {
     };
     let settings = window::Settings {
         size: initial_size,
+        fullscreen: phase == Phase::Pick,
         min_size: Some(Size::new(
             (if phase == Phase::Preview {
                 280.0_f32
@@ -441,21 +460,20 @@ impl App {
         phase: Phase,
         start: Instant,
     ) -> (Self, Task<Message>) {
-        let initial = if phase == Phase::Pick {
-            capture.document.source.as_ref().clone()
+        let (image, image_size) = if phase == Phase::Pick {
+            (
+                handle(&capture.document.source),
+                capture.document.source.dimensions(),
+            )
         } else {
-            capture
+            let initial = capture
                 .document
                 .render()
-                .unwrap_or_else(|_| capture.document.source.as_ref().clone())
+                .unwrap_or_else(|_| capture.document.source.as_ref().clone());
+            let size = initial.dimensions();
+            (owned_handle(initial), size)
         };
-        let image_size = initial.dimensions();
-        let image = handle(&initial);
-        let scene = if phase == Phase::Pick {
-            Some(handle(&capture.document.source))
-        } else {
-            None
-        };
+        let hover = (phase == Phase::Pick).then_some(capture.pointer).flatten();
         let pin = options.pin;
         let app = Self {
             width: config.line_width,
@@ -474,14 +492,13 @@ impl App {
             filled: false,
             selected: None,
             gesture: None,
-            hover: None,
+            hover,
             zoom: 1.0,
             pan: Vector::ZERO,
             window: None,
             more: false,
             history: false,
             picker_controls: false,
-            scene,
             busy: false,
             status: String::new(),
             text_draft: String::new(),
@@ -505,25 +522,6 @@ impl App {
         let mut tasks = vec![
             window::latest().map(|id| id.map(Message::Opened).unwrap_or(Message::Notice(Ok(())))),
         ];
-        if phase == Phase::Pick {
-            tasks.push(job(
-                || {
-                    output::recent_paths()?
-                        .into_iter()
-                        .take(5)
-                        .map(|p| {
-                            let source = p.with_file_name(format!(
-                                "{}-thumb.png",
-                                p.file_stem().unwrap_or_default().to_string_lossy()
-                            ));
-                            let im = ::image::open(source)?.into_rgba8();
-                            Ok((p, handle(&im)))
-                        })
-                        .collect()
-                },
-                |r| Message::Recents(r.unwrap_or_default()),
-            ));
-        }
         if phase == Phase::Preview && !pin {
             tasks.push(delay(Duration::from_secs(10), Message::Expire(1)));
         }
@@ -570,7 +568,7 @@ impl App {
         let revision = doc.revision;
         Task::batch([
             job(
-                move || Ok(handle(&doc.render()?)),
+                move || Ok(owned_handle(doc.render()?)),
                 move |r| Message::Rendered(serial, r),
             ),
             delay(Duration::from_millis(400), Message::AutoSave(revision)),
@@ -734,7 +732,6 @@ impl App {
             Action::ScrollAuto => return self.scroll_auto(),
             Action::ScrollDone => {
                 if let Some(s) = self.stitcher.take() {
-                    self.scene = None;
                     self.capture.document = Document::new(s.image);
                     self.phase = Phase::Edit;
                     self.zoom = 1.0;
@@ -768,9 +765,6 @@ impl App {
                 crate::trace(self.start, "window-opened");
                 if self.options.smoke {
                     return delay(Duration::from_millis(150), Message::Smoke);
-                }
-                if self.phase == Phase::Pick {
-                    return window::set_mode(id, window::Mode::Fullscreen);
                 }
             }
             Message::Drag => {
@@ -806,7 +800,28 @@ impl App {
                 return self.patch_selected();
             }
             Message::More => self.more = !self.more,
-            Message::History => self.history = !self.history,
+            Message::History => {
+                self.history = !self.history;
+                if self.history {
+                    return job(
+                        || {
+                            Ok(output::recent_paths()?
+                                .into_iter()
+                                .take(5)
+                                .filter_map(|p| {
+                                    let source = p.with_file_name(format!(
+                                        "{}-thumb.png",
+                                        p.file_stem()?.to_string_lossy()
+                                    ));
+                                    let im = ::image::open(source).ok()?.into_rgba8();
+                                    Some((p, owned_handle(im)))
+                                })
+                                .collect())
+                        },
+                        |r| Message::Recents(r.unwrap_or_default()),
+                    );
+                }
+            }
             Message::Annotate(v) => self.options.editor = v,
             Message::Mode(v) => self.options.mode = v.into(),
             Message::Text(v) => self.text_draft = v,
@@ -868,7 +883,6 @@ impl App {
                 self.busy = false;
                 match r {
                     Ok(c) => {
-                        self.scene = None;
                         self.history = false;
                         self.capture = c;
                         self.phase = Phase::Edit;
@@ -1066,7 +1080,6 @@ impl App {
                 self.busy = false;
                 match r {
                     Ok(doc) => {
-                        self.scene = None;
                         self.capture.document = doc;
                         self.phase = Phase::Edit;
                         return self.resize().chain(self.render());
@@ -1268,7 +1281,6 @@ impl App {
                     return self.resize().chain(self.scroll_frame());
                 }
                 self.phase = Phase::Edit;
-                self.scene = None;
                 if self.options.editor {
                     return self.resize().chain(self.render());
                 }
@@ -1550,9 +1562,11 @@ impl App {
         let mut stack = widget::Stack::new()
             .width(Length::Fill)
             .height(Length::Fill);
-        if let Some(scene) = &self.scene {
+        // Reuse the same texture to keep the frozen desktop behind a zoomed,
+        // panned or letterboxed picker. The normal fullscreen path draws once.
+        if view.rect != Rectangle::with_size(size) {
             stack = stack.push(
-                picture(scene.clone())
+                picture(self.image.clone())
                     .width(size.width)
                     .height(size.height)
                     .content_fit(iced::ContentFit::Fill),
@@ -1583,8 +1597,7 @@ impl App {
                 checkbox(self.options.editor)
                     .label("Annotate")
                     .on_toggle(Message::Annotate),
-                button(text(format!("Recents · {}", self.recents.len())).size(12))
-                    .on_press(Message::History),
+                button(text("Recents").size(12)).on_press(Message::History),
                 text("Tab to hide").size(11)
             ]
             .spacing(8)
@@ -2543,7 +2556,7 @@ impl canvas::Program<Message> for Surface<'_> {
         renderer: &iced::Renderer,
         theme: &Theme,
         bounds: Rectangle,
-        _: mouse::Cursor,
+        cursor: mouse::Cursor,
     ) -> Vec<canvas::Geometry> {
         let app = self.app;
         let view = self.view(bounds.size());
@@ -2558,13 +2571,16 @@ impl canvas::Program<Message> for Surface<'_> {
             );
         };
         if app.phase == Phase::Pick {
+            // Wayland's pointer-enter position is usable without a motion event.
+            let hover = cursor
+                .position_in(bounds)
+                .map(|p| view.source(p))
+                .or(app.hover);
             // Paint-only guidance never intercepts the capture surface. Hide it
             // while selecting, or when the pointer approaches its screen edge.
             if app.gesture.is_none()
                 && !app.picker_controls
-                && app
-                    .hover
-                    .is_none_or(|p| view.screen(p).y < bounds.height - 48.0)
+                && hover.is_none_or(|p| view.screen(p).y < bounds.height - 48.0)
             {
                 frame.fill_text(canvas::Text {
                     content: "Drag a region · click a window · Tab options · Esc cancel".into(),
@@ -2575,7 +2591,7 @@ impl canvas::Program<Message> for Surface<'_> {
                     ..Default::default()
                 });
             }
-            if let Some(p) = app.hover {
+            if let Some(p) = hover {
                 let p = view.screen(p);
                 let stroke = canvas::Stroke::default()
                     .with_color(Color::WHITE.scale_alpha(0.55))
@@ -2600,8 +2616,7 @@ impl canvas::Program<Message> for Surface<'_> {
                 .as_ref()
                 .map(|g| Rect::between(g.start, g.last))
                 .or_else(|| {
-                    app.hover
-                        .and_then(|p| app.capture.windows.iter().find(|r| r.contains(p)).copied())
+                    hover.and_then(|p| app.capture.windows.iter().find(|r| r.contains(p)).copied())
                 });
             if let Some(r) = selection {
                 let b = view.bounds(r);
@@ -2899,9 +2914,10 @@ fn platform_events() -> impl iced::futures::Stream<Item = Platform> {
         .expect("start filesystem and signal watcher");
     rx
 }
-struct BackgroundExecutor(iced::futures::executor::ThreadPool);
+pub(crate) struct BackgroundExecutor(iced::futures::executor::ThreadPool);
 impl iced::Executor for BackgroundExecutor {
     fn new() -> std::result::Result<Self, std::io::Error> {
+        crate::worker::initialize()?;
         iced::futures::executor::ThreadPool::builder()
             .pool_size(2)
             .name_prefix("snap-worker")
@@ -2918,6 +2934,110 @@ impl iced::Executor for BackgroundExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires a working Wayland GPU or software renderer"]
+    fn first_picker_frame_has_guides_without_pointer_motion() {
+        use iced::advanced::{
+            Layout, layout,
+            renderer::{Headless as _, Renderer as _},
+            widget::Tree,
+        };
+        let source = ::image::RgbaImage::from_pixel(320, 240, ::image::Rgba([100, 120, 140, 255]));
+        let cap = Capture {
+            document: Document::new(source),
+            monitor: Monitor {
+                width: 320,
+                height: 240,
+                scale: 1.0,
+                ..Default::default()
+            },
+            windows: vec![Rect {
+                x: 80.0,
+                y: 60.0,
+                w: 160.0,
+                h: 100.0,
+            }],
+            pointer: Some(Point::new(140.0, 110.0)),
+        };
+        let (mut app, _) = App::boot(
+            Options::default(),
+            Config::default(),
+            cap,
+            Phase::Pick,
+            Instant::now(),
+        );
+        assert_eq!(app.hover, Some(Point::new(140.0, 110.0)));
+        let mut renderer = iced::futures::executor::block_on(iced::Renderer::new(
+            iced::Font::DEFAULT,
+            iced::Pixels(16.0),
+            None,
+        ))
+        .expect("working renderer");
+        let bounds = Rectangle::with_size(Size::new(320.0, 240.0));
+        let mut draw = |app: &App, scale: f32| {
+            let mut content = app.overlay(bounds.size());
+            let mut tree = Tree::new(&content);
+            let node = content.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(bounds.size(), bounds.size()),
+            );
+            renderer.reset(bounds);
+            content.as_widget().draw(
+                &tree,
+                &mut renderer,
+                &app.theme,
+                &iced::advanced::renderer::Style::default(),
+                Layout::new(&node),
+                mouse::Cursor::Unavailable,
+                &bounds,
+            );
+            renderer.screenshot(
+                Size::new((320.0 * scale) as u32, (240.0 * scale) as u32),
+                scale,
+                Color::BLACK,
+            )
+        };
+        for scale in [1.0, 1.5, 2.0] {
+            let guides = draw(&app, scale);
+            app.hover = None;
+            let plain = draw(&app, scale);
+            app.hover = app.capture.pointer;
+            let pixel = |bytes: &[u8], x: u32, y: u32| {
+                let index = (((y as f32 * scale) as usize * (320.0 * scale) as usize)
+                    + (x as f32 * scale) as usize)
+                    * 4;
+                bytes[index..index + 4].to_vec()
+            };
+            assert_ne!(
+                pixel(&guides, 10, 110),
+                pixel(&plain, 10, 110),
+                "crosshair at {scale}"
+            );
+            assert!(
+                pixel(&guides, 20, 20)[0] < pixel(&plain, 20, 20)[0],
+                "outside window dims at {scale}"
+            );
+            assert_eq!(
+                pixel(&guides, 100, 100),
+                pixel(&plain, 100, 100),
+                "selected pixels stay clear at {scale}"
+            );
+            app.hover = None;
+            app.zoom = 0.5;
+            app.pan = Vector::new(15.0, 10.0);
+            let transformed = draw(&app, scale);
+            assert_eq!(
+                pixel(&transformed, 20, 20),
+                pixel(&plain, 20, 20),
+                "frozen background survives picker zoom and pan at {scale}"
+            );
+            app.zoom = 1.0;
+            app.pan = Vector::ZERO;
+            app.hover = app.capture.pointer;
+        }
+    }
     #[test]
     fn preview_is_bounded_to_discovered_monitor() {
         let monitor = Monitor {
@@ -2951,6 +3071,7 @@ mod tests {
                 ..Default::default()
             },
             windows: vec![],
+            pointer: None,
         };
         let (app, _) = App::boot(
             Options {

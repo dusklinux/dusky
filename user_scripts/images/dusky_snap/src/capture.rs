@@ -1,15 +1,12 @@
 use crate::{
     Options, Result,
-    document::{Document, Rect},
+    document::{Document, Point, Rect},
 };
 use image::RgbaImage;
 use serde::Deserialize;
-use std::{
-    io::{Read, Write},
-    os::unix::process::CommandExt,
-    process::{Command, Stdio},
-    time::{Duration, Instant},
-};
+use std::time::Duration;
+#[cfg(test)]
+use std::time::Instant;
 
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct Workspace {
@@ -78,73 +75,41 @@ pub struct Capture {
     pub document: Document,
     pub monitor: Monitor,
     pub windows: Vec<Rect>,
+    pub pointer: Option<Point>,
 }
 
-pub fn command(
-    name: &str,
-    args: &[&str],
-    input: Option<Vec<u8>>,
-    timeout: Duration,
-) -> Result<Vec<u8>> {
-    let mut child = Command::new(name)
-        .args(args)
-        .process_group(0)
-        .stdin(if input.is_some() {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        })
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-    let mut out = child.stdout.take().ok_or("Missing stdout")?;
-    let mut err = child.stderr.take().ok_or("Missing stderr")?;
-    let reader = std::thread::spawn(move || {
-        let mut b = vec![];
-        out.read_to_end(&mut b).map(|_| b)
-    });
-    let errors = std::thread::spawn(move || {
-        let mut b = vec![];
-        err.read_to_end(&mut b).map(|_| b)
-    });
-    let writer = input.map(|bytes| {
-        let mut stream = child.stdin.take().expect("piped stdin");
-        std::thread::spawn(move || stream.write_all(&bytes))
-    });
-    let deadline = Instant::now() + timeout;
-    let status = loop {
-        if let Some(s) = child.try_wait()? {
-            break Some(s);
-        }
-        if Instant::now() >= deadline {
-            unsafe {
-                libc::killpg(child.id() as i32, libc::SIGKILL);
-            }
-            let _ = child.wait();
-            break None;
-        }
-        std::thread::sleep(Duration::from_millis(3));
-    };
-    let stdout = reader.join().map_err(|_| "Output reader panicked")??;
-    let stderr = errors.join().map_err(|_| "Error reader panicked")??;
-    let write_result = writer
-        .map(|w| w.join().map_err(|_| "Input writer panicked"))
-        .transpose()?;
-    let Some(status) = status else {
-        return Err(format!("{name} timed out").into());
-    };
-    if !status.success() {
-        return Err(format!("{name}: {}", String::from_utf8_lossy(&stderr).trim()).into());
-    }
-    if let Some(r) = write_result {
-        r?;
-    }
-    Ok(stdout)
+fn parse_snapshot(bytes: &[u8]) -> Result<(Monitor, Vec<Client>, Point)> {
+    // hyprctl batches concatenate JSON values, separated by whitespace.
+    let mut json = serde_json::Deserializer::from_slice(bytes);
+    let monitors = Vec::<Monitor>::deserialize(&mut json)?;
+    let clients = Vec::<Client>::deserialize(&mut json)?;
+    let pointer = Point::deserialize(&mut json)?;
+    json.end()?;
+    let monitor = monitors
+        .into_iter()
+        .find(|m| m.focused)
+        .ok_or("No focused Hyprland output")?;
+    Ok((monitor, clients, pointer))
 }
+
+fn pointer_to_source(pointer: Point, sx: f64, sy: f64, monitor: &Monitor) -> Point {
+    Point::new(
+        (pointer.x - monitor.x as f64) * sx,
+        (pointer.y - monitor.y as f64) * sy,
+    )
+}
+
+pub use crate::process::command;
+
 pub fn take(o: &Options) -> Result<Capture> {
-    let monitor = focused_monitor()?;
-    let clients =
-        std::thread::spawn(|| command("hyprctl", &["-j", "clients"], None, Duration::from_secs(3)));
+    // One compositor snapshot, before our own window can affect focus/history.
+    let snapshot = command(
+        "hyprctl",
+        &["-j", "--batch", "monitors; clients; cursorpos"],
+        None,
+        Duration::from_secs(3),
+    )?;
+    let (monitor, mut clients, pointer) = parse_snapshot(&snapshot)?;
     let conn = libwayshot::WayshotConnection::new()?;
     let output = conn
         .get_all_outputs()
@@ -162,8 +127,6 @@ pub fn take(o: &Options) -> Result<Capture> {
         w: source.width() as f64,
         h: source.height() as f64,
     };
-    let mut clients: Vec<Client> =
-        serde_json::from_slice(&clients.join().map_err(|_| "Window query panicked")??)?;
     clients.sort_by_key(|c| c.order);
     let workspace = if monitor.special_workspace.address.is_empty() {
         &monitor.active_workspace.address
@@ -184,10 +147,12 @@ pub fn take(o: &Options) -> Result<Capture> {
         })
         .filter(|r| r.w > 0.0 && r.h > 0.0)
         .collect();
+    let pointer = pointer_to_source(pointer, sx, sy, &monitor);
     Ok(Capture {
         document: Document::new(source),
         monitor,
         windows,
+        pointer: bounds.contains(pointer).then_some(pointer),
     })
 }
 pub fn load(o: &Options) -> Result<Capture> {
@@ -216,6 +181,7 @@ pub fn load(o: &Options) -> Result<Capture> {
         document,
         monitor,
         windows: vec![],
+        pointer: None,
     })
 }
 pub fn frame(monitor: &Monitor, crop: Rect, cursor: bool) -> Result<RgbaImage> {
@@ -431,5 +397,22 @@ mod workspace_regression {
         let monitor: Monitor = serde_json::from_str(r#"{"name":"fixture","x":0,"y":0,"activeWorkspace":{"address":"2","id":2},"specialWorkspace":{"address":"","type":"","name":""}}"#).unwrap();
         assert_eq!(monitor.active_workspace.address, "2");
         assert!(monitor.special_workspace.address.is_empty());
+    }
+
+    #[test]
+    fn batched_snapshot_and_scaled_pointer_use_global_monitor_offsets() {
+        let bytes = br#"[{"name":"left","x":-1280,"y":120,"focused":true}]
+            [] {"x":-960,"y":300}"#;
+        let (monitor, clients, pointer) = parse_snapshot(bytes).unwrap();
+        assert!(clients.is_empty());
+        assert_eq!(
+            pointer_to_source(pointer, 1.5, 1.5, &monitor),
+            Point::new(480.0, 270.0)
+        );
+        for bad in [b"[] [] {}".as_slice(), b"[]", b"{} [] {}"] {
+            assert!(parse_snapshot(bad).is_err());
+        }
+        let trailing = [bytes.as_slice(), b" {}"].concat();
+        assert!(parse_snapshot(&trailing).is_err());
     }
 }

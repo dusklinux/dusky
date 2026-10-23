@@ -16,6 +16,23 @@ pub fn render(doc: &Document) -> Result<RgbaImage> {
     if w == 0 || h == 0 || u64::from(w) * u64::from(h) > 160_000_000 {
         return Err("Canvas exceeds the 160 megapixel render budget".into());
     }
+    if doc.state.backdrop == 0 && doc.state.layers.is_empty() && !doc.state.grow {
+        let source = doc.composed_source()?;
+        if canvas.x >= 0.0
+            && canvas.y >= 0.0
+            && canvas.x + canvas.w <= source.width() as f64
+            && canvas.y + canvas.h <= source.height() as f64
+        {
+            return Ok(image::imageops::crop_imm(
+                source.as_ref(),
+                canvas.x as u32,
+                canvas.y as u32,
+                w,
+                h,
+            )
+            .to_image());
+        }
+    }
     let mut out = RgbaImage::new(w, h);
     if doc.state.backdrop > 0 {
         let colors = [[31, 33, 43], [71, 56, 135], [15, 97, 110], [140, 61, 82]];
@@ -126,13 +143,22 @@ pub fn render(doc: &Document) -> Result<RgbaImage> {
             }
         }
     }
+    let mut vectors = doc
+        .state
+        .layers
+        .iter()
+        .filter(|l| {
+            !matches!(
+                l.tool,
+                Tool::Redact | Tool::Pixelate | Tool::Blur | Tool::Cut | Tool::Insert
+            )
+        })
+        .peekable();
+    if vectors.peek().is_none() {
+        return Ok(out);
+    }
     let mut overlay = Pixmap::new(w, h).ok_or("Cannot allocate annotation canvas")?;
-    for layer in doc.state.layers.iter().filter(|l| {
-        !matches!(
-            l.tool,
-            Tool::Redact | Tool::Pixelate | Tool::Blur | Tool::Cut | Tool::Insert
-        )
-    }) {
+    for layer in vectors {
         draw_layer(&mut overlay, layer, dx as f32, dy as f32)?;
     }
     for (dst, src) in out
