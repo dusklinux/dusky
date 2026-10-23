@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Bash 5.3+; Wayland Rofi, pactl, jq, notify-send.
+# Bash 5.3+; Wayland Rofi, pactl, jq.
 # Optional: busctl for MPRIS, or executable CLI controllers.
 # List media sessions and additional streams with measured audio activity.
 set -euo pipefail
 
-readonly APP_NAME=mpris_playback NOTIFY_ICON=multimedia-audio-player-symbolic
+readonly APP_NAME=mpris_playback
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 readonly SCRIPT_DIR CONTROLLERS_DIR="$SCRIPT_DIR/controllers"
 readonly ROFI_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/rofi/config.rasi"
@@ -25,12 +25,8 @@ declare -A player_pids=() player_owners=() metadata_cache=() used_backends=() pi
 REPLY='' title='' artist='' position='' duration='' status=''
 can_control='' can_play='' can_pause='' can_next='' can_prev='' track_id=''
 
-_notify() {
-    local body=${2:-}
-    # Notification bodies support markup; metadata should display literally.
-    body=${body//&/\&amp;}; body=${body//</\&lt;}; body=${body//>/\&gt;}
-    notify-send -a "$APP_NAME" -i "$NOTIFY_ICON" \
-        -h string:x-canonical-private-synchronous:mpris_ctl -- "$1" "$body" || true
+_report() {
+    printf '%s: %s\n' "$1" "${2:-}" >&2
 }
 
 _single_line() {
@@ -85,7 +81,7 @@ _rofi_menu() {
             ;;
         1|1[0-9]|2[0-8]) return 1 ;; # Cancelled or an unused custom keybinding.
     esac
-    _notify 'Execution Failed' 'Rofi did not return a valid selection.'
+    _report 'Execution Failed' 'Rofi did not return a valid selection.'
     return 2
 }
 
@@ -280,7 +276,7 @@ _build_entry() {
 _load_sources() {
     local raw id app track cork mute pid binary activity i
     if ! raw=$(_discover_sources); then
-        _notify 'Discovery Failed' 'Could not query the audio server.'
+        _report 'Discovery Failed' 'Could not query the audio server.'
         return 1
     fi
     ids=(); apps=(); media=(); corked=(); muted=(); pids=(); binaries=(); backends=(); entries=(); audible=()
@@ -379,7 +375,7 @@ _load_sources() {
         app_counts[$app]=$(( ${app_counts[$app]:-0} + 1 ))
     done
     if ((${#ids[@]} == 0)); then
-        _notify 'No Audio Sources' 'No active audio streams or loaded media sessions were found.'
+        _report 'No Audio Sources' 'No active audio streams or loaded media sessions were found.'
     fi
 }
 
@@ -423,7 +419,7 @@ _perform_action() {
     case $status in
         Playing|Paused|Stopped) ;;
         *)
-            _notify 'Player Unavailable' "${apps[i]} is no longer available."
+            _report 'Player Unavailable' "${apps[i]} is no longer available."
             exec {lock_fd}>&-
             return 1 ;;
     esac
@@ -433,7 +429,7 @@ _perform_action() {
     fi
     old_track=$track_id old_title=$title old_artist=$artist
     if ! _control_source "$action" "$backend"; then
-        _notify 'Playback Control Failed' "${apps[i]}: $action failed or is unsupported."
+        _report 'Playback Control Failed' "${apps[i]}: $action failed or is unsupported."
         exec {lock_fd}>&-
         return 1
     fi
@@ -442,7 +438,7 @@ _perform_action() {
         unset 'metadata_cache[$backend]'
         _backend_metadata "$backend"
         if [[ -z $status ]]; then
-            _notify 'Player Unavailable' "${apps[i]} is no longer available."
+            _report 'Player Unavailable' "${apps[i]} is no longer available."
             exec {lock_fd}>&-
             return 1
         fi
@@ -454,7 +450,7 @@ _perform_action() {
         now=${EPOCHREALTIME/./}
         if (( now >= deadline )); then
             if [[ -n $expected ]]; then
-                _notify 'Playback Control Failed' "${apps[i]} did not enter $expected state."
+                _report 'Playback Control Failed' "${apps[i]} did not enter $expected state."
                 exec {lock_fd}>&-
                 return 1
             fi
@@ -467,8 +463,6 @@ _perform_action() {
     if [[ $backend == mpris:* ]]; then
         printf '%s\n' "${player_owners[${backend#mpris:}]}" > "$RUNTIME_DIR/osd_media_player.txt"
     fi
-    _status_icon "$status"
-    _notify "${apps[i]}" "$REPLY $title${artist:+ · $artist} ($status)"
     exec {lock_fd}>&-
 }
 
@@ -568,7 +562,7 @@ cli_action() (
     done
     if [[ -n $fallback ]]; then _perform_action "$action" "$fallback" "$lock_fd"
     else
-        _notify 'No Playback Controls' 'The current audio streams have no playback interface.'
+        _report 'No Playback Controls' 'The current audio streams have no playback interface.'
         return 1
     fi
 )
@@ -576,9 +570,8 @@ cli_action() (
 cli_status() {
     _load_sources || return 1
     ((${#ids[@]})) || return 0
-    local i body=''
-    for i in "${!ids[@]}"; do body+="${entries[i]}"$'\n'; done
-    _notify 'Media Sources' "${body%$'\n'}"
+    local i
+    for i in "${!ids[@]}"; do printf '%s\n' "${entries[i]}"; done
 }
 
 usage() {
@@ -593,7 +586,7 @@ Playback controls require a matching MPRIS/CLI interface.
   --toggle      Play/Pause the remembered MPRIS player, or first playing/controllable source
   --next        Skip to its next track
   --prev        Skip to its previous track
-  --status      Show available media sessions via notification
+  --status      Print available media sessions
   -h, --help    Show this help
 EOF_HELP
 }
@@ -606,7 +599,7 @@ main() {
         *) printf 'Unknown option: %s\n' "$1" >&2; usage >&2; return 1 ;;
     esac
     local cmd
-    for cmd in pactl jq notify-send python3 parec timeout flock; do
+    for cmd in pactl jq python3 parec timeout flock; do
         command -v "$cmd" >/dev/null || { printf '%s: missing dependency: %s\n' "$APP_NAME" "$cmd" >&2; return 1; }
     done
     if [[ -z ${1:-} ]]; then
