@@ -9,7 +9,9 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 readonly SCRIPT_DIR CONTROLLERS_DIR="$SCRIPT_DIR/controllers"
 readonly ROFI_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/rofi/config.rasi"
 readonly ROFI_THEME='window {width: 40%;} listview {lines: 10;}'
-# Metadata protocol: title, artist, position, duration, status separated by US.
+readonly RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$UID}
+# Metadata protocol: title, artist, position, duration, status separated by US;
+# MPRIS records append capabilities and track ID.
 # US is not IFS whitespace, so empty fields survive read. Display data is one line.
 readonly SEP=$'\x1f'
 readonly ICON_PLAYING='󰐊' ICON_PAUSED='󰏤' ICON_STOPPED='󰓛' ICON_UNKNOWN='󰝚'
@@ -18,9 +20,10 @@ readonly ICON_TOGGLE='󰐎' ICON_NEXT='󰒭' ICON_PREV='󰒮' ICON_BACK='󰁍' I
 HAS_MPRIS=0
 declare -a ids=() apps=() media=() corked=() muted=() pids=() binaries=() backends=() entries=() audible=()
 declare -a players=()
-declare -A player_pids=() metadata_cache=() used_backends=() pid_counts=() app_counts=()
+declare -A player_pids=() player_owners=() metadata_cache=() used_backends=() pid_counts=() app_counts=()
 # Shared output variables avoid spawning subshells for string formatting.
 REPLY='' title='' artist='' position='' duration='' status=''
+can_control='' can_play='' can_pause='' can_next='' can_prev='' track_id=''
 
 _notify() {
     local body=${2:-}
@@ -111,15 +114,18 @@ _discover_sources() {
 }
 
 _update_players() {
-    players=(); player_pids=()
+    players=(); player_pids=(); player_owners=()
     ((HAS_MPRIS)) || return 0
-    local listing name pid rest
-    listing=$(busctl --user --no-pager --no-legend --full --acquired list) || return 0
-    while read -r name pid rest; do
-        [[ $name == org.mpris.MediaPlayer2.* ]] || continue
+    local listing name pid owner
+    listing=$(busctl --user --json=short --acquired list) || return 0
+    listing=$(jq -r '.[] | select(.name | startswith("org.mpris.MediaPlayer2."))
+        | [.name, (.pid // ""), .connection] | join("\u001f")' <<< "$listing") || return 0
+    while IFS=$SEP read -r name pid owner; do
+        [[ -n $name && $owner == :* ]] || continue
         name=${name#org.mpris.MediaPlayer2.}
         players+=("$name")
         player_pids[$name]=$pid
+        player_owners[$name]=$owner
     done <<< "$listing"
 }
 
@@ -131,9 +137,10 @@ _backend_metadata() {
         case $backend in
             mpris:*)
                 # GetAll provides typed metadata without delimiter collisions.
-                # Address the full bus name so multiple player instances stay distinct.
-                data=$(busctl --user --json=short --timeout=2 --auto-start=no call \
-                    "org.mpris.MediaPlayer2.${backend#mpris:}" /org/mpris/MediaPlayer2 \
+                # Keep the discovered connection: a restarted app must not
+                # inherit a menu selection made for its previous instance.
+                data=$(busctl --user --json=short --timeout=1 --auto-start=no call \
+                    "${player_owners[${backend#mpris:}]:-}" /org/mpris/MediaPlayer2 \
                     org.freedesktop.DBus.Properties GetAll s org.mpris.MediaPlayer2.Player \
                     2>/dev/null) || data=''
                 if [[ -n $data ]]; then
@@ -149,10 +156,14 @@ _backend_metadata() {
                                   end
                             end;
                         .data[0] as $p | ($p.Metadata.data // {}) as $m
+                        | select($p.PlaybackStatus.data | IN("Playing", "Paused", "Stopped"))
                         | [($m["xesam:title"].data // ""),
                            ($m["xesam:artist"].data // [] | join(", ")),
                            ($p.Position.data | time), ($m["mpris:length"].data | time),
-                           ($p.PlaybackStatus.data // "")]
+                           $p.PlaybackStatus.data,
+                           $p.CanControl.data, $p.CanPlay.data, $p.CanPause.data,
+                           $p.CanGoNext.data, $p.CanGoPrevious.data,
+                           ($m["mpris:trackid"].data // "")]
                         | map(text) | join("\u001f")' <<< "$data" 2>/dev/null) || data=''
                 fi
                 ;;
@@ -163,7 +174,8 @@ _backend_metadata() {
         metadata_cache[$backend]=$data
     fi
     title=''; artist=''; position=''; duration=''; status=''
-    IFS=$SEP read -r title artist position duration status <<< "$data"
+    can_control=''; can_play=''; can_pause=''; can_next=''; can_prev=''; track_id=''
+    IFS=$SEP read -r title artist position duration status can_control can_play can_pause can_next can_prev track_id <<< "$data"
 }
 
 _matches_stream() {
@@ -319,7 +331,8 @@ _load_sources() {
                 ;;
         esac
         _backend_metadata "$backend"
-        [[ -n $title || -n $artist ]] || continue
+        [[ -n $title || -n $artist || ( $backend == mpris:* && -n $track_id &&
+            $track_id != /org/mpris/MediaPlayer2/TrackList/NoTrack ) ]] || continue
         case ${status,,} in playing|paused|stopped) ;; *) continue ;; esac
         if [[ $backend == cli:* ]]; then
             # Without a stream PID, compare loaded media rather than app names alone.
@@ -374,12 +387,23 @@ _control_source() {
     local action=$1 backend=$2
     case $backend in
         mpris:*)
+            [[ $can_control == true ]] || return 1
             case $action in
-                toggle) action=PlayPause ;; next) action=Next ;; prev) action=Previous ;; stop) action=Stop ;;
+                toggle)
+                    if [[ $status == Playing ]]; then
+                        [[ $can_pause == true ]] || return 1
+                        action=Pause
+                    else
+                        [[ $can_play == true ]] || return 1
+                        action=Play
+                    fi ;;
+                next) [[ $can_next == true ]] || return 1; action=Next ;;
+                prev) [[ $can_prev == true ]] || return 1; action=Previous ;;
+                stop) action=Stop ;;
                 *) return 1 ;;
             esac
-            busctl --user --quiet --timeout=2 --auto-start=no call \
-                "org.mpris.MediaPlayer2.${backend#mpris:}" /org/mpris/MediaPlayer2 \
+            busctl --user --quiet --timeout=1 --auto-start=no call \
+                "${player_owners[${backend#mpris:}]:-}" /org/mpris/MediaPlayer2 \
                 org.mpris.MediaPlayer2.Player "$action"
             ;;
         cli:*) timeout --kill-after=1 2 "$CONTROLLERS_DIR/${backend#cli:}" "$action" ;;
@@ -388,17 +412,64 @@ _control_source() {
 }
 
 _perform_action() {
-    local action=$1 i=$2
-    if ! _control_source "$action" "${backends[i]}"; then
+    local action=$1 i=$2 backend=${backends[$2]} lock_fd=${3:-} expected='' old_track old_title old_artist deadline now
+    # Coordinate with the global OSD key and other selector invocations.
+    if [[ -z $lock_fd ]]; then
+        exec {lock_fd}> "$RUNTIME_DIR/osd_media.lock"
+        flock -x "$lock_fd"
+    fi
+    unset 'metadata_cache[$backend]'
+    _backend_metadata "$backend"
+    case $status in
+        Playing|Paused|Stopped) ;;
+        *)
+            _notify 'Player Unavailable' "${apps[i]} is no longer available."
+            exec {lock_fd}>&-
+            return 1 ;;
+    esac
+    if [[ $action == toggle ]]; then
+        if [[ $status == Playing ]]; then expected=Paused; else expected=Playing; fi
+    elif [[ $action == stop ]]; then expected=Stopped
+    fi
+    old_track=$track_id old_title=$title old_artist=$artist
+    if ! _control_source "$action" "$backend"; then
         _notify 'Playback Control Failed' "${apps[i]}: $action failed or is unsupported."
+        exec {lock_fd}>&-
         return 1
     fi
-    # Let asynchronous players publish their new status before notifying.
-    case $action in toggle) sleep 0.2 ;; *) sleep 0.4 ;; esac
-    unset 'metadata_cache[${backends[i]}]'
-    _read_metadata "$i" backend
+    now=${EPOCHREALTIME/./}; deadline=$((now + 1000000))
+    while :; do
+        unset 'metadata_cache[$backend]'
+        _backend_metadata "$backend"
+        if [[ -z $status ]]; then
+            _notify 'Player Unavailable' "${apps[i]} is no longer available."
+            exec {lock_fd}>&-
+            return 1
+        fi
+        if [[ -n $expected ]]; then
+            [[ $status != "$expected" ]] || break
+        elif [[ $track_id != "$old_track" || $title != "$old_title" || $artist != "$old_artist" || $status == Stopped ]]; then
+            break
+        fi
+        now=${EPOCHREALTIME/./}
+        if (( now >= deadline )); then
+            if [[ -n $expected ]]; then
+                _notify 'Playback Control Failed' "${apps[i]} did not enter $expected state."
+                exec {lock_fd}>&-
+                return 1
+            fi
+            # Repeating/restarting a track need not change its metadata.
+            status="$action requested"
+            break
+        fi
+        sleep 0.025
+    done
+    if [[ $backend == mpris:* ]]; then
+        printf '%s\n' "${player_owners[${backend#mpris:}]}" > "$RUNTIME_DIR/osd_media_player.txt"
+    fi
     _status_icon "$status"
     _notify "${apps[i]}" "$REPLY $title${artist:+ · $artist} ($status)"
+    exec {lock_fd}>&-
 }
 
 show_control_menu() {
@@ -470,25 +541,37 @@ show_source_menu() {
     done
 }
 
-cli_action() {
-    local action=$1 i fallback=''
+cli_action() (
+    local action=$1 i fallback='' remembered='' lock_fd
+    exec {lock_fd}> "$RUNTIME_DIR/osd_media.lock"
+    flock -x "$lock_fd"
     _load_sources || return 1
     ((${#ids[@]})) || return 0
+    if [[ -f $RUNTIME_DIR/osd_media_player.txt ]]; then
+        remembered=$(< "$RUNTIME_DIR/osd_media_player.txt")
+    fi
+    for i in "${!ids[@]}"; do
+        if [[ ${backends[i]} == mpris:* && -n $remembered &&
+              ${player_owners[${backends[i]#mpris:}]:-} == "$remembered" ]]; then
+            _perform_action "$action" "$i" "$lock_fd"
+            return $?
+        fi
+    done
     for i in "${!ids[@]}"; do
         [[ ${backends[i]} != pactl ]] || continue
         [[ -n $fallback ]] || fallback=$i
         _read_metadata "$i"
         if [[ ${status,,} == playing ]]; then
-            _perform_action "$action" "$i"
+            _perform_action "$action" "$i" "$lock_fd"
             return $?
         fi
     done
-    if [[ -n $fallback ]]; then _perform_action "$action" "$fallback"
+    if [[ -n $fallback ]]; then _perform_action "$action" "$fallback" "$lock_fd"
     else
         _notify 'No Playback Controls' 'The current audio streams have no playback interface.'
         return 1
     fi
-}
+)
 
 cli_status() {
     _load_sources || return 1
@@ -507,7 +590,7 @@ Lists media sessions and additional streams with measured audio activity.
 Paused media stays resumable. Silent idle connections are hidden.
 Playback controls require a matching MPRIS/CLI interface.
 
-  --toggle      Play/Pause the first playing controllable source, or first controllable source
+  --toggle      Play/Pause the remembered MPRIS player, or first playing/controllable source
   --next        Skip to its next track
   --prev        Skip to its previous track
   --status      Show available media sessions via notification
@@ -523,7 +606,7 @@ main() {
         *) printf 'Unknown option: %s\n' "$1" >&2; usage >&2; return 1 ;;
     esac
     local cmd
-    for cmd in pactl jq notify-send python3 parec timeout; do
+    for cmd in pactl jq notify-send python3 parec timeout flock; do
         command -v "$cmd" >/dev/null || { printf '%s: missing dependency: %s\n' "$APP_NAME" "$cmd" >&2; return 1; }
     done
     if [[ -z ${1:-} ]]; then
