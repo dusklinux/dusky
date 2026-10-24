@@ -1,143 +1,142 @@
 <#
 .SYNOPSIS
-    Dusky VM Guest Setup Bootstrapper
-    Description: Verifies Python 3, installs it if missing, and then runs setup_ssh.py and setup_vdd.py.
-    Requirements: Run as Administrator in PowerShell.
+    Configure Windows 11 guest tools and the matching Looking Glass IDD.
+.DESCRIPTION
+    Uses Python 3.15+ already installed or bundled at python\python.exe.
+    PythonIndex may reference an offline index produced by Python install manager.
+    Place looking-glass-idd-setup.exe beside this script, from the Linux client's build.
 #>
+[CmdletBinding()]
+param(
+    [string]$PythonExe,
+    [string]$PythonIndex,
+    [string]$IddInstaller,
+    [string]$VirtioIso,
+    [string]$OpenSshSource,
+    [string]$OpenSshZip,
+    [switch]$SkipSsh,
+    [switch]$SkipSpice
+)
+$ErrorActionPreference = 'Stop'
+$scriptDir = $PSScriptRoot
 
-# 1. Enforce Administrator Privileges
+function Quote-PS([string]$Value) { "'" + $Value.Replace("'", "''") + "'" }
+
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
-    Write-Host "Re-launching bootstrapper as Administrator..." -ForegroundColor Yellow
-    Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
-    Exit
+    # An encoded invocation preserves paths, switches and the child's exit code.
+    $invocation = '& ' + (Quote-PS $PSCommandPath)
+    foreach ($item in $PSBoundParameters.GetEnumerator()) {
+        $invocation += ' -' + $item.Key
+        if ($item.Value -is [System.Management.Automation.SwitchParameter]) {
+            $invocation += ':$' + $item.Value.IsPresent.ToString().ToLowerInvariant()
+        } else { $invocation += ' ' + (Quote-PS ([string]$item.Value)) }
+    }
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($invocation))
+    $child = Start-Process powershell.exe -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $encoded) -WorkingDirectory (Get-Location).Path -Verb RunAs -Wait -PassThru
+    exit $child.ExitCode
 }
 
-Write-Host "==================================================" -ForegroundColor Cyan
-Write-Host "      Dusky VM Guest Setup Bootstrapper           " -ForegroundColor Cyan
-Write-Host "==================================================" -ForegroundColor Cyan
+function Find-Python {
+    # A version probe must never trigger Python manager's automatic online install.
+    $env:PYTHON_MANAGER_AUTOMATIC_INSTALL = 'false'
+    $candidates = @($PythonExe, (Join-Path $scriptDir 'python\python.exe'))
+    $command = Get-Command python.exe -ErrorAction SilentlyContinue
+    if ($command) { $candidates += $command.Source }
+    $probe = 'import sys; print(sys.executable); sys.exit(0 if sys.version_info >= (3,15) else 1)'
+    foreach ($candidate in $candidates) {
+        if (-not $candidate) { continue }
+        try {
+            $output = & $candidate -c $probe 2>$null
+            if ($LASTEXITCODE -eq 0 -and $output) { return ([string]($output | Select-Object -Last 1)).Trim() }
+        } catch { }
+    }
+    $launcher = Get-Command py.exe -ErrorAction SilentlyContinue
+    if ($launcher) {
+        try {
+            $output = & $launcher.Source -3.15 -c $probe 2>$null
+            if ($LASTEXITCODE -eq 0 -and $output) { return ([string]($output | Select-Object -Last 1)).Trim() }
+        } catch { }
+    }
+    return $null
+}
 
-# 2. Check for Python 3 (run it to verify it's not a fake Microsoft Store app alias)
-$pythonInstalled = $false
+function Get-SpiceAgent {
+    # Discover the installed service from its binary, independent of display language.
+    Get-CimInstance Win32_Service | Where-Object { $_.PathName -match '(?i)[\\/]vdservice\.exe(?:"|\s|$)' } | Select-Object -First 1
+}
+
 try {
-    $out = & python --version 2>&1
-    if ($LASTEXITCODE -eq 0 -and $out -like "*Python*") {
-        $pythonInstalled = $true
-    }
-} catch {
-    $pythonInstalled = $false
-}
-
-if (-not $pythonInstalled) {
-    Write-Host "`n[!] Python 3 not found on this system." -ForegroundColor Yellow
-    Write-Host "[*] Downloading the latest Python 3.13 installer from python.org..." -ForegroundColor Cyan
-    
-    $tempDir = [System.IO.Path]::GetTempPath()
-    $installerPath = Join-Path $tempDir "python_installer.exe"
-    $pythonUrl = "https://www.python.org/ftp/python/3.13.0/python-3.13.0-amd64.exe"
-    
-    try {
-        Invoke-WebRequest -Uri $pythonUrl -OutFile $installerPath -ErrorAction Stop
-        Write-Host "[+] Python installer downloaded successfully." -ForegroundColor Green
-    } catch {
-        Write-Error "Failed to download Python installer: $_"
-        Read-Host "Press Enter to exit..."
-        Exit 1
-    }
-    
-    Write-Host "[*] Running Python installation with progress bar... (this will take a moment)" -ForegroundColor Cyan
-    # Install for all users and add python.exe to PATH
-    $installArgs = "/passive InstallAllUsers=1 PrependPath=1 TargetDir=`"C:\Program Files\Python313`""
-    $process = Start-Process -FilePath $installerPath -ArgumentList $installArgs -Wait -PassThru
-    
-    if ($process.ExitCode -eq 0) {
-        Write-Host "[+] Python 3 installed successfully!" -ForegroundColor Green
-        Remove-Item $installerPath -Force
-        
-        # Force refresh PATH environment variables for the current session
-        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
-    } else {
-        Write-Error "Python installation failed with exit code: $($process.ExitCode)"
-        Read-Host "Press Enter to exit..."
-        Exit 1
-    }
-} else {
-    Write-Host "`n[+] Python 3 is already installed." -ForegroundColor Green
-}
-
-# 2.5 Ensure SPICE Guest Agent (clipboard sharing) is installed
-$spiceAgent = Get-Service -Name "spice-agent" -ErrorAction SilentlyContinue
-if (-not $spiceAgent -or $spiceAgent.Status -ne "Running") {
-    Write-Host "`n[*] SPICE Guest Agent is not running." -ForegroundColor Yellow
-    
-    $choice = Read-Host "Would you like to install the SPICE Guest Agent from the VirtIO ISO? [Y/n]"
-    if ($null -eq $choice -or $choice -match '^\s*$' -or $choice.Trim().ToLower() -eq 'y') {
-        # Locate the VirtIO-Win ISO in the root of the shared Z: drive (or current directory)
-        $isoPath = Get-ChildItem -Path "Z:\" -Filter "virtio-win-*.iso" | Select-Object -First 1 -ExpandProperty FullName
-        if (-not $isoPath) {
-            $isoPath = Get-ChildItem -Path "." -Filter "virtio-win-*.iso" | Select-Object -First 1 -ExpandProperty FullName
+    $python = Find-Python
+    if (-not $python) {
+        if (-not $PythonIndex) { $PythonIndex = Join-Path $scriptDir 'python\index.json' }
+        if (-not (Test-Path -LiteralPath $PythonIndex -PathType Leaf)) {
+            throw 'Python 3.15+ is missing. Supply -PythonExe with a bundled runtime, or install Python install manager and supply -PythonIndex with offline runtime media. See README.md.'
         }
-        
-        if ($isoPath) {
-            Write-Host "[*] Found VirtIO-Win ISO at: $isoPath" -ForegroundColor Cyan
-            Write-Host "[*] Mounting ISO to search for guest tools..." -ForegroundColor Cyan
+        $manager = Get-Command pymanager.exe -ErrorAction SilentlyContinue
+        if (-not $manager) { throw 'Install Python install manager before using -PythonIndex, or supply -PythonExe.' }
+        & $manager.Source install "--source=$PythonIndex" 3.15
+        if ($LASTEXITCODE -ne 0) { throw "Offline Python installation failed ($LASTEXITCODE)." }
+        $python = Find-Python
+        if (-not $python) { throw 'Python 3.15+ could not be resolved after installation.' }
+    }
+    Write-Host "Using Python: $python"
+    $restartRequired = $false
+
+    if (-not $SkipSpice) {
+        $agent = Get-SpiceAgent
+        if (-not $agent) {
+            $mountedByUs = $false
             try {
-                $mount = Mount-DiskImage -ImagePath $isoPath -PassThru -ErrorAction Stop
-                $driveLetter = ($mount | Get-Volume).DriveLetter
-                if ($driveLetter) {
-                    $installer = Join-Path "${driveLetter}:" "virtio-win-guest-tools.exe"
-                    if (Test-Path $installer) {
-                        Write-Host "[*] Running VirtIO guest tools installer silently..." -ForegroundColor Cyan
-                        $proc = Start-Process -FilePath $installer -ArgumentList "/quiet /norestart" -PassThru -Wait
-                        if ($proc.ExitCode -eq 0) {
-                            Write-Host "[+] SPICE Guest Agent and VirtIO tools installed successfully!" -ForegroundColor Green
-                        } else {
-                            Write-Warning "VirtIO guest tools installation completed with non-zero exit code: $($proc.ExitCode)"
-                        }
-                    } else {
-                        Write-Warning "Could not find 'virtio-win-guest-tools.exe' inside the mounted ISO. Skipping installation..."
+                if ($VirtioIso) {
+                    $image = Get-DiskImage -ImagePath $VirtioIso
+                    if (-not $image.Attached) {
+                        Mount-DiskImage -ImagePath $VirtioIso | Out-Null
+                        $mountedByUs = $true
                     }
-                } else {
-                    Write-Warning "Could not resolve drive letter for mounted ISO. Skipping installation..."
                 }
-                Dismount-DiskImage -ImagePath $isoPath -ErrorAction SilentlyContinue | Out-Null
-            } catch {
-                Write-Warning "Failed to mount/read VirtIO ISO: $_. Skipping installation..."
+                $media = @($scriptDir)
+                $media += @(Get-CimInstance Win32_LogicalDisk -Filter 'DriveType = 5' | ForEach-Object { $_.DeviceID + '\' })
+                $installer = $media | ForEach-Object { Join-Path $_ 'virtio-win-guest-tools.exe' } | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+                if (-not $installer) { throw 'Provide mounted VirtIO-Win media, -VirtioIso PATH, or virtio-win-guest-tools.exe beside this script. Use -SkipSpice to omit SPICE clipboard setup.' }
+                $process = Start-Process -FilePath $installer -ArgumentList @('/quiet', '/norestart') -Wait -PassThru
+                if ($process.ExitCode -notin @(0, 3010, 1641)) { throw "VirtIO guest tools failed ($($process.ExitCode))." }
+                if ($process.ExitCode -ne 0) { $restartRequired = $true }
+            } finally {
+                if ($mountedByUs) { Dismount-DiskImage -ImagePath $VirtioIso | Out-Null }
             }
-        } else {
-            Write-Warning "Could not locate virtio-win-*.iso on Z:\ or current directory. Skipping installation..."
+            if ($restartRequired) {
+                Write-Host 'VirtIO guest tools require a restart. Restart Windows and rerun this bootstrapper to complete SSH and IDD setup.'
+                exit 3010
+            }
+            $agent = Get-SpiceAgent
         }
-    } else {
-        Write-Host "[-] Skipping SPICE Guest Agent installation." -ForegroundColor Yellow
+        if ($agent) {
+            Start-Service -Name $agent.Name
+            (Get-Service -Name $agent.Name).WaitForStatus('Running', [TimeSpan]::FromSeconds(30))
+        } else { throw 'SPICE agent service was not installed by the supplied guest tools.' }
     }
-} else {
-    Write-Host "`n[+] SPICE Guest Agent is already running." -ForegroundColor Green
+
+    if (-not $SkipSsh) {
+        $sshArgs = @((Join-Path $scriptDir 'setup_ssh.py'))
+        if ($OpenSshSource) { $sshArgs += @('--source', $OpenSshSource) }
+        if ($OpenSshZip) { $sshArgs += @('--openssh-zip', $OpenSshZip) }
+        & $python @sshArgs
+        if ($LASTEXITCODE -ne 0) { throw "SSH setup failed ($LASTEXITCODE)." }
+    }
+    $iddArgs = @((Join-Path $scriptDir 'setup_vdd.py'))
+    if ($IddInstaller) { $iddArgs += @('--installer', $IddInstaller) }
+    & $python @iddArgs
+    if ($LASTEXITCODE -eq 3010) { $restartRequired = $true }
+    elseif ($LASTEXITCODE -ne 0) { throw "Looking Glass IDD setup failed ($LASTEXITCODE)." }
+
+    if ($restartRequired) {
+        Write-Host 'Guest installers completed. Restart Windows before verifying display, input and clipboard.'
+        exit 3010
+    }
+    Write-Host 'Requested guest setup steps completed successfully.'
+    exit 0
+} catch {
+    Write-Error -ErrorAction Continue $_
+    exit 1
 }
-
-
-# 3. Locate and execute the Python setup scripts
-$scriptDir = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
-$sshScript = Join-Path $scriptDir "setup_ssh.py"
-$vddScript = Join-Path $scriptDir "setup_vdd.py"
-
-if (-not (Test-Path $sshScript)) { $sshScript = Join-Path (Get-Location) "setup_ssh.py" }
-if (-not (Test-Path $vddScript)) { $vddScript = Join-Path (Get-Location) "setup_vdd.py" }
-
-if (Test-Path $sshScript) {
-    Write-Host "`n[*] Launching SSH Configuration Script..." -ForegroundColor Cyan
-    & python $sshScript
-} else {
-    Write-Warning "Could not find 'setup_ssh.py' in $scriptDir or current directory."
-}
-
-if (Test-Path $vddScript) {
-    Write-Host "`n[*] Launching VDD Setup Script..." -ForegroundColor Cyan
-    & python $vddScript
-} else {
-    Write-Warning "Could not find 'setup_vdd.py' in $scriptDir or current directory."
-}
-
-Write-Host "`n==================================================" -ForegroundColor Green
-Write-Host "      ALL VM GUEST SETUPS COMPLETED SUCCESSFULLY! " -ForegroundColor Green
-Write-Host "==================================================" -ForegroundColor Green
-Read-Host "Press Enter to close..."

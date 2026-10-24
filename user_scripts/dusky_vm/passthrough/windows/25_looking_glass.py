@@ -1,21 +1,14 @@
 #!/usr/bin/env python3
-"""
-Arsonix KVM/VFIO Pipeline -- Phase 5 (25_looking_glass.py)
-Looking Glass shared-memory relay: host staging + native libvirt <shmem> device.
+"""Configure shared memory and libvirt devices for the current Looking Glass IDD.
 
-Target : Arch Linux rolling (Aug 2026) / libvirt 12.6+ / Looking Glass B7+
-Policy : Use the libvirt-native <shmem> device. The <qemu:commandline> ivshmem
-         hack is DELETED, not carried forward: raw QOM args bypass libvirt's
-         device model, block migration/validation, force the xmlns:qemu escape
-         hatch, and silently desynchronise from <memballoon>/NUMA handling.
-         libvirt emits the identical -device ivshmem-plain + memory-backend-file
-         pair from <shmem>, and additionally creates/labels /dev/shm/<name>.
+Target: Arch Linux, Python 3.15+, matching development client and guest builds.
+Uses native ivshmem-plain and /dev/shm/looking-glass; initializes file permissions
+without replacing active mappings, and preserves the VM's CPU configuration.
 """
 
 import argparse
 import grp
 import json
-import math
 import os
 import pwd
 import shutil
@@ -30,7 +23,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Never
 
-MIN_PY: tuple[int, int, int] = (3, 14, 7)
+MIN_PY: tuple[int, int, int] = (3, 15, 0)
 STATE_DIR = Path("/var/lib/arsonix")
 STATE_FILE = STATE_DIR / "state.json"
 STATE_SCHEMA = 2
@@ -66,8 +59,7 @@ def elevate() -> None:
 
 
 if sys.version_info[:3] < MIN_PY:
-    _hard_exit("Python 3.14.7+ required.")
-elevate()
+    _hard_exit("Python 3.15+ required.")
 
 try:
     from rich.console import Console
@@ -100,6 +92,7 @@ def run(argv: list[str], *, check: bool = False, timeout: float = 120.0) -> Cmd:
         proc = subprocess.run(
             argv, check=False, timeout=timeout, text=True,
             capture_output=True, stdin=subprocess.DEVNULL,
+            env={**os.environ, "LC_ALL": "C"},
         )
         res = Cmd(argv, proc.returncode, (proc.stdout or "").strip(), (proc.stderr or "").strip())
     except subprocess.TimeoutExpired:
@@ -210,6 +203,19 @@ def in_repos(pkg: str) -> bool:
     return run(["pacman", "-Si", pkg], timeout=30).ok
 
 
+def current_client_available() -> bool:
+    client = shutil.which("looking-glass-client")
+    if client is None:
+        return False
+    # --help prints to stderr and may return nonzero; inspect the option list.
+    help_result = run([client, "--help"], timeout=15)
+    options = help_result.out + "\n" + help_result.err
+    return all(name in options for name in (
+        "lgmp:shmDevice", "spice:enable", "spice:host", "spice:port",
+        "spice:usbAudio", "wayland:fractionScale",
+    ))
+
+
 def install_packages(pkgs: list[str], operator: pwd.struct_passwd) -> None:
     console.print("\n[bold blue]==>[/bold blue] [bold]Looking Glass client toolchain[/bold]")
     missing = [p for p in pkgs if not installed(p)]
@@ -243,18 +249,22 @@ def install_packages(pkgs: list[str], operator: pwd.struct_passwd) -> None:
 # ==============================================================================
 def shm_bytes_for(width: int, height: int) -> int:
     """
-    Looking Glass B7+ IDD sizing rule (triple-buffered):
+    Current Looking Glass IDD sizing rule (triple-buffered):
     (ceil(width * 4 / 256) * 256) * height * 3 + (4 * 1024 * 1024),
     rounded UP to the next power of two.
     ivshmem-plain requires a power-of-two region, so the rounding is mandatory.
     """
-    stride = math.ceil((width * 4) / 256) * 256
+    if width <= 0 or height <= 0:
+        raise ValueError("Width and height must be positive.")
+    stride = ((width * 4 + 255) // 256) * 256
     raw = stride * height * 3 + (4 << 20)
-    return 1 << math.ceil(math.log2(raw))
+    return 1 << (raw - 1).bit_length()
 
 
 def choose_shm(explicit_mib: int | None) -> tuple[int, int]:
-    if explicit_mib:
+    if explicit_mib is not None:
+        if explicit_mib <= 0:
+            bail("--shm-mib must be positive.")
         size = explicit_mib << 20
         if size & (size - 1):
             bail(f"--shm-mib must be a power of two, got {explicit_mib}.")
@@ -269,7 +279,7 @@ def choose_shm(explicit_mib: int | None) -> tuple[int, int]:
     table.add_column("Region (power of two)", style="bold yellow")
     for opt, label, width, height in presets:
         total = shm_bytes_for(width, height)
-        stride = math.ceil((width * 4) / 256) * 256
+        stride = ((width * 4 + 255) // 256) * 256
         table.add_row(opt, label, f"{stride * height * 3 / (1 << 20):.1f} MiB + 4 MiB",
                       f"{total >> 20} MiB")
     table.add_row("4", "custom", "-", "computed")
@@ -281,6 +291,8 @@ def choose_shm(explicit_mib: int | None) -> tuple[int, int]:
         height = IntPrompt.ask("Height", default=1440)
     else:
         _, _, width, height = presets[int(choice) - 1]
+    if width <= 0 or height <= 0:
+        bail("Width and height must be positive.")
     size = shm_bytes_for(width, height)
     console.print(f"[bold green]  ok[/bold green] {width}x{height} -> {size >> 20} MiB ({size} B)")
     return size >> 20, size
@@ -303,7 +315,28 @@ def configure_tmpfiles(operator: pwd.struct_passwd) -> None:
         console.print(f"[bold green]  ok[/bold green] {TMPFILES} already convergent.")
     res = run(["systemd-tmpfiles", "--create", str(TMPFILES)], timeout=60)
     if not res.ok:
-        console.print(f"[yellow]  ! systemd-tmpfiles: {res.err or res.out}[/yellow]")
+        bail(f"systemd-tmpfiles failed: {res.err or res.out}")
+
+
+def require_shm_stopped() -> None:
+    """Do not replace/resize a region used by any active libvirt domain."""
+    active = virsh(["list", "--name"])
+    if not active.ok:
+        bail(f"Cannot check active domains: {active.err or active.out}")
+    for name in active.out.splitlines():
+        if not name:
+            continue
+        dump = virsh(["dumpxml", name])
+        if not dump.ok:
+            bail(f"Cannot inspect active domain '{name}': {dump.err or dump.out}")
+        root = ET.fromstring(dump.out)
+        native = root.find(f"./devices/shmem[@name='{SHM_NAME}']")
+        legacy = root.find(f"{{{QEMU_NS}}}commandline")
+        if native is not None or (legacy is not None and any(
+            str(SHM_PATH) in arg.get("value", "")
+            for arg in legacy.findall(f"{{{QEMU_NS}}}arg")
+        )):
+            bail(f"Power off '{name}' before resizing or recreating {SHM_PATH}.")
 
 
 def stage_shm(operator: pwd.struct_passwd, size: int, force: bool) -> None:
@@ -313,42 +346,33 @@ def stage_shm(operator: pwd.struct_passwd, size: int, force: bool) -> None:
     except KeyError:
         bail("Group 'kvm' does not exist.")
 
-    # Symlink defense: /dev/shm is world-writable + sticky, never follow
     if SHM_PATH.is_symlink():
-        bail(f"{SHM_PATH} is a symlink (possible TOCTOU attack). Remove it manually.")
+        bail(f"{SHM_PATH} is a symlink. Remove it manually.")
     if SHM_PATH.exists():
-        try:
-            st = SHM_PATH.stat()
-        except OSError as exc:
-            bail(f"Cannot stat {SHM_PATH}: {exc}")
-        if stat.S_ISDIR(st.st_mode):
-            bail(f"{SHM_PATH} is a directory (a stale kvmfr/mount artefact). Remove it manually.")
-        if st.st_size == size and st.st_uid == operator.pw_uid and st.st_gid == kvm_gid \
-                and stat.S_IMODE(st.st_mode) == 0o660 and not force:
-            console.print(
-                f"[bold green]  ok[/bold green] {SHM_PATH} already {size >> 20} MiB "
-                f"{operator.pw_name}:kvm 0660."
-            )
+        st = SHM_PATH.stat()
+        if not stat.S_ISREG(st.st_mode):
+            bail(f"{SHM_PATH} is not a regular file.")
+        if st.st_size == size and not force:
+            # Permission drift does not invalidate a mapping. Repair in place.
+            fd = os.open(SHM_PATH, os.O_RDWR | os.O_NOFOLLOW)
+            try:
+                os.fchown(fd, operator.pw_uid, kvm_gid)
+                os.fchmod(fd, 0o660)
+            finally:
+                os.close(fd)
+            console.print(f"[bold green]  ok[/bold green] {SHM_PATH}: retained {size >> 20} MiB mapping, permissions corrected.")
             return
-        if st.st_size and st.st_size != size:
-            console.print(
-                f"[yellow]  ! Resizing {SHM_PATH} from {st.st_size >> 20} to "
-                f"{size >> 20} MiB. Any running guest mapping it must be powered off.[/yellow]"
-            )
-        # Any mismatch requires replacing the inode; warn and unlink (live mapping already
-        # invalidated by size/owner/mode drift). Use O_EXCL to avoid raced truncation.
-        try:
-            SHM_PATH.unlink()
-        except OSError as exc:
-            bail(f"Cannot remove stale {SHM_PATH}: {exc}")
 
+    require_shm_stopped()
+    SHM_PATH.unlink(missing_ok=True)
     fd = os.open(SHM_PATH, os.O_CREAT | os.O_EXCL | os.O_RDWR | os.O_NOFOLLOW, 0o660)
     try:
-        # tmpfs on Linux 7.1.8 guarantees fallocate; sparse fallback is a legacy shim and is
-        # deleted per the Aug 2026 no-compat directive.
         os.posix_fallocate(fd, 0, size)
         os.fchown(fd, operator.pw_uid, kvm_gid)
         os.fchmod(fd, 0o660)
+    except BaseException:
+        SHM_PATH.unlink(missing_ok=True)
+        raise
     finally:
         os.close(fd)
     console.print(
@@ -358,100 +382,85 @@ def stage_shm(operator: pwd.struct_passwd, size: int, force: bool) -> None:
 
 
 # ==============================================================================
-# HOST CPU TOPOLOGY
-# ==============================================================================
-def host_threads_per_core() -> int:
-    path = Path("/sys/devices/system/cpu/cpu0/topology/thread_siblings_list")
-    try:
-        raw = path.read_text(encoding="utf-8").strip()
-    except OSError:
-        return 1
-    count = 0
-    for chunk in raw.split(","):
-        if "-" in chunk:
-            low, high = chunk.split("-", 1)
-            count += int(high) - int(low) + 1
-        else:
-            count += 1
-    return max(count, 1)
-
-
-# ==============================================================================
 # DOMAIN XML SURGERY
 # ==============================================================================
-def sub(parent: ET.Element, tag: str, **attrs: str) -> ET.Element:
-    found = parent.find(tag)
-    if found is None:
-        found = ET.SubElement(parent, tag)
-    for key, val in attrs.items():
-        found.set(key, val)
-    return found
-
-
 def strip_legacy_qom(root: ET.Element) -> bool:
     """Remove the pre-<shmem> qemu:commandline ivshmem/kvmfr escape hatch."""
     cmdline = root.find(f"{{{QEMU_NS}}}commandline")
     if cmdline is None:
         return False
     args = list(cmdline.findall(f"{{{QEMU_NS}}}arg"))
-    keep: list[ET.Element] = []
-    skip_next = False
-    removed = False
-    for index, arg in enumerate(args):
-        if skip_next:
-            skip_next = False
-            removed = True
+    pairs: list[tuple[int, str, dict]] = []
+    index = 0
+    while index + 1 < len(args):
+        flag = args[index].get("value", "")
+        if flag not in ("-object", "-device"):
+            index += 1
             continue
-        value = arg.get("value", "")
-        if value in ("-device", "-object") and index + 1 < len(args):
-            payload = args[index + 1].get("value", "")
-            if "looking-glass" in payload or "kvmfr" in payload or "ivshmem" in payload:
-                skip_next = True
-                removed = True
+        payload = args[index + 1].get("value", "")
+        if payload.startswith("{"):
+            try:
+                fields = json.loads(payload)
+            except json.JSONDecodeError:
+                # QEMU also accepts the single-quoted JSON shown in the
+                # upstream IVSHMEM instructions. These device paths contain
+                # no quotes; unrelated unparseable arguments stay untouched.
+                try:
+                    fields = json.loads(payload.replace("'", '"'))
+                except json.JSONDecodeError:
+                    index += 2
+                    continue
+            if not isinstance(fields, dict):
+                index += 2
                 continue
-        if "looking-glass" in value or "kvmfr" in value:
-            removed = True
-            continue
-        keep.append(arg)
-    for child in list(cmdline):
-        cmdline.remove(child)
-    for arg in keep:
-        cmdline.append(arg)
+        else:
+            parts = payload.split(",")
+            fields = dict(part.split("=", 1) for part in parts if "=" in part)
+            fields.setdefault("driver" if flag == "-device" else "qom-type", parts[0])
+        pairs.append((index, flag, fields))
+        index += 2
+    # Match the memory backend first, then its device. Other IVSHMEM devices,
+    # QEMU arguments and qemu:env entries belong to the operator.
+    backends = {
+        fields.get("id") for _, flag, fields in pairs
+        if flag == "-object" and fields.get("id") and (
+            fields.get("mem-path") == str(SHM_PATH)
+            or str(fields.get("mem-path", "")).startswith("/dev/kvmfr")
+        )
+    }
+    remove: set[int] = set()
+    for index, flag, fields in pairs:
+        if (flag == "-object" and fields.get("id") in backends) or (
+            flag == "-device" and str(fields.get("driver", "")).startswith("ivshmem")
+            and fields.get("memdev") in backends
+        ):
+            remove.update((index, index + 1))
+    for index in sorted(remove, reverse=True):
+        cmdline.remove(args[index])
     if len(cmdline) == 0:
         root.remove(cmdline)
-    return removed
+    return bool(remove)
 
 
 def apply_shmem(root: ET.Element, mib: int) -> None:
     devices = root.find("devices")
     if devices is None:
         devices = ET.SubElement(root, "devices")
-    for existing in devices.findall("shmem"):
-        if existing.get("name") == SHM_NAME:
-            devices.remove(existing)
-    shmem = ET.SubElement(devices, "shmem", name=SHM_NAME)
-    ET.SubElement(shmem, "model", type="ivshmem-plain")
-    size = ET.SubElement(shmem, "size", unit="M")
+    shmem = devices.find(f"shmem[@name='{SHM_NAME}']")
+    if shmem is None:
+        shmem = ET.SubElement(devices, "shmem", name=SHM_NAME)
+    model = shmem.find("model")
+    if model is None:
+        model = ET.SubElement(shmem, "model")
+    model.set("type", "ivshmem-plain")
+    size = shmem.find("size")
+    if size is None:
+        size = ET.SubElement(shmem, "size")
+    size.set("unit", "M")
     size.text = str(mib)
-
-
-def apply_cpu_topology(root: ET.Element) -> str:
-    vcpu_elem = root.find("vcpu")
-    try:
-        vcpus = int((vcpu_elem.text or "1").strip()) if vcpu_elem is not None else 1
-    except ValueError:
-        vcpus = 1
-    smt = host_threads_per_core()
-    threads = smt if smt > 1 and vcpus % smt == 0 else 1
-    cores = max(vcpus // threads, 1)
-    cpu = root.find("cpu")
-    if cpu is None:
-        cpu = ET.SubElement(root, "cpu")
-    cpu.set("mode", "host-passthrough")
-    cpu.set("check", "none")
-    cpu.set("migratable", "off")
-    sub(cpu, "topology", sockets="1", dies="1", cores=str(cores), threads=str(threads))
-    return f"1 socket x {cores} cores x {threads} threads = {cores * threads} vCPU (declared {vcpus})"
+    # Doorbell servers are incompatible with ivshmem-plain. Keep the PCI address.
+    for child in [*shmem.findall("server"), *shmem.findall("msi")]:
+        shmem.remove(child)
 
 
 def apply_latency_tuning(root: ET.Element) -> list[str]:
@@ -485,6 +494,9 @@ def apply_latency_tuning(root: ET.Element) -> list[str]:
             ET.SubElement(graphics, "listen", type="address", address="127.0.0.1")
             notes.append("graphics spice listen -> 127.0.0.1 (autoport=yes)")
 
+    if graphics is None:
+        return notes  # SPICE channels require a SPICE graphics device.
+
     has_agent = any(
         channel.get("type") == "spicevmc"
         and (channel.find("target") is not None)
@@ -514,7 +526,6 @@ def transform_domain(xml_text: str, mib: int) -> tuple[str, list[str]]:
         notes.append("legacy qemu:commandline ivshmem args removed")
     apply_shmem(root, mib)
     notes.append(f"native <shmem name='{SHM_NAME}'> ivshmem-plain {mib} MiB")
-    notes.append(apply_cpu_topology(root))
     notes += apply_latency_tuning(root)
     ET.indent(root, space="  ")
     return ET.tostring(root, encoding="unicode") + "\n", notes
@@ -522,8 +533,10 @@ def transform_domain(xml_text: str, mib: int) -> tuple[str, list[str]]:
 
 def list_domains() -> list[tuple[str, str]]:
     res = virsh(["list", "--all", "--name"])
+    if not res.ok:
+        bail(f"Cannot list domains: {res.err or res.out}")
     domains: list[tuple[str, str]] = []
-    for name in res.out.split():
+    for name in res.out.splitlines():
         state = virsh(["domstate", name]).out or "unknown"
         domains.append((name, state))
     return domains
@@ -548,7 +561,7 @@ def redefine(domain: str, mib: int) -> bool:
             handle.write(new_xml)
             handle.flush()
             os.fsync(handle.fileno())
-        res = virsh(["define", str(tmp)])
+        res = virsh(["define", str(tmp), "--validate"])
         if not res.ok:
             backup = Path(f"/var/lib/arsonix/{domain}.rejected.xml")
             atomic_write(backup, new_xml)
@@ -576,12 +589,12 @@ def wait_for_shutdown(domain: str, budget: float = 900.0) -> bool:
     return False
 
 
-def interactive_domain_pass(mib: int) -> None:
+def interactive_domain_pass(mib: int) -> bool:
     domains = list_domains()
     if not domains:
         console.print("\n[yellow]No libvirt domains defined yet; Phase 6 will create one "
                       "with <shmem> already present.[/yellow]")
-        return
+        return True
     console.print("\n[bold cyan]Domains[/bold cyan]")
     choices: list[str] = []
     for index, (name, state) in enumerate(domains, start=1):
@@ -592,10 +605,10 @@ def interactive_domain_pass(mib: int) -> None:
     choices.append(skip)
     choice = Prompt.ask("Select", choices=choices, default=skip)
     if choice == skip:
-        return
+        return True
     name, state = domains[int(choice) - 1]
     if not redefine(name, mib):
-        return
+        return False
     if state != "shut off":
         console.print(
             Panel(
@@ -612,6 +625,7 @@ def interactive_domain_pass(mib: int) -> None:
                     f"[bold green]  ok[/bold green] started."
                     if res.ok else f"[red]  x {res.err or res.out}[/red]"
                 )
+    return True
 
 
 # ==============================================================================
@@ -624,12 +638,13 @@ def main() -> None:
     parser.add_argument("--no-packages", action="store_true", help="skip package installation")
     parser.add_argument("--domain", help="non-interactive: patch this domain")
     args = parser.parse_args()
+    elevate()
 
     console.clear()
     console.print(
         Panel(
             "[bold green]Arsonix Phase 5 -- Looking Glass Frame Relay[/bold green]\n"
-            "native <shmem> ivshmem-plain / tmpfiles / host-passthrough topology",
+            "native <shmem> ivshmem-plain / tmpfiles / existing CPU topology preserved",
             expand=False,
             border_style="green",
         )
@@ -637,16 +652,24 @@ def main() -> None:
 
     operator = resolve_operator()
     if not args.no_packages:
-        install_packages(["looking-glass", "freerdp"], operator)
+        packages = ["freerdp"]
+        if not current_client_available():
+            packages.append("looking-glass-git")
+        install_packages(packages, operator)
+    if not current_client_available():
+        bail("A current Looking Glass IDD client with Wayland and SPICE support is required. "
+             "Install the matching development build (looking-glass-git), or build the "
+             "client from the same source release as your Windows IDD installer.")
 
     mib, size = choose_shm(args.shm_mib)
-    configure_tmpfiles(operator)
     stage_shm(operator, size, args.force_recreate)
+    configure_tmpfiles(operator)
 
     if args.domain:
-        redefine(args.domain, mib)
-    else:
-        interactive_domain_pass(mib)
+        if not redefine(args.domain, mib):
+            bail(f"Failed to configure domain {args.domain!r}.")
+    elif not interactive_domain_pass(mib):
+        bail("Failed to configure the selected domain.")
 
     state_merge(
         shm_path=str(SHM_PATH),

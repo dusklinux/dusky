@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Never
 
-MIN_PY: tuple[int, int, int] = (3, 14, 7)
+MIN_PY: tuple[int, int, int] = (3, 15, 0)
 STATE_DIR = Path("/var/lib/arsonix")
 STATE_FILE = STATE_DIR / "state.json"
 STATE_SCHEMA = 2
@@ -55,8 +55,7 @@ def elevate() -> None:
 
 
 if sys.version_info[:3] < MIN_PY:
-    _hard_exit("Python 3.14.7+ required.")
-elevate()
+    _hard_exit("Python 3.15+ required.")
 
 try:
     from rich.console import Console
@@ -365,17 +364,20 @@ def build_command(spec: Spec) -> list[str]:
         # TPM 2.0 + SMM are hard requirements of the win11 osinfo profile.
         cmd += ["--tpm", "backend.type=emulator,backend.version=2.0,model=tpm-crb"]
         cmd += ["--features", f"smm.state=on,{HYPERV}"]
-        cmd += ["--clock", "hypervclock.present=yes"]
+        cmd += ["--clock", "timer0.name=hypervclock,timer0.present=yes"]
+        cmd += ["--redirdev", "type=spicevmc,bus=usb"]
+        cmd += ["--sound", "model=ich9,audio.id=1", "--audio", "id=1,type=spice"]
 
     match spec.graphics:
         case "spice":
             cmd += ["--graphics", "spice,listen=127.0.0.1", "--video", "virtio"]
         case "spice-gl":
-            cmd += ["--graphics", "spice,listen=127.0.0.1,gl.enable=yes",
+            cmd += ["--graphics", "spice,listen=socket,gl.enable=yes",
                     "--video", "virtio,accel3d=yes"]
         case _:
-            # Looking Glass: SPICE stays for keyboard/mouse + agent, no emulated GPU.
-            cmd += ["--graphics", "spice,listen=127.0.0.1,gl.enable=no", "--video", "model=none"]
+            # Keep a Windows setup/IDD-recovery display before guest drivers exist.
+            video = "vga" if spec.windows else "model=none"
+            cmd += ["--graphics", "spice,listen=127.0.0.1,gl.enable=no", "--video", video]
 
     for nodedev in spec.hostdevs:
         cmd += ["--hostdev", nodedev]
@@ -427,7 +429,7 @@ def define_domain(name: str, xml_text: str) -> None:
             handle.write(xml_text)
             handle.flush()
             os.fsync(handle.fileno())
-        res = virsh(["define", str(tmp)])
+        res = virsh(["define", str(tmp), "--validate"])
         if not res.ok:
             keep = STATE_DIR / f"{name}.rejected.xml"
             atomic_write(keep, xml_text)
@@ -454,7 +456,7 @@ def interview(state: dict, home: Path) -> tuple[Spec, int]:
 
     while True:
         name = Prompt.ask("\n[bold cyan]Domain name[/bold cyan]", default="arsonix-guest").strip()
-        if not NAME_RE.match(name):
+        if not NAME_RE.fullmatch(name):
             console.print("[red]  x Use [A-Za-z0-9._+-], max 50 chars, no spaces.[/red]")
             continue
         if domain_exists(name):
@@ -480,7 +482,7 @@ def interview(state: dict, home: Path) -> tuple[Spec, int]:
     console.print("\n[bold cyan]Display topology[/bold cyan]")
     console.print("  [1] SPICE + virtio 2D")
     console.print("  [2] SPICE + virgl 3D acceleration")
-    console.print("  [3] VFIO passthrough + Looking Glass (no emulated GPU)")
+    console.print("  [3] VFIO passthrough + Looking Glass (Windows VGA setup fallback)")
     gfx_choice = Prompt.ask("Choice", choices=["1", "2", "3"], default="1")
     graphics = {"1": "spice", "2": "spice-gl", "3": "passthrough"}[gfx_choice]
 
@@ -553,6 +555,7 @@ def main() -> None:
     parser.add_argument("--force-disk", action="store_true", help="recreate the qcow2 unprompted")
     parser.add_argument("--dump-only", action="store_true", help="print the XML, do not define")
     args = parser.parse_args()
+    elevate()
 
     console.clear()
     console.print(

@@ -1,24 +1,22 @@
 #!/usr/bin/env python3
-"""
-Dusky Windows KVM & Looking Glass Manager
-Author: Antigravity Pair Programmer
-Scope: Automated VM start/stop/kill/reboot/view/launch pipelines.
-Philosophy: Zero hardcoding, dynamic VM selector, self-learning default cache, elite socket-level sync.
+"""Manage a system libvirt Windows VM and its Looking Glass/FreeRDP clients.
+
+Read the selected domain's active display and shared-memory device before
+launching Looking Glass. Cache the operator's VM and input-key preferences.
 """
 
+import argparse
 import os
 import sys
 import json
 import stat
 import tempfile
-import time
-import socket
 import shutil
 import subprocess
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
-MIN_PY: tuple[int, int, int] = (3, 14, 7)
+MIN_PY: tuple[int, int, int] = (3, 15, 0)
 if sys.version_info[:3] < MIN_PY:
     sys.stderr.write(f"\n[FATAL] Python {MIN_PY[0]}.{MIN_PY[1]}.{MIN_PY[2]}+ required; running {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}.\n\n")
     raise SystemExit(1)
@@ -245,41 +243,36 @@ def normalize_key(key: str) -> str:
     return k
 
 
-def _virsh_list_names() -> list[str]:
+def query_virsh(args: list[str]) -> str:
+    """Bound each query and keep libvirt's machine-readable output in English."""
+    error = "libvirt query failed"
     for prefix in ([], ["sudo"]):
         try:
-            res = subprocess.run([*prefix, "virsh", "-c", "qemu:///system", "list", "--all", "--name"], capture_output=True, text=True, check=True)
-            return [n.strip() for n in res.stdout.split() if n.strip()]
-        except (subprocess.CalledProcessError, FileNotFoundError):
+            res = subprocess.run(
+                [*prefix, "virsh", "-c", "qemu:///system", *args],
+                capture_output=True, text=True, timeout=10,
+                env={**os.environ, "LC_ALL": "C"},
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            error = str(exc)
             continue
-    return []
+        if res.returncode == 0:
+            return res.stdout.strip()
+        error = res.stderr.strip() or res.stdout.strip() or error
+    raise RuntimeError(error)
+
+
+def _virsh_list_names() -> list[str]:
+    return [name for name in query_virsh(["list", "--all", "--name"]).splitlines() if name]
+
 
 def _virsh_domstate(name: str) -> str:
-    for prefix in ([], ["sudo"]):
-        try:
-            res = subprocess.run([*prefix, "virsh", "-c", "qemu:///system", "domstate", name], capture_output=True, text=True, check=True)
-            return res.stdout.strip() or "unknown"
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            continue
-    return "unknown"
+    return query_virsh(["domstate", name]) or "unknown"
+
 
 def get_all_vms() -> list[tuple[str, str]]:
     """Query libvirt via --name + domstate (robust, no column split)."""
     names = _virsh_list_names()
-    if not names:
-        # Fallback to legacy table parse if --name yields nothing (empty libvirt)
-        try:
-            res = subprocess.run(["virsh", "-c", "qemu:///system", "list", "--all"], capture_output=True, text=True, check=True)
-            vms = []
-            for line in res.stdout.strip().splitlines()[2:]:
-                parts = line.split()
-                if len(parts) >= 3:
-                    vms.append((parts[1], " ".join(parts[2:])))
-                elif len(parts) == 2:
-                    vms.append((parts[0], parts[1]))
-            return vms
-        except Exception:
-            return []
     return [(n, _virsh_domstate(n)) for n in names]
 
 
@@ -299,7 +292,7 @@ def run_virsh_cmd(cmd_args: list) -> bool:
             return False
 
 
-def resolve_vm(specified_vm: str = None) -> str:
+def resolve_vm(specified_vm: str | None = None) -> str:
     """
     Returns the target VM name.
     If specified_vm is passed, validates it and stores it as default.
@@ -358,62 +351,53 @@ def resolve_vm(specified_vm: str = None) -> str:
             print_info(f"Preferred VM set to: [bold]{vm_name}[/bold]")
             return vm_name
         except (ValueError, KeyboardInterrupt, EOFError):
-            if isinstance(sys.exc_info()[0], KeyboardInterrupt):
-                print("\n")
-                sys.exit(1)
+            raise SystemExit(130) from None
 
 
-def resolve_shm_path() -> str:
-    """Prefer state-recorded shm_path from pipeline state, fallback to canonical /dev/shm/looking-glass."""
-    state_file = Path("/var/lib/arsonix/state.json")
+def resolve_shm_path(root: ET.Element) -> str:
+    """Require the selected VM's Looking Glass device, rather than a global cache."""
+    shmem = root.find("./devices/shmem[@name='looking-glass']")
+    if shmem is None:
+        raise RuntimeError("This VM has no Looking Glass shared-memory device. "
+                           "Configure it with 25_looking_glass.py --domain <name> first.")
+    model = shmem.find("model")
+    if model is None or model.get("type") != "ivshmem-plain":
+        raise RuntimeError("Looking Glass requires an ivshmem-plain device.")
+    return f"/dev/shm/{shmem.get('name')}"
+
+
+def get_domain_xml(vm_name: str) -> ET.Element:
+    return ET.fromstring(query_virsh(["dumpxml", vm_name]))
+
+
+def get_spice_endpoint(vm_name: str, *, root: ET.Element | None = None) -> tuple[str, int] | None:
+    """Read this domain's active TCP or Unix SPICE listener; never guess a port."""
+    if root is None:
+        root = get_domain_xml(vm_name)
+    graphics = root.find("./devices/graphics[@type='spice']")
+    if graphics is None:
+        return None
+    listener = graphics.find("listen")
+    if listener is not None and listener.get("type") == "socket":
+        path = listener.get("socket")
+        if path:
+            return path, 0
+        raise RuntimeError("The SPICE Unix socket has no active path.")
+    if listener is not None and listener.get("type") == "none":
+        return None
+    address = (listener.get("address") if listener is not None else None) or graphics.get("listen", "127.0.0.1")
+    address = {"0.0.0.0": "127.0.0.1", "::": "::1"}.get(address, address)
     try:
-        data = json.loads(state_file.read_text(encoding="utf-8"))
-        if isinstance(data, dict):
-            cand = data.get("shm_path")
-            if isinstance(cand, str) and cand.startswith("/dev/shm/"):
-                return cand
-    except Exception:
-        pass
-    return "/dev/shm/looking-glass"
-
-
-def get_spice_port(vm_name: str) -> int:
-    """Parse the VM XML to extract the active SPICE port (handling autoport)."""
-    try:
-        res = subprocess.run(["virsh", "-c", "qemu:///system", "dumpxml", vm_name], capture_output=True, text=True)
-        if res.returncode != 0:
-            res = subprocess.run(["sudo", "virsh", "-c", "qemu:///system", "dumpxml", vm_name], capture_output=True, text=True)
-        
-        if res.returncode == 0:
-            root = ET.fromstring(res.stdout)
-            graphics = root.find(".//devices/graphics[@type='spice']")
-            if graphics is not None:
-                port_str = graphics.get("port")
-                if port_str and port_str.isdigit():
-                    return int(port_str)
-    except Exception:
-        pass
-    return 5900  # Default fallback port
-
-
-def wait_for_spice_port(port: int, timeout: int = 15) -> bool:
-    """Blocks until the SPICE socket opens, ensuring zero-delay launch alignment."""
-    start_time = time.time()
-    while time.time() - start_time < timeout:
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=1):
-                return True
-        except (socket.timeout, ConnectionRefusedError):
-            time.sleep(0.5)
-    return False
+        port = int(graphics.get("port", "-1"))
+    except ValueError:
+        port = -1
+    if not 1 <= port <= 65535:
+        raise RuntimeError("The selected VM has no active plaintext SPICE port. Check its graphics listener.")
+    return address, port
 
 
 def get_vm_state(vm_name: str) -> str:
-    """Returns the precise state of the VM (e.g. running, shut off)."""
-    res = subprocess.run(["virsh", "-c", "qemu:///system", "domstate", vm_name], capture_output=True, text=True)
-    if res.returncode != 0:
-        res = subprocess.run(["sudo", "virsh", "-c", "qemu:///system", "domstate", vm_name], capture_output=True, text=True)
-    return res.stdout.strip() if res.returncode == 0 else "unknown"
+    return _virsh_domstate(vm_name)
 
 
 def print_help():
@@ -466,30 +450,23 @@ def main():
         sys.exit(0)
 
     action = sys.argv[1].lower()
-    
-    # Parse options
-    specified_vm = None
-    if "--vm" in sys.argv:
-        try:
-            idx = sys.argv.index("--vm")
-            specified_vm = sys.argv[idx + 1]
-        except IndexError:
-            print_err("Missing VM name after --vm option.")
-            sys.exit(1)
+    if action in ("rdp", "connect"):
+        rdp_script = Path(__file__).with_name("55_rdp.py")
+        sys.exit(subprocess.run([sys.executable, str(rdp_script), *sys.argv[2:]]).returncode)
 
-    # Parse key option
-    specified_key = None
-    if "--key" in sys.argv or "-k" in sys.argv:
-        key_flag = "--key" if "--key" in sys.argv else "-k"
-        try:
-            idx = sys.argv.index(key_flag)
-            specified_key = sys.argv[idx + 1]
-        except IndexError:
-            print_err(f"Missing key name after {key_flag} option.")
-            sys.exit(1)
+    parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    parser.add_argument("--vm")
+    parser.add_argument("--key", "-k")
+    parser.add_argument("--list", "-l", action="store_true")
+    parser.add_argument("--help", "-h", action="store_true")
+    args = parser.parse_args(sys.argv[2:])
+    specified_vm, specified_key = args.vm, args.key
+    if args.help:
+        print_help()
+        return
 
     # Check for list option/action before VM resolution (so list command doesn't trigger prompts)
-    if action in ("list", "--list", "-l") or "--list" in sys.argv or "-l" in sys.argv:
+    if action in ("list", "--list", "-l") or args.list:
         vms = get_all_vms()
         if not vms:
             print_info("No virtual machines found in libvirt.")
@@ -500,6 +477,14 @@ def main():
                 console.print(f"  - [bold]{name}[/bold] ([{color}]{state}[/{color}])")
         sys.exit(0)
 
+    valid_actions = {"select", "start", "stop", "shutdown", "kill", "destroy", "reboot",
+                     "status", "edit", "view", "lg", "show", "launch", "play"}
+    if action not in valid_actions:
+        parser.error(f"unknown action: {action}")
+    if action == "select":
+        clear_cached_vm()
+        resolve_vm(specified_vm)
+        return
     vm_name = resolve_vm(specified_vm)
 
     # Resolve escape key
@@ -510,46 +495,59 @@ def main():
     else:
         active_key = load_cached_key()
 
-    if action == "select":
-        # Clear default VM and trigger selection prompt
-        clear_cached_vm()
-        resolve_vm()
-        sys.exit(0)
-
-    elif action == "start":
+    if action == "start":
         state = get_vm_state(vm_name)
         if state == "paused":
             print_info(f"Resuming paused VM '{vm_name}'...")
             if run_virsh_cmd(["resume", vm_name]):
                 print_success(f"VM '{vm_name}' resumed.")
+            else:
+                sys.exit(1)
         elif state == "pmsuspended":
             print_info(f"Waking up suspended VM '{vm_name}'...")
             if run_virsh_cmd(["dompmwakeup", vm_name]):
                 print_success(f"VM '{vm_name}' awoken.")
-        else:
+            else:
+                sys.exit(1)
+        elif state == "running":
+            print_info(f"VM '{vm_name}' is already running.")
+        elif state == "shut off":
             print_info(f"Starting VM '{vm_name}'...")
             if run_virsh_cmd(["start", vm_name]):
                 print_success(f"VM '{vm_name}' booted.")
+            else:
+                sys.exit(1)
+        else:
+            print_err(f"Cannot start VM in state {state!r}.")
+            sys.exit(1)
 
     elif action in ("stop", "shutdown"):
         print_info(f"Sending graceful shutdown signal to VM '{vm_name}'...")
         if run_virsh_cmd(["shutdown", vm_name]):
             print_success("Shutdown signal dispatched.")
+        else:
+            sys.exit(1)
 
     elif action in ("kill", "destroy"):
         print_info(f"Forcefully shutting down (destroying) VM '{vm_name}'...")
         if run_virsh_cmd(["destroy", vm_name]):
             print_success("VM forcefully terminated.")
+        else:
+            sys.exit(1)
 
     elif action == "reboot":
         print_info(f"Rebooting VM '{vm_name}'...")
         if run_virsh_cmd(["reboot", vm_name]):
             print_success("Reboot signal dispatched.")
+        else:
+            sys.exit(1)
 
     elif action == "status":
         state = get_vm_state(vm_name)
-        color = C_GREEN if state == "running" else C_RED
-        print_info(f"VM '{vm_name}' state: {color}{state}{C_RESET}")
+        color = "green" if state == "running" else "red"
+        print_info(f"VM '{vm_name}' state: [{color}]{state}[/{color}]")
+        if state == "unknown":
+            sys.exit(1)
 
     elif action == "edit":
         env = os.environ.copy()
@@ -562,64 +560,44 @@ def main():
         except subprocess.CalledProcessError:
             subprocess.run(["sudo", "virsh", "-c", "qemu:///system", "edit", vm_name], env=env, check=True)
 
-    elif action in ("view", "lg", "show"):
-        if not shutil.which("looking-glass-client"):
+    elif action in ("view", "lg", "show", "launch", "play"):
+        client = shutil.which("looking-glass-client")
+        if client is None:
             print_err("looking-glass-client binary not found in PATH.")
             sys.exit(1)
-        
-        state = get_vm_state(vm_name)
-        if state != "running":
-            print_warn(f"VM '{vm_name}' is currently {state}. Connection might fail.")
-            
-        shm_file = resolve_shm_path()
-        spice_port = get_spice_port(vm_name)
-        print_info(f"Launching Looking Glass Client (escape key: {active_key}, SPICE port: {spice_port})...")
-        cmd = ["looking-glass-client", "-f", shm_file, "-m", active_key]
-        if spice_port > 0:
-            cmd.extend(["-p", str(spice_port)])
-        subprocess.run(cmd)
-
-    elif action in ("launch", "play"):
-        if not shutil.which("looking-glass-client"):
-            print_err("looking-glass-client binary not found in PATH.")
+        if not os.environ.get("WAYLAND_DISPLAY"):
+            print_err("Launch the client from your Wayland session as the desktop user.")
             sys.exit(1)
-
         state = get_vm_state(vm_name)
-        if state != "running":
-            if state == "paused":
-                print_info(f"Resuming paused VM '{vm_name}'...")
-                run_virsh_cmd(["resume", vm_name])
-            elif state == "pmsuspended":
-                print_info(f"Waking up suspended VM '{vm_name}'...")
-                run_virsh_cmd(["dompmwakeup", vm_name])
-            else:
-                print_info(f"Starting VM '{vm_name}'...")
-                run_virsh_cmd(["start", vm_name])
+        if action in ("launch", "play") and state != "running":
+            command = {"paused": "resume", "pmsuspended": "dompmwakeup", "shut off": "start"}.get(state)
+            if command is None:
+                print_err(f"Cannot launch VM in state {state!r}.")
+                sys.exit(1)
+            if not run_virsh_cmd([command, vm_name]):
+                sys.exit(1)
+        elif state != "running":
+            print_err(f"VM '{vm_name}' is {state}; start it before viewing.")
+            sys.exit(1)
+        try:
+            root = get_domain_xml(vm_name)
+            shm_file = resolve_shm_path(root)
+            endpoint = get_spice_endpoint(vm_name, root=root)
+        except (RuntimeError, ET.ParseError, OSError) as exc:
+            print_err(str(exc))
+            sys.exit(1)
+        cmd = [client, "app:transport=lgmp", "-f", shm_file, "-m", active_key]
+        if endpoint is None:
+            cmd.append("spice:enable=no")
+            print_warn("No SPICE listener: clipboard, audio and SPICE input fallback are unavailable.")
         else:
-            print_info(f"VM '{vm_name}' is already running.")
-
-        shm_file = resolve_shm_path()
-        spice_port = get_spice_port(vm_name)
-        print_info(f"Waiting for SPICE graphics pipe on port {spice_port}...")
-        
-        cmd = ["looking-glass-client", "-f", shm_file, "-m", active_key]
-        if spice_port > 0:
-            cmd.extend(["-p", str(spice_port)])
-
-        if wait_for_spice_port(spice_port, timeout=20):
-            # A tiny sleep gives the virtual display driver (VDD) in the guest 
-            # time to complete its handshakes after SPICE wakes up
-            time.sleep(1.0)
-            print_success(f"Graphics server online. Launching Looking Glass Client (escape key: {active_key}, SPICE port: {spice_port})...")
-            subprocess.run(cmd)
-        else:
-            print_err(f"Timed out waiting for graphics server. Launching fallback (escape key: {active_key})...")
-            subprocess.run(cmd)
-
-    elif action in ("rdp", "connect"):
-        rdp_script = Path(__file__).parent / "55_rdp.py"
-        cmd = [sys.executable, str(rdp_script)] + sys.argv[2:]
-        subprocess.run(cmd)
+            host, port = endpoint
+            cmd.extend(["spice:enable=yes", f"spice:host={host}", f"spice:port={port}"])
+        print_info(f"Launching Looking Glass Client (escape key: {active_key})...")
+        # The client handles SPICE readiness; a TCP probe is not an IDD/VDD readiness check.
+        env = os.environ.copy()
+        env.pop("DISPLAY", None)
+        sys.exit(subprocess.run(cmd, env=env).returncode)
 
     else:
         print_err(f"Unknown action: {action}")
@@ -628,4 +606,10 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (KeyboardInterrupt, EOFError):
+        raise SystemExit(130) from None
+    except (RuntimeError, OSError, ET.ParseError) as exc:
+        print_err(str(exc))
+        raise SystemExit(1) from None

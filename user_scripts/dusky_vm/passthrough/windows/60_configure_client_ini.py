@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Looking Glass Client Configuration
-Target: Arch rolling (Aug 2026) / Python 3.14.7+ / Wayland / Hyprland
+Target: Arch rolling (Aug 2026) / Python 3.15+ / Wayland / Hyprland
 Policy: Atomic, idempotent, operator-owned (not root), native <shmem> path.
 """
 
@@ -12,7 +12,7 @@ import tempfile
 from pathlib import Path
 import json
 
-MIN_PY: tuple[int, int, int] = (3, 14, 7)
+MIN_PY: tuple[int, int, int] = (3, 15, 0)
 if sys.version_info[:3] < MIN_PY:
     sys.stderr.write(f"\n[FATAL] Python {MIN_PY[0]}.{MIN_PY[1]}.{MIN_PY[2]}+ required; running {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}.\n\n")
     raise SystemExit(1)
@@ -34,7 +34,15 @@ def get_caller_identity() -> tuple[Path, int, int]:
 
 def atomic_write(path: Path, content: str, uid: int, gid: int) -> None:
     """Atomic mkstemp+os.replace+fsync, preserving 0644 and operator ownership."""
-    path.parent.mkdir(parents=True, exist_ok=True)
+    missing: list[Path] = []
+    parent = path.parent
+    while not parent.exists():
+        missing.append(parent)
+        parent = parent.parent
+    for directory in reversed(missing):
+        directory.mkdir(exist_ok=True)
+        if os.geteuid() == 0:
+            os.chown(directory, uid, gid)
     # Ensure parent owned correctly if running as root
     if os.geteuid() == 0:
         try:
@@ -90,22 +98,52 @@ def resolve_shm_path() -> str:
         pass
     return SHM_DEFAULT
 
+def merge_config(content: str, shm_file: str) -> str:
+    """Converge managed keys while retaining comments and other user options.
+
+    [app] shmFile is a deprecated alias for [lgmp] shmDevice. Never put the
+    canonical key in [app]: the current client ignores app:shmDevice.
+    """
+    required = {
+        "lgmp": {"shmdevice": f"shmDevice={shm_file}"},
+        "spice": {"enable": "enable=yes", "clipboard": "clipboard=yes"},
+    }
+    emitted: set[str] = set()
+    result: list[str] = []
+    section = ""
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            section = stripped[1:-1].lower()
+            result.append(line)
+            if section in required and section not in emitted:
+                result.extend(required[section].values())
+                emitted.add(section)
+            continue
+        if stripped and not stripped.startswith((";", "#")) and "=" in stripped:
+            key = stripped.split("=", 1)[0].strip().lower()
+            if section in ("app", "lgmp") and key in ("shmfile", "shmdevice"):
+                continue
+            if key in required.get(section, {}):
+                continue
+        result.append(line)
+    for section, keys in required.items():
+        if section not in emitted:
+            result.extend(["", f"[{section}]", *keys.values()])
+    return "\n".join(result) + "\n"
+
+
 def main() -> None:
     home_dir, uid, gid = get_caller_identity()
-    config_dir = home_dir / ".config" / "looking-glass"
+    config_home = Path(os.environ.get("XDG_CONFIG_HOME") or home_dir / ".config")
+    if not config_home.is_absolute():
+        config_home = home_dir / ".config"
+    config_dir = config_home / "looking-glass"
     config_file = config_dir / "client.ini"
     shm_file = resolve_shm_path()
 
-    # Ensure config dir exists with correct ownership (atomic via mkdir + chown)
-    config_dir.mkdir(parents=True, exist_ok=True)
-    if os.geteuid() == 0:
-        try:
-            os.chown(config_dir, uid, gid)
-        except OSError as e:
-            print(f"Warning: Failed to set directory ownership: {e}")
-
     default_config = f"""; Looking Glass Client Configuration
-; Tailored for Hyprland / Wayland / Looking Glass B7+
+; Hyprland / Wayland; install matching client and guest builds.
 
 [lgmp]
 shmDevice={shm_file}
@@ -115,7 +153,7 @@ allowDMA=yes
 vsync=no
 
 [wayland]
-fractionScale=no
+fractionScale=yes
 warpSupport=yes
 
 [win]
@@ -135,143 +173,17 @@ enable=yes
 clipboard=yes
 audio=yes
 """
-
-    if not config_file.exists():
-        print(f"Creating new Looking Glass client configuration at {config_file}...")
-        atomic_write(config_file, default_config, uid, gid)
-        print("Configuration file created successfully with SPICE clipboard enabled.")
-        return
-
-    print(f"Existing configuration found at {config_file}. Merging/checking configuration...")
-    content = config_file.read_text(encoding="utf-8")
-
-    # Parse and ensure required keys
-    lines = content.splitlines()
-    has_lgmp = False
-    has_shm = False
-    has_spice_section = False
-    has_enable = False
-    has_clipboard = False
-    current_section: str | None = None
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("[") and stripped.endswith("]"):
-            current_section = stripped[1:-1].lower()
-            if current_section in ("lgmp", "app"):
-                has_lgmp = True
-            if current_section == "spice":
-                has_spice_section = True
-        elif current_section in ("lgmp", "app") and "=" in stripped:
-            key = stripped.split("=", 1)[0].strip().lower()
-            if key in ("shmdevice", "shmfile"):
-                val = stripped.split("=", 1)[1].strip()
-                if val == shm_file:
-                    has_shm = True
-        elif current_section == "spice" and "=" in stripped:
-            key = stripped.split("=", 1)[0].strip().lower()
-            val = stripped.split("=", 1)[1].strip().lower() if "=" in stripped else ""
-            if key == "enable" and val in ("yes", "true", "1"):
-                has_enable = True
-            elif key == "clipboard" and val in ("yes", "true", "1"):
-                has_clipboard = True
-
-    # If all correct, nothing to do
-    if has_shm and has_spice_section and has_enable and has_clipboard:
-        print("SPICE clipboard and shmDevice settings are already correctly configured in client.ini.")
-        return
-
-    # Rebuild with fixes: ensure shmDevice correct, ensure spice section correct
-    new_lines: list[str] = []
-    in_lgmp = False
-    in_spice = False
-    injected_shm = has_shm
-    injected_enable = has_enable
-    injected_clipboard = has_clipboard
-    found_lgmp = False
-
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("[") and stripped.endswith("]"):
-            # Close previous sections: inject missing keys before leaving section
-            if in_lgmp and not injected_shm:
-                new_lines.append(f"shmDevice={shm_file}")
-                injected_shm = True
-            if in_spice:
-                if not injected_enable:
-                    new_lines.append("enable=yes")
-                    injected_enable = True
-                if not injected_clipboard:
-                    new_lines.append("clipboard=yes")
-                    injected_clipboard = True
-            in_lgmp = stripped[1:-1].lower() in ("lgmp", "app")
-            in_spice = stripped[1:-1].lower() == "spice"
-            if in_lgmp:
-                found_lgmp = True
-            new_lines.append(line)
-            continue
-
-        if in_lgmp and "=" in stripped:
-            key = stripped.split("=", 1)[0].strip().lower()
-            if key in ("shmdevice", "shmfile"):
-                if stripped.split("=", 1)[1].strip() != shm_file or key == "shmfile":
-                    new_lines.append(f"shmDevice={shm_file}")
-                    injected_shm = True
-                else:
-                    new_lines.append(line)
-                    injected_shm = True
-                continue
-        if in_spice and "=" in stripped:
-            key = stripped.split("=", 1)[0].strip().lower()
-            if key == "enable" and not has_enable:
-                new_lines.append("enable=yes")
-                injected_enable = True
-                continue
-            if key == "clipboard" and not has_clipboard:
-                new_lines.append("clipboard=yes")
-                injected_clipboard = True
-                continue
-        new_lines.append(line)
-
-    # Handle files that ended inside a section without closing
-    if in_lgmp and not injected_shm:
-        new_lines.append(f"shmDevice={shm_file}")
-    if in_spice:
-        if not injected_enable:
-            new_lines.append("enable=yes")
-        if not injected_clipboard:
-            new_lines.append("clipboard=yes")
-
-    # Ensure [lgmp] exists at all
-    if not found_lgmp:
-        insert_at = 0
-        for i, l in enumerate(new_lines):
-            if l.strip().startswith("["):
-                insert_at = i
-                break
-        new_lines.insert(insert_at, f"shmDevice={shm_file}")
-        new_lines.insert(insert_at, "[lgmp]")
-
-    # Ensure [spice] exists
-    if not has_spice_section:
-        print("Adding [spice] section to client.ini...")
-        new_lines.append("")
-        new_lines.append("[spice]")
-        new_lines.append("enable=yes")
-        new_lines.append("clipboard=yes")
-        new_lines.append("audio=yes")
-    elif not has_enable or not has_clipboard:
-        print("Updating parameters in [spice] section...")
-
-    # Also ensure shmDevice fix is reported
-    if not has_shm:
-        print(f"Updating shmDevice to {shm_file}...")
-
-    new_content = "\n".join(new_lines) + "\n"
-    # Normalize consecutive blank lines
-    import re
-    new_content = re.sub(r"\n{3,}", "\n\n", new_content)
+    if config_file.exists():
+        content = config_file.read_text(encoding="utf-8")
+        new_content = merge_config(content, shm_file)
+        if new_content == content:
+            print("Looking Glass shared memory and SPICE settings already configured.")
+            return
+    else:
+        new_content = default_config
     atomic_write(config_file, new_content, uid, gid)
-    print("Configuration updated successfully.")
+    print(f"Looking Glass configuration saved to {config_file}.")
+
 
 if __name__ == "__main__":
     main()

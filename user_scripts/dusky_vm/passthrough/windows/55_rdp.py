@@ -6,6 +6,9 @@ Scope: Automatic IP resolution and FreeRDP v3 connection logic.
 Philosophy: Zero-config RDP connection utilizing libvirt MAC-to-DHCP lease maps.
 """
 
+import argparse
+import ipaddress
+import socket
 import os
 import sys
 import json
@@ -17,7 +20,7 @@ import subprocess
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
-MIN_PY: tuple[int, int, int] = (3, 14, 7)
+MIN_PY: tuple[int, int, int] = (3, 15, 0)
 if sys.version_info[:3] < MIN_PY:
     sys.stderr.write(f"\n[FATAL] Python {MIN_PY[0]}.{MIN_PY[1]}.{MIN_PY[2]}+ required; running {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}.\n\n")
     raise SystemExit(1)
@@ -26,6 +29,7 @@ try:
     from rich.console import Console
     from rich.panel import Panel
     from rich.prompt import Prompt
+    from rich.text import Text
 except ImportError:
     print("\n[FATAL] 'python-rich' is missing. Please run: sudo pacman -S python-rich")
     sys.exit(1)
@@ -174,47 +178,40 @@ def save_state(state: dict):
         print_warn(f"Failed to write state file: {e}")
 
 
-def _virsh_list_names() -> list[str]:
+def query_virsh(args: list[str]) -> str:
+    """Bound each query and keep libvirt's machine-readable output in English."""
+    error = "libvirt query failed"
     for prefix in ([], ["sudo"]):
         try:
-            res = subprocess.run([*prefix, "virsh", "-c", "qemu:///system", "list", "--all", "--name"], capture_output=True, text=True, check=True)
-            return [n.strip() for n in res.stdout.split() if n.strip()]
-        except (subprocess.CalledProcessError, FileNotFoundError):
+            res = subprocess.run(
+                [*prefix, "virsh", "-c", "qemu:///system", *args],
+                capture_output=True, text=True, timeout=10,
+                env={**os.environ, "LC_ALL": "C"},
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            error = str(exc)
             continue
-    return []
+        if res.returncode == 0:
+            return res.stdout.strip()
+        error = res.stderr.strip() or res.stdout.strip() or error
+    raise RuntimeError(error)
+
+
+def _virsh_list_names() -> list[str]:
+    return [name for name in query_virsh(["list", "--all", "--name"]).splitlines() if name]
+
 
 def _virsh_domstate(name: str) -> str:
-    for prefix in ([], ["sudo"]):
-        try:
-            res = subprocess.run([*prefix, "virsh", "-c", "qemu:///system", "domstate", name], capture_output=True, text=True, check=True)
-            return res.stdout.strip() or "unknown"
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            continue
-    return "unknown"
+    return query_virsh(["domstate", name]) or "unknown"
+
 
 def get_all_vms() -> list[tuple[str, str]]:
     """Query libvirt via --name + domstate (robust, no column split)."""
     names = _virsh_list_names()
-    if not names:
-        # Legacy fallback: table parse if --name empty
-        for prefix in ([], ["sudo"]):
-            try:
-                res = subprocess.run([*prefix, "virsh", "-c", "qemu:///system", "list", "--all"], capture_output=True, text=True, check=True)
-                vms = []
-                for line in res.stdout.strip().splitlines()[2:]:
-                    parts = line.split()
-                    if len(parts) >= 3:
-                        vms.append((parts[1], " ".join(parts[2:])))
-                    elif len(parts) == 2:
-                        vms.append((parts[0], parts[1]))
-                return vms
-            except Exception:
-                continue
-        return []
     return [(n, _virsh_domstate(n)) for n in names]
 
 
-def resolve_vm(specified_vm: str = None) -> str:
+def resolve_vm(specified_vm: str | None = None) -> str:
     vms = get_all_vms()
     vm_names = [v[0] for v in vms]
 
@@ -264,121 +261,96 @@ def resolve_vm(specified_vm: str = None) -> str:
 
 
 def get_vm_mac_addresses(vm_name: str) -> list[str]:
-    """Parse VM XML to extract MAC addresses."""
-    try:
-        res = subprocess.run(["virsh", "-c", "qemu:///system", "dumpxml", vm_name], capture_output=True, text=True)
-        if res.returncode != 0:
-            res = subprocess.run(["sudo", "virsh", "-c", "qemu:///system", "dumpxml", vm_name], capture_output=True, text=True)
-        if res.returncode == 0:
-            root = ET.fromstring(res.stdout)
-            macs = []
-            for mac in root.findall(".//devices/interface/mac"):
-                addr = mac.get("address")
-                if addr:
-                    macs.append(addr.lower())
-            return macs
-    except Exception:
-        pass
-    return []
+    root = ET.fromstring(query_virsh(["dumpxml", vm_name]))
+    return [mac.get("address").lower() for mac in root.findall("./devices/interface/mac")
+            if mac.get("address")]
 
 
 def get_ip_from_leases(macs: list[str]) -> str:
-    """Scan libvirt networks for a DHCP lease matching one of the MAC addresses."""
-    try:
-        res = subprocess.run(["virsh", "-c", "qemu:///system", "net-list", "--name"], capture_output=True, text=True)
-        if res.returncode != 0:
-            res = subprocess.run(["sudo", "virsh", "-c", "qemu:///system", "net-list", "--name"], capture_output=True, text=True)
-        networks = []
-        if res.returncode == 0:
-            networks = [n.strip() for n in res.stdout.strip().splitlines() if n.strip()]
-        
-        if not networks:
-            networks = ["default"]
-            
-        for net in networks:
-            res_leases = subprocess.run(["virsh", "-c", "qemu:///system", "net-dhcp-leases", net], capture_output=True, text=True)
-            if res_leases.returncode != 0:
-                res_leases = subprocess.run(["sudo", "virsh", "-c", "qemu:///system", "net-dhcp-leases", net], capture_output=True, text=True)
-            if res_leases.returncode == 0:
-                for line in res_leases.stdout.splitlines():
-                    parts = line.split()
-                    for part in parts:
-                        if ":" in part and len(part) == 17:
-                            mac = part.lower()
-                            if mac in macs:
-                                for p in parts:
-                                    if "/" in p and ("." in p or ":" in p):
-                                        return p.split('/')[0]
-    except Exception:
-        pass
+    """Match IPv4 DHCP leases against the VM's actual MAC addresses."""
+    networks = query_virsh(["net-list", "--name"]).splitlines()
+    for net in networks:
+        try:
+            leases = query_virsh(["net-dhcp-leases", net])
+        except RuntimeError:
+            continue  # A network may stop while the guest starts.
+        for line in leases.splitlines():
+            fields = line.split()
+            if not any(field.lower() in macs for field in fields):
+                continue
+            for field in fields:
+                if "/" not in field:
+                    continue
+                try:
+                    address = ipaddress.ip_interface(field).ip
+                except ValueError:
+                    continue
+                if address.version == 4:
+                    return str(address)
     return ""
 
 
 def get_ip_from_arp(macs: list[str]) -> str:
-    """Scan ARP table for MAC addresses."""
+    """Read IPv4 neighbors as JSON, skipping failed/incomplete entries."""
     try:
-        res = subprocess.run(["ip", "neigh", "show"], capture_output=True, text=True)
+        res = subprocess.run(["ip", "-j", "-4", "neigh", "show"],
+                             capture_output=True, text=True, timeout=5)
         if res.returncode == 0:
-            for line in res.stdout.splitlines():
-                parts = line.split()
-                if len(parts) >= 5:
-                    ip = parts[0]
-                    if "lladdr" in parts:
-                        idx = parts.index("lladdr")
-                        if idx + 1 < len(parts):
-                            mac = parts[idx + 1].lower()
-                            if mac in macs:
-                                return ip
-    except Exception:
+            for neighbor in json.loads(res.stdout):
+                if neighbor.get("lladdr", "").lower() in macs and not (
+                    {"FAILED", "INCOMPLETE"} & set(neighbor.get("state", []))
+                ):
+                    return str(ipaddress.IPv4Address(neighbor["dst"]))
+    except (OSError, ValueError, KeyError, subprocess.TimeoutExpired):
         pass
     return ""
 
 
-def resolve_vm_ip(vm_name: str) -> str:
-    """Automatically resolve VM IP address or prompt as fallback."""
+def resolve_vm_ip(vm_name: str, *, wait: float = 0) -> str:
+    """Resolve a VM's IPv4 address, allowing time for DHCP after a start."""
     print_info(f"Resolving IP address for VM '{vm_name}'...")
     macs = get_vm_mac_addresses(vm_name)
-    ip = ""
-    if macs:
-        ip = get_ip_from_leases(macs)
-        if not ip:
-            ip = get_ip_from_arp(macs)
-            
+    deadline = time.monotonic() + wait
+    while True:
+        ip = (get_ip_from_leases(macs) or get_ip_from_arp(macs)) if macs else ""
+        if ip:
+            print_success(f"Successfully resolved VM IP: [bold cyan]{ip}[/bold cyan]")
+            break
+        if not macs or time.monotonic() >= deadline:
+            state = load_state()
+            cached_ip = state.get("rdp_ip", "") if state.get("rdp_vm") == vm_name else ""
+            while True:
+                candidate = Prompt.ask("Enter Windows VM IP address", default=cached_ip or None).strip()
+                try:
+                    ip = str(ipaddress.ip_address(candidate))
+                    break
+                except ValueError:
+                    print_err("Enter a valid IPv4 or IPv6 address.")
+            break
+        time.sleep(1)
     state = load_state()
-    cached_ip = state.get("rdp_ip", "")
-    
-    if ip:
-        print_success(f"Successfully resolved VM IP: [bold cyan]{ip}[/bold cyan]")
-        state["rdp_ip"] = ip
-        save_state(state)
-        return ip
-        
-    if cached_ip:
-        print_warn(f"Could not automatically resolve IP. Falling back to cached IP: [bold cyan]{cached_ip}[/bold cyan]")
-        try:
-            choice = Prompt.ask("Enter IP address to use", default=cached_ip).strip()
-            ip = choice
-        except (KeyboardInterrupt, EOFError):
-            sys.exit(1)
-    else:
-        try:
-            ip = Prompt.ask("Could not automatically resolve IP. Enter Windows VM IP").strip()
-        except (KeyboardInterrupt, EOFError):
-            sys.exit(1)
-                
-    state["rdp_ip"] = ip
+    state.update(rdp_ip=ip, rdp_vm=vm_name)
     save_state(state)
     return ip
 
 
-def resolve_rdp_user(specified_user: str = None) -> str:
+def wait_for_rdp(ip_addr: str, timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            with socket.create_connection((ip_addr, 3389), timeout=1):
+                return True
+        except OSError:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            time.sleep(min(1, remaining))
+
+
+def resolve_rdp_user(specified_user: str | None = None) -> str:
     state = load_state()
     cached_user = state.get("rdp_user", "")
     
-    # If the cached user is the old hardcoded default "dusk", clear it to force prompt/redetection
-    if cached_user == "dusk":
-        cached_user = ""
-        
     if specified_user:
         state["rdp_user"] = specified_user
         save_state(state)
@@ -416,10 +388,7 @@ def resolve_rdp_user(specified_user: str = None) -> str:
 
 
 def get_vm_state(vm_name: str) -> str:
-    res = subprocess.run(["virsh", "-c", "qemu:///system", "domstate", vm_name], capture_output=True, text=True)
-    if res.returncode != 0:
-        res = subprocess.run(["sudo", "virsh", "-c", "qemu:///system", "domstate", vm_name], capture_output=True, text=True)
-    return res.stdout.strip() if res.returncode == 0 else "unknown"
+    return _virsh_domstate(vm_name)
 
 
 def run_virsh_cmd(cmd_args: list) -> bool:
@@ -436,186 +405,58 @@ def run_virsh_cmd(cmd_args: list) -> bool:
             return False
 
 
-def check_warp_status() -> str:
-    """Check if Cloudflare WARP is active and connected."""
-    if shutil.which("warp-cli"):
-        try:
-            res = subprocess.run(["warp-cli", "status"], capture_output=True, text=True, timeout=2)
-            if "Status update: Connected" in res.stdout:
-                return "Connected"
-        except Exception:
-            pass
-    return "Disconnected"
-
-
-def get_active_vpns() -> list[str]:
-    """Check for active VPN interfaces in /sys/class/net/."""
-    vpns = []
-    vpn_prefixes = ("tun", "tap", "wg", "tailscale", "proton", "warp")
-    try:
-        for net_dir in Path("/sys/class/net").iterdir():
-            name = net_dir.name
-            if any(name.startswith(p) for p in vpn_prefixes):
-                operstate_file = net_dir / "operstate"
-                if operstate_file.exists() and operstate_file.read_text().strip() == "up":
-                    vpns.append(name)
-    except Exception:
-        pass
-    return vpns
-
-
-def is_ufw_active() -> bool:
-    """Check if UFW systemd service is active."""
-    try:
-        res = subprocess.run(["systemctl", "is-active", "ufw"], capture_output=True, text=True)
-        return res.stdout.strip() == "active"
-    except Exception:
-        return False
-
-
 def print_rdp_troubleshooting(ip_addr: str):
-    warp_connected = check_warp_status() == "Connected"
-    active_vpns = get_active_vpns()
-    ufw_active = is_ufw_active()
-
-    env_warnings = []
-    if warp_connected:
-        env_warnings.append("  [bold red]• Cloudflare WARP is active.[/bold red] Run [bold cyan]warp-cli disconnect[/bold cyan] to disable it.")
-    if active_vpns:
-        env_warnings.append(f"  [bold red]• Active VPN interface(s) detected: {', '.join(active_vpns)}.[/bold red] Disconnect your VPN client.")
-    if ufw_active:
-        env_warnings.append("  [bold yellow]• Host Firewall (UFW) is active.[/bold yellow] If routing is blocked, run:\n"
-                            "    [bold cyan]sudo ufw allow in on virbr0 && sudo ufw route allow in on virbr0[/bold cyan]")
-
-    trouble_text = f"The RDP connection to [bold cyan]{ip_addr}[/bold cyan] failed.\n\n"
-    if env_warnings:
-        trouble_text += "[bold yellow]Host Environment Warnings (Potential Blocks):[/bold yellow]\n"
-        trouble_text += "\n".join(env_warnings) + "\n\n"
-
-    trouble_text += (
-        "[bold yellow]Option A: Quick Automatic Configuration (Recommended)[/bold yellow]\n"
-        "To configure your Windows VM automatically, run this command [bold yellow]inside your Windows VM[/bold yellow]:\n"
-        "  1. If not already viewing the VM, open Looking Glass on Linux: [bold cyan]win view[/bold cyan]\n"
-        "  2. In the Windows VM GUI, click the Start menu, type [bold cyan]powershell[/bold cyan],\n"
-        "     right-click [bold]Windows PowerShell[/bold], and select [bold]Run as Administrator[/bold].\n"
-        "  3. Copy and paste this exact command block and press [bold]Enter[/bold]:\n\n"
-        "  [bold green]Set-ItemProperty -Path 'HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server' -Name 'fDenyTSConnections' -Value 0; "
-        "Set-ItemProperty -Path 'HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server\\WinStations\\RDP-Tcp' -Name 'UserAuthentication' -Value 0; "
-        "Set-ItemProperty -Path 'HKLM:\\System\\CurrentControlSet\\Control\\Lsa' -Name 'LimitBlankPasswordUse' -Value 0; "
-        "New-Item -Path 'HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows NT\\CurrentVersion\\NetworkList\\Signatures\\Infrastructure' -Force; "
-        "Set-ItemProperty -Path 'HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows NT\\CurrentVersion\\NetworkList\\Signatures\\Infrastructure' -Name 'Category' -Value 1; "
-        "Get-NetConnectionProfile | Set-NetConnectionProfile -NetworkCategory Private; "
-        "Enable-NetFirewallRule -DisplayGroup 'Remote Desktop'[/bold green]\n\n"
-        "[bold yellow]Option B: Enable SSH for Remote Console Access[/bold yellow]\n"
-        "To install and enable OpenSSH Server (allowing you to connect/debug from Linux terminal via SSH), run this command in the same Administrator PowerShell:\n\n"
-        "  [bold green]Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0; "
-        "Start-Service sshd; Set-Service -Name sshd -StartupType Automatic; "
-        "(Get-Content C:\\ProgramData\\ssh\\sshd_config) -replace '#PermitEmptyPasswords no', 'PermitEmptyPasswords yes' -replace 'PermitEmptyPasswords no', 'PermitEmptyPasswords yes' | Set-Content C:\\ProgramData\\ssh\\sshd_config; "
-        "Restart-Service sshd[/bold green]\n\n"
-        "[bold yellow]Option C: Manual Configuration Steps[/bold yellow]\n"
-        "  [bold green]1. Enable Remote Desktop[/bold green]\n"
-        "     [bold white]Settings[/bold white] > [bold white]System[/bold white] > [bold white]Remote Desktop[/bold white] > Toggle [bold green]ON[/bold green].\n\n"
-        "  [bold green]2. Disable Network Level Authentication (NLA) (required for blank passwords)[/bold green]\n"
-        "     [bold white]Settings[/bold white] > [bold white]System[/bold white] > [bold white]Remote Desktop[/bold white] > [bold white]Advanced settings[/bold white] >\n"
-        "     [bold red]Uncheck[/bold red] [bold cyan]'Require computers to use Network Level Authentication to connect'[/bold cyan]\n"
-        "     and click '[bold green]Proceed anyway[/bold green]' on the warning prompt.\n\n"
-        "  [bold green]3. Set Network Profile to Private (and persist across reboots)[/bold green]\n"
-        "     Windows resets unidentified VM networks to 'Public' on reboot. To make it permanent:\n"
-        "       a. Verify current profile status in PowerShell: [bold cyan]Get-NetConnectionProfile[/bold cyan] (likely shows [bold red]NetworkCategory : Public[/bold red]).\n"
-        "       b. Press [bold cyan]Super + R[/bold cyan] (or Win + R) to open the Run dialog.\n"
-        "       c. Type [bold cyan]secpol.msc[/bold cyan] (or [bold cyan]gpedit.msc[/bold cyan]) and press Enter.\n"
-        "       d. In the [italic white]left-hand navigation tree[/italic white], click directly on [bold yellow]Network List Manager Policies[/bold yellow].\n"
-        "       e. In the [italic white]right pane[/italic white], double-click [bold cyan]'Unidentified Networks'[/bold cyan].\n"
-        "       f. Change [bold]Location type[/bold] from Not Configured to [bold green]Private[/bold green], and click OK.\n"
-        "       g. (Temporary Fix): Run [bold cyan]Set-NetConnectionProfile -NetworkCategory Private[/bold cyan] in PowerShell (Admin).\n\n"
-        "  [bold green]4. Check Custom ISO Restrictions[/bold green]\n"
-        "     If you are using a custom ISO with RDP stripped out, this method will not work. (Try a standard ISO).\n\n"
-        "  [bold green]5. Blank Passwords Policy (for passwordless login)[/bold green]\n"
-        "     If you have no password set on Windows, you must disable the blank password restriction:\n"
-        "       a. Press [bold cyan]Super + R[/bold cyan] (or Win + R) to open the Run dialog.\n"
-        "       b. Type [bold cyan]secpol.msc[/bold cyan] (or [bold cyan]gpedit.msc[/bold cyan]) and press Enter.\n"
-        "       c. In the [italic white]left-hand navigation tree[/italic white], expand the [bold yellow]Local Policies[/bold yellow] folder\n"
-        "          and click directly on the [bold yellow]Security Options[/bold yellow] folder. (Do not stay at the root!).\n"
-        "       d. In the [italic white]right pane[/italic white], find and double-click the policy:\n"
-        "          [bold cyan]'Accounts: Limit local account use of blank passwords to console logon only'[/bold cyan].\n"
-        "       e. Select [bold green]Disabled[/bold green], click [bold magenta]Apply[/bold magenta], and click [bold magenta]OK[/bold magenta].\n"
-        "       f. Note: If using Windows Home (which lacks secpol.msc), press [bold cyan]Super + R[/bold cyan],\n"
-        "          run [bold cyan]regedit[/bold cyan], go to `HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Lsa`,\n"
-        "          and set the DWORD [bold cyan]LimitBlankPasswordUse[/bold cyan] to [bold green]0[/bold green].\n\n"
-        "  [bold green]6. Firewall Access[/bold green]\n"
-        "     Ensure Windows Defender Firewall allows 'Remote Desktop' (TCP port 3389)."
-    )
-    console.print("\n")
-    console.print(Panel(
-        trouble_text,
-        title="[bold red]RDP CONNECTION TROUBLESHOOTING[/bold red]",
-        title_align="center",
-        border_style="red"
+    console.print(Panel(Text(
+        f"RDP connection/session to {ip_addr} failed. Check the FreeRDP error above.\n\n"
+        "Windows 11 Pro, Enterprise or Education is required for the built-in RDP server; "
+        "Home cannot host RDP. Enable Settings > System > Remote Desktop.\n\n"
+        "Check that TCP port 3389 is allowed by the guest firewall and that the VM address "
+        "is current. A VPN can change routing; inspect the route before changing firewall rules.\n\n"
+        "Use the Windows account password, rather than a Windows Hello PIN. For a local "
+        "account with an intentionally blank password, pass --pass '' and configure Windows "
+        "to allow blank-password remote logons with NLA disabled.\n\n"
+        "For setup or recovery, use the VM's SPICE console or win view after configuring "
+        "the matching Looking Glass IDD. Guest SSH setup is available in guest/setup_ssh.py."),
+        title="RDP troubleshooting", border_style="red",
     ))
-    console.print("\n")
 
 
-def print_help():
-    console.print(f"""[bold]Windows KVM RDP Rescue Bridge[/bold]
+def find_freerdp_client() -> str:
+    """Generic SDL executable names must actually contain the SDL3 build."""
+    for name in ("sdl3-freerdp3", "sdl-freerdp3", "sdl3-freerdp", "sdl-freerdp"):
+        path = shutil.which(name)
+        if path is None:
+            continue
+        try:
+            build = subprocess.run([path, "/buildconfig"], capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if build.returncode == 0 and "WITH_CLIENT_SDL3=ON" in build.stdout + build.stderr:
+            return path
+    raise RuntimeError("FreeRDP SDL3 client not found. Install freerdp with its SDL3 client enabled.")
 
-Usage:
-  {sys.argv[0]} [options]
 
-Options:
-  --vm <name>       Override target VM
-  -u, --user <name> Specify Windows RDP username (default: cached/host user)
-  -p, --pass <word> Specify Windows RDP password
-  --help, -h        Show this help manual
-""")
+# These outcomes are also treated as normal by SDL3's sdl_client_cleanup().
+NORMAL_SESSION_EXITS = frozenset((0, 1, 2, 11, 145))
 
 
 def main():
-    if "--help" in sys.argv or "-h" in sys.argv:
-        print_help()
-        sys.exit(0)
+    parser = argparse.ArgumentParser(description="Windows KVM RDP rescue bridge (Wayland)", allow_abbrev=False)
+    parser.add_argument("--vm", help="target VM name")
+    parser.add_argument("-u", "--user", help="Windows RDP username")
+    parser.add_argument("-p", "--pass", dest="password", help="Windows password; an empty value requests a blank password")
+    parser.add_argument("--ip", type=ipaddress.ip_address, help="override VM address (IPv4 or IPv6)")
+    args = parser.parse_args()
+    specified_vm, specified_user, password = args.vm, args.user, args.password
 
-    # Parse options
-    specified_vm = None
-    if "--vm" in sys.argv:
-        try:
-            idx = sys.argv.index("--vm")
-            specified_vm = sys.argv[idx + 1]
-        except IndexError:
-            print_err("Missing VM name after --vm option.")
-            sys.exit(1)
-
-    specified_user = None
-    if "--user" in sys.argv or "-u" in sys.argv:
-        flag = "--user" if "--user" in sys.argv else "-u"
-        try:
-            idx = sys.argv.index(flag)
-            specified_user = sys.argv[idx + 1]
-        except IndexError:
-            print_err(f"Missing username after {flag} option.")
-            sys.exit(1)
-
-    password = None
-    if "--pass" in sys.argv or "-p" in sys.argv:
-        flag = "--pass" if "--pass" in sys.argv else "-p"
-        try:
-            idx = sys.argv.index(flag)
-            password = sys.argv[idx + 1]
-        except IndexError:
-            print_err(f"Missing password after {flag} option.")
-            sys.exit(1)
-
-    # Run checks
-    freerdp_bin = (
-        shutil.which("sdl-freerdp3")
-        or shutil.which("wlfreerdp3")
-        or shutil.which("xfreerdp3")
-    )
-    if not freerdp_bin:
-        print_err("FreeRDP v3 binary not found (checked sdl-freerdp3, wlfreerdp3, xfreerdp3). Please install via: sudo pacman -S freerdp")
+    freerdp_bin = find_freerdp_client()
+    if not os.environ.get("WAYLAND_DISPLAY"):
+        print_err("Launch RDP from your Wayland session as the desktop user.")
         sys.exit(1)
 
     vm_name = resolve_vm(specified_vm)
     
+    started = False
     vm_state = get_vm_state(vm_name)
     if vm_state != "running":
         print_warn(f"VM '{vm_name}' is currently [bold red]{vm_state}[/bold red].")
@@ -635,13 +476,16 @@ def main():
                 elif vm_state == "pmsuspended":
                     print_info(f"Waking up suspended VM '{vm_name}'...")
                     success = run_virsh_cmd(["dompmwakeup", vm_name])
-                else:
+                elif vm_state == "shut off":
                     print_info(f"Starting VM '{vm_name}'...")
                     success = run_virsh_cmd(["start", vm_name])
-                    
+                else:
+                    print_err(f"Cannot start VM in state {vm_state!r}.")
+                    sys.exit(1)
+
                 if success:
                     print_success(f"VM '{vm_name}' state updated successfully. Waiting for network initialization...")
-                    time.sleep(5.0)
+                    started = True
                 else:
                     print_err(f"Failed to update state for VM '{vm_name}'. Exiting.")
                     sys.exit(1)
@@ -651,31 +495,45 @@ def main():
         except (KeyboardInterrupt, EOFError):
             sys.exit(1)
             
-    ip_addr = resolve_vm_ip(vm_name)
+    ip_addr = str(args.ip) if args.ip is not None else resolve_vm_ip(vm_name, wait=60 if started else 0)
+    print_info(f"Waiting for RDP on {ip_addr}:3389...")
+    if not wait_for_rdp(ip_addr, 60 if started else 10):
+        print_rdp_troubleshooting(ip_addr)
+        sys.exit(1)
     username = resolve_rdp_user(specified_user)
 
     # Build command
     cmd = [
         freerdp_bin,
-        f"/v:{ip_addr}",
+        f"/v:[{ip_addr}]" if ":" in ip_addr else f"/v:{ip_addr}",
         f"/u:{username}",
         "/cert:ignore",
-        "/dynamic-resolution",
+        "+dynamic-resolution",
         "/network:lan",
         "/clipboard",
         "/sound",
     ]
-    if password:
-        cmd.append(f"/p:{password}")
+    if password is not None:
+        cmd.append(f"/p:{password}" if password else "/p")
 
     print_info(f"Connecting to [bold cyan]{username}@{ip_addr}[/bold cyan] via FreeRDP v3 ({Path(freerdp_bin).name})...")
     try:
-        res = subprocess.run(cmd)
-        if res.returncode != 0:
+        env = os.environ.copy()
+        env["SDL_VIDEO_DRIVER"] = "wayland"
+        res = subprocess.run(cmd, env=env)
+        if res.returncode not in NORMAL_SESSION_EXITS:
             print_rdp_troubleshooting(ip_addr)
+        sys.exit(res.returncode)
     except KeyboardInterrupt:
         print_info("\nRDP session terminated by operator.")
+        sys.exit(130)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (KeyboardInterrupt, EOFError):
+        raise SystemExit(130) from None
+    except (RuntimeError, OSError, ET.ParseError) as exc:
+        print_err(str(exc))
+        raise SystemExit(1) from None
