@@ -6,23 +6,17 @@ arch=('x86_64')
 license=('custom')
 depends=('glibc' 'gcc-libs' 'wayland' 'libxkbcommon' 'vulkan-icd-loader' 'mesa' 'libglvnd')
 makedepends=('cargo' 'python')
-source=()
+source=('build_rust.py' '147_rust_compiles_shared_NOT_STANDALONE.py')
+# Local sources are fingerprinted by the ISO generator together with this recipe.
+sha256sums=('SKIP' 'SKIP')
 
 build() {
-  cp -a -- "$DUSKY_PACKAGE_SOURCE" "$srcdir/project"
-  cd "$srcdir/project"
-  # Never inherit builder CPU/features; encoded flags take precedence in Cargo.
-  unset CARGO_ENCODED_RUSTFLAGS
-  export RUSTFLAGS='-C target-cpu=x86-64'
-  export CFLAGS='-march=x86-64 -mtune=generic -O2'
-  export CXXFLAGS="$CFLAGS"
-  export CPPFLAGS=''
-  cargo build --release --locked --target x86_64-unknown-linux-gnu
+  cp -aL -- "$DUSKY_PACKAGE_SOURCE" "$srcdir/project"
+  python "$srcdir/build_rust.py" "$srcdir/project" "$srcdir/binary-output/dusky-papers"
 }
 
 package() {
-  local target_dir="${CARGO_TARGET_DIR:-$srcdir/project/target}"
-  install -Dm755 "$target_dir/x86_64-unknown-linux-gnu/release/dusky-papers" \
+  install -Dm755 "$srcdir/binary-output/dusky-papers" \
     "$pkgdir/usr/bin/dusky-papers"
   install -d "$pkgdir/usr/share/dusky-papers"
   python - "$srcdir/project" > "$pkgdir/usr/share/dusky-papers/source.sha256" <<'PY'

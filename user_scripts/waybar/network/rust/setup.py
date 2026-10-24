@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install Dusky Network, or build a generic ISO binary; compile offline on tmpfs."""
+"""Install Dusky Network, or build a generic ISO binary; compile offline, preferring tmpfs."""
 
 import argparse
 import fcntl
@@ -11,13 +11,15 @@ import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import tomllib
+from importlib import import_module
 from pathlib import Path
 
 sys.dont_write_bytecode = True
-
 PROJECT = Path(__file__).resolve().parent
+sys.path.insert(0, str(PROJECT))
+build_support = import_module("147_rust_compiles_shared_NOT_STANDALONE")
+
 SYSTEM_BINARY = Path("/usr/bin/dusky-network")
 SYSTEM_MANIFEST = Path("/usr/share/dusky-network/binary_manifest.json")
 TARGET = "x86_64-unknown-linux-gnu"
@@ -30,7 +32,7 @@ def digest(path: Path) -> str:
 
 
 def source_digest() -> str:
-    files = [PROJECT / name for name in ("Cargo.toml", "Cargo.lock", "setup.py")]
+    files = [PROJECT / name for name in ("Cargo.toml", "Cargo.lock", "setup.py", "147_rust_compiles_shared_NOT_STANDALONE.py")]
     files.extend(sorted(path for path in (PROJECT / "src").rglob("*") if path.is_file()))
     for name in ("build.rs", ".cargo/config", ".cargo/config.toml", "rust-toolchain.toml", "rust-toolchain"):
         if (PROJECT / name).is_file():
@@ -55,39 +57,22 @@ def cpu_signature() -> str:
 def run(command: list[str], *, env: dict[str, str] | None = None, timeout: int = 1200) -> str:
     process = subprocess.Popen(command, cwd=PROJECT, env=env, stdin=subprocess.DEVNULL,
                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                               text=True, encoding="utf-8", errors="replace", start_new_session=True)
+                               text=True, encoding="utf-8", errors="replace", start_new_session=True,
+                               pass_fds=build_support.build_lock_fds())
     try:
         output, _ = process.communicate(timeout=timeout)
+        if process.returncode:
+            termination = " (SIGKILL)" if process.returncode == -signal.SIGKILL else ""
+            raise RuntimeError(f"{' '.join(command)} failed ({process.returncode}){termination}:\n{output}")
+        return output.strip()
     except BaseException:
-        # Reap compiler children on interruption/timeouts; don't leave RAM builds running.
+        # A failed/killed Cargo leader can leave live compiler descendants.
         try:
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
         process.communicate()
         raise
-    if process.returncode:
-        raise RuntimeError(f"{' '.join(command)} failed ({process.returncode}):\n{output}")
-    return output.strip()
-
-
-def tmpfs_base() -> Path:
-    mounts = []
-    for line in Path("/proc/self/mountinfo").read_text(encoding="utf-8").splitlines():
-        before, _, after = line.partition(" - ")
-        mount = before.split()[4]
-        for encoded, decoded in (("\\040", " "), ("\\011", "\t"), ("\\012", "\n"), ("\\134", "\\")):
-            mount = mount.replace(encoded, decoded)
-        mounts.append((Path(mount), after.split()[0]))
-    for candidate in (Path("/tmp"), Path("/dev/shm")):
-        real = candidate.resolve()
-        matching = [(mount, kind) for mount, kind in mounts if real.is_relative_to(mount)]
-        kind = max(matching, key=lambda pair: len(str(pair[0])))[1]
-        info = os.statvfs(candidate)
-        if (kind == "tmpfs" and os.access(candidate, os.W_OK)
-                and not info.f_flag & os.ST_NOEXEC and info.f_bavail * info.f_frsize >= 512 * 1024 ** 2):
-            return candidate
-    raise OSError("Build needs executable tmpfs with 512 MiB free (/tmp or /dev/shm)")
 
 
 def build(args: argparse.Namespace) -> None:
@@ -124,8 +109,11 @@ def build(args: argparse.Namespace) -> None:
                     return
         except (OSError, ValueError, RuntimeError):
             pass
-    with tempfile.TemporaryDirectory(prefix="dusky-network-build-", dir=tmpfs_base()) as temporary:
-        scratch = Path(temporary)
+
+    @build_support.temporary_build("dusky-network-build-", artifact_bytes=512 * 1024 ** 2,
+                     compiler_bytes=512 * 1024 ** 2, max_jobs=1)
+    def compile_project(*, workspace: build_support.Workspace) -> None:
+        scratch = workspace.path
         env = os.environ.copy()
         env.pop("CARGO_ENCODED_RUSTFLAGS", None)
         env.update(RUSTFLAGS=flags, CARGO_TARGET_DIR=str(scratch / "target"),
@@ -150,8 +138,12 @@ def build(args: argparse.Namespace) -> None:
             command = [cargo, "check", *common]
         else:
             command = [cargo, "build", "--release", *common]
-        print(f"[INFO] {cpu} {command[1]} on tmpfs; {flags}", flush=True)
-        print(run(command, env=env))
+        print(f"[INFO] {cpu} {command[1]} in {workspace.storage}; {flags}", flush=True)
+        try:
+            print(run(command, env=env))
+        except RuntimeError as error:
+            workspace.retry_on_disk(1, str(error))
+            raise
         if args.test or args.clippy or args.check:
             return
         built = scratch / "target" / target / "release/dusky-network"
@@ -176,6 +168,8 @@ def build(args: argparse.Namespace) -> None:
             staged_binary.unlink(missing_ok=True)
             staged_manifest.unlink(missing_ok=True)
         print(f"[OK] Built {binary}; no services or Waybar configuration changed")
+
+    compile_project()
 
 
 def verified(binary: Path, manifest_path: Path, *, native: bool) -> dict | None:

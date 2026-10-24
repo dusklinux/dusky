@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compile Dusky Snap for this CPU on /tmp tmpfs; keep the ISO binary as an offline fallback."""
+"""Compile Dusky Snap for this CPU, preferring tmpfs; keep the ISO binary as an offline fallback."""
 
 import argparse
 import fcntl
@@ -11,12 +11,15 @@ import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 import tomllib
+from importlib import import_module
 from pathlib import Path
 
-GIB = 1024 ** 3
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+build_support = import_module("147_rust_compiles_shared_NOT_STANDALONE")
+
 TARGET = "x86_64-unknown-linux-gnu"
 SYSTEM_BINARY = Path("/usr/bin/dusky_snap")
 BUILD_RECIPE = "snap-rust-v3-native-first-frozen-tmpfs"
@@ -133,46 +136,6 @@ def cpu_signature() -> str:
     return hashlib.sha256(identity.encode()).hexdigest()
 
 
-def memory_bytes() -> tuple[int, int]:
-    values = {}
-    for line in Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
-        key, _, value = line.partition(":")
-        if key in ("MemTotal", "MemAvailable"):
-            values[key] = int(value.strip().split()[0]) * 1024
-    total, available = values["MemTotal"], values["MemAvailable"]
-    cgroup = next((line.partition("::")[2] for line in Path("/proc/self/cgroup").read_text(encoding="utf-8").splitlines()
-                   if line.startswith("0::")), "/")
-    root = Path("/sys/fs/cgroup")
-    group = root / cgroup.lstrip("/")
-    for directory in (group, *group.parents):
-        if not directory.is_relative_to(root):
-            break
-        try:
-            limit = int((directory / "memory.max").read_text(encoding="utf-8").strip())
-            current = int((directory / "memory.current").read_text(encoding="utf-8").strip())
-        except (OSError, ValueError):
-            continue
-        total = min(total, limit)
-        available = min(available, max(0, limit - current))
-    return total, available
-
-
-def filesystem_type(path: Path) -> str | None:
-    real_path = str(path.resolve())
-    best = (0, None)
-    for line in Path("/proc/self/mountinfo").read_text(encoding="utf-8").splitlines():
-        before, separator, after = line.partition(" - ")
-        if not separator:
-            continue
-        fields = before.split()
-        if len(fields) < 5:
-            continue
-        mount = fields[4].replace("\\040", " ")
-        if (real_path == mount or real_path.startswith(mount.rstrip("/") + "/")) and len(mount) > best[0]:
-            best = (len(mount), after.split()[0])
-    return best[1]
-
-
 def process_group_exists(pgid: int) -> bool:
     try:
         os.killpg(pgid, 0)
@@ -212,19 +175,6 @@ def terminate_process_group(process: subprocess.Popen, *, grace_seconds: float =
         pass
 
 
-def build_base() -> Path:
-    """Never fall back to disk, including on machines with limited RAM."""
-    for path in (Path("/tmp"),):
-        if not path.is_dir() or not os.access(path, os.W_OK):
-            continue
-        if filesystem_type(path) != "tmpfs":
-            continue
-        info = os.statvfs(path)
-        if not info.f_flag & os.ST_NOEXEC and info.f_bavail * info.f_frsize >= 3 * GIB:
-            return path
-    raise OSError("Native builds need an executable tmpfs with at least 3 GiB free")
-
-
 def run_bounded(command: list[str], *, timeout: int, cwd: Path | None = None,
                 env: dict[str, str] | None = None, capture_output: bool = False
                 ) -> tuple[int, str, str, bool]:
@@ -234,7 +184,8 @@ def run_bounded(command: list[str], *, timeout: int, cwd: Path | None = None,
                                    stdin=subprocess.DEVNULL,
                                    stdout=subprocess.PIPE if capture_output else None,
                                    stderr=subprocess.PIPE if capture_output else None,
-                                   text=True, errors="replace", start_new_session=True)
+                                   text=True, errors="replace", start_new_session=True,
+                                   pass_fds=build_support.build_lock_fds())
     except OSError as error:
         return 127, "", str(error), False
     try:
@@ -243,6 +194,8 @@ def run_bounded(command: list[str], *, timeout: int, cwd: Path | None = None,
         else:
             process.wait(timeout=timeout)
             stdout = stderr = ""
+        if process.returncode:
+            terminate_process_group(process)
         return process.returncode, stdout, stderr, False
     except subprocess.TimeoutExpired:
         terminate_process_group(process)
@@ -269,97 +222,90 @@ def fetch_dependencies(cargo: str, project: Path, env: dict[str, str]) -> bool:
     return True
 
 
-def build_native(project: Path, binary: Path, manifest_path: Path, version: str) -> bool:
+@build_support.temporary_build("dusky-snap-build-")
+def build_native(project: Path, binary: Path, manifest_path: Path, version: str,
+                 *, workspace: build_support.Workspace) -> bool:
     cargo = shutil.which("cargo")
     if not cargo:
         log("WARN", "Cargo is not installed; skipping native compilation")
         return False
 
-    base = build_base()
-    with tempfile.TemporaryDirectory(prefix="dusky-snap-build-", dir=base) as temp:
-        temp_dir = Path(temp)
-        # Reuse compiler artifacts in RAM across source changes. The CPU key
-        # prevents reusing native machine code after a CPU change.
-        target_dir = base / "dusky-snap-target" / f"native-{cpu_signature()[:16]}"
-        target_dir.mkdir(parents=True, exist_ok=True)
-        cargo_home = Path(os.environ.get("CARGO_HOME", Path.home() / ".cargo"))
+    temp_dir = workspace.path
+    target_dir = temp_dir / "target"
+    cargo_home = Path(os.environ.get("CARGO_HOME", Path.home() / ".cargo"))
 
-        env = os.environ.copy()
-        env["CARGO_TARGET_DIR"] = str(target_dir)
-        env["CARGO_HOME"] = str(cargo_home)
-        env["CARGO_BUILD_BUILD_DIR"] = str(target_dir)
-        env["TMPDIR"] = str(temp_dir)
-        env["CARGO_NET_OFFLINE"] = "true"
-        env["RUSTUP_AUTO_INSTALL"] = "0"
-        env["RUSTFLAGS"] = "-C target-cpu=native"
-        env.pop("CARGO_ENCODED_RUSTFLAGS", None)
-        env["CFLAGS"] = "-march=native -mtune=native -O2"
-        env["CXXFLAGS"] = env["CFLAGS"]
-        env["CPPFLAGS"] = ""
-        try:
-            _, available = memory_bytes()
-        except (OSError, KeyError, ValueError):
-            available = 2 * GIB
-        compiler_budget = max(0, available - 3 * GIB)
-        jobs = min(os.process_cpu_count() or 1, max(1, compiler_budget // (2 * GIB)))
+    env = os.environ.copy()
+    env["CARGO_TARGET_DIR"] = str(target_dir)
+    env["CARGO_HOME"] = str(cargo_home)
+    env["CARGO_BUILD_BUILD_DIR"] = str(target_dir)
+    env["TMPDIR"] = str(temp_dir)
+    env["CARGO_NET_OFFLINE"] = "true"
+    env["RUSTUP_AUTO_INSTALL"] = "0"
+    env["RUSTFLAGS"] = "-C target-cpu=native"
+    env.pop("CARGO_ENCODED_RUSTFLAGS", None)
+    env["CFLAGS"] = "-march=native -mtune=native -O2"
+    env["CXXFLAGS"] = env["CFLAGS"]
+    env["CPPFLAGS"] = ""
+    jobs = workspace.jobs
 
-        # Verify the ISO dependency cache before starting compilation
-        if not fetch_dependencies(cargo, project, env):
-            return False
+    # Verify the ISO dependency cache before starting compilation
+    if not fetch_dependencies(cargo, project, env):
+        return False
 
-        build_env = env.copy()
-        build_env["CARGO_NET_OFFLINE"] = "true"
-        build_env["RUSTUP_AUTO_INSTALL"] = "0"
+    build_env = env.copy()
+    build_env["CARGO_NET_OFFLINE"] = "true"
+    build_env["RUSTUP_AUTO_INSTALL"] = "0"
 
-        log("INFO", f"Compiling native release v{version} on tmpfs ({jobs} jobs)")
-        before = source_digest(project)
-        command = [cargo, "build", "--release", "--frozen", "--target", TARGET, "--jobs", str(jobs), "--bin", "dusky_snap"]
-        returncode, _, stderr, timed_out = run_bounded(
-            command,
-            cwd=project,
-            env=build_env,
-            timeout=BUILD_TIMEOUT_S,
-            capture_output=True,
-        )
-        if timed_out:
-            log("WARN", f"Cargo build exceeded {BUILD_TIMEOUT_S}s and was terminated")
-            return False
-        if returncode != 0:
-            log("WARN", f"Cargo build failed:\n{stderr[-12000:]}")
-            return False
+    log("INFO", f"Compiling native release v{version} in {workspace.storage} ({jobs} jobs)")
+    before = source_digest(project)
+    command = [cargo, "build", "--release", "--frozen", "--target", TARGET, "--jobs", str(jobs), "--bin", "dusky_snap"]
+    returncode, _, stderr, timed_out = run_bounded(
+        command,
+        cwd=project,
+        env=build_env,
+        timeout=BUILD_TIMEOUT_S,
+        capture_output=True,
+    )
+    if timed_out:
+        log("WARN", f"Cargo build exceeded {BUILD_TIMEOUT_S}s and was terminated")
+        return False
+    if returncode != 0:
+        workspace.retry_on_disk(returncode, stderr)
+        log("WARN", f"Cargo build failed:\n{stderr[-12000:]}")
+        return False
 
-        built = target_dir / TARGET / "release" / "dusky_snap"
-        if not binary_runs(built):
-            log("WARN", "Built binary failed its executable smoke test")
-            return False
+    built = target_dir / TARGET / "release" / "dusky_snap"
+    if not binary_runs(built):
+        log("WARN", "Built binary failed its executable smoke test")
+        return False
 
-        if source_digest(project) != before:
-            log("WARN", "Sources changed during compilation; rerun setup")
-            return False
+    if source_digest(project) != before:
+        log("WARN", "Sources changed during compilation; rerun setup")
+        return False
 
-        temporary_binary = binary.with_name(f".{binary.name}.{os.getpid()}.tmp")
-        temporary_manifest = manifest_path.with_name(f".{manifest_path.name}.{os.getpid()}.tmp")
-        try:
-            shutil.copy2(built, temporary_binary)
-            temporary_binary.chmod(0o755)
-            manifest = {
-                "version": version,
-                "target": TARGET,
-                "target_cpu": "native",
-                "cpu_signature": cpu_signature(),
-                "source_sha256": before,
-                "binary_sha256": sha256(temporary_binary),
-            }
-            temporary_manifest.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-            # Prepare both files before changing the working installation.
-            os.replace(temporary_binary, binary)
-            os.replace(temporary_manifest, manifest_path)
-        except OSError as error:
-            log("WARN", f"Could not install built binary: {error}")
-            return False
-        finally:
-            temporary_binary.unlink(missing_ok=True)
-            temporary_manifest.unlink(missing_ok=True)
+    temporary_binary = binary.with_name(f".{binary.name}.{os.getpid()}.tmp")
+    temporary_manifest = manifest_path.with_name(f".{manifest_path.name}.{os.getpid()}.tmp")
+    try:
+        shutil.copy2(built, temporary_binary)
+        temporary_binary.chmod(0o755)
+        manifest = {
+            "version": version,
+            "target": TARGET,
+            "target_cpu": "native",
+            "cpu_signature": cpu_signature(),
+            "source_sha256": before,
+            "binary_sha256": sha256(temporary_binary),
+        }
+        temporary_manifest.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        # Prepare both files before changing the working installation.
+        os.replace(temporary_binary, binary)
+        os.replace(temporary_manifest, manifest_path)
+    except OSError as error:
+        log("WARN", f"Could not install built binary: {error}")
+        return False
+    finally:
+        temporary_binary.unlink(missing_ok=True)
+        temporary_manifest.unlink(missing_ok=True)
     return True
 
 

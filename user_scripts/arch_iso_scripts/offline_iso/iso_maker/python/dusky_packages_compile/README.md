@@ -44,7 +44,19 @@ from the ISO remains installed after the offline repository is removed, but
 later binary updates require a new package source or another update mechanism.
 
 `dusky-network` uses the network meter's shared `setup.py --generic` builder:
-frozen/offline Cargo, executable tmpfs, and explicit baseline x86-64 flags. The
+frozen/offline Cargo, RAM-aware tmpfs/disk selection, and baseline x86-64 flags. The
 package includes its exact binary/source manifest and disables makepkg stripping
 because the builder already strips the executable. User setup step 154 reuses a
 matching package without a compiler, or builds natively after source edits.
+
+The four GUI recipes use `build_rust.py` and the shared
+`147_rust_compiles_shared_NOT_STANDALONE.py` storage policy. Their recipe-local
+symlinks are declared as makepkg sources. The generator fingerprints their
+contents and copies them into each isolated recipe, so they remain available
+without the rest of the checkout. Keep these symlinks when copying `TEMPLATE`.
+
+Compiler artifacts prefer executable tmpfs with sufficient available memory;
+otherwise they use temporary disk storage. Job counts follow the memory budget.
+RAM resource exhaustion retries once on disk with one job. Only the final binary
+is staged for `package()`; compiler artifacts are removed before packaging.
+The shared Cargo dependency cache is retained for reuse and offline builds.

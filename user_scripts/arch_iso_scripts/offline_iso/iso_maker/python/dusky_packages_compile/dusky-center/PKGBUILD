@@ -5,43 +5,23 @@ pkgdesc='Dusky Center control center for Hyprland'
 arch=('x86_64')
 license=('custom')
 depends=('glibc' 'gcc-libs' 'wayland' 'libxkbcommon' 'vulkan-icd-loader' 'mesa' 'libglvnd')
-makedepends=('cargo' 'python' 'util-linux')
+makedepends=('cargo' 'python')
 options=('!debug')
-source=()
+source=('build_rust.py' '147_rust_compiles_shared_NOT_STANDALONE.py')
+# Local sources are fingerprinted by the ISO generator together with this recipe.
+sha256sums=('SKIP' 'SKIP')
 
 build() {
-  # Override the factory's target directory: center compilation always stays on RAM.
-  [[ "$(findmnt -n -o FSTYPE -T /tmp)" == tmpfs ]] || {
-    printf 'Dusky Center ISO builds require /tmp on tmpfs.\n' >&2
-    return 1
-  }
-  local build_dir
-  build_dir="$(mktemp -d /tmp/dusky-center-iso.XXXXXXXX)"
-  printf '%s\n' "$build_dir" > "$srcdir/center-build-path"
-  # Keep successful output for package(); remove it if compilation fails.
-  trap "status=\$?; if ((status != 0)); then rm -rf -- '$build_dir'; fi" EXIT
-  cp -a -- "$DUSKY_PACKAGE_SOURCE" "$build_dir/project"
-  cd "$build_dir/project"
-  unset CARGO_ENCODED_RUSTFLAGS
-  export RUSTFLAGS='-C target-cpu=x86-64'
-  export CFLAGS='-march=x86-64 -mtune=generic -O2'
-  export CXXFLAGS="$CFLAGS"
-  export CPPFLAGS=''
-  export CARGO_TARGET_DIR="$build_dir/target"
-  export CARGO_BUILD_BUILD_DIR="$CARGO_TARGET_DIR"
-  export TMPDIR="$build_dir"
-  cargo build --release --locked --target x86_64-unknown-linux-gnu
+  cp -aL -- "$DUSKY_PACKAGE_SOURCE" "$srcdir/project"
+  python "$srcdir/build_rust.py" "$srcdir/project" "$srcdir/binary-output/dusky-center"
 }
 
 package() {
-  local build_dir
-  build_dir="$(cat "$srcdir/center-build-path")"
-  trap "rm -rf -- '$build_dir'" EXIT
-  install -Dm755 "$build_dir/target/x86_64-unknown-linux-gnu/release/dusky-center" \
+  install -Dm755 "$srcdir/binary-output/dusky-center" \
     "$pkgdir/usr/bin/dusky-center"
-  install -Dm644 "$build_dir/project/dusky_config.toml" \
+  install -Dm644 "$srcdir/project/dusky_config.toml" \
     "$pkgdir/usr/share/dusky-center/dusky_config.toml"
-  python - "$build_dir/project" > "$pkgdir/usr/share/dusky-center/source.sha256" <<'PY'
+  python - "$srcdir/project" > "$pkgdir/usr/share/dusky-center/source.sha256" <<'PY'
 import hashlib
 import sys
 from pathlib import Path

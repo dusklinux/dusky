@@ -10,10 +10,10 @@ options=('!debug' '!strip')
 source=()
 
 build() {
-  cp -a -- "$DUSKY_PACKAGE_SOURCE" "$srcdir/project"
+  cp -aL -- "$DUSKY_PACKAGE_SOURCE" "$srcdir/project"
   cd "$srcdir/project"
   # The shared builder pins generic CPU/release flags, frozen offline Cargo,
-  # one compiler job and executable tmpfs; inherited native flags cannot leak.
+  # one compiler job and temporary build storage; inherited native flags cannot leak.
   python setup.py --generic --force-rebuild --output-dir "$srcdir/binary-output"
 }
 

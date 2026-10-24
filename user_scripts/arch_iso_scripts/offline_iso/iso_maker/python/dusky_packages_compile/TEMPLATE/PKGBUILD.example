@@ -5,20 +5,16 @@ pkgdesc='Example package built by the Dusky ISO factory'
 arch=('x86_64')
 license=('custom')
 depends=('glibc')
-makedepends=('cargo')
-source=()
+makedepends=('cargo' 'python')
+source=('build_rust.py' '147_rust_compiles_shared_NOT_STANDALONE.py')
+sha256sums=('SKIP' 'SKIP')
 
 build() {
-  cp -a -- "$DUSKY_PACKAGE_SOURCE" "$srcdir/project"
-  cd "$srcdir/project"
-  export RUSTFLAGS="${RUSTFLAGS:-} -C target-cpu=x86-64"
-  export CFLAGS='-march=x86-64 -mtune=generic -O2'
-  export CXXFLAGS="$CFLAGS"
-  cargo build --release --locked --target x86_64-unknown-linux-gnu
+  cp -aL -- "$DUSKY_PACKAGE_SOURCE" "$srcdir/project"
+  python "$srcdir/build_rust.py" "$srcdir/project" "$srcdir/binary-output/example-package"
 }
 
 package() {
-  local target_dir="${CARGO_TARGET_DIR:-$srcdir/project/target}"
-  install -Dm755 "$target_dir/x86_64-unknown-linux-gnu/release/example-package" \
+  install -Dm755 "$srcdir/binary-output/example-package" \
     "$pkgdir/usr/bin/example-package"
 }
