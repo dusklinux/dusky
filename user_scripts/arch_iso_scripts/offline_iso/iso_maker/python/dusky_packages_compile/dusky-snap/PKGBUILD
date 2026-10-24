@@ -1,6 +1,6 @@
 pkgname=dusky-snap
 pkgver=0.4.1
-pkgrel=2
+pkgrel=3
 pkgdesc='Dusky Snap Wayland screenshot and annotation tool'
 arch=('x86_64')
 license=('custom')
@@ -23,4 +23,29 @@ package() {
   install -Dm644 "$srcdir/project/config.json" "$pkgdir/usr/share/dusky-snap/config.json"
   install -Dm644 "$srcdir/project/dusky_snap.desktop" \
     "$pkgdir/usr/share/applications/dusky_snap.desktop"
+  python - "$srcdir/project" > "$pkgdir/usr/share/dusky-snap/source.sha256" <<'PYHASH'
+import hashlib
+import sys
+from pathlib import Path
+
+project = Path(sys.argv[1])
+files = [project / "Cargo.toml", project / "Cargo.lock"]
+for relative in (
+    "build.rs", "rust-toolchain", "rust-toolchain.toml",
+    ".cargo/config", ".cargo/config.toml",
+):
+    path = project / relative
+    if path.is_file():
+        files.append(path)
+if (project / "src").is_dir():
+    files.extend(sorted(path for path in (project / "src").rglob("*") if path.is_file()))
+
+# Same build inputs and recipe marker as 150_dusky_snap_setup.py.
+digest = hashlib.sha256(b"snap-rust-v3-native-first-frozen-tmpfs\0")
+for path in files:
+    digest.update(str(path.relative_to(project)).encode())
+    digest.update(b"\0")
+    digest.update(hashlib.sha256(path.read_bytes()).digest())
+print(digest.hexdigest())
+PYHASH
 }

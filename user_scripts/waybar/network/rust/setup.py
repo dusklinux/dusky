@@ -23,6 +23,7 @@ build_support = import_module("147_rust_compiles_shared_NOT_STANDALONE")
 SYSTEM_BINARY = Path("/usr/bin/dusky-network")
 SYSTEM_MANIFEST = Path("/usr/share/dusky-network/binary_manifest.json")
 TARGET = "x86_64-unknown-linux-gnu"
+# Bump this marker when code-generation flags change, rather than for orchestration edits.
 RECIPE = "dusky-network-tmpfs-v2"
 
 
@@ -32,7 +33,7 @@ def digest(path: Path) -> str:
 
 
 def source_digest() -> str:
-    files = [PROJECT / name for name in ("Cargo.toml", "Cargo.lock", "setup.py", "147_rust_compiles_shared_NOT_STANDALONE.py")]
+    files = [PROJECT / name for name in ("Cargo.toml", "Cargo.lock")]
     files.extend(sorted(path for path in (PROJECT / "src").rglob("*") if path.is_file()))
     for name in ("build.rs", ".cargo/config", ".cargo/config.toml", "rust-toolchain.toml", "rust-toolchain"):
         if (PROJECT / name).is_file():
@@ -220,17 +221,10 @@ def install(install_dir: Path, launcher: Path, force: bool) -> bool:
     except OSError:
         before = None
     native_current = current(old_native, configuration)
-    # A compiler update invalidates a native build when a toolchain is available.
-    rustc = shutil.which("rustc")
-    if native_current and rustc:
-        try:
-            native_current = old_native.get("rustc") == run([rustc, "-vV"], timeout=10)
-        except (OSError, RuntimeError, subprocess.TimeoutExpired):
-            native_current = False
     selected = native_current and not force
     if selected:
         print("[OK] Using verified native network meter")
-    elif not force and not old_native and current(packaged, configuration):
+    elif not force and current(packaged, configuration):
         link(SYSTEM_BINARY, binary)
         manifest_path.unlink(missing_ok=True)
         selected = True

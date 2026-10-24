@@ -2,7 +2,7 @@
 
 Dependency-free Rust network meter shared by Waybar and Dusky Glance.
 
-Install or refresh the CPU-native binary:
+Install or refresh the network meter:
 
 ```sh
 python3 ~/user_scripts/arch_setup_scripts/scripts/154_dusky_network_meter_setup.py
@@ -10,8 +10,11 @@ python3 ~/user_scripts/arch_setup_scripts/scripts/154_dusky_network_meter_setup.
 
 Setup reuses a verified native build or matching ISO package, and recompiles
 changed sources on its next invocation. `--force-rebuild` requests a native build.
-Compilation is frozen/offline on executable tmpfs; no build artifacts are written
-into this source directory. The installed binary, manifest and build lock live in
+Compiler updates and edits to the build/storage scripts do not invalidate an
+otherwise matching installed binary; use `--force-rebuild` to refresh it deliberately.
+Compilation is frozen/offline, preferring executable tmpfs with disk fallback;
+build artifacts use temporary storage outside this source directory. The installed
+binary, manifest and build lock live in
 `~/.local/share/dusky/dusky_network/`; the launcher is `~/.local/bin/dusky-network`.
 `Cargo.lock` is Cargo metadata required for frozen builds.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build Dusky Tray for this CPU; retain a generic ISO package as a fallback."""
+"""Reuse a matching Dusky Tray ISO binary, or build for this CPU with temporary storage."""
 
 import argparse
 import fcntl
@@ -22,6 +22,7 @@ build_support = import_module("147_rust_compiles_shared_NOT_STANDALONE")
 
 TARGET = "x86_64-unknown-linux-gnu"
 SYSTEM_BINARY = Path("/usr/bin/dusky-tray")
+SYSTEM_SOURCE_DIGEST = Path("/usr/share/dusky-tray/source.sha256")
 BUILD_RECIPE = "tray-native-v1-frozen-tmpfs"
 
 
@@ -390,6 +391,13 @@ def install_defaults(project: Path, install_dir: Path) -> None:
             shutil.copyfile(source, destination)
 
 
+def packaged_source_matches(project: Path) -> bool:
+    try:
+        return SYSTEM_SOURCE_DIGEST.read_text(encoding="utf-8").strip() == source_digest(project)
+    except OSError:
+        return False
+
+
 def setup(project: Path, install_dir: Path, force: bool) -> int:
     binary = install_dir / "dusky-tray"
     manifest_path = install_dir / "binary_manifest.json"
@@ -402,7 +410,14 @@ def setup(project: Path, install_dir: Path, force: bool) -> int:
     selected = current and not force
     if selected:
         log("OK", f"Using verified native build for this CPU (v{version})")
-    elif version:
+    elif not force and binary_runs(SYSTEM_BINARY) and (
+        version is None or (binary_version(SYSTEM_BINARY) == version and packaged_source_matches(project))
+    ):
+        selected = link_system_binary(SYSTEM_BINARY, binary)
+        if selected:
+            manifest_path.unlink(missing_ok=True)
+            log("OK", "Using matching generic ISO package; no compilation needed")
+    if not selected and version:
         try:
             selected = build_native(project, binary, manifest_path, version)
         except OSError as error:
