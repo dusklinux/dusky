@@ -295,6 +295,9 @@ REPO_PACKAGES: list[str] = [
     "virt-manager",
     "virt-viewer",
     "virtiofsd",          # host backend for optional Linux guest shared folders
+    "acl",               # shared-directory access and inherited operator permissions
+    "openssh",           # host-to-guest SSH and Wayland clipboard transport
+    "wl-clipboard",      # native Wayland clipboard integration
     "dnsmasq",            # libvirt NAT/DHCP backend
     "edk2-ovmf",          # firmware descriptors /usr/share/qemu/firmware/*.json (libvirt selects blob via JSON, no hard-coded fd)
     "swtpm",              # TPM 2.0 emulation (mandatory for win11 osinfo)

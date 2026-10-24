@@ -1,0 +1,16 @@
+[profile]
+name = "Arch Linux"
+description = "UEFI/KVM Linux VM, SSH, Wayland text clipboard and RAM-backed sharing"
+
+[search_dirs]
+dirs = ["."] # Relative to 000_dusky_vm.py, independent of the shell's directory.
+
+[sequence]
+tasks = [
+    { script = "05_virtio_iso.py", args = ["--skip-virtio"] },
+    { script = "10_virt_modular_daemon.py" },
+    # Preserve an existing default network; create NAT on a fresh host.
+    { script = "20_networking_nmcli.py", args = ["--nat"] },
+    # Always launch a new VM; successful host preparation is resumable.
+    { script = "30_kvm_vm_deploy.py", always = true, forward_args = true },
+]

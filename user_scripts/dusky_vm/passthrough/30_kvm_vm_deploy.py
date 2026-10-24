@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 """
-Arsonix KVM/VFIO Pipeline -- Phase 6 (30_kvm_vm_deploy.py)
-Domain composition: virt-install baseline -> DOM surgery -> virsh define.
+Linux-first KVM deployment entrypoint (30_kvm_vm_deploy.py).
+
+The default Python 3.15 workflow is implemented in linux_vm.py: Arch ISO
+discovery, UEFI, 20 GiB disk, SSH, VirtioFS and native Wayland text clipboard.
+Use --help for its options. --windows retains the earlier interactive deployment
+workflow below until the separate Windows update.
+
+Original Windows pipeline: virt-install baseline -> DOM surgery -> virsh define.
 
 Target : Arch Linux rolling (Aug 2026) / libvirt 12.6+ / virt-install 5.x / QEMU 11.1.0+
 Policy : Every decision an earlier phase already made is READ, never re-typed.
@@ -24,6 +30,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Never
+
+# Linux is the default workflow. Keep the Windows pipeline explicitly selectable
+# until its separate modernization pass; do not run its import-time elevation.
+if __name__ == "__main__" and "--windows" not in sys.argv:
+    from linux_vm import main as linux_main
+
+    raise SystemExit(linux_main())
 
 MIN_PY: tuple[int, int, int] = (3, 14, 7)
 STATE_DIR = Path("/var/lib/arsonix")
@@ -61,6 +74,11 @@ def elevate() -> None:
 if sys.version_info[:3] < MIN_PY:
     _hard_exit("Python 3.14.7+ required.")
 elevate()
+
+# Keep the dispatch flag through sudo re-exec; strip it only in the elevated
+# Windows process, before its own ArgumentParser sees the remaining arguments.
+if __name__ == "__main__":
+    sys.argv.remove("--windows")
 
 try:
     from rich.console import Console

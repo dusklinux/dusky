@@ -373,8 +373,8 @@ def enforce_kv_config(path: Path, targets: dict[str, str], banner: str) -> bool:
         pattern = re.compile(rf"^[ \t]*#?[ \t]*{re.escape(key)}[ \t]*=.*$", re.MULTILINE)
         line = f"{key} = {value}"
         if pattern.search(content):
-            content = pattern.sub(line, content, count=1)
-            content = pattern.sub("", content)  # collapse duplicate later definitions
+            definitions = iter([line])
+            content = pattern.sub(lambda _match: next(definitions, ""), content)
         else:
             if not content.endswith("\n"):
                 content += "\n"
