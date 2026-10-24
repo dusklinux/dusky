@@ -1468,7 +1468,7 @@ class FileLink(Label):
 
     def render(self) -> Text:
         txt = Text()
-        txt.append(" 󰈔 Edit File ", style=self.app.theme_colors["accent"] + " bold underline")
+        txt.append("󰈔 Edit File", style=self.app.theme_colors["accent"] + " bold underline")
         return txt
 
     def watch_path(self, new_val: str) -> None:
@@ -1492,7 +1492,7 @@ class ModeButton(Label):
 
     def update_mode(self) -> None:
         txt = Text()
-        txt.append(" Mode: ", style=self.app.theme_colors["fg"])
+        txt.append("Mode: ", style=self.app.theme_colors["fg"])
 
         mode_str = "AUTO" if self.app.auto_save else "BATCH"
         color = self.app.theme_colors["success"] if self.app.auto_save else self.app.theme_colors["warning"]
@@ -1563,8 +1563,9 @@ class AppFooter(Vertical):
             # yield Shortcut("ctrl+t", "Toggle Mode", "toggle_save_mode", id="shortcut-ctrl-t")
 
         with Horizontal(id="footer-bottom-row"):
-            yield FileLink(id="file-link")
-            yield Label(" │ ", classes="footer-sep")
+            with Horizontal(id="footer-file-target"):
+                yield FileLink(id="file-link")
+                yield Label("│", classes="footer-sep")
             yield ModeButton(id="footer-legend", classes="mode-btn")
             yield Label("", id="pos-counter", classes="pos-counter-btn")
             yield Label("", id="status-bar")
@@ -1947,6 +1948,8 @@ ScrollIndicator:hover { color: $foreground; }
 
 #footer-bottom-row { width: 100%; height: 1; margin-top: 0; }
 
+#footer-file-target { width: auto; height: 1; display: none; }
+
 .footer-sep { color: $secondary; }
 
 .footer-shortcut { padding: 0 1; background: transparent; }
@@ -1958,7 +1961,7 @@ ScrollIndicator:hover { color: $foreground; }
 .mode-btn { padding: 0 1; background: transparent; }
 .mode-btn:hover { text-style: bold; color: $foreground; background: $primary 25%; }
 
-.pos-counter-btn { padding: 0 1; background: transparent; }
+.pos-counter-btn { padding: 0 1 0 0; background: transparent; }
 
 #file-link { padding: 0 1; background: transparent; }
 #file-link:hover { text-style: bold; color: $foreground; background: $primary 25%; }
@@ -4670,7 +4673,7 @@ Tooltip {
             path = engine.target_path if engine is not None and getattr(engine, "editable_target", True) else ""
             link = self.query_one("#file-link", FileLink)
             link.path = path
-            link.display = bool(path)
+            self.query_one("#footer-file-target").display = bool(path)
         except Exception:
             pass
 
@@ -4914,7 +4917,7 @@ Tooltip {
 
                 if total_selectable > 0 and selectable_idx > 0:
                     txt = Text()
-                    txt.append(" │ ", style=self.theme_colors.get("fg", ""))
+                    txt.append("│ ", style=self.theme_colors.get("fg", ""))
                     txt.append(f"{selectable_idx}/{total_selectable}", style=self.theme_colors.get("accent", "") + " bold")
                     counter.update(txt)
                     counter.display = True
