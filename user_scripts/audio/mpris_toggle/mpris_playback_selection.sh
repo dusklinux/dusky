@@ -7,6 +7,7 @@ set -euo pipefail
 readonly APP_NAME=mpris_playback
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 readonly SCRIPT_DIR CONTROLLERS_DIR="$SCRIPT_DIR/controllers"
+readonly MEDIA_IPC="$SCRIPT_DIR/../../mako_osd/osd_router/media_ipc.py"
 readonly ROFI_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/rofi/config.rasi"
 readonly ROFI_THEME='window {width: 40%;} listview {lines: 10;}'
 readonly RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$UID}
@@ -111,13 +112,17 @@ _discover_sources() {
 
 _update_players() {
     players=(); player_pids=(); player_owners=()
-    ((HAS_MPRIS)) || return 0
-    local listing name pid owner
-    listing=$(busctl --user --json=short --acquired list) || return 0
-    listing=$(jq -r '.[] | select(.name | startswith("org.mpris.MediaPlayer2."))
+    local listing='[]' ipc name pid owner
+    if ((HAS_MPRIS)); then
+        listing=$(busctl --user --json=short --acquired list) || listing='[]'
+    fi
+    ipc=$(python3 "$MEDIA_IPC" list) || ipc='[]'
+    listing=$(jq -r --argjson ipc "$ipc" '
+        ([.[] | select(.name | startswith("org.mpris.MediaPlayer2."))
+            | . as $p | select(any($ipc[]; .pid == $p.pid) | not)] + $ipc)[]
         | [.name, (.pid // ""), .connection] | join("\u001f")' <<< "$listing") || return 0
     while IFS=$SEP read -r name pid owner; do
-        [[ -n $name && $owner == :* ]] || continue
+        [[ -n $name && ( $owner == :* || $owner == mpv:* ) ]] || continue
         name=${name#org.mpris.MediaPlayer2.}
         players+=("$name")
         player_pids[$name]=$pid
@@ -135,10 +140,14 @@ _backend_metadata() {
                 # GetAll provides typed metadata without delimiter collisions.
                 # Keep the discovered connection: a restarted app must not
                 # inherit a menu selection made for its previous instance.
-                data=$(busctl --user --json=short --timeout=1 --auto-start=no call \
-                    "${player_owners[${backend#mpris:}]:-}" /org/mpris/MediaPlayer2 \
-                    org.freedesktop.DBus.Properties GetAll s org.mpris.MediaPlayer2.Player \
-                    2>/dev/null) || data=''
+                if [[ ${player_owners[${backend#mpris:}]:-} == mpv:* ]]; then
+                    data=$(python3 "$MEDIA_IPC" read "${player_owners[${backend#mpris:}]}" 2>/dev/null) || data=''
+                else
+                    data=$(busctl --user --json=short --timeout=1 --auto-start=no call \
+                        "${player_owners[${backend#mpris:}]:-}" /org/mpris/MediaPlayer2 \
+                        org.freedesktop.DBus.Properties GetAll s org.mpris.MediaPlayer2.Player \
+                        2>/dev/null) || data=''
+                fi
                 if [[ -n $data ]]; then
                     data=$(jq -er '
                         def text: tostring | gsub("[\u0000-\u001f\u007f]"; " ");
@@ -398,9 +407,13 @@ _control_source() {
                 stop) action=Stop ;;
                 *) return 1 ;;
             esac
-            busctl --user --quiet --timeout=1 --auto-start=no call \
-                "${player_owners[${backend#mpris:}]:-}" /org/mpris/MediaPlayer2 \
-                org.mpris.MediaPlayer2.Player "$action"
+            if [[ ${player_owners[${backend#mpris:}]:-} == mpv:* ]]; then
+                python3 "$MEDIA_IPC" control "${player_owners[${backend#mpris:}]}" "$action" >/dev/null
+            else
+                busctl --user --quiet --timeout=1 --auto-start=no call \
+                    "${player_owners[${backend#mpris:}]:-}" /org/mpris/MediaPlayer2 \
+                    org.mpris.MediaPlayer2.Player "$action"
+            fi
             ;;
         cli:*) timeout --kill-after=1 2 "$CONTROLLERS_DIR/${backend#cli:}" "$action" ;;
         *) return 1 ;;
@@ -462,6 +475,17 @@ _perform_action() {
     done
     if [[ $backend == mpris:* ]]; then
         printf '%s\n' "${player_owners[${backend#mpris:}]}" > "$RUNTIME_DIR/osd_media_player.txt"
+        local other owner
+        local -a observed=() fields=()
+        for other in "${backends[@]}"; do
+            [[ $other == mpris:* ]] || continue
+            IFS=$SEP read -r -a fields <<< "${metadata_cache[$other]:-}"
+            owner=${player_owners[${other#mpris:}]:-}
+            if [[ ${fields[4]:-} == Playing && -n $owner ]]; then observed+=("$owner"); fi
+        done
+        jq -n --arg selected "${player_owners[${backend#mpris:}]}" --args '
+            {selected: $selected, playing: ($ARGS.positional | unique)}
+        ' "${observed[@]}" > "$RUNTIME_DIR/osd_media_context.json"
     fi
     exec {lock_fd}>&-
 }
