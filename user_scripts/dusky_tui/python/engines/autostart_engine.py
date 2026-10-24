@@ -8,14 +8,13 @@ while handling `hl.exec_cmd(...)` autostart directives inside `hl.on("hyprland.s
 ===============================================================================
 """
 
-import os
 import re
-lazy import stat
-lazy import tempfile
+lazy from bisect import bisect_right
 lazy from pathlib import Path
 lazy from typing import Any
 
 from python.engines.lua import HyprlandLuaEngine
+from python.shared.lua_source import calls, tokens, string_value, line_comments
 
 AUTOSTART_DEFAULTS: dict[str, dict[str, Any]] = {
     # --- Interface & Background Services ---
@@ -322,173 +321,149 @@ AUTOSTART_DEFAULTS: dict[str, dict[str, Any]] = {
     },
 }
 
-def _is_header_comment(lines: list[str], idx: int) -> bool:
-    """Returns True if the line is part of the top-level doc/syntax header comments."""
-    if idx < 15 and idx < len(lines):
-        # Only comment lines can be header; active code in the first 15
-        # lines must still be honoured (short/test files).
-        if not lines[idx].strip().startswith("--"):
-            return False
-        for i in range(min(idx + 1, 15)):
-            if "Syntax:" in lines[i] or "USER CONFIGURATION" in lines[i]:
-                return True
-    return False
+_BOOTSTRAP_PARTS = {
+    'systemd_env': re.compile(r'systemctl\s+--user\s+import-environment(?:\s+[A-Z_][A-Z_0-9]*)*'),
+    'dbus_env': re.compile(r'dbus-update-activation-environment(?:\s+--[a-z-]+)*'),
+    'session_target': re.compile(r'systemctl\s+--user\s+start\s+hyprland-session\.target'),
+}
+_DISABLED_PART = re.compile(r": dusky-disabled-(systemd_env|dbus_env|session_target) '([^']*)'")
+
+
+def _visible_command(code):
+    # Disabled components remain quoted arguments to the shell's no-op command.
+    # Hide them from state detection while keeping their exact text recoverable.
+    return _DISABLED_PART.sub(':', code)
+
+
+def _event_for(key):
+    return 'hyprland.shutdown' if key == 'autostart/shutdown_target' else 'hyprland.start'
+
 
 class AutostartLuaEngine(HyprlandLuaEngine):
+    def _commands(self, content):
+        registered = {(c['line'], c['id']) for c in self._call_sites
+                      if c['file'] == str(self.config_path) and c['method'] == 'on'}
+        regions, entries = {}, []
+        for a, b, first, last in calls(content, 'on'):
+            ts = tokens(content[first:last])
+            event = string_value(ts[0][1]) if ts else None
+            if (content.count('\n', 0, a)+1, event) not in registered:
+                continue
+            all_ts = tokens(content[a:b])
+            if len(all_ts) < 2 or all_ts[-2][1] != 'end':
+                continue  # Named callbacks remain untouched; add a separate handler if needed.
+            regions.setdefault(event, []).append(a+all_ts[-2][2])
+            body = content[first:last]
+            # Only direct commands in this event callback are managed. A nested
+            # function definition does not schedule its commands for startup.
+            positions, depths, blocks = [0], [0], []
+            function_depth = 0
+            for kind, value, _, end in tokens(body):
+                if kind == 'name':
+                    if value in {'function', 'if', 'do', 'repeat'}:
+                        blocks.append(value)
+                        function_depth += value == 'function'
+                    elif value in {'end', 'until'} and blocks:
+                        function_depth -= blocks.pop() == 'function'
+                positions.append(end)
+                depths.append(function_depth)
+
+            def direct(offset):
+                return depths[bisect_right(positions, offset)-1] == 1
+
+            for ca, cb, _, _ in calls(body, 'exec_cmd'):
+                if direct(ca):
+                    entries.append((event, first+ca, first+cb, body[ca:cb], False))
+            # Only explicit command comments inside a registered event are toggles.
+            for ca, cb, line in line_comments(body):
+                if not direct(ca):
+                    continue
+                managed = re.fullmatch(r'--\[(=*)\[dusky-autostart-disabled\n(.*)\n\]\1\]', line, re.DOTALL)
+                if managed:
+                    entries.append((event, first+ca, first+cb, managed[2], 'managed'))
+                    continue
+                match = re.match(r'--[ \t]*(hl\.exec_cmd.*)', line)
+                if match and list(calls(match[1], 'exec_cmd')):
+                    entries.append((event, first+ca, first+cb, match[1], True))
+        return regions, entries
+
     def load_state(self) -> dict[str, Any]:
         state = super().load_state()
-
-        if not self.config_path.exists():
-            for full_key, meta in AUTOSTART_DEFAULTS.items():
-                state[full_key] = meta["default"]
-            return state
-
         try:
-            content = self.config_path.read_text(encoding="utf-8")
+            content = self.config_path.read_text(encoding='utf-8')
         except OSError:
-            for full_key, meta in AUTOSTART_DEFAULTS.items():
-                state[full_key] = meta["default"]
-            return state
-
-        lines = content.splitlines()
-
-        for full_key, meta in AUTOSTART_DEFAULTS.items():
-            pattern = meta["pattern"]
-            is_active = False
-            found_commented = False
-
-            for idx, line in enumerate(lines):
-                if _is_header_comment(lines, idx):
-                    continue
-
-                stripped = line.strip()
-                if re.search(pattern, stripped):
-                    if stripped.startswith("--"):
-                        found_commented = True
-                    else:
-                        is_active = True
-                        break
-
-            if is_active:
-                state[full_key] = True
-            elif found_commented:
-                state[full_key] = False
-            else:
-                state[full_key] = meta["default"]
-
+            content = ''
+        _, entries = self._commands(content)
+        for key, meta in AUTOSTART_DEFAULTS.items():
+            state[key] = any(event == _event_for(key) and not disabled and re.search(meta['pattern'], _visible_command(code), re.DOTALL)
+                             for event, _, _, code, disabled in entries)
         return state
 
     def write_batch(self, changes: list[tuple[str, str, str, str]]) -> tuple[bool, str, str]:
-        standard_changes = []
-        autostart_changes = []
+        standard = [c for c in changes if c[1] != 'autostart']
+        custom = [c for c in changes if c[1] == 'autostart']
+        if not custom:
+            return super().write_batch(standard)
+        if not self.loaded_files:
+            self.load_state()
 
-        for key, scope, val, itype in changes:
-            full_key = f"{scope}/{key}" if scope and scope != "DEFAULT" else f"autostart/{key}"
-            if scope == "autostart" or full_key in AUTOSTART_DEFAULTS or f"autostart/{key}" in AUTOSTART_DEFAULTS:
-                autostart_changes.append((key, scope, val, itype))
-            else:
-                standard_changes.append((key, scope, val, itype))
-
-        success = True
-        msg = ""
-        debug = ""
-
-        if standard_changes:
-            success, msg, debug = super().write_batch(standard_changes)
-
-        if not success:
-            return success, msg, debug
-
-        if autostart_changes:
-            try:
-                content = self.config_path.read_text(encoding="utf-8") if self.config_path.exists() else ""
-                lines = content.splitlines() if content else []
-
-                has_start_block = any("hyprland.start" in l for l in lines)
-
-                for key, scope, val_str, _ in autostart_changes:
-                    full_key = f"{scope}/{key}" if scope and scope != "DEFAULT" else f"autostart/{key}"
-                    meta = AUTOSTART_DEFAULTS.get(full_key) or AUTOSTART_DEFAULTS.get(f"autostart/{key}")
-
-                    if not meta:
-                        continue
-
-                    pattern = meta["pattern"]
-                    canonical = meta["canonical"]
-                    want_enabled = str(val_str).lower() in ("true", "1", "yes", "on", "t", "y")
-
-                    matched_idx = -1
-                    is_currently_commented = False
-
-                    for idx, line in enumerate(lines):
-                        if _is_header_comment(lines, idx):
+        def transform(content):
+            regions, entries = self._commands(content)
+            edits, additions = {}, {}
+            for key, _, value, _ in {(c[0], c[1]): c for c in custom}.values():
+                full_key = 'autostart/'+key
+                if full_key not in AUTOSTART_DEFAULTS:
+                    raise ValueError(f'Unknown autostart entry: {key}')
+                meta = AUTOSTART_DEFAULTS[full_key]
+                event = _event_for(full_key)
+                enabled = str(value).lower() in {'true', '1', 'yes', 'on', 't', 'y'}
+                handled = set()
+                if key in _BOOTSTRAP_PARTS:
+                    for e in entries:
+                        if e[0] != event or e[4]:
                             continue
+                        span = (e[1], e[2])
+                        code = edits.get(span, e[3])
+                        markers = [m for m in _DISABLED_PART.finditer(code) if m[1] == key]
+                        if enabled and markers:
+                            edits[span] = _DISABLED_PART.sub(lambda m: m[2] if m[1] == key else m[0], code)
+                            handled.add(span)
+                        elif not enabled:
+                            visible = _visible_command(code)
+                            compound = sum(bool(p.search(visible)) for p in _BOOTSTRAP_PARTS.values()) > 1
+                            part = _BOOTSTRAP_PARTS[key].search(visible)
+                            if part and (compound or _DISABLED_PART.search(code)):
+                                # Replace only this component. Keep import ordering, shell
+                                # conditions, other services, and the original variable list.
+                                edits[span] = _BOOTSTRAP_PARTS[key].sub(
+                                    lambda m: ": dusky-disabled-"+key+" '"+m[0]+"'", code, count=1)
+                                handled.add(span)
+                matches = [e for e in entries if e[0] == event and (e[1], e[2]) not in handled
+                           and re.search(meta['pattern'], _visible_command(edits.get((e[1], e[2]), e[3])), re.DOTALL)]
+                active = [e for e in matches if not e[4]]
+                if enabled and not active and not handled:
+                    if matches:
+                        managed = [e for e in matches if e[4] == 'managed']
+                        for e in managed or matches[:1]:
+                            edits[e[1], e[2]] = e[3]
+                    else:
+                        additions.setdefault(event, []).append(meta['canonical'])
+                elif not enabled:
+                    for e in active:
+                        eq = '='
+                        while ']'+eq+']' in e[3]:
+                            eq += '='
+                        edits[e[1], e[2]] = '--['+eq+'[dusky-autostart-disabled\n'+e[3]+'\n]'+eq+']'
+            for event, commands in additions.items():
+                raw = ''.join('    '+code+'\n' for code in commands)
+                if regions.get(event):
+                    pos = regions[event][-1]
+                    edits[pos, pos] = raw
+                else:
+                    pos = len(content)
+                    edits[pos, pos] = edits.get((pos, pos), '')+'\nhl.on("'+event+'", function()\n'+raw+'end)\n'
+            for (a, b), replacement in sorted(edits.items(), reverse=True):
+                content = content[:a]+replacement+content[b:]
+            return content
 
-                        stripped = line.strip()
-                        if re.search(pattern, stripped):
-                            matched_idx = idx
-                            is_currently_commented = stripped.startswith("--")
-                            if not is_currently_commented:
-                                break
-
-                    if want_enabled:
-                        if matched_idx != -1:
-                            if is_currently_commented:
-                                raw_line = lines[matched_idx]
-                                indent = raw_line[:len(raw_line) - len(raw_line.lstrip())]
-                                uncommented = re.sub(r'^\s*--+\s*', '', raw_line)
-                                lines[matched_idx] = indent + uncommented
-                        else:
-                            insert_line = f"    {canonical}"
-                            block_end_idx = -1
-                            block_start_idx = -1
-
-                            for i, l in enumerate(lines):
-                                if "hyprland.start" in l and not _is_header_comment(lines, i):
-                                    block_start_idx = i
-                                elif block_start_idx != -1 and l.strip().startswith("end)"):
-                                    block_end_idx = i
-                                    break
-
-                            if block_end_idx != -1:
-                                lines.insert(block_end_idx, insert_line)
-                            else:
-                                if not has_start_block:
-                                    lines.append('\nhl.on("hyprland.start", function()')
-                                    lines.append(insert_line)
-                                    lines.append('end)\n')
-                                    has_start_block = True
-                                else:
-                                    lines.append(insert_line)
-
-                    else: # want_enabled is False
-                        if matched_idx != -1 and not is_currently_commented:
-                            raw_line = lines[matched_idx]
-                            indent = raw_line[:len(raw_line) - len(raw_line.lstrip())]
-                            lines[matched_idx] = f"{indent}-- {raw_line.strip()}"
-
-                new_content = "\n".join(lines) + "\n"
-                self.config_path.parent.mkdir(parents=True, exist_ok=True)
-
-                out_fd, tmp_path_str = tempfile.mkstemp(dir=self.config_path.parent, text=True, suffix=".lua")
-                with os.fdopen(out_fd, "w", encoding="utf-8") as f:
-                    f.write(new_content)
-
-                tmp_path = Path(tmp_path_str)
-                if self.config_path.exists():
-                    try:
-                        tmp_path.chmod(stat.S_IMODE(self.config_path.stat().st_mode))
-                    except OSError:
-                        pass
-
-                tmp_path.replace(self.config_path)
-
-                if hasattr(self, "file_mtimes"):
-                    self.file_mtimes[str(self.config_path)] = self.config_path.stat().st_mtime
-
-                msg = f"Successfully batched {len(changes)} autostart changes."
-
-            except Exception as e:
-                return False, f"Autostart Engine failed to write changes: {e}", debug
-
-        return True, msg, debug
+        return self.write_transformed(standard, transform)

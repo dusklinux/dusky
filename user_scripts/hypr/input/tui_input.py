@@ -8,6 +8,8 @@ Engine: LUA AST Mapper
 ===============================================================================
 """
 
+import os
+import shlex
 import sys
 from pathlib import Path
 
@@ -15,27 +17,21 @@ _dusky_root = Path.home() / "user_scripts" / "dusky_tui"
 if str(_dusky_root) not in sys.path:
     sys.path.insert(0, str(_dusky_root))
 
-import sys
-from pathlib import Path
-
-_DUSKY_TUI_ROOT = Path.home() / "user_scripts" / "dusky_tui"
-if str(_DUSKY_TUI_ROOT) not in sys.path:
-    sys.path.insert(0, str(_DUSKY_TUI_ROOT))
-
 from python.frontend.core_types import ConfigItem
 
 # =============================================================================
 # 1. CORE APPLICATION ROUTING
 # =============================================================================
+_config_home = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
 ENGINE_TYPE = "lua"
-TARGET_FILE = "~/.config/hypr/edit_here/source/input.lua"
+TARGET_FILE = str(_config_home / "hypr/edit_here/source/input.lua")
 APP_TITLE = "Dusky Input Configuration"
 
 # =============================================================================
 # 2. UI & ENVIRONMENT BEHAVIOR
 # =============================================================================
 DEFAULT_MODE = "auto"
-THEME_FILE = "~/.config/matugen/generated/dusky_tui.json"
+THEME_FILE = str(_config_home / "matugen/generated/dusky_tui.json")
 ENABLE_USER_PRESETS = True
 USER_PRESETS_TAB = "Profiles"
 
@@ -75,11 +71,11 @@ SCHEMA = {
             label="Acceleration Profile",
             key="accel_profile",
             scope="input",
-            type_="cycle",
+            type_="string",
             default="adaptive",
             options=["adaptive", "flat", "custom"],
             group="Sensor",
-            extended_help="**Acceleration Profile**\n\nSets the cursor acceleration profile.\n- **Adaptive**: Accelerates naturally based on speed.\n- **Flat**: Constant sensitivity regardless of speed (good for gaming).\n- **Custom**: Based on scroll points."
+            extended_help="**Acceleration Profile**\n\nSets the cursor acceleration profile.\n- **Adaptive**: Accelerates naturally based on speed.\n- **Flat**: Constant sensitivity regardless of speed (good for gaming).\n- **Custom**: Enter `custom <step> <points>` with numeric parameters; a bare `custom` does not define a curve."
         ),
         ConfigItem(
             label="Force No Acceleration",
@@ -124,8 +120,8 @@ SCHEMA = {
             scope="input",
             type_="float",
             default=1.0,
-            min_val=0.1,
-            max_val=5.0,
+            min_val=0.0,
+            max_val=100.0,
             step=0.1,
             group="Scrolling",
             extended_help="**Scroll Factor**\n\nMultiplier added to scroll movement for external mice. Higher values make the scroll wheel move content faster."
@@ -140,7 +136,7 @@ SCHEMA = {
             is_parent=True,
             expanded=False,
             group="Focus",
-            extended_help="**Follow Mouse**\n\nSpecify if and how cursor movement affects window focus.\n- 0: Cursor won't focus windows.\n- 1: Cursor focuses windows on hover.\n- 2/3: Advanced click-to-focus hybrid behaviors."
+            extended_help="**Follow Mouse**\n\nSpecify if and how cursor movement affects window focus.\n- 0: Cursor won't focus windows.\n- 1: Cursor focuses windows on hover.\n- 2: Cursor focus follows pointer without changing keyboard focus.\n- 3: Cursor and keyboard focus are fully separate; click changes keyboard focus."
         ),
         ConfigItem(
             label="Focus Deadzone Shrink",
@@ -296,8 +292,8 @@ SCHEMA = {
             scope="input/touchpad",
             type_="float",
             default=1.0,
-            min_val=0.1,
-            max_val=5.0,
+            min_val=0.0,
+            max_val=100.0,
             step=0.1,
             group="Touchpad",
             extended_help="**Scroll Factor**\n\nMultiplier applied to the amount of scroll movement specifically for the touchpad."
@@ -309,7 +305,7 @@ SCHEMA = {
             type_="bool",
             default=True,
             group="Touchpad",
-            extended_help="**Tap to Click**\n\nAllows tapping on the touchpad surface to register as a mouse click (1 finger = Left, 2 fingers = Right, 3 fingers = Middle)."
+            extended_help="**Tap to Click**\n\nTaps generate clicks according to Tap Button Mapping; the lrm mapping uses left/right/middle for 1/2/3 fingers."
         ),
         ConfigItem(
             label="Clickfinger Behavior",
@@ -429,7 +425,7 @@ SCHEMA = {
             key="action_autodetect_kb",
             scope="DEFAULT",
             type_="action",
-            default="bash ~/.config/hypr/scripts/025_configure_keyboard.sh",
+            default="bash " + shlex.quote(str(Path.home() / "user_scripts/arch_setup_scripts/scripts/025_configure_keyboard.sh")),
             group="Layout",
             extended_help="**Auto-Detect Layout**\n\nExecutes the `025_configure_keyboard.sh` script to automatically detect your system's locale (via localectl) and patch the keyboard layout seamlessly."
         ),
@@ -543,6 +539,7 @@ SCHEMA = {
             type_="preset",
             default=None,
             group="System",
+            preset_partial=True,
             preset_payload={
                 "input/touchpad.natural_scroll": True,
                 "input/touchpad.tap_to_click": True,
@@ -559,6 +556,7 @@ SCHEMA = {
             type_="preset",
             default=None,
             group="System",
+            preset_partial=True,
             preset_payload={
                 "input.accel_profile": "flat",
                 "input.force_no_accel": False,
@@ -944,6 +942,38 @@ SCHEMA = {
         ),
     ],
 }
+
+
+# Input device options; workspace focus behavior stays in Workspace Rules.
+SCHEMA[2].extend([
+    ConfigItem(label="Virtual Keyboard Shared States", key="share_states", scope="input/virtualkeyboard",
+               type_="int", default=2, options=[0, 1, 2], min_val=0, max_val=2,
+               group="Virtual Keyboards", extended_help="0 separate states, 1 share all, 2 share only non-IME virtual keyboards."),
+    ConfigItem(label="Release Keys When Virtual Keyboard Closes", key="release_pressed_on_close",
+               scope="input/virtualkeyboard", type_="bool", default=False, group="Virtual Keyboards",
+               extended_help="Release keys held by a virtual keyboard when it disconnects."),
+])
+SCHEMA[4].extend([
+    ConfigItem(label="Hide Cursor Entirely", key="invisible", scope="cursor", type_="bool", default=False,
+               group="Rendering", extended_help="Do not render the cursor."),
+    ConfigItem(label="Cursor Edge Padding", key="hotspot_padding", scope="cursor", type_="int", default=1,
+               min_val=0, max_val=20, step=1, group="Rendering", extended_help="Cursor hotspot padding at screen edges, in logical pixels."),
+    ConfigItem(label="Initial Cursor Monitor", key="default_monitor", scope="cursor", type_="string",
+               default="[[EMPTY]]", group="Warping", extended_help="Startup monitor name; [[EMPTY]] leaves the default selection."),
+])
+SCHEMA[5].extend([
+    ConfigItem(label="Eraser Button Mode", key="eraser_button_mode", scope="input/tablettool", type_="int",
+               default=0, options=[0, 1], min_val=0, max_val=6, group="Pen",
+               extended_help="0 uses the tool's hardware behavior; 1 sends a button event instead."),
+    ConfigItem(label="Eraser Button Code", key="eraser_button_override", scope="input/tablettool", type_="int",
+               default=0, min_val=0, max_val=2147483647, step=1, group="Pen",
+               extended_help="Button event code for mode 1; 0 uses the default. Use a real BTN code, excluding BTN_TOOL and KEY codes; inspect wev for your tool."),
+])
+# Cycling and manually entering an enum must obey the same native range.
+for rows in SCHEMA.values():
+    for item in rows:
+        if item.type_ == "int" and item.options and item.min_val is None:
+            item.min_val, item.max_val = min(item.options), max(item.options)
 
 # =============================================================================
 # DIRECT EXECUTION HANDLER

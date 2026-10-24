@@ -5,6 +5,7 @@ DUSKY TUI: TRACKPAD GESTURES CONFIGURATION SCHEMA
 ===============================================================================
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -12,27 +13,21 @@ _dusky_root = Path.home() / "user_scripts" / "dusky_tui"
 if str(_dusky_root) not in sys.path:
     sys.path.insert(0, str(_dusky_root))
 
-import sys
-from pathlib import Path
-
-_DUSKY_TUI_ROOT = Path.home() / "user_scripts" / "dusky_tui"
-if str(_DUSKY_TUI_ROOT) not in sys.path:
-    sys.path.insert(0, str(_DUSKY_TUI_ROOT))
-
 from python.frontend.core_types import ConfigItem
 
 # =============================================================================
 # 1. CORE APPLICATION ROUTING (REQUIRED)
 # =============================================================================
+_config_home = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
 ENGINE_TYPE = "trackpad"
-TARGET_FILE = "~/.config/hypr/edit_here/source/trackpad.lua"
+TARGET_FILE = str(_config_home / "hypr/edit_here/source/trackpad.lua")
 APP_TITLE = "Trackpad Gestures"
 
 # =============================================================================
 # 2. UI & ENVIRONMENT BEHAVIOR
 # =============================================================================
 DEFAULT_MODE = "auto"
-THEME_FILE = "~/.config/matugen/generated/dusky_tui.json"
+THEME_FILE = str(_config_home / "matugen/generated/dusky_tui.json")
 
 # =============================================================================
 # 3. TABS DEFINITION
@@ -65,6 +60,9 @@ GESTURE_OPTIONS = [
     'Toggle Floating',
     'Toggle Fullscreen',
     'Close Window',
+    "Toggle Magic Scratchpad",
+    "Toggle Cursor Zoom (2x)",
+    "Custom Lua Action",
     "Disabled / Unbound"
 ]
 
@@ -81,9 +79,12 @@ GESTURE_HINTS = [
     'Scroll columns continuously in the Scrolling layout',
     'Move the active window continuously',
     'Resize the active window continuously',
-    'Toggle floating with a continuous gesture',
-    'Toggle fullscreen with a continuous gesture',
+    'Toggle floating state',
+    'Toggle fullscreen state',
     'Close the active window with a gesture',
+    "Toggle the magic special workspace",
+    "Toggle cursor zoom at 2x",
+    "Keep the existing custom Lua action",
     "Removes action mapping"
 ]
 
@@ -373,6 +374,7 @@ SCHEMA = {
             type_="preset",
             default=None,
             group="Profiles",
+            preset_partial=True,
             preset_payload={
                 "gestures.workspace_swipe_distance": 200,
                 "gestures.workspace_swipe_cancel_ratio": 0.3,
@@ -388,6 +390,7 @@ SCHEMA = {
             type_="preset",
             default=None,
             group="Profiles",
+            preset_partial=True,
             preset_payload={
                 "gestures.workspace_swipe_distance": 500,
                 "gestures.workspace_swipe_cancel_ratio": 0.7,
@@ -399,6 +402,15 @@ SCHEMA = {
         ),
     ]
 }
+
+
+# Additional native gesture directions; existing bindings keep their defaults.
+for fingers, direction in ((3, "vertical"), (4, "vertical"), (2, "pinch")):
+    SCHEMA[2].append(ConfigItem(label=f"{fingers}-Finger {direction.title()}", key="action",
+                                scope=f"gesture/{fingers}/{direction}", type_="picker",
+                                default="Disabled / Unbound", options=GESTURE_OPTIONS, hints=GESTURE_HINTS,
+                                group="Additional Gestures",
+                                extended_help="Broad directions can overlap directional bindings. Choose the combination you intend to use."))
 
 # =============================================================================
 # DIRECT EXECUTION HANDLER

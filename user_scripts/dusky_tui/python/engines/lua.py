@@ -166,6 +166,10 @@ class HyprlandLuaEngine(BaseEngine):
                     -- Dispatcher builders are nested namespaces, not config calls.
                     -- Leave them inert while evaluating binds without Hyprland.
                     return inert_proxy
+                elseif key == "on" then
+                    return function(event, callback)
+                        record_call(key, event, debug.getinfo(2, "Sl"))
+                    end
                 else
                     return function(tbl)
                         local id = append_list(key, tbl)
@@ -585,6 +589,45 @@ class HyprlandLuaEngine(BaseEngine):
         Guarantees zero behavioral drift between single UI edits and bulk UI presets.
         """
         return self.write_batch([(target_key, target_scope, new_value, item_type)])
+
+    def write_transformed(self, standard_changes, transform):
+        """Stage hybrid edits and AST changes before committing the single target."""
+        from python.shared.config_io import read_text, atomic_write
+        with self._lock:
+            staged = None
+            try:
+                text, expected = read_text(self.config_path)
+                remembered = self._file_stamps.get(str(self.config_path))
+                if remembered and expected != remembered[1]:
+                    raise OSError('Configuration modified externally. Reload required.')
+                text = transform(text)
+                self.config_dir.mkdir(parents=True, exist_ok=True)
+                with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', suffix='.lua',
+                                                 dir=self.config_dir, delete=False) as stream:
+                    staged = Path(stream.name)
+                    stream.write(text)
+                if standard_changes:
+                    shadow = HyprlandLuaEngine(str(staged))
+                    shadow.module_root = self.module_root
+                    shadow.load_state()
+                    if shadow.loaded_files != [str(staged)]:
+                        raise ValueError('Mixed hybrid edits require the configuration bindings in this file.')
+                    result = shadow.write_batch(standard_changes)
+                    if not result[0]:
+                        return result
+                    text = staged.read_text(encoding='utf-8')
+                syntax = subprocess.run([self.lua_bin, '-E', '-', str(staged)], input='assert(loadfile(arg[1]))',
+                                        capture_output=True, text=True, timeout=5)
+                if syntax.returncode:
+                    raise ValueError(syntax.stderr.strip())
+                atomic_write(self.config_path, text, expected)
+                self.load_state()
+                return True, 'Configuration saved.', ''
+            except (OSError, UnicodeError, ValueError, TypeError, subprocess.SubprocessError) as exc:
+                return False, f'Lua edit failed: {exc}', ''
+            finally:
+                if staged is not None:
+                    staged.unlink(missing_ok=True)
 
     def write_batch(self, changes: list[tuple[str, str, str, str]]) -> tuple[bool, str, str]:
         with self._lock:

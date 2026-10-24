@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import os
 import sys
 from pathlib import Path
 
@@ -12,15 +13,16 @@ from python.frontend.core_types import ConfigItem
 # =============================================================================
 # 1. CORE APPLICATION ROUTING
 # =============================================================================
+_config_home = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
 ENGINE_TYPE = "autostart"
-TARGET_FILE = "~/.config/hypr/edit_here/source/autostart.lua"
+TARGET_FILE = str(_config_home / "hypr/edit_here/source/autostart.lua")
 APP_TITLE = "Autostart & Services"
 
 # =============================================================================
 # 2. UI & ENVIRONMENT BEHAVIOR
 # =============================================================================
 DEFAULT_MODE = "auto"
-THEME_FILE = "~/.config/matugen/generated/dusky_tui.json"
+THEME_FILE = str(_config_home / "matugen/generated/dusky_tui.json")
 ENABLE_USER_PRESETS = True
 USER_PRESETS_TAB = "Profiles"
 
@@ -59,7 +61,7 @@ TABS = [
     "Profiles"
 ]
 
-DUSKY_SYSTEM_TARGET = "~/.config/hypr/source/autostart.lua"
+DUSKY_SYSTEM_TARGET = str(_config_home / "hypr/source/autostart.lua")
 DUSKY_DISCLAIMER = "Core system autostart configuration. Do not modify unless you know what you are doing."
 
 # =============================================================================
@@ -753,6 +755,7 @@ SCHEMA = {
             type_="preset",
             default=None,
             group="Optimization",
+            preset_partial=True,
             preset_payload={
                 "xwayland.enabled": False,
                 "autostart.audio_visualizer": False

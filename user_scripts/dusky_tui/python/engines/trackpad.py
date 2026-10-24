@@ -12,6 +12,7 @@ import re
 lazy from pathlib import Path
 lazy from typing import Any
 from python.engines.lua import HyprlandLuaEngine
+from python.shared.lua_source import fields, replace_field, string_value, tokens
 
 # -----------------------------------------------------------------------------
 # TRANSLATION MAP: UI Friendly Labels <-> Lua Backend Code
@@ -32,17 +33,31 @@ ACTION_MAP = {
     'Toggle Floating': '"float"',
     'Toggle Fullscreen': '"fullscreen"',
     'Close Window': '"close"',
+    "Toggle Magic Scratchpad": '"special"',
+    "Toggle Cursor Zoom (2x)": '"cursor_zoom"',
     "Disabled / Unbound": '__DELETE__'
 }
 
 def get_friendly_name(block_str: str) -> str:
     """Safely extracts the UI label by scanning the raw Lua block for keywords."""
-    native = re.search(r'action\s*=\s*[\"\']([a-z_]+)[\"\']', block_str)
+    try:
+        spans = fields(block_str, block_str.index('{'), block_str.rindex('}')+1)
+        a, b = spans['action']
+        action = block_str[a:b]
+    except (ValueError, KeyError):
+        return "Custom Lua Action"
+    native = string_value(action)
     if native:
-        for label, code in ACTION_MAP.items():
-            if code == '"' + native[1] + '"':
-                return label
-    if '"workspace"' in block_str or "'workspace'" in block_str: return "Native Workspace Swipe"
+        if native == "unset":
+            return "Disabled / Unbound"
+        if native == 'special' and ('workspace_name' not in spans or string_value(block_str[slice(*spans['workspace_name'])]) != 'magic'):
+            return "Custom Lua Action"
+        if native in {'float', 'fullscreen', 'cursor_zoom'} and 'mode' in spans and block_str[slice(*spans['mode'])].strip() not in {'nil', '\"\"', "''"}:
+            return "Custom Lua Action"
+        if native == 'cursor_zoom' and ('zoom_level' not in spans or block_str[slice(*spans['zoom_level'])].strip('\"\' ') not in {'2', '2.0'}):
+            return "Custom Lua Action"
+        return next((label for label, code in ACTION_MAP.items() if code == '"'+native+'"'), "Custom Lua Action")
+    block_str = ' '.join(t[1] for t in tokens(action))
     if "dusky-tray" in block_str: return "Open Dusky Tray"
     if "waybar_toggle.sh" in block_str: return "Toggle Waybar"
     if "hypr_blur_opacity_shadow_toggle.sh" in block_str: return "Toggle Blur & Opacity"
@@ -51,7 +66,7 @@ def get_friendly_name(block_str: str) -> str:
     if "--vol-down" in block_str: return "Media: Volume Down (-10%)"
     if "--bright-up" in block_str: return "Screen: Brightness Up (+10%)"
     if "--bright-down" in block_str: return "Screen: Brightness Down (-10%)"
-    return "Disabled / Unbound"
+    return "Custom Lua Action"
 
 # Tokenize once so comments, escaped quotes, and Lua long strings cannot be
 # mistaken for executable gestures or table braces.
@@ -137,8 +152,8 @@ class TrackpadLuaEngine(HyprlandLuaEngine):
             if key not in state:
                 state[key] = val
 
-        for fingers in [3, 4]:
-            for direction in ["horizontal", "left", "right", "up", "down"]:
+        for fingers in [2, 3, 4]:
+            for direction in ["horizontal", "vertical", "left", "right", "up", "down", "pinch"]:
                 state[f"gesture/{fingers}/{direction}/action"] = "Disabled / Unbound"
 
         # ---------------------------------------------------------------------
@@ -149,77 +164,67 @@ class TrackpadLuaEngine(HyprlandLuaEngine):
         except OSError:
             return state
 
+        executed = {c['line'] for c in self._call_sites if c['file'] == str(self.config_path) and c['method'] == 'gesture'}
         blocks = find_gesture_blocks(content)
-        for _, _, block_str, fingers, direction in blocks:
+        for start, _, block_str, fingers, direction in blocks:
+            if content.count('\n', 0, start)+1 not in executed:
+                continue
             friendly_label = get_friendly_name(block_str)
             state[f"gesture/{fingers}/{direction}/action"] = friendly_label
 
         return state
 
     def write_batch(self, changes: list[tuple[str, str, str, str]]) -> tuple[bool, str, str]:
-        standard_changes = []
-        gesture_changes = []
-        
-        for key, scope, val, itype in changes:
-            if scope.startswith("gesture/") and key == "action":
-                gesture_changes.append((scope, val))
-            else:
-                standard_changes.append((key, scope, val, itype))
-                
-        success = True
-        msg = ""
-        debug = ""
-        
-        # 1. Process standard configuration via the AST Engine
-        if standard_changes:
-            success, msg, debug = super().write_batch(standard_changes)
-            
-        if not success:
-            return success, msg, debug
-            
-        # 2. Process gesture changes safely via block-level structural replacement
-        if gesture_changes:
-            try:
-                path = Path(self.config_path)
-                content = path.read_text(encoding="utf-8")
-                
-                for scope, new_val in gesture_changes:
-                    parts = scope.split('/')
-                    if len(parts) != 3: continue
-                    fingers = parts[1]
-                    direction = parts[2]
-                    
-                    action_code = ACTION_MAP.get(new_val, ACTION_MAP["Disabled / Unbound"])
-                    
-                    # Re-scan blocks on every iteration because index offsets shift after substitution
-                    blocks = find_gesture_blocks(content)
-                    replaced = False
-                    for start, end, _, b_fingers, b_direction in blocks:
-                        if b_fingers == fingers and b_direction == direction:
-                            # If action is set to Disabled, we cleanly snip the entire gesture out
-                            if action_code == "__DELETE__":
-                                content = content[:start] + content[end:]
-                            else:
-                                new_block = f'''hl.gesture({{\n    fingers   = {fingers},\n    direction = "{direction}",\n    action    = {action_code},\n}})'''
-                                content = content[:start] + new_block + content[end:]
-                            replaced = True
-                            break
-                            
-                    # If gesture block doesn't exist, append it cleanly to the file (unless it's an unbind op)
-                    if not replaced and action_code != "__DELETE__":
-                        new_block = f'''hl.gesture({{\n    fingers   = {fingers},\n    direction = "{direction}",\n    action    = {action_code},\n}})'''
-                        content = content.rstrip() + f"\n\n{new_block}\n"
+        standard = [c for c in changes if not c[1].startswith("gesture/")]
+        gestures = [c for c in changes if c[1].startswith("gesture/")]
+        if not gestures:
+            return super().write_batch(standard)
+        if not self.loaded_files:
+            self.load_state()
+        executed = {c['line'] for c in self._call_sites
+                    if c['file'] == str(self.config_path) and c['method'] == 'gesture'}
 
-                path.write_text(content, encoding="utf-8")
-                
-                if hasattr(self, 'file_mtimes'):
-                    self.file_mtimes[str(path)] = path.stat().st_mtime
-                elif hasattr(self, 'file_mtime'):
-                    self.file_mtime = path.stat().st_mtime
-                    
-                msg = f"Successfully batched {len(changes)} writes (Hybrid Trackpad Engine)."
-                
-            except Exception as e:
-                return False, f"Hybrid Engine failed to patch gesture block: {e}", debug
-                
-        return True, msg, debug
+        def transform(content):
+            # Find original source spans once. Never replace a dormant callback.
+            slots = {}
+            for a, b, block, f, d in find_gesture_blocks(content):
+                if content.count('\n', 0, a)+1 in executed:
+                    slots.setdefault((f, d), []).append((a, b, block))
+            edits, appended = [], []
+            unique = {(key, scope): (key, scope, value, kind) for key, scope, value, kind in gestures}
+            for key, scope, value, _ in unique.values():
+                parts = scope.split('/')
+                if key != 'action' or len(parts) != 3 or not parts[1].isdigit() or not 2 <= int(parts[1]) <= 9:
+                    raise ValueError(f'Invalid gesture binding: {scope}/{key}')
+                f, d = parts[1:]
+                if d not in {'swipe', 'horizontal', 'vertical', 'left', 'right', 'up', 'down', 'pinch', 'pinchin', 'pinchout'}:
+                    raise ValueError(f'Invalid gesture direction: {d}')
+                matches = slots.get((f, d), [])
+                if len(matches) > 1:
+                    raise ValueError(f'Multiple gestures use {f} fingers and {d}; edit their Lua definitions individually.')
+                if value == 'Custom Lua Action' and matches:
+                    continue
+                if value not in ACTION_MAP:
+                    raise ValueError(f'Unknown gesture action: {value}')
+                raw = ACTION_MAP[value]
+                if value == 'Disabled / Unbound':
+                    if matches:
+                        edits.append((matches[0][0], matches[0][1], ''))
+                    continue
+                block = matches[0][2] if matches else f'hl.gesture({{fingers={f}, direction="{d}"}})'
+                block = replace_field(block, 'action', raw)
+                if value in {'Toggle Floating', 'Toggle Fullscreen', 'Toggle Cursor Zoom (2x)'}:
+                    block = replace_field(block, 'mode', 'nil')
+                if value == 'Toggle Magic Scratchpad':
+                    block = replace_field(block, 'workspace_name', '"magic"')
+                elif value == 'Toggle Cursor Zoom (2x)':
+                    block = replace_field(block, 'zoom_level', '"2"')
+                if matches:
+                    edits.append((matches[0][0], matches[0][1], block))
+                else:
+                    appended.append(block)
+            for a, b, replacement in sorted(edits, reverse=True):
+                content = content[:a]+replacement+content[b:]
+            return content + ''.join('\n'+block+'\n' for block in appended)
+
+        return self.write_transformed(standard, transform)
