@@ -5,6 +5,7 @@ set -euo pipefail
 export LC_ALL=C
 SYNC_ID=sys-osd
 RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$UID}
+MEDIA_IPC=$(dirname -- "${BASH_SOURCE[0]}")/media_ipc.py
 
 notify() {
     local icon=$1 title=$2 value=${3:-}
@@ -113,8 +114,14 @@ set_dpms() {
 # Outputs use media()'s local variables, just as parse_brightness() uses main()'s.
 media_read() {
     local data record
-    data=$("${media_bus[@]}" call "$1" /org/mpris/MediaPlayer2 \
-        org.freedesktop.DBus.Properties GetAll s org.mpris.MediaPlayer2.Player) || return
+    if [[ -n ${2:-} ]]; then
+        data=$2
+    elif [[ $1 == mpv:* ]]; then
+        data=$(python3 "$MEDIA_IPC" read "$1") || return
+    else
+        data=$("${media_bus[@]}" call "$1" /org/mpris/MediaPlayer2 \
+            org.freedesktop.DBus.Properties GetAll s org.mpris.MediaPlayer2.Player) || return
+    fi
     record=$(jq -er '
         .data[0] as $p | ($p.Metadata.data // {}) as $m
         | select($p.PlaybackStatus.data | IN("Playing", "Paused", "Stopped"))
@@ -131,53 +138,78 @@ media_read() {
 
 media_error() {
     printf 'Media: %s\n' "$1" >&2
-    icon=dialog-error title=$1 value=''
-    publish media
     return 1
 }
 
+media_remember() {
+    printf '%s\n' "$destination" > "$player_file"
+    # Remember other active players too: a newly started player should take
+    # priority, while an already-playing background player must not steal resume.
+    jq -n --arg selected "$destination" --arg status "$status" --args '
+        {selected: $selected, playing: ($ARGS.positional | unique
+          | map(select(. != $selected))
+          | if $status == "Playing" then . + [$selected] else . end)}
+    ' "${playing[@]}" > "$context_file"
+}
+
 media() {
-    local action=$1 listing clients ordered name owner remembered=''
+    local action=$1 listing clients ordered name owner remembered='' ipc previous='' snapshot=''
     local status track metadata can_control can_play can_pause can_next can_prev
     local destination='' player='' best=99 rank command expected='' old_track old_metadata deadline now
     local player_file=$RUNTIME_DIR/osd_media_player.txt
+    local context_file=$RUNTIME_DIR/osd_media_context.json
+    local -a playing=()
+    local -A was_playing=()
     # Systemd is part of the ISO. Direct MPRIS calls provide capabilities, typed
     # metadata, exact instance addressing and a bounded timeout without a daemon.
     local -a media_bus=(busctl --user --json=short --timeout=1 --auto-start=no)
     listing=$("${media_bus[@]}" --acquired list) || { media_error 'Cannot List Media Players'; return 1; }
+    ipc=$(python3 "$MEDIA_IPC" list) || return
     clients=$(hyprctl -j clients) || { media_error 'Cannot Read Hyprland Windows'; return 1; }
     if [[ -f $player_file ]]; then remembered=$(< "$player_file"); fi
-    ordered=$(jq -nr --argjson bus "$listing" --argjson clients "$clients" --arg remembered "$remembered" '
-        [$bus[] | select(.name | startswith("org.mpris.MediaPlayer2."))
+    if [[ -f $context_file ]]; then
+        previous=$(jq -er --arg selected "$remembered" '
+            select(.selected == $selected) | .playing[]' "$context_file" 2>/dev/null) || previous=''
+    fi
+    while IFS= read -r owner; do
+        [[ -z $owner ]] || was_playing[$owner]=1
+    done <<< "$previous"
+    ordered=$(jq -nr --argjson bus "$listing" --argjson ipc "$ipc" --argjson clients "$clients" --arg remembered "$remembered" '
+        [([$bus[] | select(.name | startswith("org.mpris.MediaPlayer2."))
+             | . as $p | select(any($ipc[]; .pid == $p.pid) | not)] + $ipc)[]
          | . as $p
-         | ([$clients[] | select(.pid == $p.pid and .mapped and (.hidden | not))
-              | .focusHistoryID | select(. >= 0)] | min // 2147483647) as $focus
-         | {name, connection, focus: $focus}]
+         | ([([$p.pid] + ($p.ancestors // []))[] as $pid
+              | [$clients[] | select(.pid == $pid and .mapped and (.hidden | not))]
+              | select(length > 0)][0] // []
+              | map(.focusHistoryID | select(. >= 0)) | min // 2147483647) as $focus
+         | {name, connection, focus: $focus, properties}]
         | sort_by((if .focus == 0 then 0 elif .connection == $remembered then 1 else 2 end),
-                  .focus, .name)[] | [.name, .connection, .focus] | @tsv
+                  .focus, .name)[]
+        | [.name, .connection, .focus,
+           (if .properties then (.properties | tojson) else "" end)] | join("\u001f")
     ') || return
-    # Focused playing player > last successful player > other playing > paused
-    # > stopped. Pause/resume stays together even while other players play.
+    # Focused playing > newly playing > remembered > already playing > paused
+    # > stopped. New playback supersedes a stale paused selection; other existing
+    # playback does not split a deliberate pause/resume pair.
     # Focusing a paused browser must not steal playback keys.
     # PID matching distinguishes multiple instances; focus history breaks ties.
     # Cache the unique bus owner, so restarting an app cannot inherit stale choice.
     local history
-    while IFS=$'\t' read -r name owner history; do
-        [[ -n $name && $owner == :* ]] || continue
-        media_read "$owner" 2>/dev/null || continue # A player may exit during discovery.
+    while IFS=$'\x1f' read -r name owner history snapshot; do
+        [[ -n $name && ( $owner == :* || $owner == mpv:* ) ]] || continue
+        media_read "$owner" "$snapshot" 2>/dev/null || continue # A player may exit during discovery.
         [[ $can_control == true ]] || continue
+        if [[ $status == Playing ]]; then playing+=("$owner"); fi
         if [[ $status == Playing && $history == 0 ]]; then rank=0
-        elif [[ $owner == "$remembered" ]]; then rank=1
-        elif [[ $status == Playing ]]; then rank=2
-        elif [[ $status == Paused ]]; then rank=3
-        else rank=4
+        elif [[ $status == Playing && ! ${was_playing[$owner]+present} ]]; then rank=1
+        elif [[ $owner == "$remembered" ]]; then rank=2
+        elif [[ $status == Playing ]]; then rank=3
+        elif [[ $status == Paused ]]; then rank=4
+        else rank=5
         fi
         if (( rank < best )); then
             best=$rank destination=$owner player=${name#org.mpris.MediaPlayer2.}
         fi
-        # Focused candidates precede the remembered owner. Once either wins,
-        # unrelated players (including stalled ones) need no property queries.
-        (( best > 1 )) || break
     done <<< "$ordered"
     [[ -n $destination ]] || { media_error 'No Controllable Player'; return 1; }
     # Refresh after selection; never redirect an action if this instance vanishes.
@@ -201,12 +233,18 @@ media() {
         Previous) [[ $can_prev == true ]] || { media_error "No Previous Track: $player"; return 1; } ;;
     esac
     old_track=$track old_metadata=$metadata
-    "${media_bus[@]}" call "$destination" /org/mpris/MediaPlayer2 org.mpris.MediaPlayer2.Player "$command" \
-        >/dev/null || { media_error "Media Command Failed: $player"; return 1; }
+    snapshot=''
+    if [[ $destination == mpv:* ]]; then
+        snapshot=$(python3 "$MEDIA_IPC" control "$destination" "$command") || { media_error "Media Command Failed: $player"; return 1; }
+    else
+        "${media_bus[@]}" call "$destination" /org/mpris/MediaPlayer2 org.mpris.MediaPlayer2.Player "$command" \
+            >/dev/null || { media_error "Media Command Failed: $player"; return 1; }
+    fi
     now=${EPOCHREALTIME/./}
     deadline=$((now + 1000000))
     while true; do
-        media_read "$destination" || { media_error "Player Unavailable: $player"; return 1; }
+        media_read "$destination" "$snapshot" || { media_error "Player Unavailable: $player"; return 1; }
+        snapshot=''
         if [[ -n $expected ]]; then
             [[ $status != "$expected" ]] || break
         elif [[ $track != "$old_track" || $metadata != "$old_metadata" || $status == Stopped ]]; then
@@ -220,27 +258,14 @@ media() {
             fi
             # Previous may restart the same track; repeat can keep the same ID.
             # A successful method reply alone cannot confirm a track change.
-            printf '%s\n' "$destination" > "$player_file"
-            if [[ $command == Previous ]]; then icon=media-skip-backward
-            else icon=media-skip-forward
-            fi
-            title="$command Requested: $player" value=''
-            publish media
+            media_remember
+            exec {lock_fd}>&-
             return
         fi
         sleep 0.025
     done
-    printf '%s\n' "$destination" > "$player_file"
-    # Share the existing coalescing worker so slow notification delivery cannot
-    # delay playback or leave an older OSD visible after a newer action.
-    metadata=${metadata:-Unknown Track}
-    case $status in
-        Playing) icon=media-playback-start title=$metadata ;;
-        Paused) icon=media-playback-pause title="Paused: $metadata" ;;
-        Stopped) icon=media-playback-stop title=Stopped ;;
-    esac
-    value=''
-    publish media
+    media_remember
+    exec {lock_fd}>&-
 }
 
 main() {
