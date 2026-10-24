@@ -119,6 +119,8 @@ waits for bounded setting and service writes to finish, including pending slider
 debounce values. Page changes and reload flush deferred slider edits; fractional
 values are retained. Search includes nested/generated controls and opens their
 owning subpage/expander before interaction; state queries continue there.
+Selecting a result scrolls its control into view and gives it a subtle accent
+highlight for 1.2 seconds, fading out over the final 350 ms.
 Labels evaluate their configured exec/file/system/static sources on workers
 and show `N/A` when a source cannot be read.
 

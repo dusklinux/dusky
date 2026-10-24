@@ -66,7 +66,7 @@ pub struct SearchLocation {
     page: usize,
     navigation: Vec<Vec<usize>>,
     expanders: Vec<String>,
-    key: String,
+    path: Vec<usize>,
 }
 
 struct SearchHit<'a> {
@@ -84,6 +84,8 @@ struct SearchHit<'a> {
 pub enum Message {
     SelectPage(usize),
     OpenSearchResult(SearchLocation),
+    SearchPositioned { started: Instant, offset: Option<f32> },
+    SearchHighlightTick,
     PushSubPage {
         title: String,
         sections: Vec<SectionConfig>,
@@ -165,6 +167,7 @@ pub struct CenterApp {
     pub live_labels: HashMap<String, String>,
     pub active_profile: String,
     pub hovered_item: Option<String>,
+    search_highlight: Option<(Vec<usize>, Instant)>,
     pub active_slider: Option<String>,
     pub sunset_active: bool,
     pub core_loading: HashSet<String>,
@@ -236,6 +239,7 @@ impl CenterApp {
             live_labels: HashMap::new(),
             active_profile: "Balanced".to_string(),
             hovered_item: initial_hover,
+            search_highlight: None,
             active_slider: None,
             sunset_active: false,
             core_loading: HashSet::new(),
@@ -400,17 +404,36 @@ impl CenterApp {
                     self.nav_stack.push(NavView::SubPage { parent_page: location.page, title, sections });
                 }
                 for key in location.expanders { self.toggle_states.insert(key, true); }
-                self.hovered_item = Some(location.key);
+                let started = Instant::now();
+                self.search_highlight = Some((location.path, started));
                 self.search_query.clear();
                 self.search_open = false;
                 self.control_generation += 1;
-                Task::batch([pending, self.refresh_visible()])
+                let reveal = iced_runtime::task::widget(LocateSearchTarget {
+                    target: iced_core::widget::Id::new("search_target"), viewport: None, target_bounds: None,
+                }).map(move |offset| Message::SearchPositioned { started, offset });
+                Task::batch([pending, self.refresh_visible(), reveal])
+            }
+            Message::SearchPositioned { started, offset } => {
+                if self.search_highlight.as_ref().is_some_and(|(_, time)| *time == started)
+                    && let Some(y) = offset
+                {
+                    return operation::scroll_to("page_content", operation::AbsoluteOffset { x: 0.0, y });
+                }
+                Task::none()
+            }
+            Message::SearchHighlightTick => {
+                if self.search_highlight.as_ref().is_some_and(|(_, time)| time.elapsed() >= Duration::from_millis(1200)) {
+                    self.search_highlight = None;
+                }
+                Task::none()
             }
             Message::SelectPage(idx) => {
                 if idx < self.config.pages.len() {
                     let pending = self.flush_deferred_sliders();
                     self.lazy_load_page(idx);
                     self.nav_stack = vec![NavView::Root(idx)];
+                    self.search_highlight = None;
                     self.search_query.clear();
                     self.control_generation += 1;
                     return Task::batch([pending, self.refresh_visible()]);
@@ -419,6 +442,7 @@ impl CenterApp {
             }
 
             Message::PushSubPage { title, sections } => {
+                self.search_highlight = None;
                 let pending = self.flush_deferred_sliders();
                 let parent = self.active_page_idx();
                 for section in &sections {
@@ -438,6 +462,7 @@ impl CenterApp {
             }
 
             Message::PopSubPage => {
+                self.search_highlight = None;
                 let pending = self.flush_deferred_sliders();
                 if self.nav_stack.len() > 1 {
                     self.nav_stack.pop();
@@ -462,6 +487,7 @@ impl CenterApp {
             }
 
             Message::SearchChanged(q) => {
+                self.search_highlight = None;
                 self.search_query = q;
                 Task::none()
             }
@@ -772,6 +798,7 @@ impl CenterApp {
                         tasks.extend(deferred.into_iter().map(|(key, (value, action, _))| self.queue_slider(key, value, action)));
                         expand_app_config_generators(&mut cfg);
                         let index = page_id.and_then(|id| cfg.pages.iter().position(|page| page.id == id)).unwrap_or(0);
+                        self.search_highlight = None;
                         self.config = cfg;
                         self.dynamic_options.clear();
                         self.loaded_pages.clear();
@@ -910,7 +937,39 @@ impl CenterApp {
             (iced::event::Status::Ignored, _) => Some(Message::EventOccurred(event)),
             _ => None,
         });
-        Subscription::batch([events, Subscription::run(Self::ticks)])
+        let highlight = if self.search_highlight.is_some() {
+            Subscription::run(Self::highlight_ticks)
+        } else { Subscription::none() };
+        Subscription::batch([events, Subscription::run(Self::ticks), highlight])
+    }
+
+    fn highlight_ticks() -> impl iced_futures::futures::Stream<Item = Message> {
+        iced_futures::futures::stream::unfold((), |()| async {
+            futures_timer::Delay::new(Duration::from_millis(33)).await;
+            Some((Message::SearchHighlightTick, ()))
+        })
+    }
+
+    fn is_search_target(&self, item: &ItemConfig) -> bool {
+        let Some((path, _)) = &self.search_highlight else { return false; };
+        let sections = match self.nav_stack.last() {
+            Some(NavView::SubPage { sections, .. }) => sections.as_slice(),
+            Some(NavView::Root(index)) => self.config.pages[*index].layout.as_slice(),
+            None => return false,
+        };
+        item_at(sections, path).is_some_and(|target| std::ptr::eq(target, item))
+    }
+
+    fn control_id(&self, item: &ItemConfig) -> iced_core::widget::Id {
+        iced_core::widget::Id::new(if self.is_search_target(item) { "search_target" } else { "control" })
+    }
+
+    fn search_highlight_strength(&self, item: &ItemConfig) -> f32 {
+        if !self.is_search_target(item) { return 0.0; }
+        self.search_highlight.as_ref().map_or(0.0, |(_, started)| {
+            // Hold gently, then fade out over the final 350 ms.
+            ((1.2 - started.elapsed().as_secs_f32()) / 0.35).clamp(0.0, 1.0)
+        })
     }
 
     fn ticks() -> impl iced_futures::futures::Stream<Item = Message> {
@@ -1429,6 +1488,7 @@ impl CenterApp {
             },
             palette.accent,
         )
+        .id("page_content")
         .into()
     }
 
@@ -1495,6 +1555,7 @@ impl CenterApp {
             },
             palette.accent,
         )
+        .id("page_content")
         .into()
     }
 
@@ -1655,6 +1716,7 @@ impl CenterApp {
             item.properties.title.clone()
         };
 
+        let highlight = self.search_highlight_strength(item);
         let service_key = controls::service_key(&item.properties.scope, &item.properties.service);
         let is_enabled = if is_service { self.service_states.get(&service_key).copied().unwrap_or(false) }
             else { self.toggle_states.get(&key).copied().unwrap_or(false) };
@@ -1844,9 +1906,9 @@ impl CenterApp {
             } else if is_enabled { glow } else { iced::Shadow::default() };
 
             button::Style {
-                background: Some(bg.into()),
+                background: Some(mix(bg, palette.accent, highlight * 0.14).into()),
                 border: Border {
-                    color: b_color,
+                    color: blend_hover(b_color, palette.accent, highlight * 0.65),
                     width: 1.0,
                     radius: 12.0.into(),
                 },
@@ -1857,14 +1919,14 @@ impl CenterApp {
         .width(Length::FillPortion(1))
         .height(Length::Fixed(62.0));
         if ready { card = card.on_press(on_press_msg); }
-        card.into()
+        container(card).id(self.control_id(item)).width(Length::FillPortion(1)).into()
     }
 
     // ---------------------------------------------------------------------------
     // Power Management Card (Icon Badge + Interactive PickList Dropdown)
     // ---------------------------------------------------------------------------
 
-    fn view_power_management_card<'a>(&'a self, _section: &'a SectionConfig) -> Element<'a, Message> {
+    fn view_power_management_card<'a>(&'a self, section: &'a SectionConfig) -> Element<'a, Message> {
         let palette = self.theme;
         let is_hovered = self.hovered_item.as_deref() == Some("Active Profile");
 
@@ -1957,10 +2019,12 @@ impl CenterApp {
             .spacing(14)
             .align_y(Vertical::Center);
 
+        let highlight = section.items.first().map_or(0.0, |item| self.search_highlight_strength(item));
         let card_container = container(row_content)
+            .id(section.items.first().map_or_else(|| iced_core::widget::Id::new("control"), |item| self.control_id(item)))
             .padding([12, 16])
             .width(Length::Fill)
-            .style(move |_| container::Style {
+            .style(move |_| search_highlight_style(container::Style {
                 background: Some(module_background(palette, is_hovered).into()),
                 border: Border {
                     color: if is_hovered {
@@ -1975,7 +2039,7 @@ impl CenterApp {
                     radius: 14.0.into(),
                 },
                 ..Default::default()
-            });
+            }, palette, highlight));
 
         mouse_area(card_container)
             .on_enter(Message::ItemEntered("Active Profile".to_string()))
@@ -2096,8 +2160,10 @@ impl CenterApp {
 
             let key_enter = key.clone();
             let key_exit = key.clone();
+            let highlight = self.search_highlight_strength(item);
             let row_container = container(ctrl_row)
                 // Move the group's inset/gaps into each row's hover bounds.
+                .id(self.control_id(item))
                 .padding(Padding {
                     top: if index == 0 { 13.0 } else { 7.0 },
                     right: 15.0,
@@ -2105,13 +2171,13 @@ impl CenterApp {
                     left: 15.0,
                 })
                 .width(Length::Fill)
-                .style(move |_| container::Style {
+                .style(move |_| search_highlight_style(container::Style {
                     background: Some(if is_row_hovered {
                         module_background(palette, true)
                     } else { Color::TRANSPARENT }.into()),
                     border: Border { radius: row_radius(index, item_count), ..Default::default() },
                     ..Default::default()
-                });
+                }, palette, highlight));
             let row_area = mouse_area(row_container)
                 .on_enter(Message::ItemEntered(key_enter))
                 .on_exit(Message::ItemExited(key_exit));
@@ -2351,16 +2417,18 @@ impl CenterApp {
             ]
             .spacing(4);
 
+            let highlight = self.search_highlight_strength(item);
             let row_container = container(row_content)
+                .id(self.control_id(item))
                 .padding([8, 15])
                 .width(Length::Fill)
-                .style(move |_| container::Style {
+                .style(move |_| search_highlight_style(container::Style {
                     background: Some(if is_row_hovered {
                         module_background(palette, true)
                     } else { Color::TRANSPARENT }.into()),
                     border: Border { radius, ..Default::default() },
                     ..Default::default()
-                });
+                }, palette, highlight));
 
             let key_enter = key.clone();
             let key_exit = key.clone();
@@ -2652,10 +2720,12 @@ impl CenterApp {
         // Paired buttons own their actions; the row only invokes an explicit row action.
         let primary_action = item.on_press.as_ref().or(item.on_action.as_ref()).cloned();
 
+        let highlight = self.search_highlight_strength(item);
         let row_container = container(row_content)
+            .id(self.control_id(item))
             .padding([8, 15])
             .width(Length::Fill)
-            .style(move |_| container::Style {
+            .style(move |_| search_highlight_style(container::Style {
                 background: Some(
                     if is_row_hovered {
                         module_background(palette, true)
@@ -2669,7 +2739,7 @@ impl CenterApp {
                     ..Default::default()
                 },
                 ..Default::default()
-            });
+            }, palette, highlight));
 
         let key_enter = key.clone();
         let key_exit = key.clone();
@@ -2765,12 +2835,60 @@ impl CenterApp {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn navigation_at<'a>(sections: &'a [SectionConfig], path: &[usize]) -> Option<&'a ItemConfig> {
+fn search_highlight_style(mut style: container::Style, palette: AppTheme, strength: f32) -> container::Style {
+    if strength > 0.0 {
+        let base = match style.background {
+            Some(iced::Background::Color(color)) if color.a > 0.0 => color,
+            _ => module_background(palette, false),
+        };
+        style.background = Some(mix(base, palette.accent, 0.14 * strength).into());
+        style.border.color = Color { a: 0.60 * strength, ..palette.accent };
+        style.border.width = 1.0;
+    }
+    style
+}
+
+struct LocateSearchTarget {
+    target: iced_core::widget::Id,
+    viewport: Option<iced::Rectangle>,
+    target_bounds: Option<iced::Rectangle>,
+}
+
+impl iced_core::widget::Operation<Option<f32>> for LocateSearchTarget {
+    fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn iced_core::widget::Operation<Option<f32>>)) {
+        operate(self);
+    }
+
+    fn container(&mut self, id: Option<&iced_core::widget::Id>, bounds: iced::Rectangle) {
+        if id == Some(&self.target) { self.target_bounds = Some(bounds); }
+    }
+
+    fn scrollable(&mut self, id: Option<&iced_core::widget::Id>, bounds: iced::Rectangle,
+        _content: iced::Rectangle, _translation: iced::Vector,
+        _state: &mut dyn iced_core::widget::operation::Scrollable) {
+        if id == Some(&iced_core::widget::Id::new("page_content")) { self.viewport = Some(bounds); }
+    }
+
+    fn finish(&self) -> iced_core::widget::operation::Outcome<Option<f32>> {
+        let offset = self.viewport.zip(self.target_bounds).map(|(viewport, target)| {
+            // Center normal rows; align oversized rows near the top. Iced clamps the bottom edge.
+            let inset = ((viewport.height - target.height) / 2.0).max(12.0);
+            (target.y - viewport.y - inset).max(0.0)
+        });
+        iced_core::widget::operation::Outcome::Some(offset)
+    }
+}
+
+fn item_at<'a>(sections: &'a [SectionConfig], path: &[usize]) -> Option<&'a ItemConfig> {
     let (&section, path) = path.split_first()?;
     let (&index, path) = path.split_first()?;
     let mut item = sections.get(section)?.items.get(index)?;
     for &index in path { item = item.items.get(index)?; }
-    (item.item_type == "navigation").then_some(item)
+    Some(item)
+}
+
+fn navigation_at<'a>(sections: &'a [SectionConfig], path: &[usize]) -> Option<&'a ItemConfig> {
+    item_at(sections, path).filter(|item| item.item_type == "navigation")
 }
 
 fn search_hits<'a>(config: &'a AppConfig, query: &str) -> Vec<SearchHit<'a>> {
@@ -2780,7 +2898,7 @@ fn search_hits<'a>(config: &'a AppConfig, query: &str) -> Vec<SearchHit<'a>> {
             let mut item_path = path.to_vec();
             item_path.push(index);
             let mut target = location.clone();
-            target.key = controls::item_key(item);
+            target.path = item_path.clone();
             let score = search_score(item, query);
             if score > 0 {
                 hits.push(SearchHit { item, breadcrumb: breadcrumb.into(), location: target.clone(), score });
@@ -2800,7 +2918,7 @@ fn search_hits<'a>(config: &'a AppConfig, query: &str) -> Vec<SearchHit<'a>> {
     }
     let mut hits = vec![];
     for (page, config) in config.pages.iter().enumerate() {
-        let location = SearchLocation { page, navigation: vec![], expanders: vec![], key: String::new() };
+        let location = SearchLocation { page, navigation: vec![], expanders: vec![], path: vec![] };
         for (section, layout) in config.layout.iter().enumerate() {
             visit(&layout.items, &config.title, &location, &[section], query, &mut hits);
         }
@@ -3501,6 +3619,48 @@ mod tests {
     }
 
     #[test]
+    fn search_highlight_identifies_duplicate_rows_and_expires_independently_of_hover() {
+        let config: AppConfig = toml::from_str("[[pages]]\nid='fixture'\ntitle='Fixture'\n[[pages.layout]]\ntype='section'\n[[pages.layout.items]]\ntype='label'\n[pages.layout.items.properties]\ntitle='Target'\n[[pages.layout.items]]\ntype='expander'\n[pages.layout.items.properties]\ntitle='Group'\n[[pages.layout.items.items]]\ntype='label'\n[pages.layout.items.items.properties]\ntitle='Target'").unwrap();
+        let location = search_hits(&config, "Target")[1].location.clone();
+        let (mut app, _initial) = CenterApp::new(config, None, None);
+        let _ = app.update(Message::OpenSearchResult(location.clone()));
+        let selected = &app.config.pages[0].layout[0].items[1].items[0];
+        assert!(app.is_search_target(selected));
+        assert!(!app.is_search_target(&app.config.pages[0].layout[0].items[0]));
+        assert!(app.search_highlight_strength(selected) > 0.99);
+        let _ = app.update(Message::ItemEntered("Other".into()));
+        let _ = app.update(Message::ItemExited("Other".into()));
+        assert!(app.search_highlight.is_some());
+        app.search_highlight.as_mut().unwrap().1 = Instant::now() - Duration::from_millis(1100);
+        let strength = app.search_highlight_strength(&app.config.pages[0].layout[0].items[1].items[0]);
+        assert!(strength > 0.0 && strength < 0.4);
+        app.search_highlight.as_mut().unwrap().1 = Instant::now() - Duration::from_millis(1300);
+        let _ = app.update(Message::SearchHighlightTick);
+        assert!(app.search_highlight.is_none());
+        let _ = app.update(Message::OpenSearchResult(location));
+        let started = app.search_highlight.as_ref().unwrap().1;
+        let _ = app.update(Message::SelectPage(0));
+        assert!(app.search_highlight.is_none());
+        assert!(app.update(Message::SearchPositioned { started, offset: Some(500.0) }).units() == 0);
+    }
+
+    #[test]
+    fn search_scroll_uses_rendered_bounds_for_short_long_and_oversized_rows() {
+        use iced_core::widget::{Operation, operation::Outcome};
+        let target = iced_core::widget::Id::new("search_target");
+        let mut locate = LocateSearchTarget {
+            target: target.clone(),
+            viewport: Some(iced::Rectangle { x: 0.0, y: 100.0, width: 600.0, height: 400.0 }),
+            target_bounds: None,
+        };
+        assert!(matches!(locate.finish(), Outcome::Some(None)));
+        for (y, height, expected) in [(120.0, 60.0, 0.0), (1200.0, 60.0, 930.0), (1200.0, 600.0, 1088.0)] {
+            locate.container(Some(&target), iced::Rectangle { x: 30.0, y, width: 540.0, height });
+            assert!(matches!(locate.finish(), Outcome::Some(Some(offset)) if offset == expected));
+        }
+    }
+
+    #[test]
     fn generated_nested_fields_and_symlinked_themes_are_preserved() {
         let mut item: ItemConfig = toml::from_str("type='navigation'\n[properties]\ntitle='{name}'\n[[layout]]\ntype='section'\n[[layout.items]]\ntype='selection'\n[layout.items.properties]\ntitle='{name_pretty}'\nservice='{name}.service'\nvalue_command='printf {name}'\n[layout.items.on_change]\ntype='argv'\nargv=['printf','{path}']").unwrap();
         let vars = HashMap::from([("name".into(), "literal{path}".into()), ("name_pretty".into(), "Literal".into()), ("path".into(), "/tmp/a b".into())]);
@@ -3540,6 +3700,7 @@ mod tests {
             live_labels: HashMap::new(),
             active_profile: String::new(),
             hovered_item: None,
+            search_highlight: None,
             active_slider: Some("Microphone".into()),
             sunset_active: false,
             core_loading: HashSet::new(),
