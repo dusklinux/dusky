@@ -469,19 +469,18 @@ class SysStatParser:
         """Verifies that a ZRAM device is actively engaged in swap or mounted to a filesystem."""
         try:
             sz_p = Path(f"/sys/block/{dev_name}/size")
-            if not sz_p.exists() or int(sz_p.read_text().strip()) == 0:
+            if int(sz_p.read_text()) == 0:
                 return False
-            if Path("/proc/swaps").exists():
-                swaps = Path("/proc/swaps").read_text()
-                if f"/dev/{dev_name}" in swaps or dev_name in swaps:
+            with open("/proc/swaps", "r", encoding="utf-8") as f:
+                if any(line.split(maxsplit=1)[0] == f"/dev/{dev_name}"
+                       for line in f if line.strip()):
                     return True
-            if Path("/proc/mounts").exists():
-                with open("/proc/mounts", "r", encoding="utf-8") as f:
-                    for line in f:
-                        src = line.split()[0] if line.split() else ""
-                        if src == f"/dev/{dev_name}" or src.endswith(f"/{dev_name}"):
-                            return True
-        except Exception:
+            with open("/proc/mounts", "r", encoding="utf-8") as f:
+                for line in f:
+                    fields = line.split(maxsplit=1)
+                    if fields and fields[0] == f"/dev/{dev_name}":
+                        return True
+        except (OSError, ValueError):
             pass
         return False
 
@@ -490,14 +489,15 @@ class SysStatParser:
         """Read topology once; None distinguishes a failed query from no devices."""
         try:
             res = subprocess.run(
-                ["lsblk", "--json", "--nodeps", "--output", "NAME,SIZE,TYPE,MODEL,ROTA,TRAN"],
+                ["lsblk", "--json", "--list", "--output", "KNAME,SIZE,TYPE,MODEL,ROTA,TRAN"],
                 capture_output=True, text=True, check=True, timeout=3.0,
             )
             data = json.loads(res.stdout)
             results: dict[str, dict] = {}
             for dev in data.get("blockdevices", []):
-                name = dev.get("name")
-                if not name or name.startswith(("loop", "sr", "ram", "dm", "fd", "nbd")):
+                name = dev.get("kname")
+                if (not name or dev.get("type") == "part"
+                        or name.startswith(("loop", "sr", "ram", "dm", "fd", "nbd"))):
                     continue
                 if name.startswith("zram") and not SysStatParser.is_zram_active(name):
                     continue
