@@ -40,6 +40,7 @@ ufw
 wayvnc
 rnnoise
 pamixer
+archlinux-xdg-menu
 
 # CPU-native builds for Dusky Rust apps; rust supplies cargo and rustc.
 rust

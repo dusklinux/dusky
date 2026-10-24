@@ -25,6 +25,7 @@ localsearch
 polkit
 dbus
 xdg-utils
+archlinux-xdg-menu
 socat
 inotify-tools
 libnotify

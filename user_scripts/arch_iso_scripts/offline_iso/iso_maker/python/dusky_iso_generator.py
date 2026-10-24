@@ -214,7 +214,7 @@ ALL_GROUPS: dict[str, list[str]] = {
     ],
     "hyprland": [
         "hyprland", "xorg-xwayland", "xdg-desktop-portal-hyprland", "xdg-desktop-portal-gtk",
-        "localsearch", "polkit", "dbus", "xdg-utils", "socat", "inotify-tools",
+        "localsearch", "polkit", "dbus", "xdg-utils", "archlinux-xdg-menu", "socat", "inotify-tools",
         "libnotify", "mako", "file",
     ],
     "appearance": [
