@@ -5,7 +5,8 @@
 Menus: --file-manager, --browser, --text-editor, --terminal.
 Direct selection: --terminal --set foot. Restore: --apply-state (alias --auto).
 Selections synchronize Hyprland bindings, user MIME defaults, terminal launchers,
-and installed FileManager1 providers. Existing file-manager windows stay open.
+and native FileManager1 activation. No Dusky background process is installed.
+Log out and back in if an existing GUI still owns Show in Folder.
 """
 
 import argparse
@@ -393,8 +394,8 @@ def run_command(argv: list[str]) -> str:
 
 
 def data_roots(data_home: Path) -> tuple[Path, ...]:
-    return (data_home, *(Path(p) for p in os.environ.get(
-        "XDG_DATA_DIRS", "/usr/local/share:/usr/share").split(":") if p))
+    return (data_home, *(Path(p) for p in (os.environ.get(
+        "XDG_DATA_DIRS") or "/usr/local/share:/usr/share").split(":") if p))
 
 
 def desktop_file(app: App, data_home: Path) -> Path | None:
@@ -448,11 +449,11 @@ def terminal_desktop(kind: str, app: App) -> bytes:
 
 
 def file_manager_service(app: App, data_home: Path) -> bytes | None:
-    """Use the installed provider's activation command and systemd unit.
+    """Find the installed provider's activation command.
 
     Firefox's Show in Folder uses FileManager1, independently of MIME defaults.
-    Terminal managers generally do not implement this interface; retain the
-    existing GUI provider for them rather than invent an incompatible command.
+    Terminal choices retain this activation entry. Launch the native provider
+    directly through D-Bus without a custom systemd unit or resident dispatcher.
     """
     destination = data_home / "dbus-1/services/org.freedesktop.FileManager1.service"
     commands = {name.casefold() for name in (app.key, *app.commands)}
@@ -472,19 +473,21 @@ def file_manager_service(app: App, data_home: Path) -> bytes | None:
                 continue
             command = shlex.split(service.get("Exec", ""))
             if command and Path(command[0]).name.casefold() in commands:
-                return path.read_bytes()
+                # Keep the vendor command exactly as installed; omit its
+                # systemd unit so D-Bus launches the native application directly.
+                return ("[D-BUS Service]\nName=org.freedesktop.FileManager1\n"
+                        f"Exec={service['Exec']}\n").encode()
     return None
 
 
 class Switcher:
     def __init__(self, home: Path | None = None):
         # Keep Dusky's config/state layout, including relocated XDG directories.
-        self.config = Path(os.environ.get("XDG_CONFIG_HOME", str((home or Path.home()) / ".config")))
+        self.config = Path(os.environ.get("XDG_CONFIG_HOME") or (home or Path.home()) / ".config")
         self.variables = self.config / "hypr/edit_here/source/default_apps.lua"
         self.bindings = self.config / "hypr/edit_here/source/keybinds.lua"
         self.settings = self.config / "dusky/settings"
-        self.data_home = Path(os.environ.get("XDG_DATA_HOME", str(
-            (home or Path.home()) / ".local/share")))
+        self.data_home = Path(os.environ.get("XDG_DATA_HOME") or (home or Path.home()) / ".local/share")
 
     def current(self) -> dict[str, str]:
         return defaults(self.variables.read_text(encoding="utf-8"))
@@ -508,6 +511,10 @@ class Switcher:
         with config_lock(self.settings):
             if requested is None:
                 requested = {kind: key for kind in kinds if (key := self.saved(kind)) is not None}
+                # A fresh installation has no saved state yet. Its configured
+                # file manager still needs native D-Bus activation configured.
+                if "file-manager" in kinds and "file-manager" not in requested:
+                    requested["file-manager"] = self.current()["file-manager"]
             if not requested:
                 return ["No saved choices found; nothing changed."]
             selected = {kind: CATEGORIES[kind].app(key) for kind, key in requested.items()}
@@ -531,6 +538,7 @@ class Switcher:
             # Read and validate both inputs before making any writes.
             variables = self.variables.read_text(encoding="utf-8")
             bindings = self.bindings.read_text(encoding="utf-8")
+            previous = defaults(variables)
             for kind, app in selected.items():
                 variables = set_default(variables, CATEGORIES[kind], app.command)
             current = defaults(variables)
@@ -579,13 +587,15 @@ class Switcher:
                         if overrides:
                             changes[path] = mime_defaults(text, overrides).encode()
             terminal_apps = {kind: app for kind, app in binding_apps.items() if app.terminal}
-            if terminal_apps:
-                for command in ("xdg-terminal-exec", "update-desktop-database"):
+            configure_terminal = "terminal" in selected or bool(terminal_apps)
+            if configure_terminal:
+                required = ("xdg-terminal-exec", "update-desktop-database") if terminal_apps else ("xdg-terminal-exec",)
+                for command in required:
                     if not shutil.which(command):
-                        raise ValueError(f"{command} is required for terminal application launchers")
-                for kind, app in terminal_apps.items():
-                    changes[self.data_home / "applications" / app.desktop] = terminal_desktop(kind, app)
-            if "terminal" in selected or terminal_apps:
+                        raise ValueError(f"{command} is required for terminal configuration")
+            for kind, app in terminal_apps.items():
+                changes[self.data_home / "applications" / app.desktop] = terminal_desktop(kind, app)
+            if configure_terminal:
                 command = Path(shlex.split(current["terminal"])[0]).name
                 terminal_app = CATEGORIES["terminal"].app(command)
                 paths = [self.config / "xdg-terminals.list"]
@@ -598,24 +608,44 @@ class Switcher:
             provider = None
             notes = []
             if "file-manager" in selected:
-                provider = file_manager_service(selected["file-manager"], self.data_home)
-                if provider is not None:
-                    changes[self.data_home / "dbus-1/services/org.freedesktop.FileManager1.service"] = provider
+                app = selected["file-manager"]
+                destination = self.data_home / "dbus-1/services/org.freedesktop.FileManager1.service"
+                if app.terminal:
+                    # The activation entry itself remembers the last GUI;
+                    # selecting a terminal manager must not overwrite it.
+                    if not destination.exists():
+                        prior_app = next((candidate for candidate in CATEGORIES["file-manager"].apps
+                                          if not candidate.terminal and candidate.key == previous["file-manager"]), None)
+                        if prior_app is not None:
+                            provider = file_manager_service(prior_app, self.data_home)
+                    notes.append("Show in Folder retains the existing GUI provider.")
                 else:
-                    notes.append("This file manager has no installed FileManager1 provider; Show in Folder keeps its existing GUI provider.")
+                    provider = file_manager_service(app, self.data_home)
+                    if provider is None:
+                        notes.append(f"{app.label} has no installed FileManager1 provider; Show in Folder retains its existing GUI provider.")
+                if provider is not None:
+                    changes[destination] = provider
+                    notes.append("Native Show in Folder activation saved. Log out and back in if the previous GUI still opens.")
             write_batch(changes)
             failures = []
-            if "terminal" in selected or terminal_apps:
+            if configure_terminal:
                 try:
                     # Its cache hashes file listings, so reordering equal-sized
                     # terminal lists can otherwise leave the previous choice cached.
-                    cache = Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache")))
+                    cache = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
                     (cache / "xdg-terminal-exec").unlink(missing_ok=True)
                 except OSError as error:
                     failures.append(str(error))
             if terminal_apps:
                 try:
                     run_command(["update-desktop-database", str(self.data_home / "applications")])
+                except OSError as error:
+                    failures.append(str(error))
+            if configure_terminal:
+                try:
+                    actual = run_command(["xdg-terminal-exec", "--print-id"]).strip()
+                    if actual != terminal_app.desktop:
+                        failures.append(f"Default terminal: expected {terminal_app.desktop}, got {actual or 'no terminal'}; check xdg-terminals.list directives and terminal desktop entries")
                 except OSError as error:
                     failures.append(str(error))
             for kind, app in selected.items():
@@ -629,16 +659,10 @@ class Switcher:
                         failures.append(str(error))
             if provider is not None and os.environ.get("DBUS_SESSION_BUS_ADDRESS"):
                 try:
-                    bus = ["busctl", "--user", "call", "org.freedesktop.DBus",
-                           "/org/freedesktop/DBus", "org.freedesktop.DBus"]
-                    run_command([*bus, "ReloadConfig"])
-                    run_command([*bus, "StartServiceByName", "su", "org.freedesktop.FileManager1", "0"])
-                    pid = int(run_command([*bus, "GetConnectionUnixProcessID", "s",
-                                           "org.freedesktop.FileManager1"]).split()[1])
-                    executable = Path(f"/proc/{pid}/exe").resolve().name.casefold()
-                    app = selected["file-manager"]
-                    if executable not in {name.casefold() for name in (app.key, *app.commands)}:
-                        notes.append("Another file manager still owns Show in Folder; close it or log in again to activate the selected provider.")
+                    # Reload activation metadata without starting a file manager
+                    # or changing the owner held by a running application.
+                    run_command(["busctl", "--user", "call", "org.freedesktop.DBus",
+                                 "/org/freedesktop/DBus", "org.freedesktop.DBus", "ReloadConfig"])
                 except OSError as error:
                     failures.append(str(error))
             # xdg-settings has no Hyprland backend; its generic handler repeats
@@ -646,6 +670,9 @@ class Switcher:
             if os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
                 try:
                     run_command(["hyprctl", "reload", "config-only"])
+                    errors = run_command(["hyprctl", "configerrors"]).strip()
+                    if errors:
+                        failures.append("Hyprland configuration errors: " + errors)
                 except OSError as error:
                     failures.append(str(error))
             if failures:
@@ -815,7 +842,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         group.add_argument(*aliases, dest="category", action="store_const", const=kind)
     actions = parser.add_mutually_exclusive_group()
     actions.add_argument("--set", metavar="NAME", help="Set a catalog choice in the selected category")
-    actions.add_argument("--apply-state", "--auto", action="store_true", help="Restore saved choices without a menu")
+    actions.add_argument("--apply-state", "--auto", action="store_true", help="Restore saved choices and native activation for the current file manager without a menu")
     args = parser.parse_args(argv)
     if args.set and not args.category:
         parser.error("--set requires a category flag")
@@ -827,7 +854,8 @@ def interrupted(signum, frame):
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = parse_args(sys.argv[1:] if argv is None else argv)
+    arguments = sys.argv[1:] if argv is None else argv
+    args = parse_args(arguments)
     for signum in (signal.SIGHUP, signal.SIGTERM):
         signal.signal(signum, interrupted)
     switcher = Switcher()
