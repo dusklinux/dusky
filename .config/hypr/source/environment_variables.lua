@@ -1,6 +1,6 @@
 -- ~/.config/hypr/source/environment_variables.lua
 -- Native Hyprland / systemd 262+ / Arch rolling
--- No UWSM; Wayland-only backends; application-specific rendering defaults.
+-- No UWSM; prefer Wayland with XWayland fallback; application-specific rendering defaults.
 -- @diagnostic disable: undefined-global
 
 local getenv = os.getenv
@@ -67,16 +67,18 @@ hl_env("XDG_SESSION_DESKTOP", "Hyprland")
 hl_env("XDG_SESSION_CLASS", "user") -- needed for localsearch ConditionEnvironment
 hl_env("XDG_MENU_PREFIX", "arch-") -- fixes empty Open With in Dolphin/digiKam on Arch
 
--- 5. Native Wayland backends and toolkit appearance.
-hl_env("GDK_BACKEND", "wayland")
-hl_env("QT_QPA_PLATFORM", "wayland")
+-- 5. Prefer Wayland; allow X11 backends when XWayland is enabled.
+hl_env("GDK_BACKEND", "wayland,x11,*")
+hl_env("QT_QPA_PLATFORM", "wayland;xcb")
 hl_env("QT_QPA_PLATFORMTHEME", "qt6ct")
 hl_env("QT_WAYLAND_DISABLE_WINDOWDECORATION", "1")
 hl_env("QT_QUICK_CONTROLS_STYLE", "Fusion")
--- Let Qt handle native scaling and GTK select a renderer for the available hardware.
-hl_env("SDL_VIDEODRIVER", "wayland") -- SDL2 API, including sdl2-compat
-hl_env("SDL_VIDEO_DRIVER", "wayland") -- SDL3 API
+-- Force GTK4's OpenGL renderer instead of automatic renderer selection.
+hl_env("GSK_RENDERER", "gl")
+hl_env("SDL_VIDEODRIVER", "wayland,x11") -- SDL2 API, including sdl2-compat
+hl_env("SDL_VIDEO_DRIVER", "wayland,x11") -- SDL3 API
 hl_env("CLUTTER_BACKEND", "wayland")
+hl_env("_JAVA_AWT_WM_NONREPARENTING", "1") -- Java AWT windows under XWayland
 
 -- 6. Application integration. Modern Electron uses XDG_SESSION_TYPE directly.
 hl_env("MOZ_ENABLE_WAYLAND", "1")
