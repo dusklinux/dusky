@@ -279,7 +279,7 @@ select_python() {
 }
 install_system_deps() {
     local dep
-    local -a deps=(uv gcc linux-api-headers mako libnotify shadow)
+    local -a deps=(uv gcc linux-api-headers mako libnotify shadow python-evdev python-dbus-fast)
     local -a missing=()
     local -A installed=()
     select_python || deps+=(python)
@@ -315,11 +315,11 @@ prepare_environment() {
         rm -f -- "$MARKER_FILE"
     fi
     if [[ ! -x $PYTHON_BIN ]]; then
-        uv venv --python "$native_python" --no-python-downloads "$VENV_DIR"
+        uv venv --python "$native_python" --system-site-packages --no-python-downloads "$VENV_DIR"
     fi
-    if [[ $RUN_MODE == setup || ! -f $MARKER_FILE ]]; then
+    if ! runtime_ready; then
         # Use portable compiler defaults, so cached extensions remain reusable.
-        uv pip install --python "$PYTHON_BIN" --link-mode=copy --compile-bytecode --reinstall \
+        uv pip install --python "$PYTHON_BIN" --link-mode=copy --compile-bytecode \
             'evdev>=2.0' 'dbus-fast>=5.2'
         runtime_ready || fail 'Python runtime validation failed after setup.'
     fi
