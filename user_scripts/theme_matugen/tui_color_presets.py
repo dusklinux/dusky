@@ -5,15 +5,13 @@ DUSKY TUI: MATUGEN COLOR PRESETS & DYNAMIC PALETTE MANAGER
 ===============================================================================
 Target: Arch Linux / Hyprland / Matugen / Wayland
 Python 3.15 implementation replacing legacy bash script dusky_matugen_presets.sh.
-Supports all 5 legacy palettes, custom hex/rgb input, full theme/animation controls,
-favorites persistence, and a dedicated tab for hardcoded vivid/exact schemas.
+Groups seed colors separately from curated generation recipes and baked Vivid packs.
+Supports custom HEX/RGB/HSL input, theme/animation controls, and saved favorites.
 ===============================================================================
 """
 
-import os
 import re
 import sys
-lazy import json
 lazy import subprocess
 from pathlib import Path
 
@@ -47,20 +45,15 @@ USER_PRESETS_TAB = "Presets"
 # =============================================================================
 # 3. TABS DEFINITION
 # =============================================================================
-TABS = [
-    "Fav",
-    "Vibrant",
-    "Neon",
-    "Deep",
-    "Pastel",
-    "Mono",
-    "Exact",
-    "Custom",
-    "Theme",
-    "Anim",
-    "Presets",
-    "Vivid",
-]
+TABS = ["Favorites", "Vivid", "Seeds", "Curated", "Custom", "Theme", "Anim", "Presets"]
+_TAB_INDEX = {name: index for index, name in enumerate(TABS)}
+
+TAB_NOTICES = {
+    _TAB_INDEX["Favorites"]: {"message": "Vivid favorites restore their complete pack. Seed favorites generate with current Theme settings. After saving or removing a favorite, press F5 to refresh the list."},
+    _TAB_INDEX["Vivid"]: {"message": "Complete baked palettes with fixed colors. Favorite Active saves the whole pack. Applying Theme settings generates from its accent and leaves the baked palette."},
+    _TAB_INDEX["Seeds"]: {"message": "Input colors for Matugen, grouped by seed appearance. Generated accents depend on Theme settings; pure grays use monochrome unless the scheme is disabled."},
+    _TAB_INDEX["Curated"]: {"message": "Saved color + scheme recipes. Each applies its saved mode and contrast and updates Theme settings. Generated tones can differ from the seed."},
+}
 
 # =============================================================================
 # 4. PALETTE DATASETS (100% PARITY WITH dusky_matugen_presets.sh)
@@ -187,7 +180,7 @@ def _build_favorites_items(engine: MatugenPresetsEngine | None = None) -> list[C
             ),
         ),
         ConfigItem(
-            label="Save Active Color as Favorite",
+            label="Favorite Active Theme",
             key="action_add_favorite",
             scope="DEFAULT",
             type_="bool",
@@ -196,8 +189,7 @@ def _build_favorites_items(engine: MatugenPresetsEngine | None = None) -> list[C
             group="Palette Controls",
             extended_help=(
                 "**Save Active Favorite**\n\n"
-                "Saves the currently applied hex color into your persistent "
-                "`theme_preset_fav` favorites file."
+                "Saves the active Vivid pack by its identity, or saves the current seed color for generation with Theme settings."
             ),
         ),
         ConfigItem(
@@ -210,10 +202,38 @@ def _build_favorites_items(engine: MatugenPresetsEngine | None = None) -> list[C
             group="Palette Controls",
             extended_help=(
                 "**Remove Active Favorite**\n\n"
-                "Removes the current active color from your saved favorites list."
+                "Removes the active Vivid pack or seed color from your favorites."
             ),
         ),
     ]
+
+    if engine.vivid_favorites_error:
+        items.append(ConfigItem(
+            label="Vivid Favorites File Error",
+            key="vivid_favorites_notice",
+            type_="string",
+            default=engine.vivid_favorites_error,
+            read_only=True,
+            group="Saved Vivid Packs",
+            extended_help=f"Cannot read `{engine.vivid_favorites_file}`. Correct the file, then refresh with F5. Existing content is retained.",
+        ))
+
+    for preset in engine.vivid_favorites:
+        items.append(
+            ConfigItem(
+                label=preset["label"],
+                key=f"fav_vivid_apply_{preset['id']}",
+                type_="bool",
+                default=False,
+                options=[f"trigger:{preset['hex']}"],
+                group="Saved Vivid Packs",
+                extended_help=(
+                    f"**{preset['label']}**\n\n"
+                    f"Restores the complete Vivid pack `{preset['id']}` through the Vivid apply path. "
+                    "If its definition is unavailable, applying reports an error."
+                ),
+            )
+        )
 
     if engine.favorites:
         for idx, (label, hex_code) in enumerate(engine.favorites):
@@ -225,15 +245,15 @@ def _build_favorites_items(engine: MatugenPresetsEngine | None = None) -> list[C
                     type_="bool",
                     default=False,
                     options=[f"trigger:{hex_code}"],
-                    group="Saved Favorites",
+                    group="Saved Seed Colors",
                     extended_help=(
                         f"**{label}**\n\n"
                         f"HEX: `{hex_code}`\n\n"
-                        f"Press Enter to apply this saved favorite color preset."
+                        "Generates from this saved seed using current Theme settings. Vivid pack favorites are listed separately."
                     ),
                 )
             )
-    else:
+    elif not engine.vivid_favorites and not engine.vivid_favorites_error:
         items.append(
             ConfigItem(
                 label="No Favorites Saved Yet",
@@ -245,15 +265,26 @@ def _build_favorites_items(engine: MatugenPresetsEngine | None = None) -> list[C
                 extended_help=(
                     "**Favorites List**\n\n"
                     "You have no saved favorites yet.\n"
-                    "Select any color preset and click 'Favorite Active' to add it here!"
+                    "Apply a Vivid pack or seed color, then choose Favorite Active to save it here."
                 ),
             )
         )
 
+    for preset in engine.vivid_favorites:
+        items.append(ConfigItem(
+            label=f"Remove {preset['label']}",
+            key=f"fav_vivid_remove_{preset['id']}",
+            type_="bool",
+            default=False,
+            options=["trigger:Remove Favorite"],
+            group="Manage Saved Vivid Packs",
+            extended_help="Removes this favorite without applying or deleting the Vivid pack.",
+        ))
+
     return items
 
 def _build_exact_items(engine: MatugenPresetsEngine | None = None) -> list[ConfigItem]:
-    """Generates schema rows for Tab 6 (Exact / Hardcoded Schemas)."""
+    """Generates curated color-and-scheme recipes; legacy keys remain stable."""
     if engine is None:
         engine = MatugenPresetsEngine()
         engine.load_state()
@@ -265,14 +296,14 @@ def _build_exact_items(engine: MatugenPresetsEngine | None = None) -> list[Confi
             scope="exact",
             type_="color",
             default="#0000FF",
-            group="Exact Controls",
+            group="Curated Controls",
             extended_help=(
                 "**Active Color**\n\n"
                 "The currently applied system color palette source."
             ),
         ),
         ConfigItem(
-            label="Exact Scheme Strategy",
+            label="Curated Scheme Override",
             key="exact_scheme_override",
             scope="DEFAULT",
             type_="cycle",
@@ -286,23 +317,23 @@ def _build_exact_items(engine: MatugenPresetsEngine | None = None) -> list[Confi
                 "scheme-rainbow",
                 "scheme-monochrome",
             ],
-            group="Exact Controls",
+            group="Curated Controls",
             extended_help=(
-                "**Exact Scheme Strategy**\n\n"
-                "- `per-preset`: Uses each preset's optimal hardcoded schema (e.g. `scheme-fidelity` for pure primary colors).\n"
-                "- `scheme-*`: Force a specific scheme for all exact presets.\n\n"
-                "This guarantees vivid, accurate colors matching the palette without unwanted tonal desaturation."
+                "**Curated Scheme Override**\n\n"
+                "- `per-preset`: Uses each preset's saved scheme (e.g. `scheme-fidelity` for pure primary colors).\n"
+                "- `scheme-*`: Force a specific scheme for all curated presets.\n\n"
+                "These recipes generate Material You tones using their saved mode and contrast. They do not reproduce the seed exactly; use Vivid for baked desktop palettes."
             ),
         ),
         ConfigItem(
-            label="Save Active Color as Favorite",
+            label="Favorite Active Theme",
             key="action_add_favorite",
             scope="exact",
             type_="bool",
             default=False,
             options=["trigger:Favorite Active"],
-            group="Exact Controls",
-            extended_help="Saves the current active color into your favorites.",
+            group="Curated Controls",
+            extended_help="Saves the active Vivid pack or seed color into your favorites.",
         ),
     ]
 
@@ -316,15 +347,15 @@ def _build_exact_items(engine: MatugenPresetsEngine | None = None) -> list[Confi
                 type_="bool",
                 default=False,
                 options=[f"trigger:{p['hex']}"],
-                group="Hardcoded Vivid & Accurate Presets",
+                group="Color + Scheme Recipes",
                 extended_help=(
                     f"**{p['label']}**\n\n"
                     f"- HEX: `{p['hex']}`\n"
                     f"- Hardcoded Scheme: `{p.get('scheme', 'scheme-fidelity')}`\n"
                     f"- Contrast: `{p.get('contrast', '0')}`\n"
                     f"- Mode: `{p.get('mode', 'dark')}`\n\n"
-                    f"{p.get('desc', 'Guarantees accurate, vivid generation.')}\n\n"
-                    f"Hit Enter to apply this exact color with its hardcoded scheme."
+                    "Matugen derives tonal colors from this seed; generated accents may differ.\n\n"
+                    "Press Enter to generate with this recipe. This also updates Theme settings."
                 ),
             )
         )
@@ -332,16 +363,16 @@ def _build_exact_items(engine: MatugenPresetsEngine | None = None) -> list[Confi
     # Custom hardcoded preset builder section
     items.extend([
         ConfigItem(
-            label="New Exact Color HEX",
+            label="New Recipe HEX",
             key="new_exact_hex",
             scope="DEFAULT",
             type_="string",
             default="#FF0080",
-            group="Add Hardcoded Preset",
+            group="Add Recipe (Dark Mode, Standard Contrast)",
             extended_help="Enter a hex code for a new curated preset entry.",
         ),
         ConfigItem(
-            label="Hardcoded Scheme Type",
+            label="Recipe Scheme",
             key="new_exact_scheme",
             scope="DEFAULT",
             type_="cycle",
@@ -354,17 +385,17 @@ def _build_exact_items(engine: MatugenPresetsEngine | None = None) -> list[Confi
                 "scheme-rainbow",
                 "scheme-monochrome",
             ],
-            group="Add Hardcoded Preset",
-            extended_help="Select the exact scheme algorithm to hardcode with this color.",
+            group="Add Recipe (Dark Mode, Standard Contrast)",
+            extended_help="Select the generation scheme to save with this seed color.",
         ),
         ConfigItem(
-            label="Save New Hardcoded Preset",
+            label="Save New Recipe",
             key="action_add_exact_preset",
             scope="DEFAULT",
             type_="bool",
             default=False,
-            options=["trigger:Save Hardcoded"],
-            group="Add Hardcoded Preset",
+            options=["trigger:Save Recipe"],
+            group="Add Recipe (Dark Mode, Standard Contrast)",
             extended_help="Saves this new color and its assigned schema into `exact_color_presets.json`.",
         ),
     ])
@@ -381,7 +412,7 @@ def _build_exact_items(engine: MatugenPresetsEngine | None = None) -> list[Confi
                     type_="bool",
                     default=False,
                     options=["trigger:Delete Preset"],
-                    group="Manage Custom Hardcoded Presets",
+                    group="Manage Custom Recipes",
                     extended_help=f"Removes `{p['label']}` from `exact_color_presets.json`.",
                 )
             )
@@ -389,10 +420,8 @@ def _build_exact_items(engine: MatugenPresetsEngine | None = None) -> list[Confi
     return items
 
 
-def _build_vivid_items(engine: MatugenPresetsEngine | None = None) -> list[ConfigItem]:
-    if engine is None:
-        engine = MatugenPresetsEngine()
-        engine.load_state()
+def _build_vivid_items() -> list[ConfigItem]:
+    """Build baked pack selectors without changing their definitions or colors."""
 
     controls = [
         ConfigItem(
@@ -403,7 +432,7 @@ def _build_vivid_items(engine: MatugenPresetsEngine | None = None) -> list[Confi
             default="#00FF00",
             read_only=True,
             group="Vivid Status",
-            extended_help="Observed accent of the active vivid pack. Read-only.",
+            extended_help="Accent of the active Vivid pack, or the last seed when no pack is active. Read-only.",
         ),
         ConfigItem(
             label="Active Vivid Preset",
@@ -414,6 +443,16 @@ def _build_vivid_items(engine: MatugenPresetsEngine | None = None) -> list[Confi
             read_only=True,
             group="Vivid Status",
             extended_help="Pack identity recorded in state.conf. Read-only.",
+        ),
+        ConfigItem(
+            label="Favorite Active Theme",
+            key="action_add_favorite",
+            scope="vivid",
+            type_="bool",
+            default=False,
+            options=["trigger:Favorite Active"],
+            group="Vivid Status",
+            extended_help="Saves the active Vivid pack by its identity so Favorites can restore the complete pack. Press F5 to refresh the Favorites list.",
         ),
         ConfigItem(
             label="Return to Wallpaper",
@@ -438,14 +477,14 @@ def _build_vivid_items(engine: MatugenPresetsEngine | None = None) -> list[Confi
             default=diag,
             read_only=True,
             group="Definition Diagnostics",
-            extended_help=f"**Source Definition Diagnostic**\n\n`{diag}`\n\nResolve this error in `~/.config/matugen/presets/` to restore this preset.",
+            extended_help=f"**Source Definition Diagnostic**\n\n`{diag}`\n\nResolve this error in the Vivid source definitions to restore this preset.",
         )
         for i, diag in enumerate(diagnostics)
     ]
 
     rows = [
         ConfigItem(
-            label=f"{preset['label']} {preset['hex']}",
+            label=preset["label"],
             key=f"vivid_apply_{preset['id']}",
             scope="DEFAULT",
             type_="bool",
@@ -467,16 +506,17 @@ def _build_vivid_items(engine: MatugenPresetsEngine | None = None) -> list[Confi
 def DEFERRED_LOAD() -> tuple[list[int], dict[int, list[ConfigItem]]]:
     """
     Called by Dusky TUI after initial render and whenever the user presses F5.
-    Dynamically refreshes the Favorites tab (0), Exact Schemes tab (6), and Vivid tab (11).
+    Refreshes Favorites, Vivid, and Curated using their current tab positions.
     """
     engine = MatugenPresetsEngine()
     engine.load_state()
 
-    fav_items = _build_favorites_items(engine)
-    exact_items = _build_exact_items(engine)
-    vivid_items = _build_vivid_items(engine)
-
-    return [0, 6, 11], {0: fav_items, 6: exact_items, 11: vivid_items}
+    refreshed = {
+        _TAB_INDEX["Favorites"]: _build_favorites_items(engine),
+        _TAB_INDEX["Vivid"]: _build_vivid_items(),
+        _TAB_INDEX["Curated"]: _build_exact_items(engine),
+    }
+    return list(refreshed), refreshed
 
 # =============================================================================
 # 6. MASTER SCHEMA DEFINITION
@@ -485,18 +525,20 @@ def DEFERRED_LOAD() -> tuple[list[int], dict[int, list[ConfigItem]]]:
 SCHEMA: dict[int, list[ConfigItem]] = {i: [] for i in range(len(TABS))}
 
 # --- TAB 0: FAVORITES ---
-SCHEMA[0] = _build_favorites_items()
+_initial_engine = MatugenPresetsEngine()
+_initial_engine.load_state()
+SCHEMA[_TAB_INDEX["Favorites"]] = _build_favorites_items(_initial_engine)
 
-# --- TABS 1-5: COLOR PALETTES (Vibrant, Neon, Deep, Pastel, Mono) ---
-_PALETTE_TAB_MAP = [
-    (1, "Vibrant", "Vibrant Presets"),
-    (2, "Neon", "Neon Presets"),
-    (3, "Deep", "Deep Presets"),
-    (4, "Pastel", "Pastel Presets"),
-    (5, "Mono", "Monochrome Presets"),
+# Preserve legacy palette names in keys so existing saved profiles still resolve.
+_PALETTE_GROUPS = [
+    ("Vibrant", "Classic Seeds"),
+    ("Neon", "Electric Seeds"),
+    ("Deep", "Dark Seeds"),
+    ("Pastel", "Soft Seeds"),
+    ("Mono", "Neutral Seeds"),
 ]
 
-for tab_idx, pal_name, group_title in _PALETTE_TAB_MAP:
+for pal_name, group_title in _PALETTE_GROUPS:
     palette_colors = PALETTES[pal_name]
     tab_items: list[ConfigItem] = []
 
@@ -516,18 +558,19 @@ for tab_idx, pal_name, group_title in _PALETTE_TAB_MAP:
                 extended_help=(
                     f"**{name}**\n\n"
                     f"HEX: `{hex_code}`\n\n"
-                    f"Press Enter to apply this color preset across your system via Matugen."
+                    "Uses the current Theme scheme, mode, and contrast to generate a palette. The swatch is the input seed, not the resulting accent. For baked vivid colors, use Vivid."
                 ),
             )
         )
 
-    SCHEMA[tab_idx] = tab_items
+    SCHEMA[_TAB_INDEX["Seeds"]].extend(tab_items)
 
-# --- TAB 6: EXACT / HARDCODED SCHEMAS ---
-SCHEMA[6] = _build_exact_items()
+# --- CURATED GENERATION RECIPES ---
+SCHEMA[_TAB_INDEX["Curated"]] = _build_exact_items(_initial_engine)
+del _initial_engine
 
-# --- TAB 7: CUSTOM INPUT ---
-SCHEMA[7] = [
+# --- CUSTOM INPUT ---
+SCHEMA[_TAB_INDEX["Custom"]] = [
     ConfigItem(
         label="Input HEX Code",
         key="custom_hex",
@@ -583,8 +626,8 @@ SCHEMA[7] = [
     ),
 ]
 
-# --- TAB 8: THEME SETTINGS ---
-SCHEMA[8] = [
+# --- THEME SETTINGS ---
+SCHEMA[_TAB_INDEX["Theme"]] = [
     ConfigItem(
         label="Apply Theme Settings",
         key="action_apply_theme",
@@ -595,7 +638,7 @@ SCHEMA[8] = [
         group="Theme Configuration",
         extended_help=(
             "**Apply & Save Settings**\n\n"
-            "Applies and saves all theme settings to `theme_ctl` and the desktop interface."
+            "Applies and saves theme settings. If Vivid is active, generates a new palette from its accent and leaves the baked Vivid pack."
         ),
     ),
     ConfigItem(
@@ -633,7 +676,7 @@ SCHEMA[8] = [
         group="Theme Configuration",
         extended_help=(
             "**Matugen Scheme Type**\n\n"
-            "- `scheme-fidelity`: Preserves source color hue and saturation strictly.\n"
+            "- `scheme-fidelity`: Builds tones influenced by the source color; output is not an exact HEX match.\n"
             "- `scheme-vibrant`: Maximizes chromatic vibrancy and punchy accents.\n"
             "- `scheme-fruit-salad`: Playful color combinations.\n"
             "- `scheme-tonal-spot`: Standard Material You spec with balanced tonal spots.\n"
@@ -688,17 +731,17 @@ SCHEMA[8] = [
     ),
 ]
 
-# --- TAB 9: ANIMATION SETTINGS ---
-SCHEMA[9] = [
+# --- ANIMATION SETTINGS ---
+SCHEMA[_TAB_INDEX["Anim"]] = [
     ConfigItem(
-        label="Apply Animation Settings",
+        label="Save Animation Settings",
         key="action_apply_anim",
         scope="DEFAULT",
         type_="bool",
         default=False,
-        options=["trigger:Apply Settings"],
+        options=["trigger:Save Settings"],
         group="Wallpaper Animation",
-        extended_help="Applies and saves transition animation settings for `awww`.",
+        extended_help="Saves transition settings for the next wallpaper change without regenerating the active palette.",
     ),
     ConfigItem(
         label="Transition Type",
@@ -795,24 +838,24 @@ SCHEMA[9] = [
     ),
 ]
 
-# --- TAB 10: PRESETS ---
+# --- SAVED SETTINGS PROFILES ---
 # Native Dusky TUI Profiles tab.
-SCHEMA[10] = [
+SCHEMA[_TAB_INDEX["Presets"]] = [
     ConfigItem(
-        label="Factory Reset All",
+        label="Reset Theme and Animation Settings",
         key="preset_factory_reset",
         scope="DEFAULT",
         type_="preset",
         default=None,
         group="System Defaults",
-        confirm_message="Reset all theme settings to defaults?",
+        confirm_message="Reset theme and animation settings and generate from the default color?",
         preset_payload={"__ALL_DEFAULTS__": True},
-        extended_help="Reverts all settings back to their original system defaults.",
+        extended_help="Resets theme and animation settings and generates from the default color. Saved favorites, recipes, and Vivid definitions are retained.",
     )
 ]
 
-# --- TAB 11: VIVID (PRE-BAKED COLOR PACKS) ---
-SCHEMA[11] = _build_vivid_items()
+# --- VIVID (PRE-BAKED COLOR PACKS) ---
+SCHEMA[_TAB_INDEX["Vivid"]] = _build_vivid_items()
 
 # =============================================================================
 # 7. STANDALONE EXECUTION / SCRIPTING CLI
@@ -829,14 +872,17 @@ def main() -> int:
             print("Dusky Color Presets TUI & CLI")
             print("Usage:")
             print("  python3 tui_color_presets.py                           # Launch interactive TUI")
-            print("  python3 tui_color_presets.py --color #HEX             # Apply hex color directly")
+            print("  python3 tui_color_presets.py --color '#HEX'             # Apply hex color directly")
             print("  python3 tui_color_presets.py --rgb <R> <G> <B>        # Apply RGB color")
             print("  python3 tui_color_presets.py --hsl <H> <S> <L>        # Apply HSL color")
-            print("  python3 tui_color_presets.py --exact <ID>             # Apply exact hardcoded preset")
-            print("  python3 tui_color_presets.py --preview #HEX [SCHEME]  # In-memory Material You preview")
-            print("  python3 tui_color_presets.py --list-exact              # List all hardcoded presets")
+            print("  python3 tui_color_presets.py --exact <ID>             # Apply curated generation recipe")
+            print("  python3 tui_color_presets.py --preview '#HEX' [SCHEME] [MODE] [CONTRAST]  # In-memory Material You preview")
+            print("  python3 tui_color_presets.py --list-exact              # List curated generation recipes")
             print("  python3 tui_color_presets.py --add-exact <HEX> <SCHEME> [LABEL] # Add exact preset")
             print("  python3 tui_color_presets.py --del-exact <ID>         # Delete exact preset")
+            print("  python3 tui_color_presets.py --favorite-active        # Favorite active Vivid pack or seed")
+            print("  python3 tui_color_presets.py --add-vivid-fav <ID>     # Favorite a complete Vivid pack")
+            print("  python3 tui_color_presets.py --del-vivid-fav <ID>     # Remove a Vivid favorite")
             print("  python3 tui_color_presets.py --list-fav                # List saved favorites")
             print("  python3 tui_color_presets.py --add-fav <HEX> [LABEL]  # Add favorite color")
             print("  python3 tui_color_presets.py --del-fav <HEX>          # Delete favorite color")
@@ -916,7 +962,7 @@ def main() -> int:
             return 0
 
         elif arg == "--list-exact":
-            print("Available Hardcoded Vivid & Accurate Presets:")
+            print("Available Curated Generation Recipes (legacy --exact IDs):")
             for p in engine.exact_presets:
                 print(f"  {p['id']:<18} {p['hex']:<9} [{p.get('scheme', 'scheme-fidelity')}] - {p['label']}")
             return 0
@@ -949,10 +995,26 @@ def main() -> int:
                 return 1
 
         elif arg == "--list-fav":
-            print(f"Saved Favorites ({len(engine.favorites)}):")
+            print(f"Saved Favorites ({len(engine.favorites) + len(engine.vivid_favorites)}):")
+            for preset in engine.vivid_favorites:
+                print(f"  [Vivid] {preset['label']} ({preset['id']})")
             for lbl, hx in engine.favorites:
                 print(f"  {lbl:<25} {hx}")
             return 0
+
+        elif arg == "--favorite-active":
+            ok, msg = engine.add_active_favorite()
+            print(f"[OK] {msg}" if ok else f"[-] {msg}", file=sys.stdout if ok else sys.stderr)
+            return 0 if ok else 1
+
+        elif arg in ("--add-vivid-fav", "--del-vivid-fav"):
+            if len(sys.argv) != 3:
+                print(f"[-] Usage: {arg} <VIVID_ID>", file=sys.stderr)
+                return 1
+            action = engine.add_vivid_favorite if arg == "--add-vivid-fav" else engine.remove_vivid_favorite
+            ok, msg = action(sys.argv[2])
+            print(f"[OK] {msg}" if ok else f"[-] {msg}", file=sys.stdout if ok else sys.stderr)
+            return 0 if ok else 1
 
         elif arg == "--add-fav":
             if len(sys.argv) < 3:

@@ -13,9 +13,7 @@ import os
 import re
 import sys
 lazy import colorsys
-lazy import copy
 lazy import json
-lazy import shutil
 lazy import subprocess
 lazy import tempfile
 lazy from pathlib import Path
@@ -25,18 +23,18 @@ _VIVID_DIR = Path.home() / "user_scripts" / "theme_matugen" / "vivid"
 if str(_VIVID_DIR) not in sys.path:
     sys.path.insert(0, str(_VIVID_DIR))
 lazy import vivid_theme
+lazy from vivid_data import VALID_SCHEMES
 
 from python.frontend.core_types import BaseEngine
 
 # PEP 695 Type Aliases
-type ScopeKeyMap = dict[str, Any]
 type ChangeTuple = tuple[str, str, str, str]
 type WriteResult = tuple[bool, str, str]
 
 # Regex patterns
-_RE_HEX = re.compile(r"^#?[a-fA-F0-9]{6}$")
-_RE_RGB_PARSER = re.compile(r"^(\d{1,3})[\s,]+(\d{1,3})[\s,]+(\d{1,3})$")
-_RE_HSL_PARSER = re.compile(r"^(\d+(?:\.\d+)?)(?:deg)?[\s,]+(\d+(?:\.\d+)?%?)[\s,]+(\d+(?:\.\d+)?%?)$")
+_RE_HEX = re.compile(r"#?[a-fA-F0-9]{6}")
+_RE_RGB_PARSER = re.compile(r"(\d{1,3})[\s,]+(\d{1,3})[\s,]+(\d{1,3})")
+_RE_HSL_PARSER = re.compile(r"(\d+(?:\.\d+)?)(?:deg)?[\s,]+(\d+(?:\.\d+)?%?)[\s,]+(\d+(?:\.\d+)?%?)")
 
 # Default state settings aligned with theme_ctl.sh & dusky_matugen_presets.sh
 _DEFAULT_SETTINGS = frozendict({
@@ -76,7 +74,7 @@ _STATE_KEY_TO_ENGINE = frozendict({
 
 _ENGINE_TO_STATE_KEY = frozendict({v: k for k, v in _STATE_KEY_TO_ENGINE.items()})
 
-# Default curated exact presets guaranteeing vivid, true-to-palette generation
+# Curated generation recipes. Material You tones can differ from their seed HEX.
 _DEFAULT_EXACT_PRESETS = (
     frozendict({
         "id": "vivid_red",
@@ -227,6 +225,7 @@ class MatugenPresetsEngine(BaseEngine):
         self.state_dir = self.state_file.parent
         self.favorites_file = self.state_dir / "theme_preset_fav"
         self.exact_file = self.state_dir / "exact_color_presets.json"
+        self.vivid_favorites_file = self.state_dir / "vivid_favorites.json"
 
         # Theme controller script path
         user_scripts = Path.home() / "user_scripts"
@@ -234,6 +233,8 @@ class MatugenPresetsEngine(BaseEngine):
 
         self.cache: dict[str, Any] = {}
         self.favorites: list[tuple[str, str]] = []
+        self.vivid_favorites: list[dict[str, str]] = []
+        self.vivid_favorites_error: str = ""
         self.exact_presets: list[dict[str, Any]] = []
         self.exact_scheme_override: str = "per-preset"
         self.new_exact_hex: str = "#FF0080"
@@ -277,7 +278,8 @@ class MatugenPresetsEngine(BaseEngine):
 
         # 2. Parse favorites
         self._load_favorites()
-        self.cache["fav_count"] = len(self.favorites)
+        self._load_vivid_favorites()
+        self.cache["fav_count"] = len(self.favorites) + len(self.vivid_favorites)
 
         # 3. Parse exact presets
         self._load_exact_presets()
@@ -287,6 +289,8 @@ class MatugenPresetsEngine(BaseEngine):
 
         # 4. Helper aliases & controls
         last_hex = str(self.cache.get("last_applied_hex", "#0000FF")).upper()
+        if not _RE_HEX.fullmatch(last_hex):
+            last_hex = _DEFAULT_SETTINGS["last_applied_hex"]
         if not last_hex.startswith("#"):
             last_hex = f"#{last_hex}"
         self.cache["last_applied_hex"] = last_hex
@@ -309,13 +313,17 @@ class MatugenPresetsEngine(BaseEngine):
             self.cache[act] = False
 
         # 5. Vivid status
-        active_id, active_hex, is_vivid = vivid_theme.get_active_vivid_info()
+        active_id = str(self.cache["vivid_preset"])
+        is_vivid = self.cache["theme_source"] == "vivid" and active_id != "none"
+        active_id = active_id if is_vivid else "none"
+        active_hex = last_hex
         self.cache["vivid_active_id"] = active_id
-        self.cache["vivid_active_hex"] = active_hex if is_vivid else self.cache.get("last_applied_hex", "#00FF00")
+        self.cache["vivid_active_hex"] = active_hex
 
         # Expose DEFAULT/ scoped keys for Dusky TUI router compatibility
         scoped = {f"DEFAULT/{k}": v for k, v in self.cache.items()}
         self.cache.update(scoped)
+        self.cache["exact/active_color"] = last_hex
 
         return self.cache
 
@@ -333,7 +341,7 @@ class MatugenPresetsEngine(BaseEngine):
                 label, hex_val = line.split("|", 1)
                 label = label.strip()
                 hex_val = hex_val.strip().upper()
-                if label and _RE_HEX.match(hex_val):
+                if label and _RE_HEX.fullmatch(hex_val):
                     if not hex_val.startswith("#"):
                         hex_val = f"#{hex_val}"
                     self.favorites.append((label, hex_val))
@@ -342,7 +350,6 @@ class MatugenPresetsEngine(BaseEngine):
 
     def _save_favorites(self) -> bool:
         """Atomically saves favorites list to theme_preset_fav."""
-        self.state_dir.mkdir(parents=True, exist_ok=True)
         lines = [
             "# Dusky Matugen Favorites",
             "# Format: Label|#HEXCODE",
@@ -352,25 +359,139 @@ class MatugenPresetsEngine(BaseEngine):
         content = "\n".join(lines) + "\n"
         return self._atomic_write(self.favorites_file, content)
 
+    def _load_vivid_favorites(self) -> None:
+        """Keep pack identities separate from the legacy HEX-only favorites file."""
+        self.vivid_favorites = []
+        self.vivid_favorites_error = ""
+        if not self.vivid_favorites_file.is_file():
+            return
+        try:
+            entries = json.loads(self.vivid_favorites_file.read_text(encoding="utf-8"))
+            if not isinstance(entries, list):
+                raise ValueError("Vivid favorites must contain a list")
+            seen: set[str] = set()
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    raise ValueError("Vivid favorite must be an object")
+                if not all(isinstance(entry.get(key), str) for key in ("id", "label", "hex")):
+                    raise ValueError("Vivid favorite needs id, label, and hex strings")
+                if not re.fullmatch(r"[a-z][a-z0-9_]*", entry["id"]):
+                    raise ValueError("Invalid Vivid favorite ID")
+                if not entry["label"].strip() or not _RE_HEX.fullmatch(entry["hex"]):
+                    raise ValueError("Invalid Vivid favorite label or HEX")
+                if entry["id"] not in seen:
+                    self.vivid_favorites.append({key: entry[key] for key in ("id", "label", "hex")})
+                    seen.add(entry["id"])
+        except (OSError, ValueError) as exc:
+            self.vivid_favorites = []
+            self.vivid_favorites_error = str(exc)
+            print(f"[-] Cannot load Vivid favorites: {exc}", file=sys.stderr)
+
+    def _save_vivid_favorites(self) -> bool:
+        if self.vivid_favorites_error:
+            return False
+        return self._atomic_write(
+            self.vivid_favorites_file, json.dumps(self.vivid_favorites, indent=2) + "\n"
+        )
+
+    def _update_favorite_count(self) -> None:
+        count = len(self.favorites) + len(self.vivid_favorites)
+        self.cache["fav_count"] = self.cache["DEFAULT/fav_count"] = count
+
+    def add_vivid_favorite(self, preset_id: str) -> tuple[bool, str]:
+        """Save the canonical pack ID, plus a label and swatch for display."""
+        if self.vivid_favorites_error:
+            return False, f"Cannot save Vivid favorites: {self.vivid_favorites_error}"
+        if any(p["id"] == preset_id for p in self.vivid_favorites):
+            return False, f"Vivid pack already in favorites: {preset_id}"
+        preset = next((p for p in self.list_vivid_presets() if p["id"] == preset_id), None)
+        if preset is None:
+            return False, f"Vivid pack '{preset_id}' is unavailable"
+        self.vivid_favorites.append({key: preset[key] for key in ("id", "label", "hex")})
+        if not self._save_vivid_favorites():
+            self.vivid_favorites.pop()
+            return False, "Failed to save Vivid favorites"
+        self._update_favorite_count()
+        return True, f"Added Vivid pack '{preset['label']}' to favorites"
+
+    def remove_vivid_favorite(self, preset_id: str) -> tuple[bool, str]:
+        original = self.vivid_favorites
+        self.vivid_favorites = [p for p in original if p["id"] != preset_id]
+        if len(self.vivid_favorites) == len(original):
+            return False, f"Vivid pack '{preset_id}' was not found in favorites"
+        if not self._save_vivid_favorites():
+            self.vivid_favorites = original
+            return False, "Failed to save Vivid favorites"
+        self._update_favorite_count()
+        return True, f"Removed Vivid pack '{preset_id}' from favorites"
+
+    def add_active_favorite(self) -> tuple[bool, str]:
+        if self.cache.get("theme_source") == "vivid":
+            return self.add_vivid_favorite(str(self.cache.get("vivid_preset", "none")))
+        return self.add_favorite(str(self.cache.get("last_applied_hex", "#0000FF")))
+
+    def remove_active_favorite(self) -> tuple[bool, str]:
+        if self.cache.get("theme_source") == "vivid":
+            return self.remove_vivid_favorite(str(self.cache.get("vivid_preset", "none")))
+        return self.remove_favorite(str(self.cache.get("last_applied_hex", "#0000FF")))
+
     def _load_exact_presets(self) -> None:
         """Loads curated hardcoded presets from exact_color_presets.json."""
         if not self.exact_file.is_file():
-            # Seed defaults
             self.exact_presets = [dict(p) for p in _DEFAULT_EXACT_PRESETS]
-            self._save_exact_presets()
             return
         try:
             raw = json.loads(self.exact_file.read_text(encoding="utf-8"))
-            if isinstance(raw, list) and raw:
-                self.exact_presets = raw
-            else:
-                self.exact_presets = [dict(p) for p in _DEFAULT_EXACT_PRESETS]
-        except (OSError, json.JSONDecodeError):
+            if not isinstance(raw, list):
+                raise ValueError("Recipe file must contain a list")
+            self.exact_presets = []
+            seen: set[str] = set()
+            for entry in raw:
+                try:
+                    preset = self._normalize_recipe(entry)
+                    if preset["id"] in seen:
+                        raise ValueError("Duplicate recipe ID")
+                except ValueError as exc:
+                    print(f"[-] Skipping invalid curated recipe: {exc}", file=sys.stderr)
+                    continue
+                seen.add(preset["id"])
+                self.exact_presets.append(preset)
+        except (OSError, ValueError) as exc:
+            print(f"[-] Cannot load curated recipes: {exc}", file=sys.stderr)
             self.exact_presets = [dict(p) for p in _DEFAULT_EXACT_PRESETS]
+
+    @staticmethod
+    def _normalize_recipe(entry: Any) -> dict[str, Any]:
+        """Validate persisted recipes before exposing them as TUI actions."""
+        if not isinstance(entry, dict):
+            raise ValueError("Recipe must be an object")
+        for key in ("id", "label", "hex"):
+            if not isinstance(entry.get(key), str) or not entry[key].strip():
+                raise ValueError(f"Recipe needs a nonempty {key}")
+        preset = dict(entry)
+        preset["hex"] = preset["hex"].strip().upper()
+        if not _RE_HEX.fullmatch(preset["hex"]):
+            raise ValueError("Invalid recipe HEX")
+        if not preset["hex"].startswith("#"):
+            preset["hex"] = f"#{preset['hex']}"
+        scheme = preset.get("scheme", "scheme-fidelity")
+        if not isinstance(scheme, str) or scheme not in VALID_SCHEMES:
+            raise ValueError("Invalid recipe scheme")
+        if preset.get("mode", "dark") not in ("dark", "light"):
+            raise ValueError("Invalid recipe mode")
+        if isinstance(preset.get("contrast"), bool):
+            raise ValueError("Invalid recipe contrast")
+        try:
+            contrast = float(preset.get("contrast", "0"))
+        except (ValueError, TypeError):
+            raise ValueError("Invalid recipe contrast") from None
+        if not -1 <= contrast <= 1:
+            raise ValueError("Recipe contrast must be between -1 and 1")
+        preset["contrast"] = str(preset.get("contrast", "0"))
+        return preset
 
     def _save_exact_presets(self) -> bool:
         """Atomically saves curated exact presets to exact_color_presets.json."""
-        self.state_dir.mkdir(parents=True, exist_ok=True)
         try:
             content = json.dumps(self.exact_presets, indent=2) + "\n"
             return self._atomic_write(self.exact_file, content)
@@ -415,7 +536,6 @@ class MatugenPresetsEngine(BaseEngine):
         Saves current state settings to state.conf, preserving existing comments,
         blank lines, and unmanaged external keys (e.g. LIGHT_WAL).
         """
-        self.state_dir.mkdir(parents=True, exist_ok=True)
 
         managed_map: dict[str, str] = {}
         for eng_key in (
@@ -437,6 +557,8 @@ class MatugenPresetsEngine(BaseEngine):
 
         last_hex = self.cache.get("last_applied_hex", _DEFAULT_SETTINGS["last_applied_hex"])
         managed_map["LAST_APPLIED_HEX"] = str(last_hex)
+        managed_map["LAST_THEME_SOURCE"] = str(self.cache.get("theme_source", "wallpaper"))
+        managed_map["LAST_VIVID_PRESET"] = str(self.cache.get("vivid_preset", "none"))
 
         written_keys: set[str] = set()
         new_lines: list[str] = []
@@ -458,7 +580,7 @@ class MatugenPresetsEngine(BaseEngine):
                             continue
                     new_lines.append(line)
             except OSError:
-                pass
+                return False
 
         if not new_lines:
             new_lines.append("# Dusky Theme State File")
@@ -524,23 +646,19 @@ class MatugenPresetsEngine(BaseEngine):
         if raw.lower().startswith("hsl(") and raw.endswith(")"):
             raw = raw[4:-1].strip()
 
-        match = _RE_HSL_PARSER.match(raw)
+        match = _RE_HSL_PARSER.fullmatch(raw)
         if not match:
             return None
 
         try:
             h_str, s_str, l_str = match.groups()
-            h_val = float(h_str) % 360.0
+            h_val = float(h_str)
             s_val = float(s_str.rstrip("%"))
             l_val = float(l_str.rstrip("%"))
-
-            if s_val > 1.0:
-                s_val /= 100.0
-            if l_val > 1.0:
-                l_val /= 100.0
-
-            s_val = max(0.0, min(1.0, s_val))
-            l_val = max(0.0, min(1.0, l_val))
+            if not (0 <= h_val <= 360 and 0 <= s_val <= 100 and 0 <= l_val <= 100):
+                return None
+            s_val /= 100.0
+            l_val /= 100.0
             h_norm = (h_val / 360.0) % 1.0
 
             r, g, b = colorsys.hls_to_rgb(h_norm, l_val, s_val)
@@ -559,13 +677,13 @@ class MatugenPresetsEngine(BaseEngine):
         contrast: str = "0",
     ) -> dict[str, str]:
         """
-        Executes `matugen --dry-run --json hex` in-memory (~8ms) to compute
+        Executes `matugen --dry-run --json hex` to compute
         Material You token mapping without modifying disk state or templates.
         """
         clean_hex = hex_code.strip().upper()
         if not clean_hex.startswith("#"):
             clean_hex = f"#{clean_hex}"
-        if not _RE_HEX.match(clean_hex):
+        if not _RE_HEX.fullmatch(clean_hex):
             return {}
 
         cmd = [
@@ -575,8 +693,7 @@ class MatugenPresetsEngine(BaseEngine):
             "-m", mode,
             "-t", scheme,
         ]
-        if contrast and contrast != "0":
-            cmd.extend(["-c", contrast])
+        cmd.append(f"--contrast={contrast}")
         cmd.extend(["color", "hex", clean_hex])
 
         try:
@@ -631,7 +748,7 @@ class MatugenPresetsEngine(BaseEngine):
         if not clean_hex.startswith("#"):
             clean_hex = f"#{clean_hex}"
 
-        if not _RE_HEX.match(clean_hex):
+        if not _RE_HEX.fullmatch(clean_hex):
             return False, f"Invalid HEX code: '{hex_code}'"
 
         if not self.theme_ctl.is_file() or not os.access(self.theme_ctl, os.X_OK):
@@ -690,6 +807,7 @@ class MatugenPresetsEngine(BaseEngine):
         # 3. Synchronize cache and state.conf
         self.cache["last_applied_hex"] = clean_hex
         self.cache["DEFAULT/last_applied_hex"] = clean_hex
+        self.cache["exact/active_color"] = clean_hex
         self.cache["active_color"] = clean_hex
         self.cache["DEFAULT/active_color"] = clean_hex
         self.cache["custom_hex"] = clean_hex
@@ -713,15 +831,25 @@ class MatugenPresetsEngine(BaseEngine):
         self.cache["DEFAULT/theme_source"] = "custom"
         self.cache["vivid_preset"] = "none"
         self.cache["DEFAULT/vivid_preset"] = "none"
+        self.cache["vivid_active_id"] = self.cache["DEFAULT/vivid_active_id"] = "none"
+        self.cache["vivid_active_hex"] = self.cache["DEFAULT/vivid_active_hex"] = clean_hex
 
-        (self.state_dir / "vivid_resume.json").unlink(missing_ok=True)
-        self._save_state_file()
+        try:
+            (self.state_dir / "vivid_resume.json").unlink(missing_ok=True)
+        except OSError as exc:
+            return False, f"Color applied, but clearing Vivid resume state failed: {exc}"
+        if not self._save_state_file():
+            return False, "Color applied, but saving theme state failed"
 
         info_scheme = f" [{scheme}]" if scheme_override else ""
         return True, f"Applied: {clean_hex}{info_scheme}"
 
     def apply_settings(self) -> tuple[bool, str]:
         """Applies currently cached Theme & Animation settings via theme_ctl."""
+        # Generating from a Vivid accent intentionally leaves the baked pack.
+        # Use the color path so pack provenance and resume state are cleared too.
+        if self.cache.get("theme_source") == "vivid":
+            return self.apply_color(str(self.cache.get("last_applied_hex", "#0000FF")))
         if not self.theme_ctl.is_file() or not os.access(self.theme_ctl, os.X_OK):
             return False, f"Theme controller not executable at: {self.theme_ctl}"
 
@@ -745,7 +873,8 @@ class MatugenPresetsEngine(BaseEngine):
         try:
             res = subprocess.run(set_cmd, capture_output=True, text=True, timeout=20)
             if res.returncode == 0:
-                self._save_state_file()
+                if not self._save_state_file():
+                    return False, "Settings applied, but saving theme state failed"
                 return True, "Settings Applied & Saved successfully"
             err = res.stderr.strip() or "Failed to apply settings"
             return False, f"Error: {err}"
@@ -757,32 +886,38 @@ class MatugenPresetsEngine(BaseEngine):
         clean_hex = hex_code.strip().upper()
         if not clean_hex.startswith("#"):
             clean_hex = f"#{clean_hex}"
-        if not _RE_HEX.match(clean_hex):
+        if not _RE_HEX.fullmatch(clean_hex):
             return False, f"Invalid HEX code: '{hex_code}'"
 
         if any(h == clean_hex for _, h in self.favorites):
             return False, f"Already in favorites: {clean_hex}"
 
-        fav_label = label or f"Color {clean_hex}"
+        fav_label = (label or f"Color {clean_hex}").strip()
+        if not fav_label or any(char in fav_label for char in "|\n\r") or fav_label.startswith("#"):
+            return False, "Favorite label must be nonempty and contain no pipes or line breaks"
         self.favorites.append((fav_label, clean_hex))
         if self._save_favorites():
-            self.cache["fav_count"] = len(self.favorites)
-            self.cache["DEFAULT/fav_count"] = len(self.favorites)
+            self._update_favorite_count()
             return True, f"♥ Added {fav_label} ({clean_hex}) to favorites"
+        self.favorites.pop()
         return False, "Failed to write favorites file"
 
     def remove_favorite(self, hex_or_label: str) -> tuple[bool, str]:
         """Removes a favorite by hex code or label."""
         norm = hex_or_label.strip().upper()
+        if _RE_HEX.fullmatch(norm) and not norm.startswith("#"):
+            norm = f"#{norm}"
+        original = self.favorites
         orig_len = len(self.favorites)
         self.favorites = [
             (lbl, hx) for (lbl, hx) in self.favorites
             if hx != norm and lbl != hex_or_label.strip()
         ]
         if len(self.favorites) < orig_len:
-            self._save_favorites()
-            self.cache["fav_count"] = len(self.favorites)
-            self.cache["DEFAULT/fav_count"] = len(self.favorites)
+            if not self._save_favorites():
+                self.favorites = original
+                return False, "Failed to write favorites file"
+            self._update_favorite_count()
             return True, f"Removed {hex_or_label} from favorites"
         return False, f"{hex_or_label} was not found in favorites"
 
@@ -799,7 +934,7 @@ class MatugenPresetsEngine(BaseEngine):
         clean_hex = hex_code.strip().upper()
         if not clean_hex.startswith("#"):
             clean_hex = f"#{clean_hex}"
-        if not _RE_HEX.match(clean_hex):
+        if not _RE_HEX.fullmatch(clean_hex):
             return False, f"Invalid HEX code: '{hex_code}'"
 
         slug = clean_hex.lstrip("#").lower()
@@ -818,18 +953,25 @@ class MatugenPresetsEngine(BaseEngine):
             "mode": mode,
             "desc": desc or f"Hardcoded preset paired with {scheme}.",
         }
+        try:
+            entry = self._normalize_recipe(entry)
+        except ValueError as exc:
+            return False, str(exc)
         self.exact_presets.append(entry)
         if self._save_exact_presets():
             return True, preset_id
+        self.exact_presets.pop()
         return False, "Failed to save exact presets file."
 
     def delete_exact_preset(self, preset_id: str) -> bool:
         """Deletes an exact preset by ID and saves to disk."""
-        orig_len = len(self.exact_presets)
+        original = self.exact_presets
+        orig_len = len(original)
         self.exact_presets = [p for p in self.exact_presets if p.get("id") != preset_id]
         if len(self.exact_presets) < orig_len:
-            self._save_exact_presets()
-            return True
+            if self._save_exact_presets():
+                return True
+            self.exact_presets = original
         return False
 
     # =========================================================================
@@ -871,15 +1013,17 @@ class MatugenPresetsEngine(BaseEngine):
 
     @override
     def write_batch(self, changes: list[ChangeTuple]) -> WriteResult:
-        """Processes atomic batch changes."""
+        """Apply changes in order, stopping at the first failure (no rollback)."""
         if not self.cache:
             self.load_state()
         status_msg = ""
-        success = True
 
         for target_key, _target_scope, new_val_raw, item_type in changes:
             val_str = str(new_val_raw).strip()
             val_lower = val_str.lower()
+            # Momentary actions must remain inert during profile/reset false writes.
+            if item_type == "bool" and val_lower not in ("true", "1"):
+                continue
 
             # 1. Direct active color mutation
             if target_key in ("last_applied_hex", "active_color"):
@@ -915,7 +1059,7 @@ class MatugenPresetsEngine(BaseEngine):
                     if not ok:
                         return False, msg, ""
                     status_msg = msg
-                elif _RE_HEX.match(val_str):
+                elif _RE_HEX.fullmatch(val_str):
                     ok, msg = self.apply_color(val_str)
                     if not ok:
                         return False, msg, ""
@@ -948,6 +1092,8 @@ class MatugenPresetsEngine(BaseEngine):
 
             # 4. Exact strategy switch
             elif target_key == "exact_scheme_override":
+                if val_str != "per-preset" and val_str not in VALID_SCHEMES:
+                    return False, f"Invalid scheme: {val_str}", ""
                 self.exact_scheme_override = val_str
                 self.cache["exact_scheme_override"] = val_str
                 self.cache["DEFAULT/exact_scheme_override"] = val_str
@@ -955,7 +1101,7 @@ class MatugenPresetsEngine(BaseEngine):
 
             # 5. Add custom exact preset
             elif target_key == "new_exact_hex":
-                if _RE_HEX.match(val_str):
+                if _RE_HEX.fullmatch(val_str):
                     hex_norm = val_str.upper()
                     if not hex_norm.startswith("#"):
                         hex_norm = f"#{hex_norm}"
@@ -967,6 +1113,8 @@ class MatugenPresetsEngine(BaseEngine):
                     return False, f"Invalid HEX code: {val_str}", ""
 
             elif target_key == "new_exact_scheme":
+                if val_str not in VALID_SCHEMES:
+                    return False, f"Invalid scheme: {val_str}", ""
                 self.new_exact_scheme = val_str
                 self.cache["new_exact_scheme"] = val_str
                 self.cache["DEFAULT/new_exact_scheme"] = val_str
@@ -988,7 +1136,7 @@ class MatugenPresetsEngine(BaseEngine):
 
             # 6. Custom Input: HEX
             elif target_key == "custom_hex":
-                if _RE_HEX.match(val_str):
+                if _RE_HEX.fullmatch(val_str):
                     ok, msg = self.apply_color(val_str)
                     if not ok:
                         return False, msg, ""
@@ -998,7 +1146,7 @@ class MatugenPresetsEngine(BaseEngine):
 
             # 7. Custom Input: RGB
             elif target_key == "custom_rgb":
-                match = _RE_RGB_PARSER.match(val_str)
+                match = _RE_RGB_PARSER.fullmatch(val_str)
                 if match:
                     r, g, b = (int(match.group(1)), int(match.group(2)), int(match.group(3)))
                     if 0 <= r <= 255 and 0 <= g <= 255 and 0 <= b <= 255:
@@ -1032,7 +1180,14 @@ class MatugenPresetsEngine(BaseEngine):
                 status_msg = f"Regenerated: {last_hex}"
 
             # 10. Apply Settings triggers
-            elif target_key in ("action_apply_theme", "action_apply_anim", "action_apply_settings"):
+            elif target_key == "action_apply_anim" and val_lower in ("true", "1"):
+                # awww transition options are consumed on the next wallpaper change.
+                # Running theme_ctl set with --mode here would also regenerate colors.
+                if not self._save_state_file():
+                    return False, "Failed to save animation settings", ""
+                status_msg = "Animation settings saved for the next wallpaper transition"
+
+            elif target_key in ("action_apply_theme", "action_apply_settings"):
                 if val_lower in ("true", "1"):
                     ok, msg = self.apply_settings()
                     if not ok:
@@ -1041,43 +1196,47 @@ class MatugenPresetsEngine(BaseEngine):
 
             # 11. Favorites Management
             elif target_key == "action_add_favorite" and val_lower in ("true", "1"):
-                curr = self.cache.get("last_applied_hex", "#0000FF")
-                ok, msg = self.add_favorite(curr)
+                ok, msg = self.add_active_favorite()
+                if not ok:
+                    return False, msg, ""
                 status_msg = msg
 
             elif target_key == "action_remove_favorite" and val_lower in ("true", "1"):
-                curr = self.cache.get("last_applied_hex", "#0000FF")
-                ok, msg = self.remove_favorite(curr)
+                ok, msg = self.remove_active_favorite()
+                if not ok:
+                    return False, msg, ""
                 status_msg = msg
 
-            elif target_key.startswith("fav_apply_"):
-                # Apply favorite
-                fav_idx_str = target_key.removeprefix("fav_apply_")
-                try:
-                    fav_idx = int(fav_idx_str)
-                    if 0 <= fav_idx < len(self.favorites):
-                        lbl, hx = self.favorites[fav_idx]
-                        ok, msg = self.apply_color(hx)
-                        if not ok:
-                            return False, msg, ""
-                        status_msg = f"Applied Favorite: {lbl} ({hx})"
-                except ValueError:
-                    if _RE_HEX.match(val_str):
-                        ok, msg = self.apply_color(val_str)
-                        if not ok:
-                            return False, msg, ""
-                        status_msg = msg
+            elif target_key.startswith("fav_vivid_apply_"):
+                preset_id = target_key.removeprefix("fav_vivid_apply_")
+                if not any(p["id"] == preset_id for p in self.vivid_favorites):
+                    return False, f"Vivid favorite '{preset_id}' no longer exists", ""
+                ok, msg, _ = self.apply_vivid(preset_id)
+                if not ok:
+                    return False, msg, ""
+                status_msg = msg
 
-            elif target_key.startswith("fav_remove_"):
-                fav_idx_str = target_key.removeprefix("fav_remove_")
+            elif target_key.startswith("fav_vivid_remove_"):
+                preset_id = target_key.removeprefix("fav_vivid_remove_")
+                ok, msg = self.remove_vivid_favorite(preset_id)
+                if not ok:
+                    return False, msg, ""
+                status_msg = msg
+
+            elif target_key.startswith(("fav_apply_", "fav_remove_")):
+                apply = target_key.startswith("fav_apply_")
+                suffix = target_key.removeprefix("fav_apply_" if apply else "fav_remove_")
                 try:
-                    fav_idx = int(fav_idx_str)
-                    if 0 <= fav_idx < len(self.favorites):
-                        lbl, hx = self.favorites.pop(fav_idx)
-                        self._save_favorites()
-                        status_msg = f"Removed favorite: {lbl} ({hx})"
+                    favorite_index = int(suffix)
                 except ValueError:
-                    pass
+                    return False, f"Invalid favorite index: {suffix}", ""
+                if not 0 <= favorite_index < len(self.favorites):
+                    return False, "Favorite no longer exists; refresh the list", ""
+                label, hex_code = self.favorites[favorite_index]
+                ok, msg = self.apply_color(hex_code) if apply else self.remove_favorite(hex_code)
+                if not ok:
+                    return False, msg, ""
+                status_msg = f"Applied Favorite: {label} ({hex_code})" if apply else msg
 
             # 11. Settings updates (mode, type, contrast, etc.)
             elif target_key in _STATE_KEY_TO_ENGINE.values():
@@ -1086,10 +1245,11 @@ class MatugenPresetsEngine(BaseEngine):
                     norm_val = "0"
                 self.cache[target_key] = norm_val
                 self.cache[f"DEFAULT/{target_key}"] = norm_val
-                self._save_state_file()
+                if not self._save_state_file():
+                    return False, "Failed to save theme settings", ""
                 status_msg = f"Set {target_key} = {norm_val}"
 
         if not status_msg:
             status_msg = "Settings updated successfully."
 
-        return success, status_msg, ""
+        return True, status_msg, ""

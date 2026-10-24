@@ -9,8 +9,9 @@
 The `matugen_presets` engine manages the desktop theme and solid color palettes in the Dusky ecosystem:
 1. `~/.config/dusky/settings/dusky_theme/state.conf`: Tracks active settings and `LAST_APPLIED_HEX`.
 2. `~/.config/dusky/settings/dusky_theme/theme_preset_fav`: Stores user favorite colors in `Label|#HEX` format.
-3. `~/.config/dusky/settings/dusky_theme/exact_color_presets.json`: Stores curated color presets with hardcoded optimal schemes (`scheme-fidelity`, `scheme-vibrant`, etc.) to guarantee vivid colors without desaturation.
-4. `~/user_scripts/theme_matugen/theme_ctl.sh`: Invoked to apply settings and trigger Matugen template generation.
+3. `~/.config/dusky/settings/dusky_theme/exact_color_presets.json`: Stores curated color presets with saved schemes, modes, and contrast. These generate Material You tones; output can differ from the seed HEX.
+4. `~/.config/dusky/settings/dusky_theme/vivid_favorites.json`: Stores Vivid favorites as a JSON list of `{ "id", "label", "hex" }` objects. The pack ID controls application; the label and hex are display metadata. This separate file preserves compatibility with the legacy seed-favorites script.
+5. `~/user_scripts/theme_matugen/theme_ctl.sh`: Invoked to apply settings and trigger Matugen template generation.
 
 ## Scope / key mapping
 
@@ -24,7 +25,7 @@ The `matugen_presets` engine manages the desktop theme and solid color palettes 
 - **Custom Input**: `custom_hex`, `custom_rgb`, `custom_hsl`, `action_regen`.
 - **Theme Settings**: `mode`, `type`, `contrast`, `index`, `base16`, `action_apply_theme`.
 - **Animation Settings**: `t_type`, `t_dur`, `t_fps`, `t_bez`, `t_ang`, `t_pos`, `action_apply_anim`.
-- **Favorites**: `action_add_favorite`, `action_remove_favorite`, `fav_apply_<index>`.
+- **Favorites**: `action_add_favorite` and `action_remove_favorite` use the active source: a Vivid pack is saved/removed by ID; other sources use the active seed HEX. `fav_apply_<index>` / `fav_remove_<index>` manage seed favorites; `fav_vivid_apply_<id>` / `fav_vivid_remove_<id>` manage Vivid favorites. False bool trigger writes are no-ops. Press F5 to refresh dynamic favorite rows after changes. Missing Vivid definitions report an error without HEX fallback.
 
 ## Engine Methods
 
@@ -32,10 +33,14 @@ The `matugen_presets` engine manages the desktop theme and solid color palettes 
 - `list_vivid_presets()`: Returns list of pre-baked vivid color presets from catalog.
 - `apply_vivid(preset_id)`: Applies a pre-baked vivid pack instantly via atomic copies and toolkit hooks.
 - `resume_wallpaper()`: Restores desktop back to dynamic wallpaper theming and reconciles mode.
-- `get_palette_preview(hex_code, scheme, mode, contrast)`: Instant in-memory Material You token preview via `matugen --dry-run --json hex` (~8ms).
-- `add_favorite(hex_code, label=None)` / `remove_favorite(hex_or_label)`: Thread-safe, atomic favorites list mutations.
+- `get_palette_preview(hex_code, scheme, mode, contrast)`: Material You token preview via `matugen --dry-run --json hex --contrast=<value>`.
+- `add_favorite(hex_code, label=None)` / `remove_favorite(hex_or_label)`: Atomic seed-favorites file writes; failed writes restore the in-memory list.
+- `add_active_favorite()` / `remove_active_favorite()`: Dispatch using the active source.
+- `add_vivid_favorite(preset_id)` / `remove_vivid_favorite(preset_id)`: Persist pack identities, deduplicated by ID rather than accent color.
 - `add_exact_preset(...)` / `delete_exact_preset(preset_id)`: Curated and user-custom hardcoded preset management.
 - `_save_state_file()`: Preserves external unmanaged keys (e.g. `LIGHT_WAL`) and file comments in place.
+
+Animation settings are saved for the next wallpaper transition without regenerating colors. Explicitly applying Theme settings while Vivid is active generates from its accent and clears Vivid provenance.
 
 ## Standalone CLI Interface
 
@@ -53,6 +58,9 @@ python3 tui_color_presets.py --preview '#FF0000'       # In-memory Material You 
 python3 tui_color_presets.py --list-exact              # List all hardcoded presets
 python3 tui_color_presets.py --add-exact '#00FF55' scheme-vibrant "Cyber Green"
 python3 tui_color_presets.py --del-exact <ID>          # Delete exact preset
+python3 tui_color_presets.py --favorite-active        # Save active Vivid pack or seed
+python3 tui_color_presets.py --add-vivid-fav toxic_lime # Save a complete Vivid pack
+python3 tui_color_presets.py --del-vivid-fav toxic_lime # Remove a Vivid favorite
 python3 tui_color_presets.py --list-fav                # List saved favorites
 python3 tui_color_presets.py --add-fav '#FF0055'       # Add favorite color
 python3 tui_color_presets.py --del-fav '#FF0055'       # Delete favorite color
