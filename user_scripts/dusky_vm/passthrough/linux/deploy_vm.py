@@ -29,9 +29,10 @@ PERSISTENT_STORAGE = Path("/var/lib/libvirt/images")
 URI = "qemu:///system"
 TAG = "dusky-host"
 NS = "https://dusky.local/vm/1"
-ENTRY = Path(__file__).with_name("30_kvm_vm_deploy.py")
-CLIPBOARD = Path(__file__).with_name("wayland_clipboard.py")
-CLIPBOARD_MANAGER = Path(__file__).with_name("vm_clipboard.py")
+ROOT = Path(__file__).resolve().parents[1]
+ENTRY = ROOT / "30_kvm_vm_deploy.py"
+CLIPBOARD = ROOT / "clipboard/wayland_clipboard.py"
+CLIPBOARD_MANAGER = ROOT / "clipboard/vm_clipboard.py"
 
 
 def run(argv: list[str], *, check: bool = True, timeout: float = 60,

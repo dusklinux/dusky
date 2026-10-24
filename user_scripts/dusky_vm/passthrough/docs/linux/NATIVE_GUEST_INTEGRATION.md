@@ -5,7 +5,7 @@ desktop account. The script asks for SSH/sudo authentication when needed; it doe
 not save passwords or change SSH authentication.
 
 ```bash
-python ~/user_scripts/dusky_vm/passthrough/22_guest_integration.py host \
+python ~/user_scripts/dusky_vm/passthrough/linux/guest_integration.py host \
   --domain YOUR_VM --guest USER@GUEST_ADDRESS \
   --share /path/to/host/folder --restart
 ```

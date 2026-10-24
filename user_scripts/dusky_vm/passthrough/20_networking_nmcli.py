@@ -603,7 +603,7 @@ def main() -> None:
     console.print(table)
 
     console.print("\n[bold green]=== PHASE 4 COMPLETE ===[/bold green]")
-    console.print("Next: 25_looking_glass.py (shared-memory frame relay).\n")
+    console.print("Next: windows/25_looking_glass.py (shared-memory frame relay).\n")
 
 
 if __name__ == "__main__":

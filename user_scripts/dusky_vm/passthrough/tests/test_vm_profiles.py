@@ -168,7 +168,9 @@ if os.environ.get('FAIL_TASK')==Path(__file__).name:sys.exit(37)
                                  "--windows", "--help"], capture_output=True, text=True,
                                 env=self.env | {"PATH": str(fakebin) + os.pathsep + os.environ["PATH"]}, timeout=5)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("--windows", json.loads(result.stdout))
+        forwarded = json.loads(result.stdout)
+        self.assertIn(str(ENTRY.parent / "windows/deploy_vm.py"), forwarded)
+        self.assertIn("--help", forwarded)
 
     def test_sigterm_stops_child_group_and_does_not_mark_completed(self):
         marker = self.root / "pid"

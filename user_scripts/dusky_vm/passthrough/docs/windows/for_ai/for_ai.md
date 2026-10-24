@@ -1,4 +1,4 @@
-# Project Context & Handover Notes: Dusky VM Passthrough Setup
+# Project Context & AI Rules: Dusky VM Passthrough Setup
 
 This workspace contains automated configuration scripts for setting up a GPU passthrough Windows 10/11 virtual machine (`win_10_dusky`) on Arch Linux with Looking Glass frame sharing.
 
@@ -7,11 +7,11 @@ This workspace contains automated configuration scripts for setting up a GPU pas
 ## 1. Environment & Target System Details
 
 - **Host OS**: Arch Linux
-- **Host User**: `new`
-- **Guest VM Name**: `win_10_dusky` (DNS name: `win_10_dusky`)
-- **Guest IP Address**: `192.168.122.9`
+- **Host User**: (check)
+- **Guest VM Name**: (check)
+- **Guest IP Address**: (ask the user)
 - **Guest OS**: Windows 10
-- **Guest SSH Credentials**: User `dusky`, Password `<configured during setup>` (default shell configured to PowerShell)
+- **Guest SSH Credentials**: User (ask the user), Password (ask the user) (default shell configured to PowerShell)
 - **Shared Directory (VirtIO-FS)**: Host `/mnt/zram1` is mounted as drive `Z:` inside the Windows VM.
 
 ---
@@ -24,38 +24,24 @@ All host-side scripts are located in `/home/new/user_scripts/dusky_vm/passthroug
 2. `10_virt_modular_daemon.py` — Manages modular libvirt daemons.
 3. `15_gpu_probing_kernal_param_mkinit.py` — Configures kernel parameters and mkinitcpio for GPU passthrough.
 4. `20_networking_nmcli.py` — Configures host networking bridging/interfaces.
-5. `25_looking_glass.py` — Automates host shared memory creation (`/dev/shm/looking-glass` allocated dynamically at 64 MiB for 1440p target) and sets boot persistence via `/etc/tmpfiles.d/10-looking-glass.conf`.
+5. `windows/25_looking_glass.py` — Automates host shared memory creation (`/dev/shm/looking-glass` allocated dynamically at 64 MiB for 1440p target) and sets boot persistence via `/etc/tmpfiles.d/10-looking-glass.conf`.
 6. `30_kvm_vm_deploy.py` — Deploys a new Windows VM. Prompts the user before building (defaulting to No).
 
 ---
 
-## 3. Windows Guest Setup Scripts (`windows_setup/`)
-
-These guest-side setup scripts are located in the `windows_setup/` directory and copied to `Z:\` (shared mount root) for VM-side execution:
-
-* **`00_bootstrap.ps1`**: The main entry point script. It verifies Python 3 is installed, automatically downloads and silently installs Python 3.13 from python.org if missing, and then runs the main setup script.
-* **`01_setup.py`**: The unified Python setup script that:
-  1. Downloads and extracts the official Microsoft Win32-OpenSSH portable package (bypassing the slow and error-prone `DISM /Add-Capability` tool entirely to avoid Windows Update hangs).
-  2. Installs and registers the SSH system service.
-  3. Configures default shell, firewalls, user login password, and SSH key authentication.
-  4. Auto-detects local VDD files on `Z:\`, copy-stages them locally, and registers the certificate.
-  5. Dynamically creates the `Root\MttVDD` hardware node using `devcon.exe` (critical for fresh VM setups) and installs the driver.
-
----
-
-## 4. Important Design Rules & Constraints (For AI)
+## 3. Important Design Rules & Constraints (For AI)
 
 If a new AI agent starts a conversation in this workspace, follow these strict rules to avoid regression:
 
-### Rule 1: No Automated Guest Driver Installation Logic in Host Scripts
-- **Do not** write code to automate the download, staging, registry manipulation, or installation of the Virtual Display Driver (VDD) from the host or through the host-side orchestrator scripts.
-- The user prefers to handle guest-side installation and setup manually using the guide in `windows_setup/VDD_INSTALL_GUIDE.md` or via the guest setup scripts.
+### Rule 1: No Automated Guest Driver Installation Logic
+- **Do not** write code to automate the download, staging, registry manipulation, or installation of the Virtual Display Driver (VDD) from the host or through the generic setup script (`windows/guest/setup_ssh.py`).
+- The user prefers to handle Virtual Display Driver (VDD) installation and setup manually using the guide in `docs/windows/VDD_INSTALL_GUIDE.md`.
 
 ### Rule 2: Keep Scripts Standalone and Idempotent
 - Do not assume `000_dusky_vm.sh` orchestrator is used. Each Python/Shell/PowerShell script must be completely self-contained and idempotent.
 
 ### Rule 3: Libvirt XML Integrity
-When updating or modifying the VM XML configuration (specifically in `25_looking_glass.py`):
+When updating or modifying the VM XML configuration (specifically in `windows/25_looking_glass.py`):
 1. **Disable Memory Ballooning**: Keep `<memballoon model='none'/>` to eliminate DMA latency.
 2. **CPU Topology**: Ensure CPU topology (sockets, cores, threads) matches the total vCPUs to prevent warning prompts on Windows.
 3. **SPICE Clipboard Sharing**: Ensure the SPICE guest agent channel (`com.redhat.spice.0`) is injected.

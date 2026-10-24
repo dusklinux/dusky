@@ -21,8 +21,12 @@ import uuid
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-import linux_vm as vm
-from wayland_clipboard import notify
+# Support both package imports and direct execution from any working directory.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from linux import deploy_vm as vm
+from clipboard.wayland_clipboard import notify
 
 PREFIX = "dusky-vm-clipboard@"
 

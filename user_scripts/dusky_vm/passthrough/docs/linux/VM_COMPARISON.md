@@ -31,8 +31,8 @@ clipboard transport.
 Host commands for the two configured VMs:
 
 ```sh
-python3 vm_clipboard.py status dusky_manual
-python3 vm_clipboard.py status dusky-linux-test
+python3 clipboard/vm_clipboard.py status dusky_manual
+python3 clipboard/vm_clipboard.py status dusky-linux-test
 ```
 
 Both services must report `Clipboard ready: host ↔ guest (text)` before expecting

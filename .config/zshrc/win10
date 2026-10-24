@@ -2,7 +2,7 @@
 # Wrapper for the python-based VM manager utility
 
 win() {
-    ${HOME}/user_scripts/dusky_vm/passthrough/50_win.py "$@"
+    "${HOME}/user_scripts/dusky_vm/passthrough/windows/50_win.py" "$@"
 }
 
 # --- Auto-Completion for 'win' ---

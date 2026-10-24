@@ -22,7 +22,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 URI = "qemu:///system"
-UNIT_BANNER = "# Managed by 22_guest_integration.py\n"
+UNIT_BANNER = "# Managed by linux/guest_integration.py\n"
 RECIPE_FILES = ("PKGBUILD", "Cargo.lock", "clipboard-owner.patch", "dusky_vdagent.service")
 
 
@@ -244,7 +244,7 @@ def host_setup(args: argparse.Namespace) -> None:
         if args.clipboard_package:
             package = Path(args.clipboard_package).resolve(strict=True)
         else:
-            recipe = Path(__file__).parent / "guest_integration"
+            recipe = Path(__file__).resolve().parents[1] / "clipboard/native_agent"
             for name in RECIPE_FILES:
                 (recipe / name).resolve(strict=True)
             config = Path(args.makepkg_config or (Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "pacman/makepkg.conf")).expanduser().resolve(strict=True)

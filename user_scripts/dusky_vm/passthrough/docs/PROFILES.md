@@ -4,7 +4,7 @@
 Python 3.15+. Individual setup scripts handle their own sudo prompts. The runner
 uses the Python standard library and the `profile/` TOML files beside it.
 
-From this directory:
+From the `passthrough/` project root:
 
 ```sh
 ./000_dusky_vm.py --linux
@@ -32,7 +32,7 @@ profiles work when the launcher is invoked from another working directory.
 | Profile | Resumable host setup | Runs each invocation |
 |---|---|---|
 | Linux | `05 --skip-virtio`, `10`, `20 --nat` | `30` Linux deployment |
-| Windows 11 | `05 --virtio`, `07`, `10`, `15`, `20`, `25` | `30 --windows` |
+| Windows 11 | `05 --virtio`, `07`, `10`, `15`, `20`, `windows/25` | `30 --windows` |
 
 Linux uses its deployment script's storage selection, virtual GPU and VirtioFS
 configuration. Its NAT step preserves an existing `default` network and creates

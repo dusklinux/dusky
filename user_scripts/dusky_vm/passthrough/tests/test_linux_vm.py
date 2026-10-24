@@ -15,8 +15,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import linux_vm as vm
-import wayland_clipboard as clipboard
+from linux import deploy_vm as vm
+from clipboard import wayland_clipboard as clipboard
 
 
 class LinuxVMTests(unittest.TestCase):
@@ -171,7 +171,7 @@ class LinuxVMTests(unittest.TestCase):
         compile(firstboot, "firstboot", "exec")
 
     def test_daemon_configuration_keeps_one_active_setting(self):
-        path = Path(vm.__file__).with_name("10_virt_modular_daemon.py")
+        path = vm.ROOT / "10_virt_modular_daemon.py"
         tree = ast.parse(path.read_text())
         helper = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "enforce_kv_config")
         writes = []

@@ -1,7 +1,7 @@
 # Arch Linux VM workflow
 
 Run `python3 000_dusky_vm.py --linux` from this directory for host preparation
-and deployment. See [profile commands and resume behavior](PROFILES.md).
+and deployment. See [profile commands and resume behavior](../PROFILES.md).
 `python3 30_kvm_vm_deploy.py` remains the direct deployment entry point once the
 host is prepared. The host code requires Python 3.15+. The Windows profile
 selects the existing `30_kvm_vm_deploy.py --windows` workflow.
@@ -126,7 +126,7 @@ key on a new boot. Existing manual VMs can use SSH alone.
 Enable sharing for an existing VM from the **host** session, once:
 
 ```sh
-python3 vm_clipboard.py enable DOMAIN --ssh USER@HOST
+python3 clipboard/vm_clipboard.py enable DOMAIN --ssh USER@HOST
 ```
 
 The first setup uses the normal SSH password prompt if needed. Passwords are
@@ -138,9 +138,9 @@ the host user manager. If a VM has been deleted, its service stops cleanly.
 Inspect or control an enabled VM:
 
 ```sh
-python3 vm_clipboard.py status DOMAIN
-python3 vm_clipboard.py restart DOMAIN
-python3 vm_clipboard.py disable DOMAIN
+python3 clipboard/vm_clipboard.py status DOMAIN
+python3 clipboard/vm_clipboard.py restart DOMAIN
+python3 clipboard/vm_clipboard.py disable DOMAIN
 ```
 
 `status` distinguishes an active supervisor from actual readiness:

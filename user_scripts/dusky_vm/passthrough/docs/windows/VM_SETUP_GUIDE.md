@@ -6,6 +6,9 @@ This guide details the sequence of scripts to run inside a fresh Windows VM to c
 
 ## The Setup Files
 
+The host source files are in [windows/guest](../../windows/guest/). Copy that
+directory's three scripts together to the guest-accessible location used below.
+
 All scripts are located on the shared `Z:` drive (mapped to `/mnt/zram1` on the host) and are named descriptively to reflect their specific functions:
 
 * **`00_bootstrap.ps1`**: The main entry point script. It verifies Python 3 is installed, automatically downloads and silently installs Python 3.13 from python.org if missing, and then runs the setup scripts sequentially.

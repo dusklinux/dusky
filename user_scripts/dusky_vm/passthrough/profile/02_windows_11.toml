@@ -12,6 +12,6 @@ tasks = [
     { script = "10_virt_modular_daemon.py" },
     { script = "15_gpu_probing_kernal_param_mkinit.py" },
     { script = "20_networking_nmcli.py" },
-    { script = "25_looking_glass.py" },
+    { script = "windows/25_looking_glass.py" },
     { script = "30_kvm_vm_deploy.py", args = ["--windows"], always = true, forward_args = true },
 ]
