@@ -934,11 +934,6 @@ for key, label, help_text in (
 ):
     SCHEMA[0].append(ConfigItem(label=label, key=key, scope="misc", type_="string", default="",
                                 group="Window Swallowing", extended_help=help_text))
-for tab, layout in ((3, "dwindle"), (4, "master")):
-    SCHEMA[tab].append(ConfigItem(label="Special Workspace Scale", key="special_scale_factor", scope=layout,
-                                  type_="float", default=1.0, min_val=0.0, max_val=1.0, step=0.05,
-                                  group=f"{layout.title()} Layout Settings",
-                                  extended_help="Scale tiled windows on special workspaces relative to monitor size."))
 
 # =============================================================================
 # DIRECT EXECUTION HANDLER

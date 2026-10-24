@@ -275,7 +275,6 @@ hl.config({
 
     -- §10b Dwindle layout
     dwindle = {
-        special_scale_factor = 1.0,
         -- 0 = follows mouse, 1 = always left/up, 2 = always right/down
         force_split                  = 0,
         -- keep the split direction when toggling — KEEP THIS TRUE for togglesplit
@@ -294,7 +293,6 @@ hl.config({
 
     -- §10c Master layout
     master = {
-        special_scale_factor = 1.0,
         -- "master" | "slave" | "inherit" — where new windows go
         new_status                    = "slave",
         -- insert new slave windows at the TOP of the stack
