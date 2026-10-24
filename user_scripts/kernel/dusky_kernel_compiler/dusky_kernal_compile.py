@@ -16,16 +16,16 @@ if sys.version_info < (3, 15):
     raise SystemExit(70)
 
 import argparse
-import kernel_storage
+lazy import kernel_storage
 lazy import kernel_nvidia
 import collections
 import functools
 import fcntl
 from contextlib import ExitStack, contextmanager
-import gzip
+lazy import gzip
 import hashlib
 import json
-import lzma
+lazy import lzma
 import os
 import platform
 import re
@@ -33,15 +33,15 @@ import shlex
 import shutil
 import signal
 import subprocess
-import tarfile
+lazy import tarfile
 import tempfile
 import textwrap
 import threading
 import time
 import tomllib
-import urllib.error
-import urllib.parse
-import urllib.request
+lazy import urllib.error
+lazy import urllib.parse
+lazy import urllib.request
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -4755,22 +4755,29 @@ def write_bls_entries(p: KernelProfile, facts: HostFacts, d: Derived) -> None:
     ucode: list[str] = []
     if not facts.microcode_hook:
         for img in ("intel-ucode.img", "amd-ucode.img"):
-            if Path("/boot", img).is_file():
+            img_path = Path("/boot", img)
+            has_img = img_path.is_file()
+            if not has_img:
+                has_img = PRIV.run(["test", "-f", str(img_path)], check=False).returncode == 0
+            if has_img:
                 ucode.append(f"initrd  /{img}")
     entries_dir = Path(root) / "loader" / "entries"
     files: dict[Path, tuple[str, str]] = {}
-    default_body = [f"title   Dusky {p.name}", f"version {d.kernelrelease or d.version}", f"sort-key dusky-{p.suffix}", f"linux   /vmlinuz-{p.pkgbase}",
+    sort_key = f"dusky-{p.suffix.removeprefix('dusky-')}" if p.suffix else "dusky"
+    default_body = [f"title   Dusky {p.name}", f"version {d.kernelrelease or d.version}", f"sort-key {sort_key}", f"linux   /vmlinuz-{p.pkgbase}",
                     *ucode, f"initrd  /initramfs-{p.pkgbase}.img", "options " + " ".join(params)]
     files[entries_dir / f"{p.pkgbase}.conf"] = ("\n".join(default_body) + "\n", "0644")
 
     fallback_img = f"initramfs-{p.pkgbase}-fallback.img"
     fallback_conf = entries_dir / f"{p.pkgbase}-fallback.conf"
     has_fallback = (Path(root) / fallback_img).is_file() or (Path("/boot") / fallback_img).is_file()
+    if not has_fallback:
+        has_fallback = PRIV.run(["test", "-f", f"{root}/{fallback_img}"], check=False).returncode == 0 or PRIV.run(["test", "-f", f"/boot/{fallback_img}"], check=False).returncode == 0
     if has_fallback:
-        fb_body = [f"title   Dusky {p.name} (fallback initramfs)", f"version {d.kernelrelease or d.version}", f"sort-key dusky-{p.suffix}", f"linux   /vmlinuz-{p.pkgbase}",
+        fb_body = [f"title   Dusky {p.name} (fallback initramfs)", f"version {d.kernelrelease or d.version}", f"sort-key {sort_key}", f"linux   /vmlinuz-{p.pkgbase}",
                    *ucode, f"initrd  /{fallback_img}", "options " + " ".join(params)]
         files[fallback_conf] = ("\n".join(fb_body) + "\n", "0644")
-    elif fallback_conf.is_file():
+    elif fallback_conf.is_file() or PRIV.run(["test", "-f", str(fallback_conf)], check=False).returncode == 0:
         PRIV.run(["rm", "-f", str(fallback_conf)], check=False)
 
     PRIV.write_files(files)
@@ -4780,19 +4787,27 @@ def write_bls_entries(p: KernelProfile, facts: HostFacts, d: Derived) -> None:
         return
     # Update loader.conf only when explicitly selected in the profile.
     loader_conf = Path(root) / "loader" / "loader.conf"
-    if loader_conf.is_file():
-        txt = loader_conf.read_text(encoding="utf-8")
-        if re.search(r"^default\s+", txt, re.M):
-            new_txt = re.sub(r"^default\s+.*$", f"default {p.pkgbase}.conf", txt, flags=re.M)
-        else:
-            new_txt = f"default {p.pkgbase}.conf\n" + txt
-        m_timeout = re.search(r"^timeout\s+(\d+)", new_txt, re.M)
-        if m_timeout and int(m_timeout.group(1)) == 0:
-            new_txt = re.sub(r"^timeout\s+\d+", "timeout 3", new_txt, flags=re.M)
-        elif not m_timeout:
-            new_txt += "timeout 3\n"
-        PRIV.write_files({loader_conf: (new_txt, "0644")})
-        ok(f"Updated {loader_conf} default -> {p.pkgbase}.conf (timeout 3s)")
+    has_loader_conf = loader_conf.is_file() or PRIV.run(["test", "-f", str(loader_conf)], check=False).returncode == 0
+    if has_loader_conf:
+        txt = ""
+        try:
+            txt = loader_conf.read_text(encoding="utf-8")
+        except PermissionError:
+            res = PRIV.run(["cat", str(loader_conf)], check=False)
+            txt = res.stdout if res.returncode == 0 else ""
+        if txt:
+            if re.search(r"^default\s+", txt, re.M):
+                new_txt = re.sub(r"^default\s+.*$", f"default {p.pkgbase}.conf", txt, flags=re.M)
+            else:
+                new_txt = f"default {p.pkgbase}.conf\n" + txt
+            m_timeout = re.search(r"^timeout\s+(\S+)", new_txt, re.M)
+            if m_timeout:
+                if m_timeout.group(1).isdigit() and int(m_timeout.group(1)) == 0:
+                    new_txt = re.sub(r"^timeout\s+\S+", "timeout 3", new_txt, flags=re.M)
+            else:
+                new_txt += "timeout 3\n"
+            PRIV.write_files({loader_conf: (new_txt, "0644")})
+            ok(f"Updated {loader_conf} default -> {p.pkgbase}.conf (timeout 3s)")
 
     if have("bootctl"):
         PRIV.run(["bootctl", "set-default", f"{p.pkgbase}.conf"], check=False)
@@ -5408,23 +5423,36 @@ def do_uninstall(args: argparse.Namespace) -> int:
     facts = host_facts()
     root = facts.xbootldr or facts.esp
     if root:
-        entries = [Path(root, "loader", "entries", f"linux-{flavor}{suffix}.conf") for suffix in ("", "-fallback")]
-        entries = [entry for entry in entries if entry.is_file()]
+        cand_entries = [Path(root, "loader", "entries", f"linux-{flavor}{suffix}.conf") for suffix in ("", "-fallback")]
+        entries = [entry for entry in cand_entries if entry.is_file() or PRIV.run(["test", "-f", str(entry)], check=False).returncode == 0]
         if entries:
             PRIV.run(["rm", "-f", *[str(e) for e in entries]], check=False)
             ok(f"Removed boot entries: {', '.join(e.name for e in entries)}")
         loader_conf = Path(root) / "loader" / "loader.conf"
-        if loader_conf.is_file():
-            txt = loader_conf.read_text(encoding="utf-8")
-            m = re.search(r"^default\s+(.+)$", txt, re.M)
-            if m and f"linux-{flavor}" in m.group(1):
-                remaining = [e.name for e in sorted((Path(root) / "loader" / "entries").glob("*.conf")) if f"linux-{flavor}" not in e.name]
-                new_default = remaining[0] if remaining else "@saved"
-                new_txt = re.sub(r"^default\s+.*$", f"default {new_default}", txt, flags=re.M)
-                PRIV.write_files({loader_conf: (new_txt, "0644")})
-                ok(f"Reset {loader_conf} default -> {new_default}")
-                if have("bootctl"):
-                    PRIV.run(["bootctl", "set-default", new_default], check=False)
+        has_loader_conf = loader_conf.is_file() or PRIV.run(["test", "-f", str(loader_conf)], check=False).returncode == 0
+        if has_loader_conf:
+            txt = ""
+            try:
+                txt = loader_conf.read_text(encoding="utf-8")
+            except PermissionError:
+                res = PRIV.run(["cat", str(loader_conf)], check=False)
+                txt = res.stdout if res.returncode == 0 else ""
+            if txt:
+                m = re.search(r"^default\s+(.+)$", txt, re.M)
+                if m and f"linux-{flavor}" in m.group(1):
+                    remaining: list[str] = []
+                    try:
+                        remaining = [e.name for e in sorted((Path(root) / "loader" / "entries").glob("*.conf")) if f"linux-{flavor}" not in e.name]
+                    except PermissionError:
+                        res = PRIV.run(["ls", "-1", f"{root}/loader/entries"], check=False)
+                        if res.returncode == 0:
+                            remaining = [line.strip() for line in res.stdout.splitlines() if line.endswith(".conf") and f"linux-{flavor}" not in line]
+                    new_default = remaining[0] if remaining else "@saved"
+                    new_txt = re.sub(r"^default\s+.*$", f"default {new_default}", txt, flags=re.M)
+                    PRIV.write_files({loader_conf: (new_txt, "0644")})
+                    ok(f"Reset {loader_conf} default -> {new_default}")
+                    if have("bootctl"):
+                        PRIV.run(["bootctl", "set-default", new_default], check=False)
     preset = Path(f"/etc/mkinitcpio.d/linux-{flavor}.preset")
     if preset.is_file():
         PRIV.run(["rm", "-f", str(preset)], check=False)
