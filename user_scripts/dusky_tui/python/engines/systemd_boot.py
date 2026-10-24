@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
-SystemdBootEngine - Bleeding-Edge systemd-boot (systemd 255-261+ / Linux 6.x-7.x+) Engine.
+SystemdBootEngine - Bleeding-Edge systemd-boot (systemd 255-262+ / Linux 6.x-7.x+) Engine.
 Implements dynamic boot entry discovery, bidirectional clean kernel name translation,
+universal automated entry synthesis for any installed/compiled Linux kernel,
 multi-entry metadata management and direct renaming, atomic loader/entry updates,
 and full systemd-boot EFI maintenance capabilities.
 """
+lazy import fnmatch
 lazy import json
 import os
 import re
@@ -13,6 +15,11 @@ lazy import subprocess
 lazy import tempfile
 from pathlib import Path
 from typing import Any, Self
+
+import sys
+_DUSKY_TUI_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_DUSKY_TUI_ROOT) not in sys.path:
+    sys.path.insert(0, str(_DUSKY_TUI_ROOT))
 
 from python.frontend.core_types import BaseEngine
 lazy from python.engines.cmdline import BridgedStateDict
@@ -31,7 +38,7 @@ _EFIVAR_ENTRY_SELECTED  = _EFI_VAR_DIR / f"LoaderEntrySelected-{_SD_BOOT_GUID}"
 
 
 # =============================================================================
-# KERNEL AND ENTRY NAME NORMALIZATION UTILITIES
+# UNIVERSAL KERNEL & ENTRY NAME NORMALIZATION UTILITIES
 # =============================================================================
 def slugify_entry_key(clean_name: str) -> str:
     """Creates a deterministic, safe schema key slug for an entry title override."""
@@ -42,7 +49,8 @@ def slugify_entry_key(clean_name: str) -> str:
 def clean_kernel_name(raw: str) -> str:
     """
     Transforms any raw kernel version, entry filename, or title into a clean,
-    human-readable kernel name (e.g., 'Arch Linux', 'Dusky Battery', 'Dusky Gaming').
+    human-readable kernel name without hardcoded lists.
+    Dynamically respects Arch Linux, Dusky custom builds, and standalone custom kernels.
     """
     if not raw:
         return "Arch Linux"
@@ -52,66 +60,72 @@ def clean_kernel_name(raw: str) -> str:
 
     is_fallback = bool(re.search(r"fallback|recovery", s, flags=re.IGNORECASE))
 
-    # Handle parenthetical annotations:
-    # - If it contains a specific kernel name like (7.2.0-dusky-battery), extract it.
-    # - If it is a generic tag like (linux), (x86_64), or (fallback initramfs), strip it.
+    # Strip file extensions (.conf, .preset, .img, .efi, etc.)
+    for ext in (".conf", ".preset", ".img", ".efi", ".efi.extra", ".bak", ".old", ".uki"):
+        if s.endswith(ext):
+            s = s[:-len(ext)]
+
+    # Handle parenthetical annotations: (linux-zen), (7.3.0-custom), etc.
     paren_match = re.search(r"\(([^)]+)\)", s)
     if paren_match:
         inner = paren_match.group(1).strip()
         if re.search(r"fallback|recovery", inner, flags=re.IGNORECASE):
             is_fallback = True
             s = re.sub(r"\s*\([^)]*\)", "", s).strip()
-        elif not re.prefixmatch(r"^(?:linux|default|x86_64|amd64)$", inner, flags=re.IGNORECASE):
+        elif not re.prefixmatch(r"^(?:default|x86_64|amd64)$", inner, flags=re.IGNORECASE):
             s = inner
         else:
             s = re.sub(r"\s*\([^)]*\)", "", s).strip()
 
-    # Strip file extensions
-    for ext in (".conf", ".preset", ".img", ".efi", ".efi.extra", ".bak", ".old", ".uki"):
-        if s.endswith(ext):
-            s = s[:-len(ext)]
-
-    # Remove 32-hex machine-id prefix if present (Type #1 BLS: e.g. 22d434e8ca4f425482251d8a6ba8ddea-)
+    # Strip 32-hex machine-id prefix if present (Type #1 BLS: e.g. 22d434e8ca4f425482251d8a6ba8ddea-)
     s = re.sub(r"^[a-f0-9]{32}[-_]", "", s)
 
-    # Repeatedly strip redundant prefixes (vmlinuz-, initramfs-, linux-, arch-linux-, etc.)
-    while True:
-        prev = s
-        s = re.sub(r"^(?:vmlinuz|initramfs|linux|Linux|arch-linux|arch_linux|arch)[-_ ]+", "", s)
-        if s == prev:
-            break
+    # Strip leading vmlinuz- or initramfs- prefixes
+    s = re.sub(r"^(?:vmlinuz|initramfs)[-_ ]+", "", s, flags=re.IGNORECASE)
 
-    # Strip SemVer kernel version prefix (e.g., '7.2.0-dusky-battery' -> 'dusky-battery', '7.1.9-arch1-2' -> 'arch1-2')
-    s = re.sub(r"^\d+\.\d+(?:\.\d+)?(?:-rc\d+)?(?:-git\d*)?-", "", s)
-
-    # Clean leftover fallback/recovery words from stem
+    # Clean leftover fallback/recovery tokens
     s = re.sub(r"[-_ ]*(?:fallback|recovery)(?:[-_ ]*initramfs)?[-_ ]*", "", s, flags=re.IGNORECASE).strip()
 
-    sl = s.lower()
-    match sl:
-        case "" | "arch" | "arch1" | "archlinux" | "linux" | "default":
+    sl = s.lower().strip()
+
+    if sl in ("", "linux", "arch", "archlinux", "arch-linux", "arch_linux", "default") or re.prefixmatch(r"^arch\d*(?:-\d+)?$", sl):
+        title = "Arch Linux"
+    elif sl.startswith(("dusky-", "dusky_")) or sl.startswith(("linux-dusky-", "linux_dusky_")):
+        # Dusky custom kernel namespace (e.g. linux-dusky-gaming -> Dusky Gaming)
+        sub = re.sub(r"^(?:linux[-_])?dusky[-_]", "", sl)
+        sub_words = [w.upper() if len(w) <= 3 and w.isalpha() else w.title() for w in re.split(r"[-_ ]+", sub) if w]
+        title = f"Dusky {' '.join(sub_words)}" if sub_words else "Dusky"
+    elif sl.startswith(("linux-", "linux_")) or sl.startswith(("arch-", "arch_")):
+        # Standard Arch flavor namespace (e.g. linux-zen -> Arch Linux Zen, linux-rt-lts -> Arch Linux RT LTS)
+        sub = re.sub(r"^(?:linux|arch)[-_]", "", sl)
+        sub = re.sub(r"^(?:linux|arch)[-_]", "", sub)
+        if sub in ("", "linux", "arch", "default"):
             title = "Arch Linux"
-        case _ if re.prefixmatch(r"^arch\d*(?:-\d+)?$", sl):
-            title = "Arch Linux"
-        case _ if sl.startswith(("dusky-", "dusky_")):
-            sub = sl[6:].replace("-", " ").replace("_", " ").strip().title()
-            title = f"Dusky {sub}"
-        case _ if "dusky" in sl:
-            clean_sub = sl.replace("dusky", "").replace("-", " ").replace("_", " ").strip().title()
-            title = f"Dusky {clean_sub}" if clean_sub else "Dusky"
-        case _ if "zen" in sl:
-            title = "Arch Linux Zen"
-        case _ if "lts" in sl:
-            title = "Arch Linux LTS"
-        case _ if "hardened" in sl:
-            title = "Arch Linux Hardened"
-        case _ if "cachyos" in sl:
-            clean_sub = sl.replace("cachyos", "").replace("-", " ").replace("_", " ").strip().title()
-            title = f"CachyOS {clean_sub}" if clean_sub else "CachyOS"
-        case _ if "t2" in sl:
-            title = "T2 Linux"
-        case _:
-            title = s.replace("-", " ").replace("_", " ").strip().title()
+        else:
+            def _format_token(w: str) -> str:
+                wl = w.lower()
+                if wl in ("rt", "lts"):
+                    return wl.upper()
+                if wl == "cachyos":
+                    return "CachyOS"
+                if len(wl) <= 3 and wl.isalpha() and wl not in ("zen", "git", "rc", "exp"):
+                    return wl.upper()
+                return w.title()
+
+            sub_words = [_format_token(w) for w in re.split(r"[-_ ]+", sub) if w]
+            title = f"Arch Linux {' '.join(sub_words)}"
+    else:
+        # Standalone custom kernel (e.g. my-kernel-6.14 -> My Kernel 6.14)
+        def _format_token(w: str) -> str:
+            wl = w.lower()
+            if wl in ("rt", "lts"):
+                return wl.upper()
+            if wl == "cachyos":
+                return "CachyOS"
+            return w.title()
+
+        words = [_format_token(w) for w in re.split(r"[-_ ]+", s) if w]
+        title = " ".join(words)
 
     if is_fallback and not title.endswith("(Fallback)"):
         title = f"{title} (Fallback)"
@@ -120,9 +134,8 @@ def clean_kernel_name(raw: str) -> str:
 
 def kernel_flavor_stem(raw: str) -> str:
     """
-    Extracts the base normalized flavor identifier token from a filename, kver,
-    or title (e.g. 'dusky-battery', 'dusky-gaming', 'zen', 'lts', 'arch').
-    Used for strict 1:1 deduplication across discovery layers.
+    Extracts the base normalized flavor identifier token from any filename, kver,
+    or title for strict 1:1 deduplication across discovery layers.
     """
     if not raw:
         return ""
@@ -141,25 +154,327 @@ def kernel_flavor_stem(raw: str) -> str:
     return s
 
 
+def check_microcode_hook() -> bool:
+    """Checks whether the modern 'microcode' hook is active in /etc/mkinitcpio.conf."""
+    mkinit_conf = Path("/etc/mkinitcpio.conf")
+    if mkinit_conf.is_file():
+        try:
+            for line in mkinit_conf.read_text(encoding="utf-8", errors="replace").splitlines():
+                line_s = line.strip()
+                if line_s.startswith("HOOKS=") or line_s.startswith("HOOKS "):
+                    return "microcode" in line_s
+        except Exception:
+            pass
+    return False
+
+
+def resolve_pkgbase_for_kernel(identifier: str) -> str:
+    """
+    Dynamically resolves the canonical pkgbase identifier for ANY kernel version,
+    preset, entry filename, or clean name without hardcoded lists.
+    """
+    s = str(identifier).strip()
+    if not s:
+        return "linux"
+
+    # 1. Strip file extensions if passed a filename (e.g. arch-linux-zen.conf -> arch-linux-zen)
+    for ext in (".conf", ".preset", ".img", ".efi", ".efi.extra", ".bak", ".old", ".uki"):
+        if s.endswith(ext):
+            s = s[:-len(ext)]
+
+    # 2. Normalize standard entry filename prefixes (e.g. arch-linux-zen -> linux-zen, arch-linux -> linux)
+    sl = s.lower()
+    if sl in ("", "arch-linux", "arch_linux", "linux", "arch"):
+        return "linux"
+    if sl.startswith(("arch-linux-", "arch_linux_")):
+        s = f"linux-{s[11:]}"
+    elif sl.startswith(("arch-", "arch_")):
+        s = s[5:]
+
+    # 1. Direct match in /usr/lib/modules/<identifier>/pkgbase (official Arch metadata)
+    mod_dir = Path("/usr/lib/modules") / s
+    if mod_dir.is_dir():
+        pkgbase_file = mod_dir / "pkgbase"
+        if pkgbase_file.is_file():
+            try:
+                p = pkgbase_file.read_text(encoding="utf-8", errors="replace").strip()
+                if p:
+                    return p
+            except Exception:
+                pass
+
+    # 2. Check mkinitcpio presets in /etc/mkinitcpio.d
+    for cand in (
+        Path("/etc/mkinitcpio.d") / f"{s}.preset",
+        Path("/etc/mkinitcpio.d") / f"linux-{s}.preset",
+    ):
+        if cand.is_file():
+            return cand.stem
+
+    # 3. Check /boot/vmlinuz-* files
+    for cand in (
+        Path("/boot") / f"vmlinuz-{s}",
+        Path("/boot") / f"vmlinuz-linux-{s}",
+    ):
+        if cand.is_file():
+            return cand.name.removeprefix("vmlinuz-")
+
+    # 4. Handle clean UI names
+    sl = s.lower()
+    if sl in ("", "arch linux", "linux"):
+        return "linux"
+    if s.startswith("Arch Linux "):
+        sub = s[11:].strip().lower().replace(" ", "-")
+        if sub in ("", "linux"):
+            return "linux"
+        return f"linux-{sub}"
+    if s.startswith("Dusky "):
+        sub = s[6:].strip().lower().replace(" ", "-")
+        if (Path("/boot") / f"vmlinuz-linux-dusky-{sub}").is_file():
+            return f"linux-dusky-{sub}"
+        return f"dusky-{sub}"
+
+    # 5. Handle version strings like 7.3.0-rc2-xanmod1 or 7.2.11-zen1-1-zen
+    m_ver = re.match(r"^\d+\.\d+(?:\.\d+)?(?:-rc\d+)?(?:-git\d*)?-(.+)$", s)
+    if m_ver:
+        tail = m_ver.group(1)
+        base_cand = re.sub(r"\d+-\d+(?:-.+)?$", "", tail).rstrip("-_")
+        if not base_cand:
+            base_cand = tail.split("-")[0]
+        if base_cand in ("arch", "linux"):
+            return "linux"
+        if base_cand.startswith(("dusky-", "dusky_")):
+            return base_cand
+        if (Path("/boot") / f"vmlinuz-linux-{base_cand}").is_file():
+            return f"linux-{base_cand}"
+        if (Path("/boot") / f"vmlinuz-{base_cand}").is_file():
+            return base_cand
+        return f"linux-{base_cand}"
+
+    return s.lower().replace(" ", "-")
+
+
+def resolve_kernel_images(pkgbase: str, kver: str = "") -> tuple[str, str, str | None]:
+    """
+    Dynamically discovers the relative ESP paths for kernel image, primary initramfs,
+    and optional fallback initramfs for ANY kernel, checking mkinitcpio presets and /boot.
+    Returns:
+        (linux_path, initrd_path, fallback_initrd_path_or_none)
+    """
+    # 1. Inspect mkinitcpio presets
+    for preset_name in (pkgbase, f"linux-{pkgbase}", kver):
+        if not preset_name:
+            continue
+        preset_file = Path("/etc/mkinitcpio.d") / f"{preset_name}.preset"
+        if preset_file.is_file():
+            try:
+                kver_path = ""
+                img_path = ""
+                fb_path = ""
+                for line in preset_file.read_text(encoding="utf-8", errors="replace").splitlines():
+                    line_s = line.strip()
+                    if match := re.prefixmatch(r"^ALL_kver=[\"']?([^\"']+)[\"']?", line_s):
+                        kver_path = match.group(1).strip()
+                    elif match := re.prefixmatch(r"^default_image=[\"']?([^\"']+)[\"']?", line_s):
+                        img_path = match.group(1).strip()
+                    elif match := re.prefixmatch(r"^fallback_image=[\"']?([^\"']+)[\"']?", line_s):
+                        fb_path = match.group(1).strip()
+
+                if kver_path and img_path:
+                    def _to_esp(p_str: str) -> str:
+                        p = Path(p_str)
+                        return f"/{p.name}"
+
+                    linux_rel = _to_esp(kver_path)
+                    img_rel = _to_esp(img_path)
+                    fb_rel = None
+                    if fb_path:
+                        try:
+                            if Path(fb_path).is_file():
+                                fb_rel = _to_esp(fb_path)
+                        except Exception:
+                            fb_rel = _to_esp(fb_path)
+                    return linux_rel, img_rel, fb_rel
+            except Exception:
+                pass
+
+    # 2. Discover from /boot directly
+    linux_rel = f"/vmlinuz-{pkgbase}"
+    img_rel = f"/initramfs-{pkgbase}.img"
+    fb_rel = None
+
+    fallback_img = Path("/boot") / f"initramfs-{pkgbase}-fallback.img"
+    try:
+        if fallback_img.is_file():
+            fb_rel = f"/{fallback_img.name}"
+    except Exception:
+        fb_rel = f"/{fallback_img.name}"
+
+    return linux_rel, img_rel, fb_rel
+
+
+def resolve_kver_for_pkgbase(pkgbase: str) -> str:
+    """
+    Dynamically discovers the kernel version (release string) for a given pkgbase
+    by checking /usr/lib/modules, mkinitcpio presets, and pacman metadata.
+    """
+    clean_pb = pkgbase.strip().lower()
+
+    # 1. Inspect /usr/lib/modules/*/pkgbase (authoritative on Arch Linux)
+    modules_dir = Path("/usr/lib/modules")
+    if modules_dir.is_dir():
+        try:
+            for d in sorted(modules_dir.iterdir(), reverse=True):
+                if d.is_dir() and not d.name.startswith((".", "old", "tmp")):
+                    pb_file = d / "pkgbase"
+                    if pb_file.is_file():
+                        try:
+                            if pb_file.read_text(encoding="utf-8", errors="replace").strip().lower() == clean_pb:
+                                return d.name
+                        except Exception:
+                            pass
+                    if d.name.endswith(f"-{clean_pb}") or d.name.startswith(f"{clean_pb}-") or clean_pb in d.name:
+                        return d.name
+        except Exception:
+            pass
+
+    # 2. Inspect /etc/mkinitcpio.d/<preset>.preset
+    for cand in (clean_pb, f"linux-{clean_pb}"):
+        preset_file = Path("/etc/mkinitcpio.d") / f"{cand}.preset"
+        if preset_file.is_file():
+            try:
+                for line in preset_file.read_text(encoding="utf-8", errors="replace").splitlines():
+                    if line.strip().startswith("ALL_kver="):
+                        val = line.split("=", 1)[1].strip("\"' ")
+                        val_path = Path(val)
+                        if val_path.is_file():
+                            try:
+                                return val_path.read_text(encoding="utf-8", errors="replace").strip()
+                            except Exception:
+                                pass
+                        elif val:
+                            return val
+            except Exception:
+                pass
+
+    return ""
+
+
+def canonical_entry_filename(pkgbase: str) -> str:
+    """Determines standard BLS Type #1 entry filename from any pkgbase."""
+    p = pkgbase.strip().lower()
+    if p in ("linux", "arch"):
+        return "arch-linux.conf"
+    if p.startswith("arch-"):
+        return f"{p}.conf"
+    if p.startswith("linux-"):
+        return f"arch-{p}.conf"
+    if p.startswith("dusky-"):
+        return f"{p}.conf"
+    return f"arch-{p}.conf"
+
+
+def canonical_fallback_filename(pkgbase: str) -> str:
+    """Determines standard BLS Type #1 fallback entry filename from any pkgbase."""
+    base = canonical_entry_filename(pkgbase)
+    return base.replace(".conf", "-fallback.conf")
+
+
+def canonical_entry_title(clean_name: str, pkgbase: str) -> str:
+    """Generates standard BLS Type #1 title line for any kernel."""
+    p = pkgbase.strip().lower()
+    if p in ("linux", "arch"):
+        return "Arch Linux (linux)"
+    if p.startswith("linux-"):
+        return f"Arch Linux ({p})"
+    if "dusky" in p:
+        return clean_name
+    return f"Arch Linux ({p})"
+
+
+def canonical_sort_key(pkgbase: str) -> str:
+    """Generates BLS Type #1 sort-key string for any kernel."""
+    p = pkgbase.strip().lower()
+    if "dusky" in p:
+        suffix = p.removeprefix("linux-").removeprefix("dusky-")
+        return f"dusky-{suffix}" if suffix else "dusky"
+    if p in ("linux", "arch"):
+        return "arch"
+    if p.startswith("linux-"):
+        return f"arch-{p.removeprefix('linux-')}"
+    if p.startswith("arch-"):
+        return p
+    return f"arch-{p}"
+
+
+def get_baseline_options(esp_entry_dirs: list[Path]) -> str:
+    """
+    Extracts proven root filesystem, encryption, and kernel parameters from existing
+    entries or /proc/cmdline, ensuring 100% forward-compatibility on new kernels.
+    """
+    for edir in esp_entry_dirs:
+        if edir.is_dir():
+            candidates = [edir / "arch-linux.conf"] + sorted(edir.glob("*.conf"))
+            for cand in candidates:
+                if cand.is_file() and "fallback" not in cand.name.lower():
+                    try:
+                        for line in cand.read_text(encoding="utf-8", errors="replace").splitlines():
+                            line_s = line.strip()
+                            if line_s.startswith(("options ", "options\t")):
+                                opts = line_s.split(None, 1)[1].strip()
+                                if opts:
+                                    return opts
+                    except Exception:
+                        pass
+
+    # Fallback to /proc/cmdline (filtered of bootloader/initrd artifacts)
+    try:
+        proc_cmdline = Path("/proc/cmdline")
+        if proc_cmdline.is_file():
+            raw = proc_cmdline.read_text(encoding="utf-8", errors="replace").strip()
+            tokens = []
+            for tok in raw.split():
+                k = tok.split("=", 1)[0]
+                if k not in ("BOOT_IMAGE", "initrd", "initrdefi"):
+                    tokens.append(tok)
+            if tokens:
+                return " ".join(tokens)
+    except Exception:
+        pass
+
+    return "rw quiet splash loglevel=3 systemd.show_status=auto rd.udev.log_level=3 vt.global_cursor_default=0"
+
+
+def get_baseline_fallback_options(esp_entry_dirs: list[Path], baseline_opts: str) -> str:
+    """Derives safe fallback recovery options (stripping splash/quiet)."""
+    for edir in esp_entry_dirs:
+        cand = edir / "arch-linux-fallback.conf"
+        if cand.is_file():
+            try:
+                for line in cand.read_text(encoding="utf-8", errors="replace").splitlines():
+                    line_s = line.strip()
+                    if line_s.startswith(("options ", "options\t")):
+                        opts = line_s.split(None, 1)[1].strip()
+                        if opts:
+                            return opts
+            except Exception:
+                pass
+    tokens = [t for t in baseline_opts.split() if t not in ("quiet", "splash")]
+    return " ".join(tokens)
+
+
+# =============================================================================
+# DYNAMIC KERNEL AND ENTRY DISCOVERY
+# =============================================================================
 def discover_all_kernels_and_entries() -> EntryMap:
     """
     Dynamically scans ESP boot loader entries, EFI variable history, installed modules
     in /usr/lib/modules, mkinitcpio presets in /etc/mkinitcpio.d, and boot kernels in /boot.
     
     Guarantees strict deduplication: exactly ONE canonical entry per physical boot option / kernel.
-    
-    Returns a mapping: clean_kernel_name -> metadata dict:
-        {
-            "clean_name": str,
-            "entry_file": str,
-            "entry_path": str,
-            "kver": str,
-            "title": str,
-            "hint": str,
-            "source": str
-        }
+    Automatically assigns canonical BLS filenames and paths to unconfigured kernels so they
+    can be synthesized and managed seamlessly.
     """
-    # 1. Primary container indexed by canonical entry identifier (e.g. filename/entry_id)
     canonical_entries: dict[str, dict[str, Any]] = {}
 
     esp_entry_dirs = [
@@ -168,10 +483,17 @@ def discover_all_kernels_and_entries() -> EntryMap:
         Path("/boot/efi/loader/entries"),
         Path("/loader/entries"),
     ]
+    primary_esp_entries_dir = esp_entry_dirs[0]
+    for cand in esp_entry_dirs:
+        if cand.is_dir():
+            primary_esp_entries_dir = cand
+            break
 
-    # Query bootctl JSON (systemd 255-261+ JSON output)
+    # 1. Query bootctl JSON (systemd 255-262+ JSON output)
     try:
         res = subprocess.run(["bootctl", "list", "--json=short"], capture_output=True, text=True, timeout=2)
+        if res.returncode != 0:
+            res = subprocess.run(["sudo", "-n", "bootctl", "list", "--json=short"], capture_output=True, text=True, timeout=2)
         if res.returncode == 0 and res.stdout.strip():
             entries_json = json.loads(res.stdout)
             if isinstance(entries_json, list):
@@ -180,13 +502,12 @@ def discover_all_kernels_and_entries() -> EntryMap:
                     entry_id = entry.get("id", "")
                     title_raw = entry.get("title", "")
 
-                    # Skip synthetic firmware/automatic non-kernel entries
                     if entry_type == "Automatic" or entry_id.startswith("auto-"):
                         continue
                     if any(sub in title_raw.lower() for sub in ("reboot into firmware", "efi default loader", "windows boot manager")):
                         continue
 
-                    src = entry.get("source", "")
+                    src = entry.get("source", "") or entry.get("path", "")
                     ver_raw = entry.get("version", "")
                     filename = Path(src).name if src and src != "esp" else (f"{entry_id}.conf" if entry_id and not entry_id.endswith(".conf") else entry_id)
                     key = filename or entry_id
@@ -200,6 +521,7 @@ def discover_all_kernels_and_entries() -> EntryMap:
                         "linux": entry.get("linux", ""),
                         "initrd": entry.get("initrd", []),
                         "source": "bootctl_json",
+                        "needs_synthesis": False,
                     }
     except Exception:
         pass
@@ -240,6 +562,7 @@ def discover_all_kernels_and_entries() -> EntryMap:
                             "linux": linux,
                             "initrd": initrd,
                             "source": "esp_conf",
+                            "needs_synthesis": False,
                         }
                     else:
                         canonical_entries[key]["entry_path"] = str(conf)
@@ -270,6 +593,7 @@ def discover_all_kernels_and_entries() -> EntryMap:
                         "linux": "",
                         "initrd": [],
                         "source": "efi_var",
+                        "needs_synthesis": False,
                     }
         except Exception:
             pass
@@ -307,9 +631,11 @@ def discover_all_kernels_and_entries() -> EntryMap:
             "entry_file": entry_file,
             "entry_path": data.get("entry_path", ""),
             "kver": kver,
+            "pkgbase": resolve_pkgbase_for_kernel(entry_file),
             "title": title_raw or unique_clean,
             "hint": hint,
             "source": data.get("source", "bls"),
+            "needs_synthesis": False,
         }
 
         stem = kernel_flavor_stem(entry_file)
@@ -328,15 +654,22 @@ def discover_all_kernels_and_entries() -> EntryMap:
                 if entry.is_dir() and not entry.name.startswith((".", "old", "tmp")):
                     stem = kernel_flavor_stem(entry.name)
                     clean = clean_kernel_name(entry.name)
-                    if clean not in results and stem not in covered_stems:
+                    pkgbase = resolve_pkgbase_for_kernel(entry.name)
+                    canonical_conf = canonical_entry_filename(pkgbase)
+
+                    if clean not in results and stem not in covered_stems and canonical_conf not in canonical_entries:
+                        target_entry_path = primary_esp_entries_dir / canonical_conf
+                        is_on_disk = target_entry_path.is_file()
                         results[clean] = {
                             "clean_name": clean,
-                            "entry_file": "",
-                            "entry_path": "",
+                            "entry_file": canonical_conf,
+                            "entry_path": str(target_entry_path),
                             "kver": entry.name,
-                            "title": clean,
-                            "hint": f"Installed Kernel: {entry.name}",
+                            "pkgbase": pkgbase,
+                            "title": canonical_entry_title(clean, pkgbase),
+                            "hint": f"Installed Kernel: {pkgbase} ({entry.name})" + ("" if is_on_disk else " (Entry auto-generates on save)"),
                             "source": "modules",
+                            "needs_synthesis": not is_on_disk,
                         }
                         if stem:
                             covered_stems.add(stem)
@@ -350,15 +683,22 @@ def discover_all_kernels_and_entries() -> EntryMap:
             for preset in sorted(preset_dir.glob("*.preset")):
                 stem = kernel_flavor_stem(preset.name)
                 clean = clean_kernel_name(preset.name)
-                if clean not in results and stem not in covered_stems:
+                pkgbase = preset.stem
+                canonical_conf = canonical_entry_filename(pkgbase)
+
+                if clean not in results and stem not in covered_stems and canonical_conf not in canonical_entries:
+                    target_entry_path = primary_esp_entries_dir / canonical_conf
+                    is_on_disk = target_entry_path.is_file()
                     results[clean] = {
                         "clean_name": clean,
-                        "entry_file": "",
-                        "entry_path": "",
+                        "entry_file": canonical_conf,
+                        "entry_path": str(target_entry_path),
                         "kver": "",
-                        "title": clean,
-                        "hint": f"Mkinitcpio Preset: {preset.name}",
+                        "pkgbase": pkgbase,
+                        "title": canonical_entry_title(clean, pkgbase),
+                        "hint": f"Mkinitcpio Preset: {preset.name}" + ("" if is_on_disk else " (Entry auto-generates on save)"),
                         "source": "mkinitcpio",
+                        "needs_synthesis": not is_on_disk,
                     }
                     if stem:
                         covered_stems.add(stem)
@@ -372,15 +712,22 @@ def discover_all_kernels_and_entries() -> EntryMap:
             for vmlinuz in sorted(boot_dir.glob("vmlinuz-*")):
                 stem = kernel_flavor_stem(vmlinuz.name)
                 clean = clean_kernel_name(vmlinuz.name)
-                if clean not in results and stem not in covered_stems:
+                pkgbase = vmlinuz.name.removeprefix("vmlinuz-")
+                canonical_conf = canonical_entry_filename(pkgbase)
+
+                if clean not in results and stem not in covered_stems and canonical_conf not in canonical_entries:
+                    target_entry_path = primary_esp_entries_dir / canonical_conf
+                    is_on_disk = target_entry_path.is_file()
                     results[clean] = {
                         "clean_name": clean,
-                        "entry_file": "",
-                        "entry_path": "",
+                        "entry_file": canonical_conf,
+                        "entry_path": str(target_entry_path),
                         "kver": "",
-                        "title": clean,
-                        "hint": f"Kernel Image: {vmlinuz.name}",
+                        "pkgbase": pkgbase,
+                        "title": canonical_entry_title(clean, pkgbase),
+                        "hint": f"Kernel Image: {vmlinuz.name}" + ("" if is_on_disk else " (Entry auto-generates on save)"),
                         "source": "boot_image",
+                        "needs_synthesis": not is_on_disk,
                     }
                     if stem:
                         covered_stems.add(stem)
@@ -392,11 +739,13 @@ def discover_all_kernels_and_entries() -> EntryMap:
         results["Arch Linux"] = {
             "clean_name": "Arch Linux",
             "entry_file": "arch-linux.conf",
-            "entry_path": "/boot/loader/entries/arch-linux.conf",
+            "entry_path": str(primary_esp_entries_dir / "arch-linux.conf"),
             "kver": "",
-            "title": "Arch Linux",
+            "pkgbase": "linux",
+            "title": "Arch Linux (linux)",
             "hint": "Stock Arch Linux kernel (/boot/vmlinuz-linux)",
             "source": "stock_default",
+            "needs_synthesis": not (primary_esp_entries_dir / "arch-linux.conf").is_file(),
         }
 
     return results
@@ -407,13 +756,15 @@ def discover_all_kernels_and_entries() -> EntryMap:
 # =============================================================================
 class SystemdBootEngine(BaseEngine):
     """
-    Intelligent engine for systemd-boot (systemd 255 - 261+ / Linux 6.x - 7.x+).
+    Intelligent engine for systemd-boot (systemd 255 - 262+ / Linux 6.x - 7.x+).
     
     Manages:
     - DEFAULT scope: Kernel command-line parameters in options line of active entry .conf
     - ENTRY scope: Active entry metadata (title, sort-key, version, linux, initrd, architecture)
     - ENTRY_OVERRIDE scope: Direct per-entry title modification for ANY installed kernel entry
     - LOADER scope: Global bootloader settings in loader.conf (default, timeout, console-mode, editor, auto-entries, etc.)
+    - UNIVERSAL SYNTHESIS: Dynamically discovers and synthesizes valid BLS Type #1 .conf files
+      for ANY Linux kernel installed via pacman, AUR, or custom compiler pipelines.
     """
 
     def __init__(self, config_path: str = "") -> None:
@@ -443,7 +794,6 @@ class SystemdBootEngine(BaseEngine):
             if p.exists():
                 return p
 
-        # Check candidate entry directories (prioritizing entries dir next to loader.conf)
         candidate_dirs = [
             self.loader_conf_path.parent / "entries",
             Path("/boot/loader/entries"),
@@ -455,7 +805,7 @@ class SystemdBootEngine(BaseEngine):
         # 1. If explicit target_entry override was chosen in Tab 5
         if self._target_override and not self._target_override.startswith("Auto"):
             entry_path = self.get_entry_path_for_name(self._target_override)
-            if entry_path and entry_path.exists():
+            if entry_path:
                 return entry_path
 
         # 2. Check candidate entry directories for active/default conf
@@ -478,9 +828,9 @@ class SystemdBootEngine(BaseEngine):
                                     cand_conf = entries_dir / f"{def_val}.conf"
                                     if cand_conf.is_file():
                                         return cand_conf
-                                for match in entries_dir.glob(f"*{def_val.strip('*')}*"):
-                                    if match.is_file():
-                                        return match
+                                for conf_path in entries_dir.glob("*.conf"):
+                                    if fnmatch.fnmatch(conf_path.name.lower(), def_val.lower()) or fnmatch.fnmatch(conf_path.stem.lower(), def_val.lower()):
+                                        return conf_path
                 except Exception:
                     pass
 
@@ -508,7 +858,7 @@ class SystemdBootEngine(BaseEngine):
                         return cand
                 return all_confs[0]
 
-        return Path("/boot/loader/entries/arch-linux.conf")
+        return self.loader_conf_path.parent / "entries" / "arch-linux.conf"
 
     @classmethod
     def from_path(cls, config_path: str) -> Self:
@@ -524,16 +874,19 @@ class SystemdBootEngine(BaseEngine):
         return self._cached_entries_map
 
     def get_entry_path_for_name(self, clean_name: str) -> Path | None:
-        """Resolves a clean kernel name to its absolute Path on disk."""
+        """Resolves a clean kernel name to its absolute Path on disk or canonical target path."""
         entries = self.get_entries_map()
         if clean_name in entries:
             src = entries[clean_name].get("entry_path") or entries[clean_name].get("entry_file")
             if src:
                 p = Path(src)
-                if p.exists():
+                if p.is_file():
+                    return p
+                if str(p).endswith(".conf"):
                     return p
 
         stem_target = kernel_flavor_stem(clean_name)
+        pkgbase_target = resolve_pkgbase_for_kernel(clean_name)
 
         for entries_dir in [
             self.loader_conf_path.parent / "entries",
@@ -551,42 +904,46 @@ class SystemdBootEngine(BaseEngine):
                             return conf
                         try:
                             for line in conf.read_text(encoding="utf-8", errors="replace").splitlines():
-                                if line.strip().startswith(("title ", "title\t")):
-                                    t = line.strip().split(None, 1)[1].strip()
+                                line_s = line.strip()
+                                if line_s.startswith(("title ", "title\t")):
+                                    t = line_s.split(None, 1)[1].strip()
                                     if clean_kernel_name(t) == clean_name:
+                                        return conf
+                                elif line_s.startswith(("linux ", "linux\t")):
+                                    lx = line_s.split(None, 1)[1].strip()
+                                    if f"vmlinuz-{pkgbase_target}" in lx:
                                         return conf
                         except Exception:
                             pass
                 except Exception:
                     pass
-        return None
+
+        # Canonical target fallback
+        entries_dir = self.loader_conf_path.parent / "entries"
+        return entries_dir / canonical_entry_filename(pkgbase_target)
 
     def map_raw_to_clean(self, raw_val: str) -> str:
-        """Translates a raw loader.conf default value (e.g. long filename) to its clean UI name."""
+        """Translates a raw loader.conf default value to its clean UI name."""
         if not raw_val or raw_val.startswith("@"):
             return raw_val
 
         entries = self.get_entries_map()
 
-        # 1. Direct match on entry filename or entry ID
         for clean_name, meta in entries.items():
             entry_file = meta.get("entry_file", "")
             if entry_file and (raw_val == entry_file or raw_val == Path(entry_file).stem):
                 return clean_name
 
-        # 2. Match on clean normalization
         clean = clean_kernel_name(raw_val)
         if clean in entries:
             return clean
 
-        # 3. Match by flavor stem
         raw_stem = kernel_flavor_stem(raw_val)
         if raw_stem:
             for clean_name, meta in entries.items():
                 if kernel_flavor_stem(clean_name) == raw_stem or kernel_flavor_stem(meta.get("entry_file", "")) == raw_stem:
                     return clean_name
 
-        # 4. Partial / wildcard pattern match
         pattern = raw_val.strip("*").lower()
         if pattern:
             for clean_name in entries:
@@ -596,39 +953,138 @@ class SystemdBootEngine(BaseEngine):
         return clean
 
     def map_clean_to_raw(self, clean_name: str) -> str:
-        """Translates a clean UI selection (e.g. 'Arch Linux' or 'Dusky Battery') to the loader.conf entry format."""
+        """Translates a clean UI selection to the exact loader.conf entry format."""
         if not clean_name or clean_name.startswith("@"):
             return clean_name
 
         entries = self.get_entries_map()
 
-        # 1. Exact match in discovered entries
         if clean_name in entries:
             meta = entries[clean_name]
             entry_file = meta.get("entry_file", "")
             if entry_file:
                 return entry_file
 
-        # 2. Check on-disk entry directories for matching filename or title
         p = self.get_entry_path_for_name(clean_name)
         if p and p.is_file():
             return p.name
 
-        # 3. Derive standard filename / glob fallback (per loader.conf(5), entry IDs
-        #    include the literal ".conf" suffix and glob matching is case-insensitive)
         cl = clean_name.lower()
-        slug = cl.replace(" ", "-")
         match cl:
             case "arch linux":
                 return "arch-linux.conf"
             case "arch linux (fallback)":
                 return "arch-linux-fallback.conf"
             case _:
-                return f"*{slug}*.conf"
+                pkgbase = resolve_pkgbase_for_kernel(clean_name)
+                return canonical_entry_filename(pkgbase)
+
+    def synthesize_entry_for_kernel(self, clean_name: str, custom_title: str = "", custom_options: str = "") -> tuple[bool, Path | None, str]:
+        """
+        Dynamically synthesizes a full BLS Type #1 entry file for ANY kernel package.
+        Resolves vmlinuz, initramfs, microcode, and root topology dynamically.
+        """
+        entries = self.get_entries_map()
+        meta = entries.get(clean_name, {})
+        pkgbase = meta.get("pkgbase") or resolve_pkgbase_for_kernel(clean_name)
+        kver = meta.get("kver") or resolve_kver_for_pkgbase(pkgbase)
+
+        entries_dir = self.loader_conf_path.parent / "entries"
+        entries_dir.mkdir(parents=True, exist_ok=True)
+        entry_file = meta.get("entry_file") or canonical_entry_filename(pkgbase)
+        entry_path = entries_dir / entry_file
+
+        title = custom_title or meta.get("title") or canonical_entry_title(clean_name, pkgbase)
+        sort_key = canonical_sort_key(pkgbase)
+
+        linux_rel, img_rel, fb_rel = resolve_kernel_images(pkgbase, kver)
+
+        lines = [
+            f"title      {title}",
+        ]
+        if kver:
+            lines.append(f"version    {kver}")
+        lines.extend([
+            f"sort-key   {sort_key}",
+            f"linux      {linux_rel}",
+        ])
+
+        if not check_microcode_hook():
+            for img in ("intel-ucode.img", "amd-ucode.img"):
+                if (Path("/boot") / img).is_file():
+                    lines.append(f"initrd     /{img}")
+
+        lines.append(f"initrd     {img_rel}")
+
+        opts = custom_options or get_baseline_options([entries_dir, Path("/boot/loader/entries")])
+        lines.append(f"options    {opts}")
+
+        content = "\n".join(lines) + "\n"
+        ok, msg = self._atomic_write(entry_path, content)
+        if not ok:
+            return False, entry_path, msg
+
+        # Synthesize fallback entry if fallback initramfs exists on disk
+        if fb_rel:
+            fb_file = canonical_fallback_filename(pkgbase)
+            fb_path = entries_dir / fb_file
+            fb_title = f"{title} (Fallback Recovery)"
+            fb_opts = get_baseline_fallback_options([entries_dir, Path("/boot/loader/entries")], opts)
+            fb_lines = [
+                f"title      {fb_title}",
+            ]
+            if kver:
+                fb_lines.append(f"version    {kver}")
+            fb_lines.extend([
+                f"sort-key   {sort_key}",
+                f"linux      {linux_rel}",
+            ])
+            if not check_microcode_hook():
+                for img in ("intel-ucode.img", "amd-ucode.img"):
+                    if (Path("/boot") / img).is_file():
+                        fb_lines.append(f"initrd     /{img}")
+            fb_lines.append(f"initrd     {fb_rel}")
+            fb_lines.append(f"options    {fb_opts}")
+            self._atomic_write(fb_path, "\n".join(fb_lines) + "\n")
+
+        self._cached_entries_map = {}
+        return True, entry_path, f"Synthesized BLS entry: {entry_file}"
+
+    def ensure_entry_exists(self, clean_name: str) -> tuple[bool, Path | None, str]:
+        """Ensures that a physical .conf entry exists on disk for the given clean kernel name."""
+        if not clean_name or clean_name.startswith("@"):
+            return True, None, "Special target"
+
+        p = self.get_entry_path_for_name(clean_name)
+        if p and p.is_file():
+            return True, p, "Entry already exists"
+
+        return self.synthesize_entry_for_kernel(clean_name)
+
+    def auto_synthesize_all_missing_entries(self) -> tuple[bool, list[str]]:
+        """Scans for any installed kernels lacking BLS entries and generates them."""
+        entries = self.get_entries_map()
+        synthesized: list[str] = []
+        for clean_name, meta in entries.items():
+            if clean_name.startswith("@"):
+                continue
+            if meta.get("needs_synthesis"):
+                ok, _, _ = self.synthesize_entry_for_kernel(clean_name)
+                if ok:
+                    synthesized.append(clean_name)
+        return True, synthesized
 
     def load_state(self) -> dict[str, Any]:
         self.cache = BridgedStateDict()
         self._cached_entries_map = discover_all_kernels_and_entries()
+
+        # If running as root, auto-heal and synthesize missing entries immediately
+        if os.geteuid() == 0:
+            try:
+                self.auto_synthesize_all_missing_entries()
+                self._cached_entries_map = discover_all_kernels_and_entries()
+            except Exception:
+                pass
 
         # 1. Load global loader.conf (LOADER scope)
         raw_default = ""
@@ -652,9 +1108,7 @@ class SystemdBootEngine(BaseEngine):
             except OSError:
                 pass
 
-        # Cross-check against the LoaderEntryDefault EFI variable, which takes
-        # absolute precedence over loader.conf at boot time. If the variable is
-        # set, it represents the actual effective default regardless of loader.conf.
+        # Cross-check against the LoaderEntryDefault EFI variable
         if _EFIVAR_ENTRY_DEFAULT.is_file():
             try:
                 efi_bytes = _EFIVAR_ENTRY_DEFAULT.read_bytes()
@@ -725,6 +1179,30 @@ class SystemdBootEngine(BaseEngine):
                 self.cache["ENTRY/entry_file"] = self.config_path.name
             except OSError:
                 pass
+        else:
+            # Active entry is planned/virtual: pre-populate with proven baseline options
+            base_opts = get_baseline_options([self.loader_conf_path.parent / "entries", Path("/boot/loader/entries")])
+            tokens = re.split(r'((?:[^\s"\']|"[^"]*"|\'[^\']*\')+)', base_opts)
+            args = [t for t in tokens if t.strip()]
+            counts: dict[str, int] = {}
+            for arg in args:
+                k, v = arg.split("=", 1) if "=" in arg else (arg, "true")
+                counts[k] = counts.get(k, 0) + 1
+                self.cache[f"DEFAULT/{k}:{counts[k]}"] = v
+                self.cache[f"DEFAULT/{k}"] = v
+
+            target_clean = clean_kernel_name(self.config_path.stem)
+            pkgbase = resolve_pkgbase_for_kernel(self.config_path.stem)
+            kver = resolve_kver_for_pkgbase(pkgbase)
+            linux_rel, img_rel, _ = resolve_kernel_images(pkgbase, kver)
+            self.cache["ENTRY/entry_file"] = self.config_path.name
+            self.cache["ENTRY/title"] = canonical_entry_title(target_clean, pkgbase)
+            if kver:
+                self.cache["ENTRY/version"] = kver
+            self.cache["ENTRY/sort-key"] = canonical_sort_key(pkgbase)
+            self.cache["ENTRY/linux"] = linux_rel
+            self.cache["ENTRY/initrd"] = img_rel
+            self.cache["ENTRY/needs_synthesis"] = "true"
 
         return self.cache
 
@@ -745,7 +1223,20 @@ class SystemdBootEngine(BaseEngine):
         for k, scope, val, _ in loader_changes:
             if k == "target_entry":
                 self._target_override = str(val).strip()
+                if not self._target_override.startswith("Auto"):
+                    ok_ens, _, msg_ens = self.ensure_entry_exists(self._target_override)
+                    if not ok_ens and "AUTH_REQUIRED" in msg_ens:
+                        return False, "AUTH_REQUIRED", ""
                 self.config_path = self._resolve_config_path()
+
+        # Handle default entry selection: ensure entry exists on disk first
+        for k, scope, val, _ in loader_changes:
+            if k == "default":
+                clean_def = str(val).strip()
+                if clean_def and not clean_def.startswith("@"):
+                    ok_ens, _, msg_ens = self.ensure_entry_exists(clean_def)
+                    if not ok_ens and "AUTH_REQUIRED" in msg_ens:
+                        return False, "AUTH_REQUIRED", ""
 
         # Write loader.conf
         if loader_changes:
@@ -760,7 +1251,6 @@ class SystemdBootEngine(BaseEngine):
             if not ok_o:
                 return False, msg_o, ""
             msgs.append(msg_o)
-            # Invalidate cached map so next discovery reflects the new names immediately
             self._cached_entries_map = {}
 
         # Write active entry config
@@ -784,7 +1274,10 @@ class SystemdBootEngine(BaseEngine):
             if key not in slug_to_entry:
                 continue
             clean_name = slug_to_entry[key]
-            entry_path = self.get_entry_path_for_name(clean_name)
+
+            ok_ens, entry_path, msg_ens = self.ensure_entry_exists(clean_name)
+            if not ok_ens:
+                return False, msg_ens
             if not entry_path or not entry_path.is_file():
                 continue
 
@@ -826,7 +1319,7 @@ class SystemdBootEngine(BaseEngine):
         changes_dict = {}
         for key, _, val, _ in changes:
             if key == "target_entry":
-                continue  # Virtual UI state
+                continue
             elif key == "default":
                 changes_dict[key] = self.map_clean_to_raw(str(val))
             else:
@@ -858,9 +1351,7 @@ class SystemdBootEngine(BaseEngine):
         if not ok:
             return ok, msg
 
-        # Sync the LoaderEntryDefault EFI variable via bootctl set-default.
-        # The EFI variable takes absolute precedence over loader.conf at boot time
-        # (per loader.conf(5)), so we must update it atomically whenever the default changes.
+        # Sync the LoaderEntryDefault EFI variable via bootctl set-default
         if "default" in changes_dict:
             default_val = changes_dict["default"]
             bootctl_arg = default_val if default_val not in ("unset", "__delete__", "") else ""
@@ -870,8 +1361,13 @@ class SystemdBootEngine(BaseEngine):
                     capture_output=True, text=True, timeout=5,
                 )
                 if res.returncode != 0:
-                    stderr = (res.stderr or "").strip()
-                    msg += f" (Warning: bootctl set-default: {stderr})"
+                    res_sudo = subprocess.run(
+                        ["sudo", "-n", "bootctl", "set-default", bootctl_arg],
+                        capture_output=True, text=True, timeout=5,
+                    )
+                    if res_sudo.returncode != 0:
+                        stderr = (res.stderr or res_sudo.stderr or "").strip()
+                        msg += f" (Warning: bootctl set-default: {stderr})"
             except Exception:
                 pass
 
@@ -880,14 +1376,17 @@ class SystemdBootEngine(BaseEngine):
             timeout_val = changes_dict["timeout"]
             bootctl_timeout = timeout_val if timeout_val not in ("unset", "__delete__", "") else ""
             try:
-                subprocess.run(
+                res = subprocess.run(
                     ["bootctl", "set-timeout", bootctl_timeout],
                     capture_output=True, text=True, timeout=5,
                 )
+                if res.returncode != 0:
+                    subprocess.run(
+                        ["sudo", "-n", "bootctl", "set-timeout", bootctl_timeout],
+                        capture_output=True, text=True, timeout=5,
+                    )
             except Exception:
                 pass
-
-        return ok, msg
 
         return ok, msg
 
@@ -899,6 +1398,31 @@ class SystemdBootEngine(BaseEngine):
                     lines = f.read().splitlines()
             except OSError as e:
                 return False, f"Failed to open config for verification: {e}"
+        else:
+            # Entry file does not exist yet: build complete BLS Type #1 skeleton before applying changes
+            target_clean = clean_kernel_name(self.config_path.stem)
+            pkgbase = resolve_pkgbase_for_kernel(self.config_path.stem)
+            title = canonical_entry_title(target_clean, pkgbase)
+            sort_key = canonical_sort_key(pkgbase)
+            kver = resolve_kver_for_pkgbase(pkgbase)
+            linux_rel, img_rel, _ = resolve_kernel_images(pkgbase, kver)
+
+            lines = [
+                f"title      {title}",
+            ]
+            if kver:
+                lines.append(f"version    {kver}")
+            lines.extend([
+                f"sort-key   {sort_key}",
+                f"linux      {linux_rel}",
+            ])
+            if not check_microcode_hook():
+                for img in ("intel-ucode.img", "amd-ucode.img"):
+                    if (Path("/boot") / img).is_file():
+                        lines.append(f"initrd     /{img}")
+            lines.append(f"initrd     {img_rel}")
+            base_opts = get_baseline_options([self.loader_conf_path.parent / "entries", Path("/boot/loader/entries")])
+            lines.append(f"options    {base_opts}")
 
         cmdline_changes = [c for c in changes if c[1] == "DEFAULT"]
         entry_changes = {c[0]: c[2] for c in changes if c[1] == "ENTRY"}
@@ -948,29 +1472,26 @@ class SystemdBootEngine(BaseEngine):
 
                     lookup_exact = ("DEFAULT", f"{k}:{counts[k]}")
                     lookup_base = ("DEFAULT", k)
+                    is_last = counts[k] == max_counts.get(k, 1)
 
-                    target_val = None
-                    target_itype = None
-                    matched_lookup = None
-
+                    match_key = None
                     if lookup_exact in changes_dict:
-                        target_val, target_itype = changes_dict[lookup_exact]
-                        matched_lookup = lookup_exact
-                    elif counts.get(k, 0) == max_counts.get(k, 0) and lookup_base in changes_dict:
-                        target_val, target_itype = changes_dict[lookup_base]
-                        matched_lookup = lookup_base
+                        match_key = lookup_exact
+                    elif is_last and lookup_base in changes_dict:
+                        match_key = lookup_base
 
-                    if target_val is not None:
-                        applied_commits.add(matched_lookup)
-                        val_str = str(target_val)
+                    if match_key:
+                        val, itype = changes_dict[match_key]
+                        applied_commits.add(match_key)
+                        val_str = str(val)
                         val_lower = val_str.lower()
 
-                        match (val_lower, target_itype):
+                        match (val_lower, itype):
                             case ("__delete__" | "unset" | "", _) | ("false", "bool"):
-                                if out_tokens and out_tokens[-1].isspace():
+                                if out_tokens and not out_tokens[-1].strip():
                                     out_tokens.pop()
                             case _:
-                                if target_itype == "bool" and val_lower == "true":
+                                if itype == "bool" and val_lower == "true":
                                     out_tokens.append(k)
                                 else:
                                     out_tokens.append(f"{k}={val_str}")
@@ -1083,3 +1604,25 @@ class SystemdBootEngine(BaseEngine):
                     temp_file_path.unlink()
                 except OSError:
                     pass
+
+
+# =============================================================================
+# CLI & DIAGNOSTIC RUNNER
+# =============================================================================
+if __name__ == "__main__":
+    import sys
+    engine = SystemdBootEngine()
+
+    if "--sync" in sys.argv:
+        print("[*] Synchronizing systemd-boot entries for all installed kernels...")
+        ok, syn = engine.auto_synthesize_all_missing_entries()
+        if syn:
+            print(f"[+] Successfully synthesized entries for: {', '.join(syn)}")
+        else:
+            print("[✓] All installed kernels already have valid BLS entries.")
+    else:
+        entries = engine.get_entries_map()
+        print(f"systemd-boot entries map ({len(entries)} entries):")
+        for k, v in entries.items():
+            status = "needs synthesis" if v.get("needs_synthesis") else "live on disk"
+            print(f"  - {k:<25} -> {v.get('entry_file'):<25} [{status}] ({v.get('source')})")
