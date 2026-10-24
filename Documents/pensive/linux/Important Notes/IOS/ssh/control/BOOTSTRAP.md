@@ -26,11 +26,12 @@ phone address; do not reuse an old address from a transcript.
 
 ## 2. Authenticate with the intended account
 
-The owner reported both root and mobile password login working on 2026-10-21.
-Later live checks that day found **mobile key SSH plus interactive sudo working**,
-while direct root password authentication failed. Use the working mobile route
-first; neither report guarantees a future authentication state. The CLI defaults
-to mobile. The owner-supplied password is recorded in the local
+Live checks on 2026-10-25 verified **both mobile and root key SSH**. Earlier
+root password authentication failed on 2026-10-21; that does not contradict a
+working root key. Current password login was not retested. Try the read-only key
+checks in README.md; use a working root route for privileged automation, or the
+mobile-plus-interactive-sudo route below. The CLI defaults to mobile. The
+owner-supplied password is recorded in the local
 [unlock guide](unlock.md#connection); enter it at prompts, not in command
 arguments or generated scripts. Do not rewrite credentials to repair a diagnostic.
 
@@ -91,6 +92,35 @@ with a root socket or expect changing `--target` to change an existing master's
 identity. Confirm `id` before privileged work. Adjust the later mobile examples
 consistently if using this route.
 
+## Device identity and command paths
+
+From a working root or mobile SSH shell, these are read-only:
+
+```sh
+uname -m
+uname -n
+/var/jb/usr/bin/python3 --version
+/var/jb/usr/bin/python3 - <<'PYDEVICE'
+import os, plistlib
+with open('/System/Library/CoreServices/SystemVersion.plist', 'rb') as f:
+    info = plistlib.load(f)
+print({k: info[k] for k in ('ProductVersion', 'ProductBuildVersion')})
+for p in ('/bin/ps', '/var/jb/usr/bin/launchctl', '/var/jb/usr/bin/ldid',
+          '/var/jb/usr/bin/tar', '/var/jb/usr/bin/gzip', '/var/jb/usr/bin/unzip',
+          '/var/jb/usr/bin/uicache', '/var/jb/usr/bin/sbreload', '/usr/sbin/spindump'):
+    print(p, os.path.isfile(p), os.access(p, os.X_OK))
+PYDEVICE
+```
+
+The model identifier appears at the end of `uname -a` on this phone. The documented
+model is iPhone10,2, not iPhone10,5. On the checked bootstrap, launchctl's
+`/var/jb/bin/launchctl` and `/var/jb/usr/bin/launchctl` resolve to the same file;
+use the latter consistently. `/bin/ps` is available; `pgrep`, `rg`, `plutil` and
+`notifyutil` must not be assumed. Use `/bin/ps -A -o pid,comm` and phone Python
+3.9-compatible scripts, or download data for host Python/rg. GNU `ls` does not
+accept macOS `ls -eO@` flags. Inspect help rather than copying Linux/macOS flags
+across platforms. Check packages with `dpkg-query -W`, not a tweak's runtime label.
+
 ## 3. Prepare the host interpreter
 
 SSH/help work without Frida. UI commands require Frida in the interpreter that
@@ -102,7 +132,8 @@ will actually execute before choosing syntax or diagnosing a version failure.
 
 ```sh
 python3 --version
-python3 -m venv .venv
+# Reuse .venv; create it only when missing.
+if [ ! -x .venv/bin/python ]; then python3 -m venv .venv; fi
 .venv/bin/python -m pip install 'frida==17.2.17'
 source .venv/bin/activate
 ./iphone-control --control-path /tmp/iphone-control-ssh doctor
@@ -247,6 +278,12 @@ Equivalent explicit SSH command:
 ssh -S /tmp/iphone-control-ssh -p 2222 -N -o ExitOnForwardFailure=yes \
   -L 127.0.0.1:27047:127.0.0.1:27042 mobile@127.0.0.1
 ```
+
+For a dedicated forward without a master, add
+`-o ServerAliveInterval=15 -o ServerAliveCountMax=3` to detect a dead connection.
+Do not put server startup, forwarding, and UI probes in one concurrent batch;
+verify each dependent layer before the next. If SSH closes during startup, check
+`ps` for the exact staged server: it can remain alive after its parent channel exits.
 
 The host endpoint 27047 forwards to the phone server’s 27042. The recording
 receiver’s reverse forwards are separate. Keep the tunnel alive.

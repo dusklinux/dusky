@@ -156,13 +156,32 @@ function wake() {
     checked(shared('SBBacklightController'),'turnOnScreenFullyWithBacklightSource:','v24@0:8q16','void',['int64'],[1]);
     return {requested:'wake',note:'Read status to verify display state'};
 }
+// Duskie's simulated passcode must complete through its own authentication path.
+// Calling the native finish method directly while that lock is active can abort SB.
+function duskieLock() {
+    const cls=native('objc_getClass','pointer',['pointer'])(utf8('DKLockController'));
+    if(cls.isNull())return null;
+    const controller=checked(cls,'sharedInstance','@16@0:8');
+    return boolean(controller,'enabled')?controller:null;
+}
+function unlockAfterWake() {
+    if(!boolean(shared('SBLockScreenManager'),'isUILocked'))return {changed:false,uiLocked:false};
+    const controller=duskieLock();
+    if(controller) {
+        checked(controller,'authenticateInternally','v16@0:8','void');
+        return {requested:'unlock',route:'Duskie simulated lock',note:'Read status after authentication settles'};
+    }
+    const accepted=checked(shared('SBLockScreenManager'),'_finishUIUnlockFromSource:withOptions:',
+        'B28@0:8i16@20','bool',['int','pointer'],[12,ptr(0)]);
+    return {accepted:Boolean(accepted),route:'native no-passcode',note:'Read status; not a device-passcode bypass'};
+}
 function alerts() {
     return controllers().filter(item=>isKind(item.object,'UIAlertController')).map(item=>({
         id:item.id,title:text(send0(item.object,'title')),message:text(send0(item.object,'message'))}));
 }
 const actions = {
     status, wake,
-    'duskie-unlock':()=>{checked(shared('DKLockController'),'authenticateInternally','v16@0:8','void');return {requested:'Duskie simulated-lock authentication',nativePasscodeChanged:false};},
+    'duskie-unlock':()=>{const controller=duskieLock();if(!controller)throw Error('Duskie simulated lock is not enabled');checked(controller,'authenticateInternally','v16@0:8','void');return {requested:'Duskie simulated-lock authentication',nativePasscodeChanged:false};},
     home:()=>{checked(app(),'_simulateHomeButtonPressWithCompletion:','v24@0:8@?16','void',['pointer'],[ptr(0)]);return {requested:'home'};},
     sleep:()=>{
         if(!boolean(shared('SBBacklightController'),'screenIsOn'))return {changed:false,displayOn:false};
@@ -199,7 +218,7 @@ const actions = {
     modules:parameters=>Process.enumerateModules().filter(item=>item.name.toLowerCase().includes(parameters.matching.toLowerCase())).map(item=>({name:item.name,path:item.path,base:item.base.toString(),size:item.size})),
     notify:parameters=>({code:native('notify_post','int',['pointer'])(utf8(parameters.name)),name:parameters.name,completed:false}),
     screenshot:()=>{
-        const image=native('UICreateScreenUIImage','pointer',[])();if(image.isNull())throw Error('Screen image unavailable; wake the display first');
+        const image=native('_UICreateScreenUIImageWithRotation','pointer',['bool'])(1);if(image.isNull())throw Error('Screen image unavailable; wake the display first');
         const data=native('UIImagePNGRepresentation','pointer',['pointer'])(image);if(data.isNull())throw Error('PNG encoding failed');
         const encoded=checked(data,'base64EncodedStringWithOptions:','@24@0:8Q16','pointer',['uint64'],[0]);
         return {pngBase64:text(encoded),phoneFileWritten:false};
@@ -226,11 +245,7 @@ rpc.exports.execute = async (action,parameters) => {
     if(action==='unlock') {
         await onMain(wake);
         await new Promise(resolve=>setTimeout(resolve,340));
-        return onMain(()=>{
-            const lock=shared('SBLockScreenManager');
-            const accepted=checked(lock,'_finishUIUnlockFromSource:withOptions:','B28@0:8i16@20','bool',['int','pointer'],[12,ptr(0)]);
-            return {accepted:Boolean(accepted),...status(),note:'Verified historical no-passcode procedure; not a device-passcode bypass'};
-        });
+        return onMain(unlockAfterWake);
     }
     if(!Object.hasOwn(actions,action))throw Error('Unknown action '+action);
     return onMain(()=>actions[action](parameters));

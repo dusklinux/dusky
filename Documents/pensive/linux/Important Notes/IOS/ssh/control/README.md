@@ -19,6 +19,7 @@ for presets, native overrides, dependencies and TrollStore installation.
 | USB SSH, authentication, root, Frida server and forwarding | [BOOTSTRAP.md](BOOTSTRAP.md) |
 | Commands for display, apps, UI, files and Camera | Command reference below |
 | App settings, screenshots, Wi-Fi, recording and storage | [RECIPES.md](RECIPES.md) |
+| App/group discovery, backup/reset/restore and preference caches | [CONTAINERS.md](CONTAINERS.md) |
 | Add a typed operation or inspect private APIs | [EXTENDING.md](EXTENDING.md) |
 | Build, sign, install and remove an iOS control dylib | [DEVELOPMENT.md](DEVELOPMENT.md) |
 | Unlock without Frida using a standalone injected helper | [unlock.md](unlock.md) |
@@ -28,6 +29,32 @@ for presets, native overrides, dependencies and TrollStore installation.
 `iphone-control` is the host CLI; `runtime.js` is its injected helper. Keep them
 together: the CLI loads runtime.js from its own directory. Optional recording
 commands require the installed Duskie worker; ordinary UI control uses Frida.
+
+## Quick start on this host
+
+Last checked 2026-10-25: both **mobile and root key SSH** worked through the existing
+USB forward on 2222. No persistent Frida server/forward is assumed. Password
+login was not retested. Verify current access instead of treating an older root
+password failure as a reason to avoid a working root key.
+
+From this directory, these checks need no Frida and change no phone settings:
+
+```sh
+./iphone-control doctor
+ssh -o BatchMode=yes -o ConnectTimeout=8 -p 2222 mobile@127.0.0.1 id
+ssh -o BatchMode=yes -o ConnectTimeout=8 -p 2222 root@127.0.0.1 id
+# Use this target only if that root check succeeds; no master socket is required.
+export IPHONE_SSH_TARGET=root@127.0.0.1
+./iphone-control doctor --phone
+./iphone-control ps
+./iphone-control ssh -- cat /var/mobile/Library/Caches/Duskie-runtime.json
+```
+
+`export` affects that host shell only. Use the working account; failure of either
+optional login check does not invalidate the other. Examples elsewhere use a
+mobile master; substitute the **whole account/socket pair**, or omit the socket
+with working key authentication. Never create a second iproxy if 2222 is owned.
+For exact device/OS/tool checks and optional Frida setup, follow BOOTSTRAP.md.
 
 ## First-use sequence
 
@@ -144,9 +171,9 @@ None of these commands automatically runs sudo, ldid, dpkg or a reboot.
 | `wake` | Wake display only; does not deliberately extend idle-sleep timers |
 | `sleep` | If display is on, invoke Lock button; if already off, leave it off |
 | `lock` | Request UI locking with source 12; read status afterward |
-| `unlock` | Wake, wait about 340 ms, request the documented no-passcode UI unlock |
+| `unlock` | Wake, wait about 340 ms; use enabled Duskie simulated-lock authentication, otherwise the native no-passcode path; already unlocked is unchanged |
 | `duskie-unlock` | Call Duskie's own simulated-lock authentication entry point if installed |
-| `screenshot OUTPUT.png` | **Known broken on this profile**; use the explicit alternative in RECIPES.md |
+| `screenshot OUTPUT.png` | Capture through `_UICreateScreenUIImageWithRotation(BOOL)` and write PNG on the host; verified on this profile |
 
 ```sh
 ./iphone-control --control-path /tmp/iphone-control-ssh status
@@ -160,10 +187,15 @@ None of these commands automatically runs sudo, ldid, dpkg or a reboot.
 `unlock` comes from the owner's no-device-passcode configuration described in
 [unlock.md](unlock.md). The SSH password is not a device passcode. It does not
 claim to unlock a different device-passcode configuration. Duskie's simulated
-lock is separate: `duskie-unlock` uses an installed Duskie class and is not required
-on a phone without that feature. Neither command changes a saved passcode or
-Touch ID enrollment. The `lock` and `duskie-unlock` wrappers are ABI-guarded but
-need verification on the current device; see VALIDATION.md for capability status.
+lock is separate: `unlock` now detects its enabled controller and calls
+`authenticateInternally`. Do not call `_finishUIUnlockFromSource:withOptions:`
+directly while that simulated lock is active: matching ABI did not prevent a
+SpringBoard abort. `duskie-unlock` is an explicit authentication request and
+requires the Duskie controller to be enabled; call `wake` first if needed.
+Neither changes a saved passcode or Touch ID enrollment. The Duskie branch and
+resulting unlocked state were verified on 2026-10-25; the native branch is a
+historical no-passcode procedure, not a newly tested path with Duskie disabled.
+See VALIDATION.md for the remaining capability limits.
 
 `status.duskieLoaded=false` is a clue, not a complete Safe Mode diagnosis: injection
 can also be disabled or the payload may be absent. Pair it with the Safe Mode
@@ -350,7 +382,7 @@ arbitrary supplied script is safe or ABI-correct. See [EXTENDING.md](EXTENDING.m
 | Foreground app freezes or a sign-in page never appears | Collect a targeted, symbolicated stack sample using DIAGNOSTICS.md; distinguish a main-thread wait from a missing daemon |
 | Action times out | It may already have run; inspect actual state before repeating a toggle/start/stop |
 | Duskie missing from modules | Check installation, injection filter and Safe Mode separately |
-| Screenshot missing export | Built-in capture is unavailable here; use RECIPES.md’s explicit alternative |
+| Screenshot missing export | Confirm the current runtime uses `_UICreateScreenUIImageWithRotation`; older copies used an absent export; see RECIPES.md |
 | Auto-Lock greyed | Check profiled, effective policy and LPM; see RECIPES.md |
 | USB recording unavailable | SSH alone is insufficient; check receiver and reverse forwards |
 | Preview URL returns HTML | Use the media endpoint documented in RECIPES.md |
@@ -362,7 +394,8 @@ arbitrary supplied script is safe or ABI-correct. See [EXTENDING.md](EXTENDING.m
    crashing code. Do not repeatedly invoke the same failed probe.
 2. Detach and stop only your diagnostic server/forward. Do not broadly kill
    processes or remove another operator’s injection files.
-3. Repair/remove the identified cause. If ElleKit placed the diagnosed incident
+3. Preserve the incident marker and relevant report on the host, then repair/remove
+   the identified cause. If ElleKit placed the diagnosed incident
    in Safe Mode, its marker on this phone is `/var/mobile/.eksafemode`.
 4. In an interactive root shell, only for that repaired incident:
 
@@ -375,6 +408,23 @@ rm -f /var/mobile/.eksafemode
    and verify normal operation. Do not clear the marker to conceal an unresolved
    crash loop. Do not perform a normal kernel reboot.
 
+### Choose the smallest required restart
+
+Inspect captures/pending uploads and preserve their state before restarting.
+Use a working root phone shell for privileged commands:
+
+| Scope | Command / procedure |
+|---|---|
+| SpringBoard injection change | `/var/jb/usr/bin/sbreload`; then fresh PID/runtime readiness |
+| One app/helper image | Stop the exact app, then relaunch and verify new PID; see CONTAINERS.md |
+| All existing app/keyboard clients need replacement | `/var/jb/usr/bin/launchctl reboot userspace`; SSH/Frida/receiver connections may disappear |
+| Normal kernel reboot | Do not use on this jailbreak setup |
+
+The word `userspace` is essential; do not shorten that command to `reboot`.
+Its syntax was checked with `launchctl help reboot`; it is not a routine
+connectivity test. After userspace restart, rediscover resources instead of
+assuming an old PID, forward, server or readiness report remains valid.
+
 ### Finish an operation
 
 Read the actual resulting state. Restore temporary preferences/Camera format;
@@ -382,6 +432,8 @@ preserve user media, pending uploads and deliberately retained changes. Frida
 `detach` does not unload a separately dlopened helper or undo native actions.
 Stop only owned server/forward processes and remove their recorded probe paths.
 A process restart is needed to remove live callbacks/hooks from a loaded helper.
+A foreground SSH disconnection can leave its native child running: rediscover
+the exact owned process before restarting a server or deleting its files.
 
 ## Local tool checks
 

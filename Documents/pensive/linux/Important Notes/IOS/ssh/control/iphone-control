@@ -72,7 +72,7 @@ def parser():
     for command in ("home", "wake", "sleep", "lock", "unlock", "duskie-unlock"):
         sub.add_parser(command, help={"home":"Home action", "wake":"wake display only",
             "sleep":"ensure display off; does not toggle an already-off display",
-            "lock":"lock UI", "unlock":"documented no-passcode UI unlock; see README", "duskie-unlock":"authenticate the installed Duskie simulated lock"}[command])
+            "lock":"lock UI", "unlock":"wake and unlock the configured no-passcode/Duskie UI; see README", "duskie-unlock":"authenticate the installed Duskie simulated lock"}[command])
     s = sub.add_parser("screenshot", help="PNG to the host, without a phone-side output file")
     s.add_argument("output", type=Path)
     sub.add_parser("controllers", help="controller hierarchy in --process (default SpringBoard)")

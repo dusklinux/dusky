@@ -32,6 +32,8 @@ phone in the intended state.
 | Table/setting selection | Correct specifier/value/checkmark and live behavior |
 | Notification | Listener’s fresh acknowledgement/state, not notify_post’s code |
 | Saved preferences | Readback, correct owner/mode and cache propagation |
+| App data restore/reset | Target exited before mutation; actual relaunched app sees intended document/main/shared defaults; preserve rollback on failure |
+| Backup archive | Complete checked compression, manifest/container/group validation, successful restore into a disposable fixture |
 | Start/stop recording | Actual recording state, fresh worker status, file growth/finalization |
 | Format selection | Displayed labels, then actual encoded media |
 | FTP/USB test | Fresh timestamp, selected transport, login plus passive data result |
@@ -46,14 +48,17 @@ Do not sum process footprints or infer battery/NAND savings from a control actio
 
 ## Known capability boundaries
 
-- USB SSH/process discovery and the CLI’s unlock, app-launch, controller,
-  notification and custom-JS routes have operated on this profile. Private APIs
-  still require a responsive process and the expected live method encoding.
-- The built-in screenshot route is **unavailable on this profile** because it
-  requests the absent `UICreateScreenUIImage` export. RECIPES.md supplies an
-  explicit adapter for the different native API used by the installed capture
-  path. Inspect that adapter’s output/orientation; it is not a tested replacement
-  built into the CLI.
+- USB SSH/process discovery and the CLI's app-launch, controller, notification
+  and custom-JS routes have operated on this profile. The current `unlock` Duskie
+  branch was verified from display off/locked to display on/unlocked with the
+  same SpringBoard PID. The native-only branch remains historical. Direct native
+  finish while Duskie's simulated lock is active caused an abort; correct ABI
+  alone does not make that route valid. Private APIs still require a responsive
+  process and the expected live method encoding.
+- The current built-in screenshot route uses
+  `_UICreateScreenUIImageWithRotation(BOOL)` and produced a valid 1242×2208 PNG on
+  this profile. Older copies requesting `UICreateScreenUIImage` fail. Inspect
+  visible content/orientation, not just the command exit code.
 - Native dark PIN controls may be omitted by the screenshot adapter even while
   the owner sees them correctly on the display. A black capture alone does not
   prove a blank panel. Check the live view tree/style and physical display before
@@ -72,6 +77,25 @@ Do not sum process footprints or infer battery/NAND savings from a control actio
   and the RPC deadline does not bound all Frida attach/teardown operations.
 - Frida detach does not undo changes or unload separately dlopened callbacks.
 
+## What was exercised versus documented
+
+The 2026-10-25 verification covered live key SSH, matching Frida 17.2.17 attach,
+status, safe Duskie unlock, app launch/controller/view inspection, PNG capture,
+and a compiled/signed standalone unlock helper loaded into SpringBoard and
+controlled through SSH/libnotify without a Frida request. It also covered real sandboxed main/App Group backup/restore/reset behavior. Archive tests
+covered truncated gzip, wrapped ZIP/Mac metadata, ENOSPC, rollback and FTP passive
+transfers, fallback and origin preservation. These are profile-specific results,
+not guarantees that optional services remain installed or every future app behaves
+identically. Keep the exact project test logs outside this manual.
+
+Camera format/recording, Wi-Fi mutation and daemon isolation procedures retain
+their separately established profile; this manual audit did not start a new
+recording or toggle radios/services just to refresh their dates. Physical touch
+streams, end-to-end AirDrop delivery and individual TCC prompts remain separate
+verification tasks. Mark newly added templates as such until their actual result
+has been exercised. Run local tests after changing the CLI/runtime; these never
+replace device checks.
+
 ## After a failure
 
 Record the exact error and last action. Check fresh processes, responsive main
@@ -79,6 +103,10 @@ queue, injection state and relevant crash/log output. Stop the specific failed
 probe rather than immediately repeat a mutation. Follow README.md’s diagnosed
 recovery procedure. Clear Safe Mode only after identifying/removing the cause;
 never normal-reboot this jailbreak setup as a generic recovery step.
+
+An empty CrashReporter directory is not proof that no crash occurred: collectors
+can be disabled. Compare the fresh PID/runtime and Safe Mode marker, and retain
+any marker before repair. DIAGNOSTICS.md gives focused crash evidence commands.
 
 For a frozen foreground app, use [DIAGNOSTICS.md](DIAGNOSTICS.md) to capture a
 short targeted stack sample over SSH before repeatedly attaching Frida or

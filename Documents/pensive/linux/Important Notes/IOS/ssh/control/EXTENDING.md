@@ -20,7 +20,11 @@ Every UI operation runs through `onMain(job)`. That helper calls dispatch_async_
 on the exported main queue, retains its NativeCallback and pins the script until
 the scheduled callback runs. It establishes an autorelease pool for Foundation
 objects created by that job. Job code must be **synchronous**; do not retain an
-Objective-C object through an await after that pool has drained. Convert output
+Objective-C object through an await after that pool has drained. Frida pointers
+do not retain the Objective-C object they point to. Compiled ARC code has the
+same requirement for an unowned bridged temporary; keep the NSString path owned
+for all later C calls. Use a state-owned ivar or a precise-lifetime local as shown
+in CONTAINERS.md before keeping a CFStringRef. Convert output
 to ordinary JavaScript strings, numbers, arrays and objects before returning.
 
 The host's RPC cancellation bounds its wait. It cannot roll back an operation
@@ -182,6 +186,7 @@ that every action has been run in the new wrapper. Check capability status in [V
 | SBLockScreenManager / isUILocked | `B16@0:8` |
 | SBLockScreenManager / _finishUIUnlockFromSource:withOptions: | `B28@0:8i16@20` |
 | SBLockScreenManager / lockUIFromSource:withOptions: | `v28@0:8i16@20` |
+| DKLockController / enabled | `B16@0:8` |
 | DKLockController / authenticateInternally | `v16@0:8` |
 | CAMViewfinderViewController / currentCaptureMode | `q16@0:8` |
 | CAMViewfinderViewController / isRecording, startRecording, stopRecording, capturePhoto | `B16@0:8` |
@@ -197,6 +202,14 @@ that every action has been run in the new wrapper. Check capability status in [V
 | UIControl / isEnabled, UIView / isHidden | `B16@0:8` |
 | LSApplicationWorkspace class / defaultWorkspace | `@16@0:8` |
 | NSData / base64EncodedStringWithOptions: | `@24@0:8Q16` |
+
+For `unlock`, **semantic state matters beyond ABI**: the native finish method
+aborted SpringBoard while Duskie's simulated lock was active. The current runtime
+wakes, checks lock state, and uses enabled `DKLockController.authenticateInternally`
+in that case. Do not bypass that routing in a custom snippet; see unlock.md.
+Screenshot is a C export, `_UICreateScreenUIImageWithRotation(BOOL) -> UIImage *`,
+not an Objective-C selector. Call with Frida result `pointer`, argument `bool` 1,
+on main, then encode/copy the result before the autorelease pool drains.
 
 ## Adding a built-in operation
 
@@ -249,6 +262,10 @@ rules again. `js` remains available for deliberate expert probes.
 
 - Wait for injection initialization after a UI restart; see README.md. Serialize
   Frida operations. A suspended app or blocked main queue may not answer an RPC.
+- An exact ABI match is necessary but does not establish a valid operation in the
+  current lock, scene or capture state. Use the owning feature's state machine.
+- An assertion or launch acknowledgement is not completion. Stop/wait and fresh
+  sandboxed-app checks for data operations are documented in CONTAINERS.md.
 - Do not call arbitrary private objects’ `description` to dump them. Getters and
   descriptions can run code, throw KVC exceptions or change state. Read only
   required typed values; use className for unsupported objects.

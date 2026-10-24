@@ -12,6 +12,7 @@ and verify their result; they are not universal UI automation APIs.
 ./iphone-control --control-path /tmp/iphone-control-ssh ps
 # Frida commands require the prepared interpreter and server/forward:
 .venv/bin/python ./iphone-control --control-path /tmp/iphone-control-ssh apps
+.venv/bin/python ./iphone-control --control-path /tmp/iphone-control-ssh unlock
 .venv/bin/python ./iphone-control --control-path /tmp/iphone-control-ssh launch com.dusklinux.duskie.remoteftp
 .venv/bin/python ./iphone-control --control-path /tmp/iphone-control-ssh --process DuskieRemoteFTP controllers
 .venv/bin/python ./iphone-control --control-path /tmp/iphone-control-ssh --process DuskieRemoteFTP ui
@@ -21,7 +22,10 @@ Known app identities: native Camera `com.apple.camera` / process `Camera`;
 Settings `com.apple.Preferences` / `Preferences`; Duskie
 `com.dusklinux.duskie.remoteftp` / `DuskieRemoteFTP`. App display name is **Duskie**.
 Discover identifiers for other apps with `apps`; never infer the executable from
-the displayed name. A launched app can take time to build its UI. Don't launch
+the displayed name. A launched app can take time to build its UI. Keep the display unlocked and the
+target foreground for main-queue probes. A suspended app can time out even though
+its PID exists; inspect status, foreground it, and observe readiness before
+retrying. A timed-out mutating job may already be queued. Don't launch
 another camera client while one owns an active capture session.
 
 Prefer an exposed semantic action over simulated coordinates. `tap` works only
@@ -171,6 +175,26 @@ accessibility identifiers `share-wifi` and `share-usb`, usable with `tap --id`
 when enabled. Standalone controller fixtures can test preparation and transfer
 logic, but button delivery requires a running UIKit application; see
 [the validation limits](VALIDATION.md#known-capability-boundaries).
+
+## Post a Darwin notification with SSH only
+
+Do not start Frida just to post a known notification. The phone's installed
+Python can call libnotify through libSystem. This example posts Duskie's settings
+notification; use it only after an intended settings change:
+
+```sh
+./iphone-control --control-path /tmp/iphone-control-ssh ssh -- /var/jb/usr/bin/python3 -c '
+import ctypes, sys
+lib = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
+lib.notify_post.argtypes = [ctypes.c_char_p]
+lib.notify_post.restype = ctypes.c_int
+raise SystemExit(lib.notify_post(sys.argv[1].encode()))
+' com.dusklinux.edgedock/settings
+```
+
+Return code 0 confirms posting, not that a listener acted. Read fresh listener
+state or its durable report. Notifications can coalesce; use the worker's command
+queue for capture requests and the standalone helper's snapshot report for unlock.
 
 ## Native Slo-mo and ordinary video
 
@@ -330,14 +354,23 @@ file growth. Distinguish free NAND from a full RAM staging queue. On this setup,
 success; measure with df/mount. Never overmount retained media or delete pending
 captures to hide a failure. A File Provider location can materialize a local cache.
 
-## Screenshot when the built-in command is unavailable
+## Screenshot to the host
 
-The bundled `screenshot OUTPUT.png` currently looks up `UICreateScreenUIImage`,
-which is absent on this profile. Do not loop that command or rely on
-idevicescreenshot when screenshotr/developer-disk-image support is unavailable.
-The installed Duskie capture path uses `_UICreateScreenUIImageWithRotation(BOOL)`.
-The following explicit adapter uses that known C signature and PNG conversion;
-verify its image/orientation on the current runtime before relying on it.
+The bundled command now uses `_UICreateScreenUIImageWithRotation(BOOL)` with 1
+and PNG conversion, verified on this profile. Older runtime copies used the absent
+`UICreateScreenUIImage` export. Wake/unlock only when the task needs it, then:
+
+```sh
+./iphone-control --control-path /tmp/iphone-control-ssh screenshot ./screen.png
+```
+
+This writes the requested host file and can overwrite it; no phone output file is
+created. Inspect image dimensions and visible contents. A valid PNG can still be
+black or omit protected/dark PIN controls. Do not diagnose a broken UI from that
+alone. `idevicescreenshot` also needs screenshotr/developer-disk-image support;
+it is not an automatic fallback when that service is unavailable.
+
+For a deliberate custom probe, the equivalent adapter is:
 
 Save as `screen-capture.js` in your work directory:
 
@@ -366,7 +399,7 @@ PYPNG
 ```
 
 Inspect the resulting PNG dimensions/orientation. Do not publish screen contents.
-The adapter is not a claim that the unchanged built-in screenshot route works.
+The built-in route and this adapter use the same export; neither provides HID input.
 
 ## Auto-Lock and Low Power Mode policy
 
@@ -382,15 +415,15 @@ The existing job file is
 Inspect first from an appropriately privileged phone shell:
 
 ```sh
-/var/jb/bin/launchctl print-disabled system
-/var/jb/bin/launchctl print system/com.apple.managedconfiguration.profiled
+/var/jb/usr/bin/launchctl print-disabled system
+/var/jb/usr/bin/launchctl print system/com.apple.managedconfiguration.profiled
 ```
 
 For a repair that requires the service, enable it; bootstrap only if unregistered:
 
 ```sh
-/var/jb/bin/launchctl enable system/com.apple.managedconfiguration.profiled
-/var/jb/bin/launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.managedconfiguration.profiled.plist
+/var/jb/usr/bin/launchctl enable system/com.apple.managedconfiguration.profiled
+/var/jb/usr/bin/launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.managedconfiguration.profiled.plist
 ```
 
 Check command results and re-read the effective policy/row. Other management,
@@ -448,3 +481,65 @@ rg/plistlib to filter/parse downloaded output rather than assume rg/plutil/notif
 exists on the phone. Noninteractive PATH can differ from the interactive root
 shell; use confirmed absolute paths. If notifyutil is absent, unlock.md shows a
 phone Python ctypes call to libnotify without needing Frida.
+
+## Inspect, back up, clear cache, and reset app containers
+
+Use [CONTAINERS.md](CONTAINERS.md) for container discovery, app termination,
+preference-cache synchronization, archive layout and checked restore procedures.
+It replaces the old assertion-only termination and tar-child-gzip advice. Do not
+exclude WebKit persistent state or recursively change a live container's metadata.
+
+## Deserializing binary plist image attachments in remote sharing
+
+An image-typed `NSItemProvider` can return a keyed UIImage archive with a
+`bplist00` prefix. That prefix alone only identifies a binary plist; an ordinary
+plist is not necessarily an image. Prefer concrete offered PNG/JPEG/HEIC/GIF/WebP
+identifiers to generic image/item representations. For an image representation:
+
+```objc
+UIImage *image = nil;
+if (data.length >= 8 && !memcmp(data.bytes, "bplist00", 8)) {
+    @try {
+        image = [NSKeyedUnarchiver unarchivedObjectOfClass:UIImage.class
+                                               fromData:data error:NULL];
+    } @catch (__unused NSException *exception) {
+        image = nil;
+    }
+}
+NSData *png = image ? UIImagePNGRepresentation(image) : nil;
+// Require nonempty png and check its write result before reporting success.
+// Change the filename extension to .png, including a misleading existing .jpg.
+```
+
+Keep ordinary data/plist attachments as data. A failed image decode is an error,
+not a successful raw-plist image export. File representations are temporary: copy
+them into owned staging before their completion callback returns. Sniff a small
+prefix (the current implementation reads 16 bytes); read the whole file only
+when decoding a serialized image. Do not load a large ordinary attachment merely
+to choose its extension. Verify transferred bytes or a decoded image on the PC.
+See CONTAINERS.md for explicit ownership of temporary staging and cleanup.
+
+## Choose the FTP transport for the operation
+
+The saved remote configuration lives in the app group
+`group.com.dusklinux.duskie.remoteftp`, in `connection.plist`; discover the UUID,
+never hardcode it. Read privately: it contains credentials. The saved Wi-Fi
+`host`, `port` (default 21), `username`, `password` and `root` are preserved when
+`transport` switches to `usb`. USB's effective endpoint is `127.0.0.1:2240`,
+anonymous user, password `duskie`, root `/`, with the receiver's reverse forwards.
+That is a separate loopback login, not the Wi-Fi account or the SSH credential.
+
+| Operation | Transport behavior |
+|---|---|
+| Recording and Remote FTP Files | Use selected saved `transport`; preserve original transport for retained recordings |
+| Send to Remote share sheet | Starts with saved Wi-Fi; USB button explicitly retries via USB after failure |
+| App Data backup upload/list | Try saved Wi-Fi first, then automatically try USB if the connection check fails |
+| Listed App Data restore/delete | Keep the exact configuration on which the item was listed; do not fall back to another server |
+
+Connection checks include login and passive data listing; TCP connect alone is
+insufficient. App Data's initial fallback does not promise to retry every failed
+mid-transfer operation on a different destination. Remote backup paths are
+`Duskie Backups/<bundleID>/<filename>` beneath the configured FTP root, not a
+fixed host path. The receiver's `--directory` controls its host parent. The same
+filename can exist on two servers; an item selected for restore or deletion must
+remain pinned to its original host/port/root/login snapshot after settings change.

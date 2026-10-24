@@ -63,6 +63,18 @@ executables can need their own platform/no-container/no-sandbox or feature-speci
 entitlements. Use the target project’s reviewed entitlement plist and sign with
 `ldid -S/path/to/entitlements.plist EXECUTABLE`; do not borrow the Frida server’s
 entitlements. A process killed at startup is not proof its ObjC logic is wrong.
+
+**App executable identity matters:** sign an app/extension with
+`ldid -I<its-bundle-ID> -S/path/to/its-entitlements.plist EXECUTABLE`.
+The installed ldid defaults its CodeDirectory identifier to the executable
+basename; that is not necessarily the Info.plist bundle identifier. A disposable
+sandboxed app with a mismatch used a different runtime HOME from its registered
+container. Keep Info.plist, application-identifier, group entitlements and signing
+identifier consistent. Use each extension's own bundle identifier. Do not add
+no-sandbox/no-container to disguise a container mismatch. See CONTAINERS.md for
+a real-app fixture sequence. Ordinary injected dylibs use the plain signing
+route above and do not become apps by assigning them an app identifier.
+
 The observed standalone fixture entitlement set is shown below; it is not a
 universal entitlement set for every private API:
 
@@ -86,6 +98,7 @@ updating an owned helper. In the root shell:
 cp /var/mobile/Library/ControlTools/ControlUnlock.dylib /var/jb/Library/MobileSubstrate/DynamicLibraries/ControlUnlock.dylib.new
 mv /var/jb/Library/MobileSubstrate/DynamicLibraries/ControlUnlock.dylib.new /var/jb/Library/MobileSubstrate/DynamicLibraries/ControlUnlock.dylib
 printf '{ Filter = { Bundles = ( "com.apple.springboard" ); }; }\n' > /var/jb/Library/MobileSubstrate/DynamicLibraries/ControlUnlock.plist
+chown 0:0 /var/jb/Library/MobileSubstrate/DynamicLibraries/ControlUnlock.dylib /var/jb/Library/MobileSubstrate/DynamicLibraries/ControlUnlock.plist
 chmod 755 /var/jb/Library/MobileSubstrate/DynamicLibraries/ControlUnlock.dylib
 chmod 644 /var/jb/Library/MobileSubstrate/DynamicLibraries/ControlUnlock.plist
 /var/jb/usr/bin/sbreload
@@ -94,14 +107,21 @@ chmod 644 /var/jb/Library/MobileSubstrate/DynamicLibraries/ControlUnlock.plist
 The filter above is **SpringBoard only**. For an app helper use that app’s actual
 bundle identifier, not its executable/display name. Wait for fresh-PID readiness
 before issuing notifications or attaching Frida. For ControlUnlock, use its own
-report described in unlock.md. A userspace restart is required when all existing
-app processes must load a changed broad injection; respring alone is narrower.
+report described in unlock.md. Restart affected app processes individually when
+that covers the change. If all
+existing app processes must load a changed broad injection, a userspace restart
+covers them; respring alone is narrower. Check pending captures/uploads first.
+For the verified command/scope distinction see README.md's restart table.
 Never perform a normal kernel reboot on this setup.
 
 A temporary reviewed dylib may instead be dlopened through a Frida script in the
 target process. Call dlopen/dlsym with C strings, check both results, and invoke
 only its declared exported ABI. Retain callbacks/objects correctly. A second
 dlopen of the same path can reuse the loaded image rather than a rebuilt file.
+Strongly retain Objective-C values across native C calls and delayed callbacks.
+A bridged pointer to a temporary `url.path` NSString is not retained by its
+CFStringRef local; use a state-owned ivar or a precise-lifetime local. The
+concrete cache-sync failure and fix are in CONTAINERS.md.
 
 ## 4. Add hooks deliberately
 
@@ -132,7 +152,9 @@ and symbolizing a live wait before changing a hook.
 ## 5. Verify and remove
 
 Check installed file hashes and the **fresh target process’s** loaded module,
-readiness report and intended behavior. Saved preferences or a successful copy
+readiness report and intended behavior. Use host `sha256sum` and phone Python
+`hashlib.sha256(open(path, "rb").read()).hexdigest()` for a hash comparison when
+no phone hash utility is available. Saved preferences or a successful copy
 alone do not prove the new code is loaded. Test relevant failure/disabled paths;
 restore temporary settings and remove diagnostic flags.
 

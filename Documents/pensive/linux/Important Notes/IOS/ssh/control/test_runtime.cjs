@@ -1,7 +1,8 @@
 // Host-only contract tests for the raw bridge. These do not emulate iOS behavior.
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
 const calls=[];let methodEncoding='B28@0:8@16B24';
-function pointer(kind,value){return {kind,value,isNull:()=>false,readUtf8String:()=>value,toString:()=>kind+':'+value};}
+let lockEnabled=true,uiLocked=true,duskiePresent=true;
+function pointer(kind,value){return {kind,value,isNull:()=>kind==='nil',readUtf8String:()=>value,toString:()=>kind+':'+value};}
 const sandbox={console,Map,Set,Promise,Object,Number,Error,setTimeout,
     rpc:{exports:{}},ptr:()=>pointer('ptr',0),
     Memory:{allocUtf8String:text=>pointer('cstring',text)},
@@ -10,13 +11,16 @@ const sandbox={console,Map,Set,Promise,Object,Number,Error,setTimeout,
         return (...args)=>{
             calls.push({name,result,types,args});
             switch(name){
-            case 'objc_getClass':return pointer('class',args[0].value);
+            case 'objc_getClass':return pointer(args[0].value==='DKLockController'&&!duskiePresent?'nil':'class',args[0].value);
             case 'sel_registerName':return pointer('selector',args[0].value);
             case 'object_getClass':return pointer('class','Fake');
             case 'class_getInstanceMethod':return pointer('method',args[1].value);
-            case 'method_getTypeEncoding':return pointer('encoding',({'isRecording':'B16@0:8','currentCaptureMode':'q16@0:8','changeToMode:device:':'v32@0:8q16q24','startRecording':'B16@0:8'})[args[0].value]||methodEncoding);
+            case 'method_getTypeEncoding':return pointer('encoding',({'sharedInstance':'@16@0:8','enabled':'B16@0:8','isUILocked':'B16@0:8','authenticateInternally':'v16@0:8','_finishUIUnlockFromSource:withOptions:':'B28@0:8i16@20','isRecording':'B16@0:8','currentCaptureMode':'q16@0:8','changeToMode:device:':'v32@0:8q16q24','startRecording':'B16@0:8'})[args[0].value]||methodEncoding);
             case 'class_getName':return pointer('cstring','Fake');
             case 'objc_msgSend':
+                if(args[1].value==='sharedInstance')return pointer('object',args[0].value);
+                if(args[1].value==='enabled')return lockEnabled?1:0;
+                if(args[1].value==='isUILocked')return uiLocked?1:0;
                 if(args[1].value==='isRecording')return 0;
                 if(args[1].value==='currentCaptureMode')return 2;
                 if(args[1].value==='isKindOfClass:')return args[0].kind==='NSString'?1:0;
@@ -29,7 +33,7 @@ const sandbox={console,Map,Set,Promise,Object,Number,Error,setTimeout,
     }
 };
 vm.createContext(sandbox);
-vm.runInContext(fs.readFileSync(__dirname+'/runtime.js','utf8')+'\nglobalThis.fixture={checked,ns,text};',sandbox);
+vm.runInContext(fs.readFileSync(__dirname+'/runtime.js','utf8')+'\nglobalThis.fixture={checked,ns,text,unlockAfterWake,actions};',sandbox);
 const {checked,ns,text}=sandbox.fixture;
 const string=ns('com.apple.camera');assert.equal(string.kind,'NSString');
 assert.equal(text(string),'com.apple.camera');assert.equal(text(pointer('NSNumber','123')),null);
@@ -47,7 +51,21 @@ sandbox.fixtureCameraActions['camera.mode']({mode:2});
 assert.equal(calls.at(-1).args[2],2);assert.equal(calls.at(-1).args[3],0);
 assert.equal(sandbox.fixtureCameraActions['camera.start']().accepted,true);
 assert.throws(()=>sandbox.fixtureCameraActions['camera.mode']({mode:99}),/Only Photo/);
+const {unlockAfterWake}=sandbox.fixture;
+let start=calls.length;
+assert.equal(unlockAfterWake().route,'Duskie simulated lock');
+let selectors=calls.slice(start).filter(c=>c.name==='objc_msgSend').map(c=>c.args[1].value);
+assert.ok(selectors.includes('authenticateInternally'));
+assert.ok(!selectors.includes('_finishUIUnlockFromSource:withOptions:'),'enabled Duskie lock must never receive native finish');
+uiLocked=false;start=calls.length;
+assert.equal(unlockAfterWake().changed,false);
+assert.ok(!calls.slice(start).some(c=>c.name==='objc_msgSend'&&c.args[1].value==='authenticateInternally'));
+uiLocked=true;lockEnabled=false;
+assert.equal(unlockAfterWake().route,'native no-passcode');
+duskiePresent=false;
+assert.equal(unlockAfterWake().route,'native no-passcode');
+assert.throws(()=>sandbox.fixture.actions['duskie-unlock'](),/not enabled/);
 (async()=>{
     await assert.rejects(sandbox.rpc.exports.execute('unknown-action',{}),/Unknown action/);
-    console.log('PASS: NSString conversion/type validation, explicit BOOL argument, ABI rejection before invocation, nil rejection, Slo-mo mode/start dispatch, unknown-action rejection.');
+    console.log('PASS: NSString conversion/type validation, explicit BOOL argument, ABI rejection before invocation, nil rejection, Slo-mo mode/start dispatch, unknown-action rejection, Duskie/native unlock routing and already-unlocked no-op.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

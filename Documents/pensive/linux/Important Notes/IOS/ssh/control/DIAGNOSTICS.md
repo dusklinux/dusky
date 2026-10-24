@@ -65,6 +65,54 @@ path before trying macOS-style `log show` arguments. Logs can contain account or
 message data; keep raw captures outside published source and report only the
 evidence needed for the diagnosis.
 
+## CrashReporter and Safe Mode evidence
+
+Before a reproduction, save the current SpringBoard PID, Duskie runtime report,
+Safe Mode marker state and newest report names/times. This read-only script runs
+in the **phone Python interpreter**, not the host interpreter:
+
+```python
+import os, json, subprocess
+root = '/var/mobile/Library/Logs/CrashReporter'
+print(subprocess.check_output(['/bin/ps', '-A', '-o', 'pid,comm'], text=True))
+for p in ('/var/mobile/.eksafemode',
+          '/var/mobile/Library/Caches/Duskie-runtime.json'):
+    if os.path.isfile(p):
+        print(p, os.stat(p).st_mtime)
+        with open(p) as f:
+            print(f.read())
+    else:
+        print(p, 'absent')
+entries = []
+if os.path.isdir(root):
+    for name in os.listdir(root):
+        path = os.path.join(root, name)
+        if os.path.isfile(path):
+            entries.append((os.stat(path).st_mtime, name))
+print('Newest crash files:', json.dumps(sorted(entries, reverse=True)[:15]))
+```
+
+Run via `ssh ... 'python3 -'` with a quoted heredoc, saving output privately on
+the host. After failure, compare fresh evidence with that baseline. Copy the
+specific report using CLI `get` or scp; inspect exception/termination reason,
+triggered thread, backtrace and relevant binary images. An `.ips` file can have
+one JSON metadata header followed by another JSON document; do not assume one
+`json.load` parses the whole file. Read only the relevant parts for the diagnosis.
+
+The marker `/var/mobile/.eksafemode` can contain the incident time/signal even
+when no CrashReporter file appears. Preserve its contents **before** removing it
+for a repaired incident (README.md). Do not clear the crash history or enable an
+entire collector group to make a report exist. Disabled/unregistered collectors
+can explain a missing report; no new report alone does not prove stability.
+Pair reports with PID continuity, current injection/readiness and actual behavior.
+
+If a crash follows a native probe, check semantic state as well as ABI. Direct
+native unlock while Duskie's simulated lock was active aborted SpringBoard;
+`unlock.md` gives the corrected route. A dangling bridged temporary NSString in
+preference synchronization produced a memory fault; CONTAINERS.md explains the
+strong-ownership fix. Do not repeatedly reproduce either failing call to gather
+more evidence when the cause is already established.
+
 ## Sample a frozen app before restarting it
 
 A blocked main queue may never answer a Frida UI probe. Discover a fresh PID
