@@ -49,7 +49,7 @@ aliases:
   - [ ] [[KVM Setup/VM Creation/06 Guest Integration — Agent, Clipboard & Input]] — `spicevmc` + `org.qemu.guest_agent.0`, tablet optional
 - [ ] Windows path [[+ MOC Windows Installation Through Virt Manager]] → after canonical, adds [[Enable Trusted Platform Module (TPM)]] (`tpm-crb` 2.0), [[Enable Hyper-V Enlightenments]] / [[Hyper-V Enlightenments]] / [[Hypervisor Features]], [[Install a Windows Virtual Machine on KVM]] (`viostor`/`NetKVM`), `virtio-win-guest-tools`
 - [ ] Linux path [[gnome-boxes/linux]] + [[gnome-boxes]] — for Boxes `qemu:///session` SPICE plumbing ( `spice-vdagent` user service, Xwayland, wl-clipboard bridge); for `qemu:///system` Linux use canonical above (no TPM/Hyper-V)
-- [ ] [[Looking Glass]] → `25_looking_glass.py` + `60_configure_client_ini.py` — `looking-glass`/`freerdp`, `/dev/shm/looking-glass` `0660 operator:kvm`, `O_EXCL|O_NOFOLLOW`, `posix_fallocate`, `<shmem>` ivshmem-plain (no `<qemu:commandline>`)
+- [ ] [[Looking Glass]] → `25_looking_glass.py` + `60_configure_client_ini.py` — `looking-glass-idd-setup.exe` IDD driver, `/dev/shm/looking-glass` `0660 operator:kvm`, `O_EXCL|O_NOFOLLOW`, `posix_fallocate`, `<shmem>` ivshmem-plain, client config (`[lgmp] shmDevice`, `autoResize=no`, `setGuestRes=yes`)
 - [ ] Optional: [[Optimize the Host with TuneD]] — `tuned` vs `TLP` conflict
 
 > [!warning] Legacy entries kept as warnings

@@ -1,5 +1,5 @@
 ---
-title: "GPU Isolation — VFIO Binding (Arch, Kernel 7.1.8)"
+title: "GPU Isolation — VFIO Binding (Arch, Kernel 7.3+)"
 tags:
   - kvm
   - vfio
@@ -11,10 +11,10 @@ aliases:
   - Host PC Preparation for GPU isolation
 ---
 
-# GPU Isolation — VFIO Binding (Arch, Kernel 7.1.8)
+# GPU Isolation — VFIO Binding (Arch, Kernel 7.3+)
 
 > [!info] Audited
-> `15_gpu_probing_kernal_param_mkinit.py` (sysfs truth, IOMMU group + ID-collision audits, BLS Type1/Type2, `mkinitcpio` `modconf<kms`, softdep vs blacklist). Binding via `vfio-pci` predates 6.x; unchanged in 7.1. Canonical state: `/var/lib/arsonix/state.json`.
+> `15_gpu_probing_kernal_param_mkinit.py` (sysfs truth, IOMMU group + ID-collision audits, BLS Type1/Type2, `mkinitcpio` `modconf<kms`, softdep vs blacklist). Binding via `vfio-pci` predates 6.x; rock-solid on 7.3+. Canonical state: `/var/lib/arsonix/state.json`.
 
 > [!warning] MUX switch (laptop)
 > BIOS → **Hybrid / Optimus** (not Discrete/NVIDIA-only) or you blind the host (no iGPU to render `sddm`/`gdm`). Use G-Helper on ASUS.

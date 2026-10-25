@@ -9,7 +9,7 @@ tags:
 # KVM Kernel Modules — Autoload vs Manual
 
 > [!abstract] What are we doing?
-> Verify the kernel is allowed to act as a hypervisor. On Arch 7.1+ `systemd-udevd` autoloads the correct `kvm` flavour at boot; manual work is rarely needed.
+> Verify the kernel is allowed to act as a hypervisor. On Arch (Kernel 7.3+) `systemd-udevd` autoloads the correct `kvm` flavour at boot; manual work is rarely needed.
 
 ## 1. Check autoload (expected path)
 

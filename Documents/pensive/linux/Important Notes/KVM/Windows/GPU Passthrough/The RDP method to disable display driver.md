@@ -63,8 +63,10 @@ Set-NetConnectionProfile -NetworkCategory Private   # temporary
 > You lose mouse + video with no live channel back. **Always via RDP**.
 
 ```bash
-# from Arch host (55_rdp.py probes MAC → leases → ARP; prompts for user/password/IP if not resolved)
-# manual equivalent:
+# from Arch host (55_rdp.py probes MAC → leases → ARP; tests port 3389 reachability)
+# Wayland native (FreeRDP 3.x):
+wlfreerdp /v:192.168.122.9 /u:dusky /cert:ignore /gfx:AVC444 /network:auto +clipboard /dynamic-resolution
+# Or xfreerdp3 / sdlfreerdp3 fallback:
 xfreerdp3 /v:192.168.122.9 /u:dusky /cert:ignore /dynamic-resolution
 # cached in ~/.config/dusky/settings/virt/win_state (rdp_ip/rdp_user)
 ```
@@ -74,7 +76,7 @@ xfreerdp3 /v:192.168.122.9 /u:dusky /cert:ignore /dynamic-resolution
 1. `devmgmt.msc` → **Display adapters**
 2. Right-click **Microsoft Basic Display Adapter** / **Red Hat QXL controller** → **Disable device → Yes**
    Windows loses emulated output → scans next GPU → **NVIDIA** wakes; RDP stays (independent RDP channel)
-3. Continue in [[Looking Glass]] Phase 3.7 (VDD virtual monitor, `looking-glass-host` capture)
+3. Continue in [[Looking Glass]] Phase 3 (Looking Glass IDD driver setup, `Root\LGIdd` + `Root\LGInput`, and IVSHMEM capture via `LGIddHelper`).
 
 > [!tip] Troubleshoot
 > `55_rdp.py:print_rdp_troubleshooting` checks WARP/VPN/UFW (host) and gives one-click PowerShell to: `fDenyTSConnections=0`, `UserAuthentication=0`, `LimitBlankPasswordUse=0`, `NetworkCategory Private`, `Enable-NetFirewallRule -DisplayGroup "Remote Desktop"`. Also verifies `xfreerdp3` binary (`freerdp` pkg).

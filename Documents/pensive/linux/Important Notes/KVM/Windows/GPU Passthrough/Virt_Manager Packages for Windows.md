@@ -6,7 +6,7 @@ tags:
   - packages
 ---
 
-# KVM Packages for Windows Guest (Arch · Kernel 7.1.8+)
+# KVM Packages for Windows Guest (Arch · Kernel 7.3+)
 
 > [!abstract] Goal
 > Hypervisor stack for Windows guest with passthrough. Replaces stale `qemu-full`/`bridge-utils`/`iptables-nft` lists.

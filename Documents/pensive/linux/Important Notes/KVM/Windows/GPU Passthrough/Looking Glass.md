@@ -11,27 +11,31 @@ tags:
 # Looking Glass — Muxless Passthrough (Native `<shmem>`, Aug 2026)
 
 > [!info] Stack
-> **Arch · Kernel 7.1.8 · systemd 261 · libvirt 12.6 · QEMU 11.1 · B7+ · Windows 10 (de-bloated)**
+> **Arch · Kernel 7.3+ · systemd 262 · libvirt 12.6+ · QEMU 11.1 · Looking Glass IDD Development Stack · Windows 10/11**
 > Even on MUX-laptops, follow this muxless path — works across modes.
 
 ```
-Windows Guest (NVIDIA pass-through)   Kernel SHM                      Host
-NVIDIA → VDD (ghost monitor)  →  /dev/shm/looking-glass (RAM, ivshmem-plain)  →  looking-glass-client (Wayland)
-LG Host (capture)                 memory-backend-file SHARE
+Windows Guest (NVIDIA pass-through)          Kernel SHM                           Host
+NVIDIA → Looking Glass IDD (Root\LGIdd)  →  /dev/shm/looking-glass (ivshmem-plain)  →  looking-glass-client (Wayland/EGL)
+Direct kernel-level frame output            Zero-copy RAM buffer
+(LGIddHelper Windows Service)
 ```
 
-| Comp | Role |
+| Component | Role |
 |---|---|
-| **VDD** | Headless render target (IDD) |
-| **LG Host** | Captures NVIDIA fb → shm |
-| **`/dev/shm/looking-glass`** | `tmpfs` `ivshmem-plain` region — zero-copy |
-| **`looking-glass-client`** | Reads shm, renders via OpenGL on Wayland |
-| **`xfreerdp3`** | Rescue RDP while emulated display disabled (`freerdp` pkg) |
+| **Looking Glass IDD** | Modern unified Indirect Display Driver (`Root\LGIdd`) + direct input (`Root\LGInput`) |
+| **`LGIddHelper`** | Windows service managing frame synchronization into IVSHMEM |
+| **`/dev/shm/looking-glass`** | Host `tmpfs` `ivshmem-plain` region — zero-copy buffer |
+| **`looking-glass-client`** | Reads shm, renders via EGL/OpenGL on Wayland (Hyprland) |
+| **`wlfreerdp` / `xfreerdp3`** | Rescue RDP while emulated display disabled (`freerdp` pkg) |
+
+> [!note] IDD Driver vs Legacy B7 Host
+> Previous B7 stable releases used a separate user-space `Looking Glass (host)` capture application paired with a third-party Virtual Display Driver (MttVDD). The modern Looking Glass development stack replaces both with the official **Looking Glass IDD driver** (`looking-glass-idd-setup.exe`). The IDD driver renders directly into IVSHMEM without requiring `devcon.exe`, `vdd_settings.xml`, or the old background capture host service.
 
 ## Prereqs
 
 - [ ] VFIO bound (`vfio-pci` per [[Host PC  Preparation for GPU isolation]])
-- [ ] VM is Windows 10 libvirt (`qemu:///system`)
+- [ ] VM is Windows 10/11 libvirt (`qemu:///system`)
 - [ ] `kvm` group: `groups | grep kvm`
 - [ ] packages: `sudo pacman -S --needed linux-headers` (+ `dkms` if you ever used `kvmfr`)
 
@@ -41,7 +45,8 @@ LG Host (capture)                 memory-backend-file SHARE
 
 ```bash
 paru -S --needed looking-glass freerdp   # 25_looking_glass.py:install_packages fallback paru
-# Windows side: download matching LG Host from https://looking-glass.io/downloads (versions must match exactly)
+# Windows side: download paired looking-glass-idd-setup.exe from https://looking-glass.io/downloads
+# Note: Linux client and Windows IDD installer MUST come from the exact same build/commit!
 ```
 
 ### 1.2 Size (SDR, double-buffer + 10 MiB, power-of-two)
@@ -132,91 +137,122 @@ virsh -c qemu:///system start win_10_dusky
 virsh -c qemu:///system domstate win_10_dusky  # running
 ```
 
-## Phase 3 — Windows: drivers + VDD/LG Host
+## Phase 3 — Windows: Drivers & Modern Looking Glass IDD Setup
 
-Via RDP (rescue) since emulated display goes dark:
+Via RDP (rescue) or temporary SPICE display console:
 
-### 3.1 IP → `xfreerdp3`
+### 3.1 IP & RDP Connection
 
 ```bash
 virsh -c qemu:///system domifaddr win_10_dusky --source lease   # 192.168.122.x
+# Wayland native (FreeRDP 3.x):
+wlfreerdp /v:192.168.122.45 /u:Administrator /cert:ignore /gfx:AVC444 /network:auto +clipboard /dynamic-resolution
+# Or xfreerdp3 fallback:
 xfreerdp3 /v:192.168.122.45 /u:Administrator /cert:ignore /dynamic-resolution
 ```
 
-(`freerdp` ships `xfreerdp3`; check `which xfreerdp3`)
+### 3.2 Inside Guest: Drivers & IDD Installation
 
-### 3.2 Inside RDP
+1. **VirtIO drivers**: Mount `virtio-win.iso` → run `virtio-win-guest-tools.exe` (installs `vioinput`, `viostor`, `NetKVM`, `spice-agent`, and `QEMU Guest Agent`).
+2. **NVIDIA driver**: Install standard GeForce / Quadro driver for your pass-through GPU → reboot.
+3. **Looking Glass IDD Driver (Modern Stack)**:
+   - Place `looking-glass-idd-setup.exe` inside the guest (from the **same upstream build/commit** as the Linux client).
+   - In Administrator PowerShell, trust the installer publisher and install silently with IVSHMEM:
+     ```powershell
+     # Trust installer signature to prevent driver prompt hang:
+     $sig = Get-AuthenticodeSignature .\looking-glass-idd-setup.exe
+     if ($sig.Status -eq 'Valid' -and $sig.SignerCertificate) {
+         $store = [Security.Cryptography.X509Certificates.X509Store]::new('TrustedPublisher', 'LocalMachine')
+         $store.Open('ReadWrite')
+         $store.Add($sig.SignerCertificate)
+         $store.Close()
+     }
+     # Stop legacy host service if upgrading from B7:
+     $old = Get-Service -Name 'Looking Glass (host)' -ErrorAction SilentlyContinue
+     if ($old) { Stop-Service -InputObject $old -Force; Set-Service -InputObject $old -StartupType Disabled }
 
-- **VirtIO drivers** → mount `virtio-win.iso` → `virtio-win-guest-tools.exe` (vioinput + spice-agent)
-- **NVIDIA driver** → standard installer → reboot
-- **LG Host** → matching build → install to `C:\Program Files\Looking Glass (host)\` → autostart (Task)
-- **Disable emulated adapter:** `devmgmt.msc` → Display adapters → Right-click **Red Hat QXL** / *Microsoft Basic* → **Disable device → Yes** (RDP stays via independent channel; NVIDIA wakes)
-- **VDD:** <https://github.com/VirtualDrivers/Virtual-Display-Driver> → `VirtualDriverControl.exe` install → `C:\VirtualDisplayDriver\vdd_settings.xml` → **SDR** single 1440p (see below) → disable/reenable device to flush DWM
-  ```xml
-  <?xml version='1.0' encoding='utf-8'?>
-  <VirtualDisplaySettings>
-     <Monitors>1</Monitors>
-     <Resolution><Width>2560</Width><Height>1440</Height><RefreshRate>144</RefreshRate></Resolution>
-  </VirtualDisplaySettings>
-  ```
-  Set VDD monitor as **Primary** (drag to Monitor 1, NVIDIA GPU indicated).
+     # Install Looking Glass IDD & bundled IVSHMEM driver:
+     Start-Process -FilePath .\looking-glass-idd-setup.exe -ArgumentList @('/S', '/ivshmem') -Wait
+     ```
+   - Reboot Windows when prompted (exit code 3010).
+4. **Verify Devices & Service**:
+   ```powershell
+   Get-PnpDevice -Class Display,HIDClass -PresentOnly | Where-Object { $_.InstanceId -match 'Root\\LGIdd|Root\\LGInput' }
+   Get-Service -Name LGIddHelper
+   ```
+   Both display and input devices should show status `OK`, and `LGIddHelper` should be `Running`.
+
+> [!important] Disable Emulated Display Only After IDD Is Active
+> In `devmgmt.msc` → **Display adapters**, right-click **Red Hat QXL** / **Microsoft Basic Display Adapter** → **Disable device**. The desktop output will immediately switch to the Looking Glass IDD display on the NVIDIA GPU.
 
 ## Phase 4 — Host Wayland (Hyprland) `client.ini`
 
-Pipeline `60_configure_client_ini.py` creates/merges `~/.config/looking-glass/client.ini` atomic `0660` for operator, shmFile from `state.json` (`/dev/shm/looking-glass`).
+Pipeline `60_configure_client_ini.py` creates/merges `~/.config/looking-glass/client.ini` with mode `0644`/`0660` for the operator user.
 
-Manual:
+Manual configuration:
 
 ```bash
 mkdir -p ~/.config/looking-glass
 nvim ~/.config/looking-glass/client.ini
 ```
 ```ini
-; Looking Glass Client — Hyprland / Wayland / Kernel 7.1.8 (Aug 2026)
-[app]
-shmFile=/dev/shm/looking-glass
+; Looking Glass Client — Hyprland / Wayland / Kernel 7.3+ (Aug 2026)
+[lgmp]
+; Canonical key is [lgmp] shmDevice. [app] shmFile is deprecated, and app:shmDevice is ignored!
+shmDevice=/dev/shm/looking-glass
 allowDMA=yes
-renderer=opengl
+
+[egl]
+vsync=yes
+
 [opengl]
 vsync=no
 preventBuffer=yes
 mipmap=yes
-amdPinnedMem=yes
+
 [wayland]
 fractionScale=no
 warpSupport=yes
+
 [win]
-autoResize=yes
+; autoResize=yes FATALLY conflicts with setGuestRes=yes in modern IDD clients! Keep autoResize=no:
+autoResize=no
+setGuestRes=yes
 keepAspect=yes
 dontUpscale=yes
 noScreensaver=yes
 borderless=yes
+
 [input]
 escapeKey=64   ; KEY_F6
 rawMouse=yes
 hideCursor=yes
+
 [spice]
 enable=yes
 clipboard=yes
+audio=no
 ```
 
 ### Launch
 
 ```bash
+looking-glass-client
+# or explicit device flag:
 looking-glass-client -f /dev/shm/looking-glass -m KEY_F6
-# or if client.ini correct: looking-glass-client
 ```
-**Keys:** `F6` capture, `F6+Q` quit, `F6+F` fullscreen, `F6+D` FPS, `F6+O` overlay.
+**Hotkeys:** `F6` capture/release, `F6+Q` quit, `F6+F` fullscreen, `F6+D` show FPS, `F6+O` overlay menu.
 
 ## Phase 5 — Troubleshoot
 
-| Symptom | Fix |
-|---|---|
-| **Black screen** | LG window black → `F6` capture → blind `Win+P` → ↓↓ → `Enter` (Project: PC only → Extend) wakes NVIDIA |
-| **Permission denied** `/dev/shm/looking-glass` | `fs.protected_regular` lock → `sudo rm -f /dev/shm/looking-glass; sudo systemd-tmpfiles --create …; sudo fallocate…; chown new:kvm; chmod 0660` |
-| **Size mismatch** | XML `size` bytes vs file mismatch → delete/recreate matching size (table §1.2) |
-| **Clipboard broken** | needs `spice-agent` service in Windows → `Get-Service spice-agent`; reinstall `virtio-win-guest-tools` |
-| **xfreerdp3 not found** | `pacman -Q freerdp; which xfreerdp3` |
+| Symptom | Cause | Fix |
+|---|---|---|
+| **Black screen / splash remains** | Display sleeping or handoff pending | Focus LG window, press a key or move cursor to wake IDD; verify `LGIddHelper` is running in guest |
+| **Fatal config conflict on launch** | `autoResize=yes` set with `setGuestRes=yes` | In `client.ini` set `autoResize=no` under `[win]` |
+| **Permission denied `/dev/shm/...`** | Host `fs.protected_regular` or stale owner | `sudo rm -f /dev/shm/looking-glass && sudo systemd-tmpfiles --create /etc/tmpfiles.d/10-looking-glass.conf && sudo fallocate -l 64M /dev/shm/looking-glass && sudo chown $USER:kvm /dev/shm/looking-glass && sudo chmod 0660 /dev/shm/looking-glass` |
+| **Size mismatch** | XML `<size>` vs `/dev/shm` capacity mismatch | Re-verify power-of-two sizing (64 MiB for 1440p / 4K SDR) |
+| **Clipboard broken** | `spice-agent` inactive in Windows | Verify `Get-Service spice-agent` is Running; verify SPICE channel in domain XML |
+| **`shmDevice` ignored** | Placed under `[app]` instead of `[lgmp]` | Ensure `shmDevice=/dev/shm/...` is declared under section `[lgmp]` |
 
 ## Appendix — Legacy `qemu:commandline` (archived)
 

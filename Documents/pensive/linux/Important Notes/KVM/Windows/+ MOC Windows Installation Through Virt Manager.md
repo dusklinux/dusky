@@ -45,7 +45,7 @@ aliases:
 ## 4. Debloat & tune
 
 - [[Optimize Windows Performance]] hub → [[Disable SysMain]] · [[Disable Windows Web Search]] · [[Disable useplatformclock]] · [[Disable Unnecessary Scheduled Tasks]] · [[Disable Unnecessary Startup Programs]] · [[Adjust the Visual Effects in Windows 11]]
-- For passthrough hosts also: [[Windows Configurations for Passthrough]] (VDD + Looking Glass host + OpenSSH portable)
+- For passthrough hosts also: [[Windows Configurations for Passthrough]] (Looking Glass IDD driver + OpenSSH)
 
 ## 5. Integration
 

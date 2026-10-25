@@ -98,7 +98,7 @@ sudo lsinitcpio /boot/initramfs-linux.img | grep vfio; virt-host-validate
 
 > [!tip] Do not re-document Q35/virtio/CPU here — run:
 > [[KVM Setup/VM Creation/00 Index — VM Creation (Unified)]] → `virt-install --osinfo win11 --machine q35 --boot uefi --cpu host-passthrough --disk bus=virtio,cache=none,io=io_uring --network network=default,model=virtio --tpm emulator --features hyperv.*` or follow [[+ MOC Windows Installation Through Virt Manager]] (wizard → Q35/OVMF+smm+TPM, storage virtio+viostor, network virtio+NetKVM, CPU host-passthrough+Hyper-V, agent+tablet).
-> For Looking Glass: [[Looking Glass]] + [[KVM Setup/VM Creation/06 Guest Integration — Agent, Clipboard & Input|06]] (SPICE + `org.qemu.guest_agent.0`) then [[The RDP method to disable display driver]] + VDD.
+> For Looking Glass: [[Looking Glass]] + [[KVM Setup/VM Creation/06 Guest Integration — Agent, Clipboard & Input|06]] (SPICE + `org.qemu.guest_agent.0`) then [[The RDP method to disable display driver]] + Looking Glass IDD driver (`looking-glass-idd-setup.exe /S /ivshmem`).
 
 Networking → [[Network Bridging for LAN access]] (Option 2/3) or [[KVM Setup/VM Creation/04 Network — Virtio NIC (NAT vs Bridge)]].
 

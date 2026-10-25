@@ -55,15 +55,20 @@ tags:
   <pm><suspend-to-mem enabled='no'/><suspend-to-disk enabled='no'/></pm>
   <devices>
     <emulator>/usr/bin/qemu-system-x86_64</emulator>
-    <disk type='file' device='disk'><driver name='qemu' type='qcow2'/><source file='/mnt/zram1/win11.qcow2'/><target dev='sda' bus='sata'/></disk>
-    <disk type='file' device='cdrom'><driver name='qemu' type='raw'/><source file='/mnt/zram1/25h2_lite.iso'/><target dev='sdb' bus='sata'/><readonly/></disk>
-    <interface type='bridge'><mac address='52:54:00:53:da:cc'/><source bridge='virbr0'/><model type='e1000e'/></interface>
+    <disk type='file' device='disk'><driver name='qemu' type='qcow2' cache='none' io='io_uring' discard='unmap'/><source file='/var/lib/libvirt/images/win11.qcow2'/><target dev='vda' bus='virtio'/></disk>
+    <disk type='file' device='cdrom'><driver name='qemu' type='raw'/><source file='/var/lib/libvirt/images/win11.iso'/><target dev='sda' bus='sata'/><readonly/></disk>
+    <disk type='file' device='cdrom'><driver name='qemu' type='raw'/><source file='/var/lib/libvirt/images/virtio-win.iso'/><target dev='sdb' bus='sata'/><readonly/></disk>
+    <interface type='network'><source network='default'/><model type='virtio'/></interface>
     <controller type='usb' model='qemu-xhci' ports='15'/>
     <controller type='pci' model='pcie-root'/><controller type='pci' model='pcie-root-port'/><controller type='pci' model='pcie-root-port'/><controller type='pci' model='pcie-root-port'/><controller type='pci' model='pcie-root-port'/><controller type='pci' model='pcie-root-port'/><controller type='pci' model='pcie-root-port'/><controller type='pci' model='pcie-root-port'/><controller type='pci' model='pcie-root-port'/><controller type='pci' model='pcie-root-port'/><controller type='pci' model='pcie-root-port'/><controller type='pci' model='pcie-root-port'/><controller type='pci' model='pcie-root-port'/>
-    <console type='pty'/><channel type='spicevmc'><target type='virtio' name='com.redhat.spice.0'/></channel>
+    <console type='pty'/>
+    <channel type='spicevmc'><target type='virtio' name='com.redhat.spice.0'/></channel>
+    <channel type='unix'><source mode='bind'/><target type='virtio' name='org.qemu.guest_agent.0'/></channel>
     <input type='tablet' bus='usb'/><tpm model='tpm-crb'><backend type='emulator'/></tpm>
     <graphics type='spice' autoport='yes'><image compression='off'/><gl enable='no'/></graphics><sound model='ich9'/><video><model type='qxl'/></video>
     <redirdev bus='usb' type='spicevmc'/><redirdev bus='usb' type='spicevmc'/>
+    <memballoon model='none'/>
+    <shmem name='looking-glass'><model type='ivshmem-plain'/><size unit='M'>64</size></shmem>
   </devices>
 </domain>
 ```
@@ -72,8 +77,9 @@ tags:
 > - `avic` removed → conflicts `evmcs`
 > - `vendor_id='Microsoft Hv'` → anti-cheat/NVIDIA `Error 43` mitigation
 > - `kvm.hidden=on` → same NVIDIA reason
-> - `evmcs=on` → VBS/Hyper-V perf (Intel nested)
+> - `evmcs=on` → VBS/Hyper-V perf (Intel nested; Intel only)
 > - `cputune`: P-cores for vCPUs, E-cores for emulator (see `35_cpu_pinning_generator.py` for auto-gen)
+> - `devices`: `virtio` bus (`cache=none`, `io=io_uring`, `discard=unmap` for disk; `cache=writeback` if on RAM-backed zram/tmpfs) + `virtio` NIC + `<memballoon model='none'/>` (avoids DMA latency/jitter) + `<shmem>` for Looking Glass
 
 ## Minimal patches (if you already have a VM)
 

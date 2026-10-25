@@ -8,7 +8,7 @@ tags:
   - arch
 ---
 
-# Verify VT-x / KVM / IOMMU & ACS (Kernel 7.1+, systemd 261+)
+# Verify VT-x / KVM / IOMMU & ACS (Kernel 7.3+, systemd 262+)
 
 > [!abstract] Goal
 > Guarantee firmware and the modern stack (KVM + `IOMMUFD`) are cooperating **before** touching libvirt. This note is the pre-flight gate `05_virtio_iso.py:verify_kvm_capability` and `15_*.py:enumerate_pci` codify.

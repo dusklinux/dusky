@@ -49,7 +49,7 @@ aliases:
 virt-install --connect qemu:///system --osinfo win11 --machine q35 --boot uefi \
   --vcpus 4 --memory 8192 --cpu host-passthrough,migratable=off,cache.mode=passthrough \
   --disk path=/var/lib/libvirt/images/win11.qcow2,format=qcow2,bus=virtio,driver.cache=none,driver.io=io_uring,driver.discard=unmap \
-  --network network=default,model=virtio --.graphics spice,listen=none --video virtio \
+  --network network=default,model=virtio --graphics spice,listen=none --video virtio \
   --tpm backend.type=emulator,backend.version=2.0,model=tpm-crb --features hyperv.relaxed.state=on,hyperv.vapic.state=on,hyperv.spinlocks.state=on \
   --clock hypervclock.present=yes --channel spicevmc --channel unix,target.type=virtio,target.name=org.qemu.guest_agent.0
 

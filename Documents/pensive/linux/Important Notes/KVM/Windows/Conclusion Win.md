@@ -27,4 +27,4 @@ Get-Service SysMain,DiagTrack | Set-Service -StartupType Disabled 2>$null
 
 Further perfs: web-search “optimize Windows 11 VM” — most win comes from the de-bloat + correct [[Configure the Storage]] (`cache=none,io=io_uring|native,discard=unmap`) and correct [[Enable Hyper-V Enlightenments]]/pinning.
 
-See: [[+ MOC Windows Installation Through Virt Manager]] (full roadmap), [[Windows Configurations for Passthrough]] (VDD/LG/OpenSSH).
+See: [[+ MOC Windows Installation Through Virt Manager]] (full roadmap), [[Windows Configurations for Passthrough]] (Looking Glass IDD / OpenSSH).

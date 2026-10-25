@@ -79,10 +79,17 @@ virsh pool-list --all --details
 virsh pool-dumpxml arsonix-images | grep -A2 '<target>'
 ```
 
-## When ephemeral makes sense
+## When ephemeral makes sense & RAM Budgeting
 
 - You explicitly want a throwaway Windows/Linux lab and will copy out artifacts before reboot.
 - SSD wear avoidance for heavy snapshot churn.
+
+> [!important] RAM Capacity Heuristic (from `linux/deploy_vm.py:ram_storage_reason`)
+> When hosting a VM disk in RAM (`/mnt/zram1` / `tmpfs`):
+> 1. Host must have $\ge 24\,\text{GiB}$ free RAM available.
+> 2. Total host RAM must cover: $\text{Disk Capacity} + \text{Guest RAM} + 4\,\text{GiB host safety reserve}$.
+> 3. Example: A $4\,\text{GiB}$ guest with a $20\,\text{GiB}$ qcow2 disk requires at least $28\,\text{GiB}$ RAM available on the host and $20\,\text{GiB}$ free on the tmpfs filesystem.
+> 4. Disks created on RAM filesystems should use `driver.cache=writeback` (not `none`) to avoid bypassing tmpfs page cache buffers.
 
 Otherwise: **keep persistent** and use `qcow2` `lazy_refcounts` / `cluster_size=64k` (see `30_kvm_vm_deploy.py:provision_disk`).
 

@@ -13,7 +13,7 @@ aliases:
 # Storage Performance — Disk Bus / Cache / io_uring / iothreads (Unified)
 
 > [!abstract] Goal
-> Near-bare NVMe speed via four levers: **bus**, **cache**, **async API**, **host-thread fanout**. Verified against **Linux 7.1.8** + **QEMU 11.1** + **libvirt 12.6** (Aug 2026). Pipeline `30_kvm_vm_deploy.py:build_command` uses `cache=none,io=io_uring,discard=unmap` for single-disk simplicity. **Identical for Windows and Linux** — only driver-load moment differs.
+> Near-bare NVMe speed via four levers: **bus**, **cache**, **async API**, **host-thread fanout**. Verified against **Linux 7.3+** + **QEMU 11.1** + **libvirt 12.6+** (Aug 2026). Pipeline `30_kvm_vm_deploy.py:build_command` uses `cache=none,io=io_uring,discard=unmap` for persistent storage, and `cache=writeback` for RAM-backed storage. **Identical for Windows and Linux** — only driver-load moment differs.
 
 ## Quick glance
 
@@ -42,7 +42,9 @@ VM details (lightbulb) → **SATA Disk 1** (the volume you created in [[KVM Setu
 3. **Discard mode** → `unmap`
 
 > [!important] Triad fine print
-> - **`none`**: bypasses host page cache (`O_DIRECT`), no double-cache, stable forever.
+> - **`none` vs `writeback`**:
+>   - **Persistent disks (`ext4`/`xfs`/`btrfs`)**: use `cache=none` (`O_DIRECT`, bypassing host page cache, no double-cache, stable).
+>   - **RAM-backed disks (`tmpfs`/`zram`)**: use `cache=writeback`! On RAM filesystems, `cache=none` conflicts with or bypasses the memory-backed buffer cache; `writeback` achieves full memory-speed I/O.
 > - **`io_uring`**: lowest overhead API since Linux 5.1, but had ordering bug on BTRFS-backed disks fixed in **QEMU 10.2** (Dec 2025) — stay ≥10.2 (current 11.1). Hardened distros may set `kernel.io_uring_disabled` (60% of 2022 exploit bounties hit io_uring) — check `sysctl kernel.io_uring_disabled`. Linux 7.0 added BPF filtering for it.
 > - **`unmap`**: TRIM guest→host, identical on both buses in modern QEMU.
 

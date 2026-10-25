@@ -21,73 +21,101 @@ Required for VDD + LG host.
 
 <https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist>
 
-## 2. Virtual Display Driver (VDD) — fake monitor for headless dGPU
+## 2. Looking Glass IDD Driver (Modern Stack — Recommended)
 
-Pass-through dGPU has no physical output → Windows needs an IDD sink or GPU goes idle / `Error 43`.
+The pass-through dGPU has no physical monitor attached. The **Looking Glass IDD Driver** (`looking-glass-idd-setup.exe`) provisions a native kernel-level Indirect Display Driver (`Root\LGIdd`) and direct input device (`Root\LGInput`), while `LGIddHelper` synchronizes frames directly into the IVSHMEM buffer.
 
-- **Repo:** <https://github.com/VirtualDrivers/Virtual-Display-Driver>
+> [!tip] Modern IDD vs Legacy MttVDD
+> This replaces third-party MttVDD and the old user-space `Looking Glass (host)` background service completely. Do **not** run both; if upgrading from an older B7 setup, disable the old `Looking Glass (host)` service.
 
-### A — GUI
+### Installation (Silent & Automated via PowerShell as Administrator)
 
-Download latest `*.zip` → extract → `VirtualDriverControl.exe` → Install → confirm virtual monitor appears.
-
-### B — CLI (scriptable)
-
-Extract `.inf/.cer/.sys` to `C:\VirtualDisplayDriver` → Admin PowerShell:
+1. Obtain `looking-glass-idd-setup.exe` from the **exact same build** as your host `looking-glass` package.
+2. Run in an Administrator PowerShell:
 
 ```powershell
-certutil -addstore "TrustedPublisher" C:\VirtualDisplayDriver\VirtualDisplayDriver.cer
-certutil -addstore "Root"               C:\VirtualDisplayDriver\VirtualDisplayDriver.cer
-# pick one:
-devcon install C:\VirtualDisplayDriver\VirtualDisplayDriver.inf Root\MttVDD   # fresh node (recommended fresh VM)
-pnputil /add-driver C:\VirtualDisplayDriver\VirtualDisplayDriver.inf /install
+# Trust verified installer certificate for silent driver staging:
+$sig = Get-AuthenticodeSignature .\looking-glass-idd-setup.exe
+if ($sig.Status -eq 'Valid' -and $sig.SignerCertificate) {
+    $store = [Security.Cryptography.X509Certificates.X509Store]::new('TrustedPublisher', 'LocalMachine')
+    $store.Open('ReadWrite')
+    $store.Add($sig.SignerCertificate)
+    $store.Close()
+    Write-Host "Trusted publisher: $($sig.SignerCertificate.Subject)" -ForegroundColor Green
+}
+
+# Stop and disable legacy B7 host service if present:
+$old = Get-Service -Name 'Looking Glass (host)' -ErrorAction SilentlyContinue
+if ($old) { Stop-Service -InputObject $old -Force; Set-Service -InputObject $old -StartupType Disabled }
+
+# Run silent installer with IVSHMEM driver:
+$proc = Start-Process -FilePath .\looking-glass-idd-setup.exe -ArgumentList @('/S', '/ivshmem') -Wait -PassThru
+if ($proc.ExitCode -eq 3010) { Write-Host "Restart required to complete driver install." -ForegroundColor Yellow }
 ```
 
-### Config (SDR lock — 10 MiB overhead rule)
+3. Reboot Windows (`Restart-Computer`).
+4. Verify display and input devices in PowerShell:
+   ```powershell
+   Get-PnpDevice -Class Display,HIDClass -PresentOnly | Where-Object { $_.InstanceId -match 'Root\\LGIdd|Root\\LGInput' }
+   Get-Service LGIddHelper
+   ```
+   Status must be `OK` and service `Running`.
 
-`C:\VirtualDisplayDriver\vdd_settings.xml` → keep to **SDR single 1440p** (matches host 64 MiB):
+### Legacy Alternative — Third-Party MttVDD + LG Host (Historical B7 Only)
 
-```xml
-<?xml version='1.0' encoding='utf-8'?>
-<VirtualDisplaySettings>
-   <Monitors>1</Monitors>
-   <Resolution><Width>2560</Width><Height>1440</Height><RefreshRate>144</RefreshRate></Resolution>
-</VirtualDisplaySettings>
-```
+> [!warning] Legacy Path
+> Only use this if running older Looking Glass B7 stable releases without IDD support.
+> - **Repo:** <https://github.com/VirtualDrivers/Virtual-Display-Driver>
+> - Extract to `C:\VirtualDisplayDriver` → import certificate to `TrustedPublisher` and `Root` → install via `devcon install ... VirtualDisplayDriver.inf Root\MttVDD`.
+> - Install legacy Looking Glass Host to `C:\Program Files\Looking Glass (host)\looking-glass-host.exe` and configure autostart.
+> - Configure `C:\VirtualDisplayDriver\vdd_settings.xml` for 1440p SDR.
 
-> [!danger] One install only
-> Re-running creates ghost monitors → cursor exits to invisible monitor. Keep **one** VDD node; disable/reenable to flush DWM cache.
+## 3. NVIDIA Guest Driver
 
-## 3. Looking Glass Host (frame exporter)
+Standard GeForce driver for your card inside VM → install → reboot. Do **not** disable the `NVIDIA Display` adapter nor the `Looking Glass IDD` display device in Device Manager.
 
-Runs in Windows, matches **client** `looking-glass` version on host (`pacman -S looking-glass freerdp`).
-
-- <https://looking-glass.io/downloads> → host binary → install → autostart (Scheduled Task or `host.ini`):
-  Install to `C:\Program Files\Looking Glass (host)\` and set `looking-glass-host.exe` to run at logon. Version must match `looking-glass-client` on host (B7+).
-
-## 4. NVIDIA Guest Driver
-
-Standard GeForce driver for your card inside VM → install → reboot. Do **not** disable `NVIDIA Display` nor `VDD` in Device Manager.
-
-## 5. Utilities
+## 4. Utilities
 
 - **7-Zip** — <https://www.7-zip.org>
 - **O&O ShutUp10++** — <https://www.oo-software.com/en/download/current/ooshutup10>
 - **Windows Update MiniTool** — <https://www.majorgeeks.com/files/details/windows_update_minitool.html>
-- **WinFsp** — <https://github.com/winfsp/winfsp> (if you enabled virtiofs sharing earlier)
+- **WinFsp** — <https://github.com/winfsp/winfsp> (for virtiofs folder sharing)
 
-## 6. OpenSSH Server (portable, not DISM)
+## 5. OpenSSH Server (Offline or Portable)
 
-`DISM /Add-Capability` often hangs on fresh VMs (WU lock). Use official Win32-OpenSSH portable:
+Online `DISM /Add-Capability` often hangs on fresh VMs due to Windows Update service locks. Use offline Features-on-Demand or portable Win32-OpenSSH:
+
+### Option A: Offline Features-on-Demand (Windows Feature)
 
 ```powershell
-# 1. Download OpenSSH-Win64.zip from https://github.com/PowerShell/Win32-OpenSSH/releases
+# Point -Source to mounted Windows FoD / ISO media directory
+Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 -Source "D:\LanguagesAndOptionalFeatures" -LimitAccess
+Set-Service sshd -StartupType Automatic; Start-Service sshd
+```
+
+### Option B: Win32-OpenSSH Portable Package
+
+```powershell
+# 1. Download OpenSSH-Win64.zip (or copy from host share)
 # 2. Expand to C:\Program Files\OpenSSH-Win64
 powershell -ExecutionPolicy Bypass -File "C:\Program Files\OpenSSH-Win64\install-sshd.ps1"
 Set-Service sshd -StartupType Automatic; Start-Service sshd
-New-NetFirewallRule -Name "SSH" -DisplayName "OpenSSH SSH Server" -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22
+```
+
+### Firewall & Key Permissions (Both Options)
+
+```powershell
+# Firewall rule
+New-NetFirewallRule -Name "SSH" -DisplayName "OpenSSH SSH Server" -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 2>$null
+# Default shell to PowerShell:
 New-ItemProperty -Path "HKLM:\SOFTWARE\OpenSSH" -Name "DefaultShell" -Value "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -PropertyType String -Force
-# for RDP rescue / WinFsp re-arm, this is your headless CLI bridge
+
+# Optional: authorized_keys setup for passwordless SSH:
+$authKeys = "$env:ProgramData\ssh\administrators_authorized_keys"
+# Append host public key:
+Add-Content -Path $authKeys -Value "ssh-ed25519 AAAAC3... operator@host"
+# Mandatory strict Windows OpenSSH ACLs on administrator key:
+icacls.exe $authKeys /inheritance:r /grant:r "*S-1-5-18:(F)" "*S-1-5-32-544:(F)"
 ```
 
 ## 7. Quirks

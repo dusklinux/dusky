@@ -19,7 +19,7 @@ aliases:
 
 | Canonical | Windows note |
 |---|---|
-| `VirtIO` / `VirtIO SCSI` + `cache=none` + `io=io_uring` + `discard=unmap` | **identical** — set before first boot; pipeline `30_*:build_command --disk …bus=virtio,driver.cache=none,driver.io=io_uring,driver.discard=unmap` |
+| `VirtIO` / `VirtIO SCSI` + `cache=none` + `io=io_uring` + `discard=unmap` | **identical** — set before first boot; pipeline `30_*:build_command --disk …bus=virtio,driver.cache=none,driver.io=io_uring,driver.discard=unmap`. (Use `driver.cache=writeback` for RAM-backed pools like `/mnt/zram1` to avoid O_DIRECT bypass penalties per canonical [[03 Storage — Virtio Bus, Cache, io_uring, Discard]]). |
 | Queue count auto = vCPU, IOThreads binding | **identical** — see canonical Step 4 XML; Red Hat 4–8 iothreads, pin away from vCPUs |
 | `qcow2` vs `raw` | **identical** — `qcow2` `cluster_size=64k,lazy_refcounts=on` thin; `raw` faster but no snapshots |
 
