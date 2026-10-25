@@ -100,6 +100,12 @@ class ToggleTests(unittest.TestCase):
             _,_,_,desired,*_=m.plan(self.args,{})
             self.assertEqual(desired['amd_iommu'],'force_enable')
 
+    def test_amd_off_is_removed_while_other_valid_settings_survive(self):
+        self.boot.write_text('options root=test amd_iommu=off,force_isolation\n')
+        with patch.object(m.common,'cpu_vendor',return_value='amd'):
+            _,_,_,desired,*_=m.plan(self.args,{})
+        self.assertEqual(desired['amd_iommu'],'force_isolation')
+
     def test_id_collision_and_boot_gpu_are_rejected(self):
         claim=m.common.Claim([self.devices[1]])
         with self.assertRaises(SystemExit):
@@ -116,11 +122,40 @@ class ToggleTests(unittest.TestCase):
         after=(self.root/'output').stat()
         self.assertEqual((before.st_ino,before.st_mtime_ns),(after.st_ino,after.st_mtime_ns))
 
+    def test_permission_failure_is_not_configuration_drift(self):
+        with patch.object(Path,'read_text',side_effect=PermissionError('private boot filesystem')):
+            with self.assertRaises(PermissionError):
+                m.files_match({str(self.boot):'options root=test\n'})
+        output=io.StringIO()
+        with (patch.object(m,'files_match',side_effect=PermissionError('private boot filesystem')),
+              contextlib.redirect_stdout(output)):
+            result=m.status({'mode':'bind','pending':False,'boot_id':'fixture.conf','functions':[],'staged_files':{}})
+        self.assertEqual(result,2)
+        self.assertIn('run this command with sudo',output.getvalue())
+        self.assertNotIn('configuration has drifted',output.getvalue())
+        self.assertNotIn('Reboot is pending',output.getvalue())
+
+    def test_dangling_managed_symlink_is_detected_and_removed(self):
+        path=self.root/'dangling';path.symlink_to(self.root/'absent')
+        self.assertFalse(m.files_match({str(path):None}))
+        self.assertTrue(m.apply_files({str(path):None}))
+        self.assertTrue(m.files_match({str(path):None}))
+
     def test_missing_or_corrupted_journal_fails_cleanly(self):
         self.assertEqual(m.saved_state(),{})
         for data in ('{', '[]', '{"schema":9}', '{"schema":1,"mode":"bind","pending":false}'):
             m.STATE.write_text(data)
             with self.subTest(data=data),self.assertRaises((ValueError,RuntimeError)):
+                m.saved_state()
+
+    def test_incomplete_file_inventory_cannot_claim_verified_status(self):
+        baseline={'schema':1,'mode':'bind','pending':False,'host_options':{},
+                  'host_files':{str(m.MODPROBE):None,str(m.MODULES):None},
+                  'functions':[{'addr':'0000:01:00.0','ids':'10de:1234'}],
+                  'boot_id':'fixture.conf','slots':['0000:01:00']}
+        for inventory in (None,{}, {str(m.MODPROBE):None,str(m.MODULES):None}):
+            m.STATE.write_text(json.dumps({**baseline,'staged_files':inventory}))
+            with self.subTest(inventory=inventory),self.assertRaisesRegex(RuntimeError,'inventory'):
                 m.saved_state()
 
     def test_uki_fragment_mode_preserves_unowned_fragments(self):
@@ -201,7 +236,25 @@ class ToggleTests(unittest.TestCase):
             self.assertEqual(modules,['vfio_pci','btrfs'])
             self.assertIn('modconf',hooks)
 
+    def test_iommu_group_bridge_is_allowed_but_unselected_endpoint_is_not(self):
+        group=self.root/'group/devices';group.mkdir(parents=True)
+        pci=m.common.SYS_PCI;pci.mkdir()
+        for dev in self.devices[1:]:
+            node=pci/dev.addr;node.mkdir()
+            (node/'class').write_text('0x'+dev.klass)
+            (node/'iommu_group').symlink_to(group.parent,target_is_directory=True)
+            (group/dev.addr).symlink_to(node,target_is_directory=True)
+        bridge=pci/'0000:00:01.0';bridge.mkdir();(bridge/'class').write_text('0x060400')
+        (group/bridge.name).symlink_to(bridge,target_is_directory=True)
+        with patch.object(m,'check_groups',wraps=ToggleTests.original_groups):
+            m.check_groups(m.common.Claim(self.devices[1:]),require=True)
+            extra=pci/'0000:02:00.0';extra.mkdir();(extra/'class').write_text('0x010800')
+            (group/extra.name).symlink_to(extra,target_is_directory=True)
+            with self.assertRaisesRegex(RuntimeError,'also contains'):
+                m.check_groups(m.common.Claim(self.devices[1:]),require=True)
+
     original_active=staticmethod(m.active_guest_claims)
+    original_groups=staticmethod(m.check_groups)
 
 
 if __name__=='__main__':unittest.main()

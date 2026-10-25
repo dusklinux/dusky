@@ -25,6 +25,8 @@ if sys.version_info < (3, 15):
 
 # Load the supplied companion as a library; its main/elevation never runs.
 COMMON_PATH = Path(__file__).resolve().parents[2] / 'gpu/gpu_disable_toggle.py'
+if not COMMON_PATH.is_file():
+    sys.exit('Keep user_scripts/gpu/gpu_disable_toggle.py alongside this script tree; shared GPU helpers are missing.')
 _spec = importlib.util.spec_from_file_location('dusky_gpu_common', COMMON_PATH)
 common = importlib.util.module_from_spec(_spec)
 sys.modules[_spec.name] = common
@@ -69,6 +71,19 @@ def saved_state():
                  or not isinstance(data.get('functions'), list) or not data['functions']
                  or not all(isinstance(r, dict) and isinstance(r.get('addr'), str) and isinstance(r.get('ids'), str) for r in data['functions'])):
         fail('Malformed VFIO recovery state; the recorded claim/baseline is unusable.')
+    if data and (not all(k in KEYS and isinstance(v, str) for k, v in data['host_options'].items())
+                 or set(data['host_files']) != {str(MODPROBE), str(MODULES)}
+                 or not all(isinstance(v, (str, type(None))) for v in data['host_files'].values())
+                 or not isinstance(data.get('boot_id'), str) or not data['boot_id']
+                 or not isinstance(data.get('slots'), list) or not data['slots']
+                 or not all(isinstance(slot, str) and re.fullmatch(r'[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}', slot) for slot in data['slots'])
+                 or not all(re.fullmatch(r'[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]', r['addr'])
+                            and re.fullmatch(r'[0-9a-f]{4}:[0-9a-f]{4}', r['ids']) for r in data['functions'])):
+        fail('Malformed VFIO baseline or hardware identifiers. Preserve the journal and restore its known-good backup.')
+    if data and (not isinstance(data.get('staged_files'), dict)
+                 or not {str(MODPROBE), str(MODULES)} < data['staged_files'].keys()
+                 or not all(isinstance(k, str) and isinstance(v, (str, type(None))) for k, v in data['staged_files'].items())):
+        fail('The VFIO journal lacks its complete staged-file inventory; configuration verification is unavailable.')
     return data
 
 
@@ -340,7 +355,7 @@ def apply_files(files):
     for name, payload in files.items():
         path = Path(name)
         if payload is None:
-            if path.exists():
+            if path.exists() or path.is_symlink():
                 common.remove_file(path)
                 changed = True
         else:
@@ -349,9 +364,18 @@ def apply_files(files):
 
 
 def files_match(files):
-    return all((not Path(name).exists() if payload is None else
-                Path(name).is_file() and Path(name).read_text(encoding='utf-8') == payload)
-               for name, payload in files.items())
+    for name, payload in files.items():
+        path = Path(name)
+        try:
+            if payload is None:
+                path.lstat()
+                return False
+            if path.read_text(encoding='utf-8') != payload:
+                return False
+        except FileNotFoundError:
+            if payload is not None:
+                return False
+    return True
 
 
 def verify_images(images, binding):
@@ -374,18 +398,24 @@ def status(state):
         return 2
     print(f"Staged mode: {state['mode']}; incomplete operation: {state['pending']}; entry: {state['boot_id']}")
     live = {d.addr: d for d in devices}
-    ok = not state['pending'] and files_match(state.get('staged_files', {}))
-    if not files_match(state.get('staged_files', {})):
+    try:
+        matches = files_match(state.get('staged_files', {}))
+    except PermissionError:
+        matches = None
+        print('Boot configuration is unreadable as this user; run this command with sudo for the complete check. Live drivers are shown below.')
+    ok = not state['pending'] and matches is True
+    if matches is False:
         print('Staged configuration has drifted; rerun the requested action to repair it.')
     for record in state['functions']:
         dev = live.get(record['addr'])
         good = bool(dev and dev.ids == record['ids'] and
-                    (dev.driver == 'vfio-pci' if state['mode'] == 'bind' else dev.driver not in (None, 'vfio-pci')))
+                    (dev.driver == 'vfio-pci' if state['mode'] == 'bind' else dev.driver not in (None, 'vfio-pci', 'pci-stub')))
         print(f"{record['addr']}: {dev.driver if dev else 'absent'}; {'applied' if good else 'not applied'}")
         ok = ok and good
     if state['mode'] == 'bind' and ok:
         check_groups(common.Claim([live[r['addr']] for r in state['functions']]), require=True)
-    print('Live state verified.' if ok else 'Reboot is pending or a driver/device needs investigation. Rerun the requested action if staging was interrupted.')
+    if matches is not None:
+        print('Live state verified.' if ok else 'Reboot is pending or a driver/device needs investigation. Rerun the requested action if staging was interrupted.')
     return 0 if ok else 2
 
 

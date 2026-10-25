@@ -17,11 +17,11 @@ are guessed.
 python3 nvidia_vfio_bind_unbind.py --bind --dry-run
 python3 nvidia_vfio_bind_unbind.py --bind
 # Reboot, then verify actual drivers:
-python3 nvidia_vfio_bind_unbind.py --status
+sudo python3 nvidia_vfio_bind_unbind.py --status
 
 python3 nvidia_vfio_bind_unbind.py --unbind
 # Reboot, then verify the host drivers:
-python3 nvidia_vfio_bind_unbind.py --status
+sudo python3 nvidia_vfio_bind_unbind.py --status
 ```
 
 A saved Phase 3 slot is reused. Without one, multiple GPUs are offered in a
@@ -56,7 +56,9 @@ leaves an incomplete journal deliberately; rerun without it before rebooting.
 Converged runs verify the images/configuration without rewriting files or
 rebuilding. `--status` returns 0 only when saved configuration and actual drivers
 match, and 2 for unconfigured, pending or drifted state; operation failures
-return 1. Staging success alone does not mean a live GPU has changed driver.
+return 1. A status check without permission to read private boot files reports
+that limitation and returns 2; it does not label unreadable files as drift.
+Staging success alone does not mean a live GPU has changed driver.
 
 For RAM-backed VMs, shut down the guest and copy its disk to persistent storage
 before a host reboot. Verify the copied qcow2 and update the domain's disk path.
