@@ -165,7 +165,12 @@ media() {
     local -a media_bus=(busctl --user --json=short --timeout=1 --auto-start=no)
     listing=$("${media_bus[@]}" --acquired list) || { media_error 'Cannot List Media Players'; return 1; }
     ipc=$(python3 "$MEDIA_IPC" list) || return
-    clients=$(hyprctl -j clients) || { media_error 'Cannot Read Hyprland Windows'; return 1; }
+    # Focus only ranks players; it is not required to control them. A terminal
+    # or launcher can retain an old instance signature after Hyprland restarts.
+    if ! clients=$(hyprctl -j clients 2>/dev/null) ||
+        ! jq -e 'type == "array"' >/dev/null 2>&1 <<< "$clients"; then
+        clients='[]'
+    fi
     if [[ -f $player_file ]]; then remembered=$(< "$player_file"); fi
     if [[ -f $context_file ]]; then
         previous=$(jq -er --arg selected "$remembered" '

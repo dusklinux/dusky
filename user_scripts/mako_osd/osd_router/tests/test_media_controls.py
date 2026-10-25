@@ -230,6 +230,14 @@ exit 1''', "selector", str(selector), identities[0]],
             run()
             assert (root / "calls.state").read_text() == "Playing"
             print("PASS ordinary MPRIS-only playback still toggles without notifications", flush=True)
+
+            (root / "windows").write_text("Couldn't connect to old Hyprland socket")
+            run()
+            assert (root / "calls.state").read_text() == "Paused"
+            (root / "windows").unlink()  # Also test a nonzero hyprctl exit status.
+            run()
+            assert (root / "calls.state").read_text() == "Playing"
+            print("PASS stale/unavailable Hyprland focus cannot block media controls", flush=True)
             try:
                 helper.Client(identities[0] + "0")
             except ValueError:
