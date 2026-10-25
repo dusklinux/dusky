@@ -13,7 +13,7 @@ aliases:
 # MOC — KVM Host Bring-Up (Aug 2026)
 
 > [!info] Canonical pipeline
-> This checklist mirrors the **Arsonix pipeline** under `/home/dusk/user_scripts/dusky_vm/passthrough/` — each entry maps to a script phase. Prefer the scripts for idempotent execution; use these notes to *learn* what each phase does.
+> This checklist mirrors the **Arsonix pipeline** under `~/user_scripts/dusky_vm/passthrough/` — each entry maps to a script phase. Prefer the scripts for idempotent execution; use these notes to *learn* what each phase does.
 
 ## Phase 0 — Firmware
 

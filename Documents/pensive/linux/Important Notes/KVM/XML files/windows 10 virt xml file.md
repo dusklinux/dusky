@@ -95,7 +95,7 @@ tags:
     <input type="tablet" bus="usb"/> <!-- or virtio with LG -->
     <graphics type="spice" port="-1" tlsPort="-1" autoport="yes"><image compression="off"/></graphics>
     <sound model="ich9"/><video><model type="qxl"/></video> <!-- or virtio with accel3d, or none + <shmem> for LG -->
-    <!-- passthrough hostdevs injected via 30_kvm_vm_deploy: --hostdev pci_0000_01_00_0 etc. -->
+    <!-- passthrough hostdevs injected via 30_kvm_vm_deploy: flag hostdev pci_0000_01_00_0 etc. -->
     <!-- native LG shmem (Aug 2026): <shmem name='looking-glass'><model type='ivshmem-plain'/><size unit='M'>64</size></shmem> -->
     <memballoon model="none"/>
     <rng model="virtio"><backend model="random">/dev/urandom</backend></rng>

@@ -47,7 +47,7 @@ intel_iommu=on iommu=pt   # AMD: iommu=pt only (amd_iommu=on invalid)
 sudo nvim /etc/mkinitcpio.conf
 MODULES=(i915 btrfs vfio_pci vfio vfio_iommu_type1)  # AMD iGPU → amdgpu instead of i915
 HOOKS=(base systemd autodetect microcode modconf kms keyboard sd-vconsole block filesystems fsck)
-# modconf MUST be before kms; microcode hook (not separate initrd) on 7.1
+# modconf MUST be before kms; microcode hook (not separate initrd) on Kernel 7.3+
 ```
 
 ## VFIO modprobe (single source; vfio_virqfd deleted since 6.2)

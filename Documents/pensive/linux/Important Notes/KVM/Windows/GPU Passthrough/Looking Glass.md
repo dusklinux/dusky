@@ -73,21 +73,21 @@ EOF
 
 ### 1.4 Create & pre-allocate (bypass `fs.protected_regular=1`)
 
-Do **not** `ftruncate`/sparse — pipeline uses unconditional `posix_fallocate` (tmpfs on 7.1 guarantees it) + `O_EXCL|O_NOFOLLOW` (symlink TOCTOU defense):
+Do **not** `ftruncate`/sparse — pipeline uses unconditional `posix_fallocate` (tmpfs on Kernel 7.3+ guarantees it) + `O_EXCL|O_NOFOLLOW` (symlink TOCTOU defense):
 
 ```bash
 sudo rm -f /dev/shm/looking-glass                         # clear ownership lock
 sudo systemd-tmpfiles --create /etc/tmpfiles.d/10-looking-glass.conf
 # 64 MiB for 1440p (match table above):
 sudo fallocate -l 64M /dev/shm/looking-glass
-# pipeline does: fd = os.open(/dev/shm/... , O_CREAT|O_EXCL|O_RDWR|O_NOFOLLOW); posix_fallocate; fchown new:kvm; fchmod 0660
-sudo chown new:kvm /dev/shm/looking-glass
+# pipeline does: fd = os.open(/dev/shm/... , O_CREAT|O_EXCL|O_RDWR|O_NOFOLLOW); posix_fallocate; fchown $(id -un):kvm; fchmod 0660
+sudo chown "$(id -un)":kvm /dev/shm/looking-glass
 sudo chmod 0660 /dev/shm/looking-glass
-ls -lh /dev/shm/looking-glass   # 64M new kvm
+ls -lh /dev/shm/looking-glass   # 64M <user> kvm
 ```
 
 > [!warning] Why `posix_fallocate` unconditionally
-> Sparse `fallocate` fallback masked real tmpfs ENOSPC. On 7.1 `tmpfs` `fallocate` always succeeds; any failure should abort (host OOM risk), not silently create sparse file causing mid-frame faults. `25_*.py:stage_shm` enforces this.
+> Sparse `fallocate` fallback masked real tmpfs ENOSPC. On Kernel 7.3+ `tmpfs` `fallocate` always succeeds; any failure should abort (host OOM risk), not silently create sparse file causing mid-frame faults. `25_*.py:stage_shm` enforces this.
 
 ## Phase 2 — Domain XML: native `<shmem>` (no `xmlns:qemu` hack)
 
@@ -107,9 +107,9 @@ We previously used `<qemu:commandline>` raw `-device ivshmem-plain` / `-object m
 
 ```bash
 virsh -c qemu:///system list --all
-virsh -c qemu:///system dumpxml --inactive win_10_dusky > /tmp/old.xml
-# interactively:
-virsh -c qemu:///system edit win_10_dusky
+virsh -c qemu:///system dumpxml --inactive win11 > /tmp/old.xml
+# interactively (replace win11 with your VM name):
+virsh -c qemu:///system edit win11
 ```
 
 ### 2.2 Add `<shmem>` + fix companions
@@ -133,8 +133,8 @@ Pipeline redefines → `virsh define`; if guest `running`, power-cycle needed (r
 
 ```bash
 virsh -c qemu:///system define /tmp/new.xml
-virsh -c qemu:///system start win_10_dusky
-virsh -c qemu:///system domstate win_10_dusky  # running
+virsh -c qemu:///system start win11
+virsh -c qemu:///system domstate win11  # running
 ```
 
 ## Phase 3 — Windows: Drivers & Modern Looking Glass IDD Setup
@@ -144,7 +144,7 @@ Via RDP (rescue) or temporary SPICE display console:
 ### 3.1 IP & RDP Connection
 
 ```bash
-virsh -c qemu:///system domifaddr win_10_dusky --source lease   # 192.168.122.x
+virsh -c qemu:///system domifaddr win11 --source lease   # 192.168.122.x
 # Wayland native (FreeRDP 3.x):
 wlfreerdp /v:192.168.122.45 /u:Administrator /cert:ignore /gfx:AVC444 /network:auto +clipboard /dynamic-resolution
 # Or xfreerdp3 fallback:
@@ -259,7 +259,7 @@ looking-glass-client -f /dev/shm/looking-glass -m KEY_F6
 > [!warning] Historical path — do not use
 > Old notes (`Looking Glass_old.md`) declared `xmlns:qemu` on `<domain>` +:
 > ```xml
-> <qemu:commandline>
+> <qemu:commandline xmlns:qemu='http://libvirt.org/schemas/domain/qemu/1.0'>
 >   <qemu:arg value="-device"/><qemu:arg value="{'driver':'ivshmem-plain','id':'shmem0','memdev':'looking-glass'}"/>
 >   <qemu:arg value="-object"/><qemu:arg value="{'qom-type':'memory-backend-file','id':'looking-glass','mem-path':'/dev/shm/looking-glass','size':67108864,'share':true}"/>
 > </qemu:commandline>

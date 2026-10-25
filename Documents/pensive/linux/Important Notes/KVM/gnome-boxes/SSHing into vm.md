@@ -151,7 +151,7 @@ Keep `slirp` + `hostfwd` on **session** VM: `127.0.0.1:2222 → guest:22`, then 
 6. Just before `</domain>` add:
 
 ```xml
-<qemu:commandline>
+<qemu:commandline xmlns:qemu='http://libvirt.org/schemas/domain/qemu/1.0'>
   <qemu:arg value='-netdev'/>
   <qemu:arg value='user,id=hostssh,hostfwd=tcp:127.0.0.1:2222-:22'/>
   <qemu:arg value='-device'/>

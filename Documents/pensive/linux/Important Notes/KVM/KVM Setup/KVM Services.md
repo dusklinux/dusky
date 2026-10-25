@@ -10,7 +10,7 @@ tags:
 # KVM Services — Legacy Monolith
 
 > [!warning] Legacy — do **not** use on Aug 2026 Arch
-> This note documents the *old* monolithic `libvirtd.service` path. Modern Arch (libvirt 12.6+, systemd 261+) uses **modular, socket-activated** daemons. Keep this note only as historical context; the replacement is [[libvert Modular daemon enable]] (`10_virt_modular_daemon.py`).
+> This note documents the *old* monolithic `libvirtd.service` path. Modern Arch (libvirt 12.6+, systemd 262+) uses **modular, socket-activated** daemons. Keep this note only as historical context; the replacement is [[libvert Modular daemon enable]] (`10_virt_modular_daemon.py`).
 
 ## What the monolith did (and why it was replaced)
 

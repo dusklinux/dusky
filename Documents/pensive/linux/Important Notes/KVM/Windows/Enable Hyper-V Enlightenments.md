@@ -108,7 +108,7 @@ tags:
   <emulatorpin cpuset='12-19'/>
 </cputune>
 ```
-Generate yours: `/home/dusk/user_scripts/dusky_vm/passthrough/35_cpu_pinning_generator.py`
+Generate yours: `~/user_scripts/dusky_vm/passthrough/35_cpu_pinning_generator.py`
 
 ### 2. Topology
 
