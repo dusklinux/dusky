@@ -43,13 +43,18 @@ apply new hardware. After installing the agent:
 ```sh
 virsh -c qemu:///system qemu-agent-command win11 '{"execute":"guest-ping"}'
 virsh -c qemu:///system domifaddr win11 --source agent
-virsh -c qemu:///system shutdown win11 --mode agent
 ```
 
-A successful ping is `{"return":{}}`. Shutdown is a separate command that
-changes guest state; do not run it as an incidental connectivity probe. Without
-QGA, an ACPI shutdown request is another graceful route if the guest handles it.
-Forced destroy is not a normal restart method.
+A successful ping is `{"return":{}}`. Only when you intend to shut the guest down,
+run this separate mutating command and wait until `domstate` reports shut off:
+
+```sh
+virsh -c qemu:///system shutdown win11 --mode agent
+virsh -c qemu:///system domstate win11
+```
+
+Without QGA, an ACPI shutdown request is another graceful route if the guest
+handles it. Forced destroy is not a normal restart method.
 
 ## Windows versus Linux
 

@@ -94,14 +94,22 @@ For fully manual service setup after installing the driver and WinFsp, use
 Administrator PowerShell. Replace the owner numbers and choose an unused drive:
 
 ```powershell
+$ErrorActionPreference = 'Stop'
 $binary = Join-Path $env:ProgramFiles 'Virtio-Win\VioFS\virtiofs.exe'
 if (-not (Test-Path -LiteralPath $binary)) { throw 'Install VirtIO-FS guest tools first.' }
-$service = Get-Service VirtioFsSvc -ErrorAction SilentlyContinue
+$command = '"' + $binary + '"'
+$service = Get-CimInstance Win32_Service -Filter "Name='VirtioFsSvc'"
 if ($service) {
-    Stop-Service VirtioFsSvc
-    (Get-Service VirtioFsSvc).WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))
+    if ($service.State -ne 'Stopped') {
+        Stop-Service VirtioFsSvc
+        (Get-Service VirtioFsSvc).WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))
+    }
+    if ($service.PathName -ne $command) {
+        $result = Invoke-CimMethod -InputObject $service -MethodName Change -Arguments @{PathName=$command}
+        if ($result.ReturnValue -ne 0) { throw "Updating the service executable failed ($($result.ReturnValue))." }
+    }
 } else {
-    New-Service -Name VirtioFsSvc -BinaryPathName ('"' + $binary + '"') -StartupType Automatic -DependsOn VirtioFsDrv
+    New-Service -Name VirtioFsSvc -BinaryPathName $command -StartupType Automatic -DependsOn VirtioFsDrv
 }
 $key = 'HKLM:\SOFTWARE\VirtIO-FS'
 New-Item $key -Force | Out-Null
@@ -109,7 +117,15 @@ New-ItemProperty $key -Name MountPoint -Value 'Z:' -PropertyType String -Force |
 New-ItemProperty $key -Name Owner -Value '1000:1000' -PropertyType String -Force | Out-Null
 Set-Service VirtioFsSvc -StartupType Automatic
 Start-Service VirtioFsSvc
+(Get-Service VirtioFsSvc).WaitForStatus('Running', [TimeSpan]::FromSeconds(30))
+Test-Path Z:\
 ```
+
+This deliberately restarts the service when applying manual settings, so close
+open files on the shared drive first. The scripted helper additionally checks
+drive collisions and device health, waits for the mount, and avoids restarting
+an already converged service. Require the chosen drive to appear before testing
+file access; a Running service alone is not a successful mount.
 
 The tag identifies the host filesystem. The drive letter is configured
 separately; do not depend on the Explorer volume label matching the tag.

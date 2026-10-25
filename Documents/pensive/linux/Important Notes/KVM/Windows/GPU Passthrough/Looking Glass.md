@@ -154,9 +154,21 @@ if ($process.ExitCode -eq 3010) {
 verify the actual devices and service:
 
 ```powershell
-Get-PnpDevice -PresentOnly | Where-Object { $_.InstanceId -match 'LGIdd|LGInput|IVSHMEM' }
+Get-PnpDevice -PresentOnly | Where-Object { $_.InstanceId -like 'PCI\VEN_1AF4&DEV_1110*' }
+Get-PnpDevice -Class Display,HIDClass -PresentOnly | ForEach-Object {
+    $ids = @((Get-PnpDeviceProperty -InstanceId $_.InstanceId -KeyName 'DEVPKEY_Device_HardwareIds' -ErrorAction SilentlyContinue).Data)
+    if ($ids -contains 'Root\LGIdd' -or $ids -contains 'Root\LGInput') {
+        $_ | Select-Object Status,Class,FriendlyName,InstanceId
+    }
+}
 Get-Service LGIddHelper
 ```
+
+The IDD/input devices are identified by their hardware IDs, matching
+`setup_vdd.py`. Their instance paths can instead look like `ROOT\DISPLAY\0000`
+and `ROOT\HIDCLASS\0000`, so filtering instance paths for the name "LGIdd" can
+incorrectly report no devices. Require the expected devices to be present and
+healthy; the service check is separate.
 
 Sign in normally. The interactive helper defaults to making LG the only active
 monitor. The old SPICE console can therefore become black while Looking Glass

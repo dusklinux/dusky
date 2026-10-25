@@ -72,6 +72,11 @@ SocketMode=0660
 
 Apply equivalent RW-socket policy to the supporting drivers your users manage.
 Keep admin sockets root-only unless deliberately choosing another policy.
+This manual example uses mode 0660 with libvirt-group socket access. The script
+uses mode 0666 for regular sockets, then authorizes API access through polkit
+(and its rule accepts libvirt or wheel). Those are deliberate access-policy
+choices, not identical settings. In either case, socket access does not replace
+API authorization; keep `auth_unix_rw="polkit"` in the applicable daemon config.
 
 ```sh
 sudo systemctl daemon-reload
@@ -85,6 +90,22 @@ Polkit authorizes API access after the filesystem socket check. See
 same distinction encoded by `10_virt_modular_daemon.py`, which also configures
 `firewall_backend="nftables"` in `/etc/libvirt/network.conf`.
 
+## NAT firewall backend
+
+Before starting libvirt NAT networks, edit `/etc/libvirt/network.conf` with
+`sudoedit` and set its existing `firewall_backend` assignment to the following
+value, matching phase 10. Do not add a second conflicting assignment:
+
+```ini
+firewall_backend = "nftables"
+```
+
+This is a daemon setting, not an instruction to enable the standalone
+`nftables.service` or replace the host ruleset. If virtnetworkd is already
+running, it needs a controlled restart to read a changed config. Make that
+transition with affected guests/networks stopped; the fresh-host route sets
+this before the first network start.
+
 ## Guest lifecycle at host shutdown
 
 `libvirt-guests.service` coordinates configured shutdown/start actions; read
@@ -92,6 +113,43 @@ its installed EnvironmentFile path with `systemctl cat` rather than guessing
 between `/etc/conf.d/` and `/etc/sysconfig/`. Choose shutdown versus managed-save
 according to the actual guest devices and shared-filesystem support. A saved
 RAM state is not a disk backup, and nothing preserves host tmpfs through reboot.
+
+For this Windows/VFIO/VirtIO-FS route, use graceful shutdown rather than relying
+on managed-save support. The installed Arch unit inspected for these notes
+reads `/etc/conf.d/libvirt-guests`; use the path shown by your own unit. Edit
+that file with `sudoedit`, preserving unrelated settings and replacing matching
+assignments rather than appending duplicates. These file contents match the
+script's lifecycle policy:
+
+```conf
+URIS='qemu:///system'
+ON_BOOT=start
+ON_SHUTDOWN=shutdown
+SHUTDOWN_TIMEOUT=120
+PARALLEL_SHUTDOWN=4
+START_DELAY=0
+SYNC_TIME=1
+```
+
+Choose a shutdown timeout sufficient for your guests. `ON_BOOT=start` can restart
+all guests recorded as running at host shutdown, even if their individual
+autostart flag is off. Choose `ON_BOOT=ignore` if you do not want that resume
+behavior; guest autostart is a separate setting. Ensure encrypted/external/RAM
+mounts and needed directory contents are ready before enabling automatic starts.
+`SYNC_TIME=1` uses supported guest-agent time sync on resume; it is not required
+for display or ordinary Windows timekeeping.
+
+After choosing that policy, arm it for the next host shutdown:
+
+```sh
+sudo systemctl enable --now libvirt-guests.service
+systemctl status libvirt-guests.service --no-pager
+```
+
+On an existing host, starting this service can perform its selected boot action;
+inspect its state/recorded guests first. Enabling sockets alone does not arm
+this guest-shutdown policy. Reference:
+[libvirt-guests lifecycle variables](https://libvirt.org/manpages/libvirt-guests.html).
 
 ## Verify
 
@@ -109,4 +167,4 @@ should run as the desktop user. An active service after a query is normal. Sourc
 
 ---
 
-Previous: [[KVM Packages]]. Continue: [[Give the User System-Wide Permission]].
+Previous: [[Verify VT-x and Kernel Modules and IOMMU]]. Continue: [[Give the User System-Wide Permission]].

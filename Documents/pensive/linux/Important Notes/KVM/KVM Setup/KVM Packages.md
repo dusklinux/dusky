@@ -39,7 +39,11 @@ sudo pacman -S --needed qemu-desktop libvirt virt-install virt-manager virt-view
 `qemu-img` is a real Arch package providing the image utility; it is pulled in
 by this QEMU installation. Verify ownership with `pacman -Qo /usr/bin/qemu-img`
 instead of treating the package name as obsolete. `osinfo-db` supplies OS data
-through the installed dependency set; inspect `virt-install --osinfo list`.
+through the installed dependency set. With the distribution interpreter:
+
+```sh
+/usr/bin/python3 /usr/bin/virt-install --osinfo list
+```
 
 For Windows prepare the Windows ISO, VirtIO-Win ISO, and, if selected, WinFsp,
 OpenSSH offline inputs and a **paired** Looking Glass client/IDD installer.
@@ -61,8 +65,18 @@ python3 -VV
 ```
 
 If a temporary custom Python is first in PATH, distribution GUI bindings may
-still belong to `/usr/bin/python3`. Launch the packaged GUI with its interpreter:
-`/usr/bin/python3 /usr/bin/virt-manager --connect qemu:///system`. The setup
+still belong to `/usr/bin/python3`. This affects both virt-manager and
+virt-install; the latter's `/usr/bin/env python3` shebang can select the local
+runtime. Launch packaged Python tools with their distribution interpreter:
+
+```sh
+/usr/bin/python3 /usr/bin/virt-manager --connect qemu:///system
+/usr/bin/python3 /usr/bin/virt-install --version
+```
+
+The deployment script already puts distribution command paths first for its
+virt-install subprocess. Once the ISO ships Python 3.15 as its distribution
+runtime, verify the final package/binding versions together. The setup
 scripts themselves use Python 3.15+. Do not copy a runtime-directory UID or a
 Wayland socket name from another login session.
 
@@ -72,4 +86,4 @@ Reference:
 
 ---
 
-Previous: [[Verify VT-x and Kernel Modules and IOMMU]]. Continue: [[libvert Modular daemon enable]].
+Previous: [[+ MOC KVM]]. Continue: [[Verify VT-x and Kernel Modules and IOMMU]].

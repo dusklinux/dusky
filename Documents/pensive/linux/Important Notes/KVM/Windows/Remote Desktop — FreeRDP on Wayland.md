@@ -27,13 +27,16 @@ For the same supported management API used by the bootstrapper, Administrator
 PowerShell can enable RDP and its built-in firewall exception:
 
 ```powershell
+$ErrorActionPreference = 'Stop'
 $settings = Get-CimInstance -Namespace 'root/cimv2/TerminalServices' -ClassName Win32_TerminalServiceSetting
 $result = Invoke-CimMethod -InputObject $settings -MethodName SetAllowTSConnections -Arguments @{AllowTSConnections=[uint32]1;ModifyFirewallException=[uint32]1}
-$result.ReturnValue
+if ($result.ReturnValue -ne 0) { throw "Enabling Remote Desktop failed ($($result.ReturnValue))." }
 Start-Service TermService
+Get-Service TermService
 ```
 
-Require a zero ReturnValue. This uses an API instead of a localized firewall
+The command requires a zero ReturnValue before continuing, matching the
+bootstrapper. This uses an API instead of a localized firewall
 display-group name. Do not routinely disable NLA, allow blank-password remote
 logon or make every network profile Private as a connection fix. Supported blank
 local-account scenarios are deliberate exceptions, not the baseline.
@@ -82,4 +85,5 @@ the local console/Looking Glass when verifying that display path. A successful
 RDP picture alone does not prove the same GPU/monitor path is working.
 
 Sources: [Microsoft RDP host setup](https://learn.microsoft.com/en-us/windows-server/remote/remote-desktop-services/remotepc/remote-desktop-allow-access),
-[FreeRDP upstream](https://github.com/FreeRDP/FreeRDP).
+[FreeRDP upstream](https://github.com/FreeRDP/FreeRDP),
+[Microsoft SetAllowTSConnections API](https://learn.microsoft.com/en-us/windows/win32/termserv/win32-terminalservicesetting-setallowtsconnections).

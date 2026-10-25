@@ -130,7 +130,7 @@ Snippets belong inside an existing XML element as stated; do not create duplicat
 Replace uppercase placeholders before running a command. Stop on an error and
 resolve it before continuing; a command accepting an option is not proof the
 requested change succeeded. Code blocks marked `xml`, `ini`, `javascript` or
-`fstab` are file contents, not commands to paste into a terminal.
+`fstab` or `conf` are file contents, not commands to paste into a terminal.
 
 The planned ISO floor is Linux 7.3+, systemd 262+, Python 3.15+, current
 Hyprland/Wayland and Bash 5.3.20+. Final ISO package versions still need checking.
@@ -145,10 +145,11 @@ restart keeps the same QEMU hardware model.
 
 ## Host preparation
 
-1. [[Verify VT-x and Kernel Modules and IOMMU|Check firmware and KVM]]. Enable
-   CPU virtualization. On a fresh host, install the next step’s tools before
-   running the command-line validation. Add IOMMU checks only for PCI assignment.
-2. [[KVM Packages|Install or stage the package set]] and installation media.
+Enable CPU virtualization in firmware before host bring-up; add IOMMU firmware
+settings only for physical PCI assignment. Then follow this command order:
+
+1. [[KVM Packages|Install or stage the package set]] and installation media.
+2. [[Verify VT-x and Kernel Modules and IOMMU|Validate KVM with those installed tools]].
 3. [[libvert Modular daemon enable|Configure modular libvirt sockets]].
 4. [[Give the User System-Wide Permission|Verify regular-user system access]].
 5. [[Symbolic link to zram for image file|Choose storage]] and

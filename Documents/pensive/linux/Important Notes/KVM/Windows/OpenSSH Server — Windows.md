@@ -57,12 +57,16 @@ Get-Service sshd
 Get-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue
 ```
 
-If the intended server has no such rule, Administrator PowerShell can add it
-once; an existing rule is preserved:
+If the intended server has no such rule, Administrator PowerShell can add it;
+an existing matching rule is enabled without replacing its other settings,
+matching `setup_ssh.py`:
 
 ```powershell
+$ErrorActionPreference = 'Stop'
 if (-not (Get-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue)) {
     New-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -DisplayName 'OpenSSH Server (sshd)' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22
+} else {
+    Enable-NetFirewallRule -Name 'OpenSSH-Server-In-TCP'
 }
 ```
 
