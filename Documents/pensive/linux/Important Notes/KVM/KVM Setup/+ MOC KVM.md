@@ -22,7 +22,7 @@ compare against, not prerequisites for following the manual instructions.
 2. [[00 Index — VM Creation (Unified)|Choose virtual hardware]]: firmware,
    disk/NIC models, CPU, RAM, console and guest-agent channels.
 3. [[+ MOC Windows Installation Through Virt Manager|Install and integrate Windows 11]].
-4. Optionally add [[GPU Passthrough — Host Isolation and Return|GPU passthrough]],
+4. Optionally add [[+ MOC Windows GPU Passthrough|GPU passthrough]],
    [[Looking Glass]], [[Remote Desktop — FreeRDP on Wayland|RDP]],
    [[OpenSSH Server — Windows|SSH]] or [[09 Shared Folders — VirtIO-FS|a shared folder]].
 5. [[Verification — Windows VM|Verify the selected features]], then retain a
@@ -34,6 +34,50 @@ The shared host/hardware guides already distinguish the OS requirements.
 Existing `gnome-boxes/` and Linux XML pages are older material, not the current
 Wayland guest-integration instructions. macOS remains a separate, unreviewed
 workflow. Neither is required to complete the Windows route.
+
+## How to use these notes in Obsidian
+
+The numbered route is the installation order. Read each page's explanation,
+choose the applicable branch, apply that change, then verify its result. Optional
+features are independent choices; skip their configuration when not selected.
+The short navigation line under each title returns to this MOC and the relevant
+section. **Continue** links follow the main route; **Related** links explain a
+concept without adding a required installation step.
+
+Use Obsidian's Backlinks panel to see which notes reference the current page;
+these incoming links are generated from the actual links, not a second list to
+maintain by hand. The Outline panel navigates long guides. Heading links open
+the relevant section directly. Older filenames remain valid, while their page
+titles and links identify the current guide. No community plugin is required.
+See [[Reference Index — Older Names and Separate Workflows]] for those older
+entry points and the clearly separated Linux/macOS material. Sources and script
+locations are in [[Source Tutorial Link|Sources and maintenance map]].
+
+Obsidian reference: [internal and heading links](https://help.obsidian.md/links),
+[Backlinks](https://help.obsidian.md/plugins/backlinks).
+
+## How a change reaches the guest
+
+Keep four layers separate when learning or troubleshooting:
+
+| Layer | What changes here | What to check |
+|---|---|---|
+| Host resources | Mounted disks, permissions, networks, isolated PCI devices | The resource exists and is accessible before VM start |
+| Persistent VM definition | The hardware libvirt should create on its next start | Inactive XML and the chosen device/controller model |
+| Running VM | The QEMU process and hardware currently presented to Windows | Running XML, guest device enumeration and driver health |
+| Guest/session | Drivers, services, signed-in user, active monitor and applications | The specific service and real desktop/file/workload behavior |
+
+A Windows restart stays inside the existing QEMU process; it does not recreate
+hardware from an edited persistent definition. These guides use a full graceful
+shutdown followed by a VM start for hardware changes. Some devices support live
+updates, but each needs its own documented procedure. A host reboot is a third
+operation: it also resets host drivers and clears RAM-backed filesystems.
+
+For a running persistent VM, `virsh -c qemu:///system dumpxml win11` shows the
+running definition; adding `--inactive` shows the next-start definition. They
+can differ. A newly added channel still needs its guest driver/service, and a
+running service still does not prove a usable signed-in desktop. Diagnose the
+first failed layer rather than repeatedly reinstalling unrelated components.
 
 ## Choose the options before creating the guest
 
@@ -102,7 +146,8 @@ restart keeps the same QEMU hardware model.
 ## Host preparation
 
 1. [[Verify VT-x and Kernel Modules and IOMMU|Check firmware and KVM]]. Enable
-   CPU virtualization; add IOMMU checks only if assigning physical PCI devices.
+   CPU virtualization. On a fresh host, install the next step’s tools before
+   running the command-line validation. Add IOMMU checks only for PCI assignment.
 2. [[KVM Packages|Install or stage the package set]] and installation media.
 3. [[libvert Modular daemon enable|Configure modular libvirt sockets]].
 4. [[Give the User System-Wide Permission|Verify regular-user system access]].

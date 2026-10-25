@@ -9,6 +9,8 @@ reviewed: 2026-10-25
 
 # Windows timers — remove an old forced debugging override
 
+[[+ MOC KVM|KVM home]] · [[+ MOC Windows Installation Through Virt Manager|Windows route]]
+
 `useplatformclock` is a Windows boot debugging option, not a required gaming or
 KVM optimization. Do not set it on every fresh VM. Exposing a Hyper-V clock does
 not itself require forcing `useplatformclock=No` inside Windows.

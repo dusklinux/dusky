@@ -11,6 +11,8 @@ tags:
 
 # SSH into QEMU/KVM Guests — Arch (Boxes vs System, Aug 2026)
 
+[[+ MOC KVM|KVM home]] · [[Reference Index — Older Names and Separate Workflows|Separate workflows]]
+
 > [!note] Linux guest review pending
 > This page retains older Linux/Boxes or example-XML instructions. It can
 > conflict with the current Hyprland/Wayland-only baseline, including older

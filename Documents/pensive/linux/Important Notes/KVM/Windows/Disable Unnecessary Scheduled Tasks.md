@@ -9,6 +9,8 @@ reviewed: 2026-10-25
 
 # Scheduled tasks — inspect before disabling
 
+[[+ MOC KVM|KVM home]] · [[+ MOC Windows Installation Through Virt Manager|Windows route]]
+
 Keep normal maintenance unless a specific task is demonstrated to interfere
 with the workload. `ScheduledDefrag` also participates in storage optimization/
 retrim; a host disk setting of `discard=unmap` only permits requests and does

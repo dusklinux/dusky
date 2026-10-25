@@ -11,6 +11,8 @@ reviewed: 2026-10-25
 
 # Windows QEMU guest agent — install and check
 
+[[+ MOC KVM|KVM home]] · [[+ MOC Windows Installation Through Virt Manager|Windows route]]
+
 The shared channel XML and management/clipboard distinction are in
 [[06 Guest Integration — Agent, Clipboard & Input]]. Add
 `org.qemu.guest_agent.0`, then power the VM off/start it to apply the device.

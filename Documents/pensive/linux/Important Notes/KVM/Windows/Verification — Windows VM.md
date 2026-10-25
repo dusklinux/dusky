@@ -9,6 +9,8 @@ reviewed: 2026-10-25
 
 # Windows VM verification and known limits
 
+[[+ MOC KVM|KVM home]] · [[+ MOC Windows Installation Through Virt Manager|Windows route]]
+
 Run checks for the features you selected. Configuration success, guest-agent
 success, visible pixels and hardware rendering are different forms of evidence.
 A disabled/unselected optional component need not be repaired into existence.

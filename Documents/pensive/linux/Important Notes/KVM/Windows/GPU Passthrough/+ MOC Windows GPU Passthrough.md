@@ -9,6 +9,8 @@ reviewed: 2026-10-25
 
 # Windows GPU passthrough — ordered extension
 
+[[+ MOC KVM|KVM home]] · [[+ MOC Windows Installation Through Virt Manager|Windows route]]
+
 First establish [[+ MOC Windows Installation Through Virt Manager|a working Windows VM]]. GPU passthrough is an extension, not an alternative host setup.
 
 1. [[GPU Passthrough — Host Isolation and Return|Audit and isolate the GPU]]:

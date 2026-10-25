@@ -9,6 +9,8 @@ reviewed: 2026-10-25
 
 # Windows startup apps — optional cleanup
 
+[[+ MOC KVM|KVM home]] · [[+ MOC Windows Installation Through Virt Manager|Windows route]]
+
 In Windows Task Manager → **Startup apps**, or Settings → Apps → Startup,
 disable user applications you do not want at sign-in. This changes startup
 behavior, not the installed application's functionality. Record what changed and

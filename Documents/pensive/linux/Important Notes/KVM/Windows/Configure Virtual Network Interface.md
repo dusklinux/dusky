@@ -11,6 +11,8 @@ reviewed: 2026-10-25
 
 # Windows NIC driver — VirtIO or inbox e1000e
 
+[[+ MOC KVM|KVM home]] · [[+ MOC Windows Installation Through Virt Manager|Windows route]]
+
 Select [[04 Network — Virtio NIC (NAT vs Bridge)|the shared network topology]]
 independently of its device model. The Windows deployment asks for VirtIO
 (prepared NetKVM driver) or e1000e (Windows inbox driver).

@@ -8,6 +8,8 @@ reviewed: 2026-10-25
 
 # VM RAM — capacity, fixed allocation and ballooning
 
+[[+ MOC KVM|KVM home]] · [[00 Index — VM Creation (Unified)|Virtual hardware]]
+
 Choose RAM in GiB according to the workload and host budget. The Windows script
 always offers **8 GiB by default**, accepts custom positive whole amounts such
 as 4 or 50, and separately asks whether to enable ballooning (**No by default**).
@@ -87,3 +89,7 @@ A physical eight GiB host, a running 50 GiB guest and balloon reclamation with
 VFIO were not tested. No application-performance percentage was established.
 
 Source: [libvirt memory balloon device](https://libvirt.org/formatdomain.html#memory-balloon-device).
+
+---
+
+Previous: [[05 CPU — Host-Passthrough & Topology]]. Continue: [[+ MOC Windows Installation Through Virt Manager#3. Install Windows and guest tools|Install Windows after completing hardware review]].

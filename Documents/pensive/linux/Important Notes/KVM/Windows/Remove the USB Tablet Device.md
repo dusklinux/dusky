@@ -11,6 +11,8 @@ reviewed: 2026-10-25
 
 # Tablet input — optional, keep recovery usable
 
+[[+ MOC KVM|KVM home]] · [[+ MOC Windows Installation Through Virt Manager|Windows route]]
+
 Removing the setup tablet is not mandatory. Retain it until console and IDD input are verified, and measure any claimed idle-CPU benefit before changing the configuration. Current IDD direct input does not depend on an added VirtIO mouse.
 
 Continue with [[06 Guest Integration — Agent, Clipboard & Input]]. This filename is retained so existing links still work; the complete procedure is maintained in the linked guide.

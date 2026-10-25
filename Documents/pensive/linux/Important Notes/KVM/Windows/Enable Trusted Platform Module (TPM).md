@@ -9,6 +9,8 @@ reviewed: 2026-10-25
 
 # Windows 11 TPM 2.0 — configuration and persistence
 
+[[+ MOC KVM|KVM home]] · [[+ MOC Windows Installation Through Virt Manager|Windows route]]
+
 The standard Windows 11 route uses an emulated TPM 2.0, supplied by swtpm on the
 host. In a powered-off VM: **Add Hardware → TPM → Emulated → Version 2.0**, with
 the supported CRB model for this x86 Q35 setup.

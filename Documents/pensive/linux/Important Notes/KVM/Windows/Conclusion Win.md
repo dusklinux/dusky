@@ -9,6 +9,8 @@ reviewed: 2026-10-25
 
 # Windows VM completion checklist
 
+[[+ MOC KVM|KVM home]] · [[+ MOC Windows Installation Through Virt Manager|Windows route]]
+
 A complete install is one whose selected features have been verified, not one
 with the largest list of disabled services. Use [[Verification — Windows VM]]
 to check OS boot, devices, management, desktop/input, clipboard, sharing and

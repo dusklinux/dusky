@@ -10,6 +10,8 @@ reviewed: 2026-10-25
 
 # IOMMU boot parameters — systemd-boot and mkinitcpio
 
+[[+ MOC KVM|KVM home]]
+
 The filename is retained for old links; this setup uses **systemd-boot**, not
 GRUB. Host boot parameters are separate from the guest's OVMF firmware.
 Do not edit every boot entry or replace a complete options line with an example.

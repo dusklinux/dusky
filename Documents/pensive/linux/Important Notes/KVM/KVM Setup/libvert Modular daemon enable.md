@@ -10,6 +10,8 @@ reviewed: 2026-10-25
 
 # Modular libvirt sockets — manual setup
 
+[[+ MOC KVM|KVM home]]
+
 These instructions target system libvirt on Arch. A socket listens and starts
 its daemon on demand. This can reduce idle daemon residency, but it does not
 promise zero VM overhead or that every daemon immediately exits after use.
@@ -104,5 +106,7 @@ These initial queries use sudo because regular-user access is the next step.
 Repeat them without sudo after that access is configured; everyday GUI/VM use
 should run as the desktop user. An active service after a query is normal. Source:
 [libvirt daemons and systemd activation](https://libvirt.org/daemons.html).
-Next: [[Give the User System-Wide Permission]], then
-[[Symbolic link to zram for image file|choose storage and apply its directory ACLs]].
+
+---
+
+Previous: [[KVM Packages]]. Continue: [[Give the User System-Wide Permission]].

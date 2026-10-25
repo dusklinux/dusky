@@ -11,6 +11,8 @@ reviewed: 2026-10-25
 
 # Windows 11 VM — complete manual route
 
+[[+ MOC KVM|KVM home]]
+
 Use this as the ordered Windows checklist. Shared host/hardware explanations
 live in [[+ MOC KVM]] and [[00 Index — VM Creation (Unified)]]. You can complete
 this route manually; the optional script equivalents are shown after the steps.
@@ -20,7 +22,8 @@ this route manually; the optional script equivalents are shown after the steps.
 Finish packages, KVM, modular libvirt, regular-user access, a mounted storage
 pool and a named NAT/bridge network. GPU isolation is **optional**, not part of
 the minimum Windows installation. Use [[GPU Passthrough — Host Isolation and Return]]
-only if assigning a physical card.
+only if assigning a physical card. The complete ordered Windows extension is
+[[+ MOC Windows GPU Passthrough]].
 
 ## 2. Create and inspect virtual hardware
 
@@ -42,7 +45,8 @@ VGA/SPICE setup console, tablet/PS2 input and the QGA/SPICE channels. Add suppor
 Follow [[Install a Windows Virtual Machine on KVM]] for the correct storage
 bus driver, network driver, first desktop sign-in and guest tools. Verify
 [[Add QEMU Guest Agent Channel|QGA access]] before depending on automated
-management. Basic display/agent setup should work before optional GPU/display
+management. Use [[06 Guest Integration — Agent, Clipboard & Input]] to distinguish management,
+desktop and input checks. Basic display/agent setup should work before optional GPU/display
 changes. OS edition/build determines Windows Setup's account/network rules;
 preparing offline driver media does not waive those requirements.
 

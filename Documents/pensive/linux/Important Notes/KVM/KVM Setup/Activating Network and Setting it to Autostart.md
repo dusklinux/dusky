@@ -8,6 +8,8 @@ reviewed: 2026-10-25
 
 # Libvirt NAT network — provision, start and verify
 
+[[+ MOC KVM|KVM home]]
+
 NAT gives guests outbound connectivity and normally lets the **host** contact
 them directly. It does not automatically expose guest services to other LAN
 machines. The guest firewall and listening service still matter.
@@ -84,3 +86,7 @@ Missing lease output does not prove the guest has no IP; static addressing and
 other network modes need guest/agent discovery. LAN-visible alternative:
 [[Host Networking — NAT and Wired Bridge]]. Source:
 [libvirt network XML](https://libvirt.org/formatnetwork.html).
+
+---
+
+Previous: [[Symbolic link to zram for image file]]. Continue: [[00 Index — VM Creation (Unified)]].

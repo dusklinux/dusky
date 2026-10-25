@@ -8,6 +8,8 @@ reviewed: 2026-10-25
 
 # Check installed modular libvirt units
 
+[[+ MOC KVM|KVM home]]
+
 Inspect the installed package and unit files before enabling services:
 
 ```sh

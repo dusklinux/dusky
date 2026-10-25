@@ -10,6 +10,8 @@ reviewed: 2026-10-25
 
 # Guest integration — management, desktop and input paths
 
+[[+ MOC KVM|KVM home]] · [[00 Index — VM Creation (Unified)|Virtual hardware]]
+
 Install a guest component for the job it actually performs. Adding a channel
 alone does not install its driver or userspace service.
 

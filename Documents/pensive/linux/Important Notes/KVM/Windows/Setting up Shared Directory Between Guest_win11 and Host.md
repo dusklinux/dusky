@@ -10,6 +10,8 @@ reviewed: 2026-10-25
 
 # Shared Folder — Virtiofs (Host ↔ Win11)
 
+[[+ MOC KVM|KVM home]] · [[+ MOC Windows Installation Through Virt Manager|Windows route]]
+
 VirtIO-FS exposes a host directory as a Windows filesystem. It works independently
 of Looking Glass, SPICE and RDP; no Samba server is needed. Performance depends
 on the workload. The tests below establish correctness, not a speed advantage.

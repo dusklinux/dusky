@@ -8,6 +8,8 @@ reviewed: 2026-10-25
 
 # Shared folders — VirtIO-FS host configuration
 
+[[+ MOC KVM|KVM home]] · [[00 Index — VM Creation (Unified)|Virtual hardware]]
+
 VirtIO-FS exports an existing host directory to a guest. The common part is the
 host backend/device and shared guest-memory backing. Mounting it is OS-specific.
 It works independently of the display transport; no Samba or RDP redirection is

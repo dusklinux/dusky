@@ -8,6 +8,8 @@ reviewed: 2026-10-25
 
 # GNOME Boxes Windows — separate session workflow
 
+[[+ MOC KVM|KVM home]] · [[Reference Index — Older Names and Separate Workflows|Separate workflows]]
+
 Native GNOME Boxes commonly uses the per-user `qemu:///session` inventory. Check
 it explicitly before editing a VM in virt-manager. It is a separate alternative,
 not the system-libvirt Windows/VFIO workflow documented by this pass.

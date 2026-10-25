@@ -9,6 +9,8 @@ reviewed: 2026-10-25
 
 # SysMain — optional troubleshooting experiment
 
+[[+ MOC KVM|KVM home]] · [[+ MOC Windows Installation Through Virt Manager|Windows route]]
+
 SysMain manages Windows prefetch behavior. Its usefulness depends on the guest
 workload and storage. Host caching is not a proof it is redundant, especially
 when the virtual disk uses direct host I/O. There is no measured universal

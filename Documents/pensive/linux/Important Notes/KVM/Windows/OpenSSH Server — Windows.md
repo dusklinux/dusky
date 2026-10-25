@@ -9,6 +9,8 @@ reviewed: 2026-10-25
 
 # Windows OpenSSH Server — optional shell and file access
 
+[[+ MOC KVM|KVM home]] · [[+ MOC Windows Installation Through Virt Manager|Windows route]]
+
 SSH is optional. QGA can manage a guest without an account password, and Looking
 Glass/RDP do not depend on sshd. For SSH, distinguish the Windows Server feature
 from a portable Win32-OpenSSH distribution. Choose one installed server rather

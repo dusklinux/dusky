@@ -8,6 +8,8 @@ reviewed: 2026-10-25
 
 # Host networking — NAT or wired bridge
 
+[[+ MOC KVM|KVM home]]
+
 Use [[Activating Network and Setting it to Autostart|NAT]] for ordinary desktop
 VMs and host-to-guest RDP/SSH. A Linux bridge joins a VM to the physical LAN;
 it is useful when other LAN devices must reach guest services directly.

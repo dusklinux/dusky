@@ -9,6 +9,8 @@ reviewed: 2026-10-25
 
 # Grow a Windows virtual disk and its volume
 
+[[+ MOC KVM|KVM home]] · [[+ MOC Windows Installation Through Virt Manager|Windows route]]
+
 Image capacity and the partition/filesystem inside it are different layers.
 This is a **grow** procedure, not a shrink recipe. First preserve a consistent
 backup: [[08 Backup and Restore — Disks, Firmware and TPM]].

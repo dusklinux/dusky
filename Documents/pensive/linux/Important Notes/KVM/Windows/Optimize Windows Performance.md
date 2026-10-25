@@ -9,6 +9,8 @@ reviewed: 2026-10-25
 
 # Windows performance — establish a baseline, then measure
 
+[[+ MOC KVM|KVM home]] · [[+ MOC Windows Installation Through Virt Manager|Windows route]]
+
 A usable Windows VM does not require blanket “debloat”. Begin with correct
 storage/NIC drivers, sensible CPU/RAM, healthy GPU drivers if assigned, and a
 working desktop transport. Record idle CPU/RAM, boot time and the workload that

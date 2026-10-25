@@ -10,6 +10,8 @@ reviewed: 2026-10-25
 
 # Guest storage — format, bus, caching and discard
 
+[[+ MOC KVM|KVM home]] · [[00 Index — VM Creation (Unified)|Virtual hardware]]
+
 Start with one simple virtual disk. A guest disk's controller/bus, image format,
 cache policy and host filesystem are independent choices. No combination in
 this note is a universal performance winner; measure your actual workload.
@@ -87,3 +89,7 @@ QEMU's image locking. Growing a Windows disk:
 Sources: [QEMU image utility](https://www.qemu.org/docs/master/tools/qemu-img.html),
 [QEMU disk/cache options](https://www.qemu.org/docs/master/system/invocation.html),
 [libvirt disk XML](https://libvirt.org/formatdomain.html#hard-drives-floppy-disks-cdroms).
+
+---
+
+Previous: [[02 Chipset & Firmware — Q35 + UEFI]]. Continue: [[04 Network — Virtio NIC (NAT vs Bridge)]].

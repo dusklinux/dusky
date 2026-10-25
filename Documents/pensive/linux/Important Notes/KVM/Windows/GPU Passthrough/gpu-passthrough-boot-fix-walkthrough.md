@@ -9,6 +9,8 @@ reviewed: 2026-10-25
 
 # Recover a host display after VFIO boot configuration
 
+[[+ MOC KVM|KVM home]] · [[+ MOC Windows Installation Through Virt Manager|Windows route]] · [[+ MOC Windows GPU Passthrough|GPU route]]
+
 A black host display after assigning its GPU can mean the native host driver no
 longer owns it. This is different from a black Windows setup console after the
 Looking Glass helper changed the guest's active monitor. Diagnose which machine

@@ -10,6 +10,8 @@ reviewed: 2026-10-25
 
 # VM storage — persistent disks and RAM-backed experiments
 
+[[+ MOC KVM|KVM home]]
+
 A libvirt storage pool is an inventory of a host directory. It is not the guest
 RAM allocation and does not make storage persistent. A qcow2 has a **virtual
 capacity**, **allocated host space**, and possibly **backing images**; these are
@@ -112,5 +114,7 @@ Do not infer an I/O speedup merely from a RAM-backed pathname.
 
 Before host reboot, preserve a stopped guest's complete disk chain and its
 firmware/TPM state: [[08 Backup and Restore — Disks, Firmware and TPM]].
-With directory access and the pool ready, continue with
-[[Activating Network and Setting it to Autostart]].
+
+---
+
+Previous: [[Give the User System-Wide Permission]]. Continue: [[Activating Network and Setting it to Autostart]].

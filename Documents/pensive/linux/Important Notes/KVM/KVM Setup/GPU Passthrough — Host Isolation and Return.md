@@ -8,6 +8,8 @@ reviewed: 2026-10-25
 
 # GPU passthrough — host isolation and return
 
+[[+ MOC KVM|KVM home]]
+
 VFIO gives a physical PCI device to QEMU instead of its ordinary Linux driver.
 It is optional: a setup console, RDP and the current Looking Glass IDD's software
 path can work without a passed-through GPU. The procedure below is a **boot-time

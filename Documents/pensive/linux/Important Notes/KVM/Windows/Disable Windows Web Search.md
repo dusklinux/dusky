@@ -9,6 +9,8 @@ reviewed: 2026-10-25
 
 # Windows search preferences — avoid a universal registry promise
 
+[[+ MOC KVM|KVM home]] · [[+ MOC Windows Installation Through Virt Manager|Windows route]]
+
 This is a desktop preference, not required VM setup. Windows edition/build and
 policy support determine which search controls are available. Use the supported
 Search/Start policy in the installed edition, read its applicability and test

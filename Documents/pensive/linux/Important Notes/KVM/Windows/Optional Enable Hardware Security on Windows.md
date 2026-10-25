@@ -9,6 +9,8 @@ reviewed: 2026-10-25
 
 # Optional VBS and nested virtualization — separate from baseline
 
+[[+ MOC KVM|KVM home]] · [[+ MOC Windows Installation Through Virt Manager|Windows route]]
+
 This page explains an existing optional topic; it does not change the VM's
 security configuration. UEFI, TPM readiness, Secure Boot enforcement, Hyper-V
 enlightenments and Windows Memory Integrity/VBS are different mechanisms.

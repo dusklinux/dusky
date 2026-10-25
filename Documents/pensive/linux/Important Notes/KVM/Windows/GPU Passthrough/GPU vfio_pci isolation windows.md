@@ -9,6 +9,8 @@ reviewed: 2026-10-25
 
 # VFIO isolation — shared guide
 
+[[+ MOC KVM|KVM home]] · [[+ MOC Windows Installation Through Virt Manager|Windows route]] · [[+ MOC Windows GPU Passthrough|GPU route]]
+
 Do not maintain a second kernel/module recipe for Windows. Use the shared guide for discovery, safe load order, verification and reversing the change.
 
 Continue with [[GPU Passthrough — Host Isolation and Return]]. This filename is retained so existing links still work; the complete procedure is maintained in the linked guide.

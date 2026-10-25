@@ -11,6 +11,8 @@ tags:
 
 # macOS — QEMU Networking
 
+[[+ MOC KVM|KVM home]] · [[Reference Index — Older Names and Separate Workflows|Separate workflows]]
+
 > [!note] Separate workflow — not reviewed in the Windows pass
 > This page retains older macOS-specific instructions. Its packages, firmware,
 > device examples and commands have not been validated by the Windows/shared

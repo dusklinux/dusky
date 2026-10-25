@@ -9,6 +9,8 @@ reviewed: 2026-10-25
 
 # Windows Hyper-V enlightenments on KVM
 
+[[+ MOC KVM|KVM home]] · [[+ MOC Windows Installation Through Virt Manager|Windows route]]
+
 These are paravirtual interfaces that help Windows cooperate with KVM. They do
 not require installing the Hyper-V role inside Windows or enabling nested
 virtualization. The current deployment uses a conservative custom set plus a

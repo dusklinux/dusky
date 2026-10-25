@@ -8,6 +8,8 @@ reviewed: 2026-10-25
 
 # Windows 11 XML — annotated baseline
 
+[[+ MOC KVM|KVM home]] · [[00 Index — VM Creation (Unified)|Virtual hardware]]
+
 This is a **schema-checked teaching template**, not an exported definition of
 this laptop. Replace image paths/name/resources before defining it. Let libvirt
 generate UUID, MAC, PCI addresses and firmware paths. The example omits a

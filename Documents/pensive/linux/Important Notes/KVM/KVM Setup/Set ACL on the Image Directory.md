@@ -8,6 +8,8 @@ reviewed: 2026-10-25
 
 # VM image access — discover QEMU identity and apply ACLs
 
+[[+ MOC KVM|KVM home]]
+
 Three identities matter: the desktop operator, the libvirt management daemon,
 and the QEMU process. A root daemon does not imply root QEMU. Commented
 `user="root"` examples in `qemu.conf` do not reveal the distribution default.
@@ -68,3 +70,6 @@ and inspect QEMU/libvirt startup errors. The service account's ability to open
 an image is distinct from the user's permission to manage the VM.
 
 Source: [libvirt capabilities](https://libvirt.org/formatcaps.html).
+
+Continue: return to [[Symbolic link to zram for image file#Create a directory pool|storage pool setup]]
+after verifying directory access.

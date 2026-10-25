@@ -9,6 +9,8 @@ reviewed: 2026-10-25
 
 # Install Windows 11 — disk, NIC and guest drivers
 
+[[+ MOC KVM|KVM home]] · [[+ MOC Windows Installation Through Virt Manager|Windows route]]
+
 Complete [[+ MOC Windows Installation Through Virt Manager|virtual hardware]]
 first. Boot the Windows ISO in the retained VGA/SPICE console. The Windows
 installer should see the chosen firmware/TPM and meet its resource requirements.
@@ -65,6 +67,8 @@ Eject the Windows installer when no longer needed and boot the installed disk.
 Preserve the driver media for future offline use. A historical tools screenshot:
 ![[Pasted image 20250726223648.png]]
 
-Continue with [[Verification — Windows VM]], then chosen access/sharing options.
+First verify the baseline OS/devices/QGA with [[Verification — Windows VM]].
+Then return to [[+ MOC Windows Installation Through Virt Manager#4. Pick desktop and management access|desktop and management choices]],
+and repeat the relevant checks after adding each selected feature.
 Sources: [VirtIO-Win driver installation](https://github.com/virtio-win/kvm-guest-drivers-windows/wiki/Driver-installation),
 [Microsoft PnPUtil](https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/pnputil-command-syntax).

@@ -8,6 +8,8 @@ reviewed: 2026-10-25
 
 # System libvirt — user access and connection URI
 
+[[+ MOC KVM|KVM home]]
+
 Use `qemu:///system` for this workflow. The system daemon is privileged, but QEMU
 processes can run under a separate service account. `qemu:///session` is a
 separate per-user inventory with different networking/device arrangements.
@@ -77,3 +79,7 @@ Troubleshoot in order: correct URI → listening socket → current group member
 → polkit agent/rule → individual error. Do not launch the desktop GUI with sudo
 as a general repair. Sources: [libvirt authentication](https://libvirt.org/auth.html),
 [systemd environment.d](https://www.freedesktop.org/software/systemd/man/latest/environment.d.html).
+
+---
+
+Previous: [[libvert Modular daemon enable]]. Continue: [[Symbolic link to zram for image file]].

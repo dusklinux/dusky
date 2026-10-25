@@ -8,6 +8,8 @@ reviewed: 2026-10-25
 
 # VM backup and restore — disks, firmware and TPM
 
+[[+ MOC KVM|KVM home]] · [[00 Index — VM Creation (Unified)|Virtual hardware]]
+
 A working VM is more than its qcow2. Preserve its domain definition, every disk
 and backing image, NVRAM, TPM state and any required host-device/network setup.
 A shared host directory is separate data and is not part of a VM snapshot.

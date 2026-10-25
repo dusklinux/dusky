@@ -8,6 +8,8 @@ reviewed: 2026-10-25
 
 # KVM kernel modules
 
+[[+ MOC KVM|KVM home]]
+
 KVM support must be built into or loadable by the running kernel. Modules
 normally load through device discovery; persistent modules-load entries are not
 necessary when that already works.
@@ -37,4 +39,5 @@ put its name in `/etc/modules-load.d/kvm.conf`. That file contains a module
 name such as `kvm_intel`, not modprobe options. No host reboot is required just
 to test `modprobe` now.
 
-Verify `virt-host-validate qemu`, then [[libvert Modular daemon enable]].
+Verify `virt-host-validate qemu`, then return to
+[[Verify VT-x and Kernel Modules and IOMMU|the KVM checks]].

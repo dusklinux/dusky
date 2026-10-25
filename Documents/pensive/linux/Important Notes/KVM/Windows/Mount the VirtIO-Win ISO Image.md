@@ -9,6 +9,8 @@ reviewed: 2026-10-25
 
 # VirtIO-Win ISO — prepare and attach driver media
 
+[[+ MOC KVM|KVM home]] · [[+ MOC Windows Installation Through Virt Manager|Windows route]]
+
 Windows needs drivers for the selected VirtIO devices. The disk bus determines
 whether it needs viostor or vioscsi; NetKVM handles VirtIO networking. Guest tools
 also provide management/integration components. SATA/e1000e can use inbox

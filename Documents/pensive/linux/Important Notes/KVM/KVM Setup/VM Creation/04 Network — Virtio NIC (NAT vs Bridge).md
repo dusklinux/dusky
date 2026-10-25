@@ -10,6 +10,8 @@ reviewed: 2026-10-25
 
 # Guest NIC — device model versus network topology
 
+[[+ MOC KVM|KVM home]] · [[00 Index — VM Creation (Unified)|Virtual hardware]]
+
 Choose topology and NIC model separately. [[Activating Network and Setting it to Autostart|Libvirt NAT]] works on ordinary Wi-Fi and wired hosts. Use
 [[Host Networking — NAT and Wired Bridge|a wired bridge]] only when its LAN
 visibility is needed. Do not use macvtap as an ordinary Wi-Fi bridging fix.
@@ -42,3 +44,7 @@ virsh -c qemu:///system domifaddr win11 --source agent
 Agent discovery requires QGA. Guest service/firewall settings determine whether
 RDP/SSH works after IP connectivity exists. Host-to-guest NAT access and
 LAN-to-guest access are different paths; diagnose the one you are using.
+
+---
+
+Previous: [[03 Storage — Virtio Bus, Cache, io_uring, Discard]]. Continue: [[05 CPU — Host-Passthrough & Topology]].

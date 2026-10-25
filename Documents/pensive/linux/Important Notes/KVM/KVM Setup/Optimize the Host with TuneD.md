@@ -8,6 +8,8 @@ reviewed: 2026-10-25
 
 # Host tuning — optional and measured
 
+[[+ MOC KVM|KVM home]]
+
 A desktop VM does not require TuneD. First establish a working baseline, then
 measure the workload you want to improve. A profile can change power use,
 thermals, scheduling and I/O behavior without improving your application.

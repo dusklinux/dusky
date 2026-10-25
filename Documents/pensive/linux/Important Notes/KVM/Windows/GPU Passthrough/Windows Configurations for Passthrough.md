@@ -9,6 +9,8 @@ reviewed: 2026-10-25
 
 # Windows integration — choose the components you need
 
+[[+ MOC KVM|KVM home]] · [[+ MOC Windows Installation Through Virt Manager|Windows route]] · [[+ MOC Windows GPU Passthrough|GPU route]]
+
 After installing Windows/guest tools, use a separate guide for each component:
 
 | Component | Guide |

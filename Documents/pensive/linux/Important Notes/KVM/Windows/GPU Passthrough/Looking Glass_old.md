@@ -9,6 +9,8 @@ reviewed: 2026-10-25
 
 # Older Looking Glass configuration — replaced
 
+[[+ MOC KVM|KVM home]] · [[+ MOC Windows Installation Through Virt Manager|Windows route]] · [[+ MOC Windows GPU Passthrough|GPU route]]
+
 The executable raw-QEMU and forced-destroy recipes have been retired. Stable legacy Host and the paired IDD development stack are distinct; choose matching components and the documented native shmem route. No live mapping deletion is a normal repair.
 
 Continue with [[Looking Glass]]. This filename is retained so existing links still work; the complete procedure is maintained in the linked guide.

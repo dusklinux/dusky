@@ -9,6 +9,8 @@ reviewed: 2026-10-25
 
 # Windows visual effects — preference and measured trade-off
 
+[[+ MOC KVM|KVM home]] · [[+ MOC Windows Installation Through Virt Manager|Windows route]]
+
 Reducing animations/transparency can make a software-rendered desktop feel
 more responsive, but this setup has no measured universal FPS or transport
 bandwidth saving from doing so. Treat it as a preference or a workload test.

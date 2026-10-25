@@ -10,6 +10,8 @@ reviewed: 2026-10-25
 
 # KVM host packages and offline inputs
 
+[[+ MOC KVM|KVM home]]
+
 The shared package list is `05_virtio_iso.py:REPO_PACKAGES`. Understand the roles
 before adding optional components. On a connected Arch installation, update the
 system consistently before installing from its repositories; do not perform a
@@ -64,6 +66,10 @@ still belong to `/usr/bin/python3`. Launch the packaged GUI with its interpreter
 scripts themselves use Python 3.15+. Do not copy a runtime-directory UID or a
 Wayland socket name from another login session.
 
-Next: [[libvert Modular daemon enable]]. Reference:
+Reference:
 [Arch package database](https://archlinux.org/packages/),
 [libvirt daemon architecture](https://libvirt.org/daemons.html).
+
+---
+
+Previous: [[Verify VT-x and Kernel Modules and IOMMU]]. Continue: [[libvert Modular daemon enable]].

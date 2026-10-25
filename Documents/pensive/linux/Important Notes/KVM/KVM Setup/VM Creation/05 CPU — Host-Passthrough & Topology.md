@@ -10,6 +10,8 @@ reviewed: 2026-10-25
 
 # CPU mode, topology and optional pinning
 
+[[+ MOC KVM|KVM home]] · [[00 Index — VM Creation (Unified)|Virtual hardware]]
+
 `host-passthrough` exposes the host CPU's available features to the guest. It is
 a useful single-host default, not a promise that an arbitrary VM can move to
 unlike hardware. `host-model`/named models have migration use cases; there is no
@@ -56,3 +58,7 @@ feature block. CPU virtualization, PCI passthrough and Looking Glass are three
 separate concepts.
 
 Source: [libvirt CPU XML](https://libvirt.org/formatdomain.html#cpu-model-and-topology).
+
+---
+
+Previous: [[04 Network — Virtio NIC (NAT vs Bridge)]]. Continue: [[07 Memory — Fixed and Ballooning]].

@@ -8,6 +8,8 @@ reviewed: 2026-10-25
 
 # Sources and maintenance map
 
+[[+ MOC KVM|KVM home]]
+
 The older sysguides KVM tutorial explains the origin of some notes:
 <https://sysguides.com/install-kvm-on-linux>. It is background, not the authority
 for this host's package/daemon versions. Local notes can be wrong too; compare

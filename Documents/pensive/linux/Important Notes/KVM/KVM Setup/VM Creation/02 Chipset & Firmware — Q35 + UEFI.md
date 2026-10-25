@@ -10,6 +10,8 @@ reviewed: 2026-10-25
 
 # Chipset and firmware — Q35, UEFI and NVRAM
 
+[[+ MOC KVM|KVM home]] · [[00 Index — VM Creation (Unified)|Virtual hardware]]
+
 Q35 is this workflow's modern x86 PCIe machine model. Use it for new domains;
 changing an established guest's chipset can change its device layout and boot
 behavior. Preserve its existing versioned machine model during ordinary updates
@@ -64,3 +66,7 @@ snapshot workflow. A consistent cold backup is the documented recovery route.
 
 Sources: [libvirt firmware selection](https://libvirt.org/formatdomain.html#operating-system-booting),
 [Windows 11 requirements](https://learn.microsoft.com/en-us/windows/whats-new/windows-11-requirements).
+
+---
+
+Previous: [[01 Wizard — Create VM]]. Continue: [[03 Storage — Virtio Bus, Cache, io_uring, Discard]].

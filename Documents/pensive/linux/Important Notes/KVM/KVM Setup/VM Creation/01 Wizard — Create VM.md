@@ -10,6 +10,8 @@ reviewed: 2026-10-25
 
 # Create a VM — virt-manager wizard
 
+[[+ MOC KVM|KVM home]] · [[00 Index — VM Creation (Unified)|Virtual hardware]]
+
 Connect with `virt-manager --connect qemu:///system` as your desktop user.
 If the inventory is empty, check the URI before assuming disks or definitions
 are missing. Complete [[+ MOC KVM|host setup]] first.
@@ -34,7 +36,8 @@ are missing. Complete [[+ MOC KVM|host setup]] first.
 
 Enable virt-manager's XML editing preference if using its XML tab. That is a GUI
 editing preference, not a hypervisor requirement; `virsh edit` works separately.
-After starting installation, follow [[Install a Windows Virtual Machine on KVM]].
+Complete the hardware review using the **Continue** links below before
+starting installation. Then follow [[Install a Windows Virtual Machine on KVM]].
 
 Earlier screenshots are retained as historical UI examples:
 ![[Pasted image 20250726180159.png]]
@@ -44,3 +47,7 @@ For CLI learning, use [[Windows 11 XML — Baseline]]. The scripted equivalent i
 `python3 30_kvm_vm_deploy.py --windows --dump-only`: it interviews you and previews
 XML without provisioning storage. Preview flags matter: raw virt-install XML
 printing without its dry-run protections is not a universal no-side-effect mode.
+
+---
+
+Previous: [[00 Index — VM Creation (Unified)]]. Continue: [[02 Chipset & Firmware — Q35 + UEFI]].

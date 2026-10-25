@@ -9,6 +9,8 @@ reviewed: 2026-10-25
 
 # Remote Desktop — Windows host and FreeRDP on Wayland
 
+[[+ MOC KVM|KVM home]] · [[+ MOC Windows Installation Through Virt Manager|Windows route]]
+
 RDP is an optional independent desktop connection, not a requirement for IDD or
 permission to disable a recovery display adapter. Windows 11 Pro/Enterprise/
 Education can host supported RDP sessions; Home does not supply the equivalent

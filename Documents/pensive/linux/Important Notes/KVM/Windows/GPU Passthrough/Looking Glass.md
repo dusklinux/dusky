@@ -9,6 +9,8 @@ reviewed: 2026-10-25
 
 # Looking Glass — paired IDD and native Wayland client
 
+[[+ MOC KVM|KVM home]] · [[+ MOC Windows Installation Through Virt Manager|Windows route]] · [[+ MOC Windows GPU Passthrough|GPU route]]
+
 This guide describes the **paired IDD development stack used by these scripts**.
 Stable B7's legacy capture Host is a different implementation. Do not combine
 a development IDD installer with an arbitrary stable client/package. Obtain both
