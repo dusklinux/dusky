@@ -1,48 +1,30 @@
 ---
-title: "Disable Unnecessary Scheduled Tasks"
+title: "Scheduled tasks — inspect before disabling"
 tags:
   - kvm
+  - manual
   - windows
-  - performance
+reviewed: 2026-10-25
 ---
 
-# Disable Unnecessary Scheduled Tasks
+# Scheduled tasks — inspect before disabling
 
-> [!abstract] Goal
-> Stop Windows background defrag/telemetry bursts that steal VM I/O/CPU.
+Keep normal maintenance unless a specific task is demonstrated to interfere
+with the workload. `ScheduledDefrag` also participates in storage optimization/
+retrim; a host disk setting of `discard=unmap` only permits requests and does
+not generate them. Do not disable that task as a generic qcow2/SSD optimization.
 
-## List tasks (Admin PowerShell)
-
-```powershell
-Get-ScheduledTask
-Get-ScheduledTask -TaskName '*schedule*'
-```
-
-Example output:
-
-```
-TaskPath                                TaskName                     State
-\Microsoft\Windows\Defrag\               ScheduledDefrag              Ready
-\Microsoft\Windows\Diagnosis\            Scheduled                    Ready
-\Microsoft\Windows\UpdateOrchestrator\   Schedule Scan                Ready
-```
-
-## Disable chosen tasks (example: defrag — host storage `discard=unmap` handles TRIM)
+Inspect in Task Scheduler or Administrator PowerShell:
 
 ```powershell
-Disable-ScheduledTask -TaskPath '\Microsoft\Windows\Defrag\' -TaskName ScheduledDefrag
-# verify
-Get-ScheduledTask -TaskPath '\Microsoft\Windows\Defrag\' -TaskName ScheduledDefrag | Select TaskPath,TaskName,State
-# → State: Disabled
+Get-ScheduledTask -TaskPath '\Microsoft\Windows\Defrag\' | Select-Object TaskPath,TaskName,State
+Get-ScheduledTaskInfo -TaskPath '\Microsoft\Windows\Defrag\' -TaskName ScheduledDefrag
 ```
 
-Re-enable if ever needed:
+For a deliberately selected third-party task, record its path/name/settings.
+Use `Disable-ScheduledTask -TaskPath PATH -TaskName NAME` only after replacing
+those placeholders. Re-enable with `Enable-ScheduledTask` and the same identity.
+Rescheduling away from interactive work may be a better fit than disabling it.
+Do not disable update, recovery, time or guest integration tasks in bulk.
 
-```powershell
-Enable-ScheduledTask -TaskPath '\Microsoft\Windows\Defrag\' -TaskName ScheduledDefrag
-```
-
-> [!warning] Don’t blindly disable all
-> Keep `Time Synchronization` / `UpdateOrchestrator` if you rely on Windows Update control via `Windows Update MiniTool` / `O&O ShutUp10`.
-
-See: [[Optimize Windows Performance]].
+Source: [Microsoft drive optimization](https://support.microsoft.com/en-us/windows/experience/storage-filemanagement/defragment-optimize-your-data-drives-in-windows).

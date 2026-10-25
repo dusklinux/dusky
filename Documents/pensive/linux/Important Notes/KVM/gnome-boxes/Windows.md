@@ -1,45 +1,35 @@
 ---
-title: "GNOME Boxes — Windows Guest Tools (SPICE)"
+title: "GNOME Boxes Windows — separate session workflow"
 tags:
   - kvm
-  - gnome-boxes
-  - windows
-  - spice
+  - manual
+reviewed: 2026-10-25
 ---
 
-# GNOME Boxes — Windows Guest (SPICE Tools)
+# GNOME Boxes Windows — separate session workflow
 
-> [!info] Scope
-> Boxes `qemu:///session` Windows VM — SPICE for display + clipboard (no VFIO here). For `qemu:///system` Windows + passthrough see [[+ MOC Windows GPU Passthrough]].
+Native GNOME Boxes commonly uses the per-user `qemu:///session` inventory. Check
+it explicitly before editing a VM in virt-manager. It is a separate alternative,
+not the system-libvirt Windows/VFIO workflow documented by this pass.
 
-## spice-guest-tools (display, agent, qxl)
-
-Install **spice-guest-tools** inside **Windows guest** (not host):
-
-- Download: <https://www.spice-space.org/download.html> → **Windows binaries → Windows SPICE Guest Tools** (`spice-guest-tools-latest.exe`) — includes `qxl` video, `spice-agent` (copy/paste, auto-resize), optional `virtio` serial drivers.
-- Install → reboot.
-
-Verify in guest: `services.msc` → **RDP/SPICE agents** running; `Device Manager → Display adapters` → **Red Hat QXL**.
-
-> [!tip] CLI x64 path issue?
-> Boxes default `qxl` driver may show `Standard VGA` pre-tools → after install it becomes `Red Hat QXL`.
-
-## WebDAV (guest↔host file sharing, separate from clipboard)
-
-Clipboard (`spice-vdagent` / `spice-guest-tools`) ≠ Shared Folders.
-
-For **folder sharing** via SPICE WebDAV need **Spice WebDAV daemon** inside Windows guest:
-
-- <https://www.spice-space.org/download/windows/spice-webdavd/> → install → plus **SPICE WebDAV channel** in VM XML (Boxes usually omits; add via `virt-manager --connect qemu:///session` → Add Hardware → Channel → `org.spice-space.webdav.0` per SPICE manual: <https://www.spice-space.org/spice-user-manual.html#_folder_sharing>):
-
-```xml
-<channel type='spiceport'>
-  <source channel='org.spice-space.webdav.0'/>
-  <target type='virtio' name='org.spice-space.webdav.0'/>
-</channel>
+```sh
+virsh -c qemu:///session list --all
+virt-manager --connect qemu:///session
 ```
 
-> [!note] virtiofs vs WebDAV
-> `virtiofs` (`host_zram` shared folder for `qemu:///system` VMs) is different stack (see [[Setting up Shared Directory Between Guest_win11 and Host]]). Boxes `session` VMs typically use **WebDAV**, not `virtiofs`, for folder sharing.
+Windows SPICE tools/agent can provide supported clipboard/display integration
+when the corresponding channel and viewer exist. VirtIO-Win tools and driver
+requirements still depend on the devices actually configured; see
+[[Install a Windows Virtual Machine on KVM]]. Do not infer healthy display
+acceleration from a QXL driver name.
 
-See: [[gnome-boxes]] (scope + clipboard plumbing), [[SSHing into vm]].
+Boxes folder sharing through SPICE WebDAV is a different mechanism from
+VirtIO-FS. Its guest daemon/channel/client support must all match. The tested
+folder route in this session is system-libvirt VirtIO-FS:
+[[Setting up Shared Directory Between Guest_win11 and Host]]. A channel alone
+does not install a WebDAV service or share a directory.
+
+For a complete current Windows manual route use
+[[+ MOC Windows Installation Through Virt Manager]]. Broader Boxes/Linux guest
+clipboard notes await the Linux pass and are not a Wayland/XWayland baseline
+recommendation here. Source: [SPICE manual](https://www.spice-space.org/spice-user-manual.html).

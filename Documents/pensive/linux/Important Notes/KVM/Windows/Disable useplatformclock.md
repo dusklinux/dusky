@@ -1,38 +1,32 @@
 ---
-title: "Disable useplatformclock (Fix Clock Stutter)"
+title: "Windows timers — remove an old forced debugging override"
 tags:
   - kvm
+  - manual
   - windows
-  - clock
-  - hyperv
+reviewed: 2026-10-25
 ---
 
-# Disable `useplatformclock`
+# Windows timers — remove an old forced debugging override
 
-> [!warning] When to do this
-> When Hyper-V enlightenments (`hypervclock.present=yes` + `hyperv.synic/stimer`) are active, forcing `useplatformclock` + HPET creates lag/stutter. The fix is to **disable** it.
+`useplatformclock` is a Windows boot debugging option, not a required gaming or
+KVM optimization. Do not set it on every fresh VM. Exposing a Hyper-V clock does
+not itself require forcing `useplatformclock=No` inside Windows.
 
-## Inside Windows VM (Admin)
-
-Open **Command Prompt** or **PowerShell as Administrator**:
+If an older guide forced a value, inspect it first in Administrator PowerShell:
 
 ```powershell
-bcdedit /set useplatformclock No
-# verify
-bcdedit /enum | findstr useplatformclock   # should show No or absent
-Restart-Computer
+bcdedit /enum '{current}'
+# Only if useplatformclock was explicitly configured and you want OS defaults:
+bcdedit /deletevalue '{current}' useplatformclock
 ```
 
-> [!info] Pair with XML
-> Virt-manager XML should be:
-> ```xml
-> <clock offset='localtime'>
->   <timer name='rtc' tickpolicy='catchup'/><timer name='pit' tickpolicy='delay'/>
->   <timer name='hpet' present='no'/><timer name='hypervclock' present='yes'/>
-> </clock>
-> ```
-> (`hpet=no` + `hypervclock=yes` — matches `30_kvm_vm_deploy.py:build_command --clock`)
+An absent value is already the default; “element not found” is not a reason to
+add it. Record the original state, restart Windows when ready, then compare the
+same timing-sensitive workload. Leave unrelated BCD/HPET/dynamic-tick settings
+alone unless diagnosing a specific issue.
 
-If stutter persists, verify `35_cpu_pinning_generator.py` pinning and that host `tuned` isn’t in `balanced` vs `virtual-host`.
-
-See: [[Enable Hyper-V Enlightenments]], [[Optimize Windows Performance]].
+Guest clock XML is explained by [[Hyper-V Enlightenments]]. A timer change is
+not a generic repair for CPU oversubscription, driver faults or a sleeping
+Looking Glass display. Source:
+[Microsoft BCDEdit options](https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/bcdedit--set).

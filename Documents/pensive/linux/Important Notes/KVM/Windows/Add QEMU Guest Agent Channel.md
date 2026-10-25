@@ -1,33 +1,31 @@
 ---
-title: "QEMU Guest Agent Channel (Windows Delta)"
+title: "Windows QEMU guest agent — install and check"
 tags:
   - kvm
+  - manual
   - windows
-  - spice
-  - arch
 aliases:
   - Windows Agent Stub
+reviewed: 2026-10-25
 ---
 
-# QEMU Guest Agent Channel (Windows)
+# Windows QEMU guest agent — install and check
 
-> [!tip] Merged — canonical source
-> **Shared both-channels + 3-part input model lives in [[KVM Setup/VM Creation/06 Guest Integration — Agent, Clipboard & Input]].** This stub keeps **only Windows install** detail inline.
+The shared channel XML and management/clipboard distinction are in
+[[06 Guest Integration — Agent, Clipboard & Input]]. Add
+`org.qemu.guest_agent.0`, then power the VM off/start it to apply the device.
+Install QEMU Guest Agent and its required serial driver through VirtIO-Win tools.
 
-## Windows install (after canonical Add Hardware)
+Inside Windows, inspect the installed service in `services.msc`; configure/start
+it if that component was selected. A channel with no driver/service cannot
+answer management requests. From the Linux host:
 
-1. Canonical already did: **Add Hardware → Channel → Name `org.qemu.guest_agent.0`** + `com.redhat.spice.0`. XML:
-   ```xml
-   <channel type="unix"><source mode="bind"/><target type="virtio" name="org.qemu.guest_agent.0"/></channel>
-   <channel type="spicevmc"><target type="virtio" name="com.redhat.spice.0"/></channel>
-   ```
-2. Inside Windows: install **QEMU Guest Agent** via `virtio-win-guest-tools.exe` (CD Drive E:) → set **Services → QEMU Guest Agent → Automatic → Start** + **Spice Agent → Automatic**.
-
-Verify host:
-
-```bash
-virsh -c qemu:///system qemu-agent-command win11 '{"execute":"guest-info"}' | python3 -m json.tool
-virsh -c qemu:///system shutdown win11 --mode agent   # clean > --mode acpi
+```sh
+virsh -c qemu:///system qemu-agent-command win11 '{"execute":"guest-ping"}'
+virsh -c qemu:///system domifaddr win11 --source agent
 ```
 
-See: canonical [[KVM Setup/VM Creation/06 Guest Integration — Agent, Clipboard & Input]] (both OSes, Linux `spice-vdagent`/`qemu-guest-agent` via `pacman`), [[Looking Glass]].
+A successful ping permits management without an RDP/SSH account password. It does
+not sign the user into Windows, bypass the sign-in screen, prove desktop pixels,
+or replace the SPICE/IDD user-session clipboard path. A Windows Hello PIN is
+not an RDP/SSH password. Keep this boundary when diagnosing a black display.

@@ -1,87 +1,68 @@
 ---
-title: "Verify VT-x / KVM / IOMMU & ACS"
+title: "Verify CPU virtualization, KVM and optional IOMMU"
 tags:
   - kvm
-  - kernel
-  - iommu
-  - vfio
-  - arch
+  - manual
+reviewed: 2026-10-25
 ---
 
-# Verify VT-x / KVM / IOMMU & ACS (Kernel 7.3+, systemd 262+)
+# Verify CPU virtualization, KVM and optional IOMMU
 
-> [!abstract] Goal
-> Guarantee firmware and the modern stack (KVM + `IOMMUFD`) are cooperating **before** touching libvirt. This note is the pre-flight gate `05_virtio_iso.py:verify_kvm_capability` and `15_*.py:enumerate_pci` codify.
+CPU virtualization and PCI-device isolation are separate features. A plain
+Windows/Linux VM needs KVM; VFIO PCI passthrough also needs an enabled IOMMU and
+usable device groups. IOMMUFD is a QEMU/kernel interface, not a firmware switch.
 
-## Step 0 — UEFI/BIOS
+## KVM first
 
-| Setting | Value | Why |
-|---|---|---|
-| VT-x / SVM | **Enabled** | `vmx`/`svm` flags → `/dev/kvm` |
-| VT-d / AMD-Vi | **Enabled** | IOMMU DMA remapping |
-| Above 4G Decoding | **Enabled** | >16 GiB BAR (large dGPU) |
-| ReBAR / SAM | **Enabled** | Zero-bottleneck BAR |
-| ACS | **Enabled** if exposed | Physical PCIe isolation (not all boards expose) |
-| SR-IOV | **Enabled** only if using vGPU | — |
+In firmware enable Intel VT-x or AMD SVM. Then inspect:
 
-## Step 1 — CPU flags
-
-```bash
-lscpu | grep -i virtualization
-# Intel: VT-x   AMD: AMD-V
-grep -m1 '^flags' /proc/cpuinfo | tr ' ' '\n' | grep -E '^vmx$|^svm$'
-ls -l /dev/kvm   # crw-rw-rw- 1 root kvm
+```sh
+lscpu
+ls -l /dev/kvm
+lsmod
+virt-host-validate qemu
 ```
 
-## Step 2 — Kernel modules (KVM + IOMMUFD)
+`lsmod` omits built-in kernel support. A missing module listing alone does not
+prove KVM is unavailable. If needed, follow [[KVM Loading Kernel Module]].
+Nested virtualization controls whether a guest can run its own hypervisor;
+it is not a prerequisite for a first-level Windows desktop VM.
 
-```bash
-zgrep -E "CONFIG_KVM=|CONFIG_VFIO_PCI=|CONFIG_IOMMUFD=" /proc/config.gz
-# y = builtin, m = module (Arch default m, loaded on demand)
-lsmod | grep -iE 'kvm|vfio|iommu'
+## Only for PCI/GPU passthrough
+
+Enable Intel VT-d or AMD-Vi in firmware. Above 4G Decoding can be needed for
+large PCI resource mappings. ReBAR support depends on the GPU/firmware/guest
+combination; it is not a universal prerequisite or guaranteed speed improvement.
+SR-IOV matters only when using a device's virtual functions.
+
+```sh
+cat /proc/cmdline
+sudo journalctl -k -b --grep='DMAR|IOMMU|AMD-Vi|remapping'
 ```
 
-> [!info] IOMMUFD vs Type1
-> Since Kernel 7.1, VFIO Type1 is deprecated in favor of **IOMMUFD** for memory management. QEMU 10+ defaults to `iommufd` backend where available. This is guest memory-management future; host isolation steps below unchanged.
+List actual IOMMU groups with Python so the command works from Bash or zsh:
 
-## Step 3 — Boot params
-
-```bash
-cat /proc/cmdline | tr ' ' '\n' | grep -E '^(intel_iommu|amd_iommu|iommu|vfio)'
-# Intel expects: intel_iommu=on + iommu=pt
-# AMD expects: iommu=pt only (amd_iommu=on is ignored — see Grub Kernal Parameters)
+```sh
+python3 - <<'PY'
+from pathlib import Path
+import subprocess
+for group in sorted(Path('/sys/kernel/iommu_groups').glob('*'), key=lambda p: int(p.name)):
+    print('Group', group.name)
+    for dev in sorted((group / 'devices').iterdir()):
+        subprocess.run(['lspci', '-nnk', '-s', dev.name], check=True)
+PY
 ```
 
-## Step 4 — IOMMU groups (the crucial test)
+Inspect every function in the selected GPU slot. Other endpoints in the group
+can prevent independent assignment. PCI bridges are not equivalent to unrelated
+storage/network endpoints. Do not infer isolation from a vendor name or copy
+another machine's group number. The workflow does not add ACS overrides.
 
-```bash
-for d in /sys/kernel/iommu_groups/*/devices/*; do
-  n=${d#*/iommu_groups/*}; n=${n%%/*}
-  printf 'IOMMU Group %s ' "$n"
-  lspci -nns "${d##*/}"
-done
-```
+A kernel supporting IOMMUFD does not prove a VM is using it. Inspect the actual
+QEMU command/domain configuration. Do not manually force `vfio_iommu_type1`
+into initramfs merely because an older recipe listed it; load `vfio_pci` and
+let dependencies follow the installed driver stack.
 
-> [!info] How to read
-> - **Success:** target dGPU + its audio/xHCI/UCSI are alone (PCIe bridges in same group are irrelevant).
-> - **Failure:** dGPU shares group with NVMe/SATA/LAN from other slots. Fix: move card to CPU-attached x16 slot or board with real ACS. **Do NOT** apply ACS-override patches on hosts handling data you care about — they fake isolation.
-
-## Step 5 — Interrupt remapping
-
-```bash
-sudo dmesg | grep -i -e 'remapping' -e 'DMAR-IR' -e 'AMD-Vi'
-# Intel: DMAR-IR: Enabled IRQ remapping in x2apic mode
-# AMD:   AMD-Vi: Interrupt remapping enabled
-```
-
-## Flow
-
-```mermaid
-flowchart LR
-  A[CPU flags vmx/svm] --> B[IOMMUFD/KVM modules]
-  B --> C[Boot params iommu=pt]
-  C --> D[ACS groups clean]
-  D --> E[IRQ remap enabled]
-```
-
-On failure, see [[Verify VT-x and Kernel Modules and IOMMU|Troubleshooting]] and [[Host PC  Preparation for GPU isolation]]`:§1.2` for the scripts' `audit_groups`/`audit_id_collisions` panels.
+Continue: [[GPU Passthrough — Host Isolation and Return]]. Sources:
+[kernel VFIO](https://docs.kernel.org/driver-api/vfio.html),
+[kernel IOMMUFD](https://docs.kernel.org/userspace-api/iommufd.html).

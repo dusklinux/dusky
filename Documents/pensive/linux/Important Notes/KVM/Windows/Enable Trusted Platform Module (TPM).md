@@ -1,46 +1,36 @@
 ---
-title: "Enable TPM 2.0 (Windows 11)"
+title: "Windows 11 TPM 2.0 — configuration and persistence"
 tags:
   - kvm
+  - manual
   - windows
-  - tpm
-  - swtpm
+reviewed: 2026-10-25
 ---
 
-# Enable TPM 2.0 — Windows 11 Only
+# Windows 11 TPM 2.0 — configuration and persistence
 
-> [!info] Why
-> Win11 osinfo (`win11`) hard-requires TPM 2.0 + SMM. `30_kvm_vm_deploy.py:build_command` adds `--tpm backend.type=emulator,backend.version=2.0,model=tpm-crb` + `smm.state=on` automatically; this note is manual virt-manager equivalent.
+The standard Windows 11 route uses an emulated TPM 2.0, supplied by swtpm on the
+host. In a powered-off VM: **Add Hardware → TPM → Emulated → Version 2.0**, with
+the supported CRB model for this x86 Q35 setup.
 
-## Prereq (already via `05_virtio_iso.py`)
-
-```bash
-sudo pacman -S --needed swtpm
-pacman -Q swtpm
-```
-
-## Manual steps (virt-manager)
-
-1. VM Details → `TPM` (or **Add Hardware** → **TPM** if absent)
-2. **Advanced options:**
-   - **Type:** `Emulated`
-   - **Version:** `2.0`
-   - **Model:** `CRB` (or `TIS` — CRB is modern)
-3. **Apply**
-
-XML (`virsh dumpxml win11 | grep -A4 '<tpm'`):
+Inside `<devices>`:
 
 ```xml
-<tpm model="tpm-crb">
-  <backend type="emulator" version="2.0"/>
+<tpm model='tpm-crb'>
+  <backend type='emulator' version='2.0'/>
 </tpm>
-<features><smm state="on"/></features>
 ```
 
-> [!success] Result
-> VM now satisfies `win11` osinfo → installer no longer blocks on “This PC doesn't meet…”.
+The Windows script also enables SMM in its Q35/UEFI feature block. This does not
+mean every TPM on every platform requires SMM. Guest UEFI, Secure Boot state and
+TPM readiness are separate checks: [[02 Chipset & Firmware — Q35 + UEFI]].
+Inside Windows, inspect `tpm.msc` or `Get-Tpm` and `msinfo32`.
 
-> [!note] Skip condition
-> If your ISO has TPM patched out (custom de-bloated/LTSC), you can omit TPM and set osinfo to `win10` instead — but keep `swtpm` installed for future `win11` guests.
+TPM state is persistent VM data. Back it up alongside disks and NVRAM before
+relocating/reinstalling the host: [[08 Backup and Restore — Disks, Firmware and TPM]].
+Replacing the TPM, clearing it or changing firmware can affect encrypted guest
+volumes and stored credentials. Keep the corresponding recovery information.
+No patched installer, fake Windows 10 OS profile or TPM bypass is needed for
+the supported configuration here.
 
-See: [[Configure Chipset and Firmware]] (UEFI/SMM), [[Enable Hyper-V Enlightenments]].
+Source: [Microsoft Windows 11 requirements](https://learn.microsoft.com/en-us/windows/whats-new/windows-11-requirements).

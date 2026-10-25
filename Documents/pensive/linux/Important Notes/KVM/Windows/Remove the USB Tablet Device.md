@@ -1,26 +1,16 @@
 ---
-title: "Remove the USB Tablet Device (Windows Delta)"
+title: "Tablet input — optional, keep recovery usable"
 tags:
   - kvm
+  - manual
   - windows
-  - performance
-  - input
 aliases:
   - Windows Tablet Stub
+reviewed: 2026-10-25
 ---
 
-# Remove the USB Tablet Device (Windows)
+# Tablet input — optional, keep recovery usable
 
-> [!tip] Merged — canonical source
-> **Shared trade + steps + XML + release keys + `rawMouse=yes` lives in [[KVM Setup/VM Creation/06 Guest Integration — Agent, Clipboard & Input#Part C — Input: Tablet vs Mouse (both OSes)]].** This stub retains Windows filename for `[[wikilink]]` stability and Windows note below.
+Removing the setup tablet is not mandatory. Retain it until console and IDD input are verified, and measure any claimed idle-CPU benefit before changing the configuration. Current IDD direct input does not depend on an added VirtIO mouse.
 
-## Windows note
-
-Same trade as Linux: default **USB Tablet** (absolute pointer, seamless capture) polls → extra idle CPU. Remove for **minimum latency/idle** (gaming/passthrough with Looking Glass `rawMouse=yes`); keep for casual desktop.
-
-- Shut off VM → **VM Details → Tablet (Input/USB) → Remove → Apply**; XML `<!-- delete: <input type='tablet' bus='usb'/> -->`; keep `<input type='mouse' bus='virtio'/>` + keyboard.
-- After removal: mouse **captured** (`virt-viewer` `Ctrl_L + Alt_L` to release; Looking Glass `F6` / `escapeKey=64` + `rawMouse=yes`).
-
-> [!warning] Don't remove both pointer devices — keep at least one `mouse`/`keyboard`.
-
-See: canonical [[KVM Setup/VM Creation/06 Guest Integration — Agent, Clipboard & Input]], [[Looking Glass]].
+Continue with [[06 Guest Integration — Agent, Clipboard & Input]]. This filename is retained so existing links still work; the complete procedure is maintained in the linked guide.

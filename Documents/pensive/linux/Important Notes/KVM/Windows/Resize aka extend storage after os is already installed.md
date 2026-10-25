@@ -1,68 +1,55 @@
 ---
-title: "Resize Windows Disk (qcow2 Expand)"
+title: "Grow a Windows virtual disk and its volume"
 tags:
   - kvm
-  - storage
-  - qemu-img
+  - manual
   - windows
+reviewed: 2026-10-25
 ---
 
-# Resize Windows Disk (qcow2 Expand)
+# Grow a Windows virtual disk and its volume
 
-> [!warning] VM must be **Shutoff**
-> Modifying a live `qcow2` → **corruption**. In `virt-manager` ensure **Shutoff**.
-> ```bash
-> virsh -c qemu:///system list --all | grep win11   # → shut off
-> virsh -c qemu:///system domstate win11
-> ```
+Image capacity and the partition/filesystem inside it are different layers.
+This is a **grow** procedure, not a shrink recipe. First preserve a consistent
+backup: [[08 Backup and Restore — Disks, Firmware and TPM]].
 
-## Part 1 — Host: grow image
+## 1. Discover the stopped guest's actual disk
 
-```bash
-# locate image idempotently
-virsh -c qemu:///system domblklist win11
-# e.g. /var/lib/libvirt/images/win11.qcow2  (from 07_storage_setup.py pool)
-
-# add 20 GiB (sparse — only metadata grows)
-sudo qemu-img resize /var/lib/libvirt/images/win11.qcow2 +20G
-
-# verify
-qemu-img info /var/lib/libvirt/images/win11.qcow2 | grep -E 'virtual size|disk size'
-```
-> Adjust pool path per your `storage_dir` (`/var/lib/arsonix/state.json`).
-
-## Part 2 — Guest: extend C:
-
-1. **Start** win11
-2. `Win + X` → **Disk Management**
-3. Find `C:` → to its right you now have **Unallocated** (black bar). Right-click `C:` → **Extend Volume…** → Next → Finish. Immediate, no reboot.
-
-> [!bug] Extend Volume grayed — recovery partition blocking
-> If a ~500 MiB Recovery partition sits between `C:` and Unallocated, Windows cannot skip it.
-
-### Option A — GParted Live (safer, keeps WinRE)
-
-1. Download **GParted Live ISO** → attach as CDROM in virt-manager → boot guest from CD.
-2. Drag **Recovery** to end → drag `C:` to fill → Apply → reboot to Windows → Extend now works.
-
-### Option B — `diskpart` (faster, removes WinRE)
-
-> [!danger] Loses “Reset this PC” until WinRE rebuilt.
-
-Inside **Admin** PowerShell/CMD in Windows VM:
-
-```cmd
-diskpart
-list disk
-select disk 0        &:: your OS disk (usually 0)
-list partition       &:: note Recovery (~500 MB) number X
-select partition X
-delete partition override
-exit
+```sh
+virsh -c qemu:///system domstate win11
+virsh -c qemu:///system domblklist win11 --inactive --details
 ```
 
-Back in Disk Management → `C:` → **Extend Volume** now available.
+Require **shut off** before using qemu-img to modify its image. If it has a
+backing chain/snapshots, understand that chain first; changing the wrong layer
+is not a growth procedure. For a standalone qcow2, replacing the path below:
 
-Verify in guest: `Get-PSDrive C | Format-List Used,Free`
+```sh
+qemu-img info --backing-chain /path/to/win11.qcow2
+qemu-img resize -f qcow2 /path/to/win11.qcow2 +20G
+qemu-img info /path/to/win11.qcow2
+```
 
-See: [[Configure the Storage]] (format/cache note), `30_kvm_vm_deploy.py:provision_disk` (create flags).
+This increases virtual capacity. It does not guarantee physical host free space
+when Windows eventually fills it, and it does not extend C: automatically.
+
+## 2. Start Windows and inspect the layout
+
+Open Disk Management, rescan if necessary and identify the correct disk/volume.
+If unallocated space is immediately after C:, choose Extend Volume. The supported
+PowerShell route is `Get-PartitionSupportedSize` / `Resize-Partition` for the
+actual volume, after inspecting its supported maximum.
+
+If a recovery partition lies between C: and the new space, Windows cannot extend
+C: across it using the simple contiguous-space operation. Do not paste a fixed
+`disk 0` / partition number or delete Recovery blindly. Options are to use the
+space as a separate data volume, perform a planned backup-assisted repartition,
+or follow the Windows build's documented WinRE relocation procedure. Preserve
+WinRE and encrypted-volume recovery information. Moving partitions with another
+OS's live tool is not automatically the safer operation, especially for encrypted
+or active Windows filesystems.
+
+Verify the resulting partition/filesystem size and that Windows recovery/boot
+still works. No live guest disk was resized during this documentation review.
+Sources: [QEMU image resize](https://www.qemu.org/docs/master/tools/qemu-img.html),
+[Microsoft volume extension requirements](https://learn.microsoft.com/en-us/windows-server/storage/disk-management/extend-a-basic-volume).

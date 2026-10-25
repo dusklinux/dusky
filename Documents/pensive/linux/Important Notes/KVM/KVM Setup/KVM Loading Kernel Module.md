@@ -1,63 +1,40 @@
 ---
-title: "KVM Kernel Modules"
+title: "KVM kernel modules"
 tags:
   - kvm
-  - kernel
-  - arch
+  - manual
+reviewed: 2026-10-25
 ---
 
-# KVM Kernel Modules — Autoload vs Manual
+# KVM kernel modules
 
-> [!abstract] What are we doing?
-> Verify the kernel is allowed to act as a hypervisor. On Arch (Kernel 7.3+) `systemd-udevd` autoloads the correct `kvm` flavour at boot; manual work is rarely needed.
+KVM support must be built into or loadable by the running kernel. Modules
+normally load through device discovery; persistent modules-load entries are not
+necessary when that already works.
 
-## 1. Check autoload (expected path)
-
-```bash
-lsmod | grep -iE kvm
-```
-
-> [!success] Expected (Intel)
-> ```
-> kvm_intel   401408  0
-> kvm        1204224  1 kvm_intel
-> irqbypass    16384  1 kvm
-> ```
-> AMD: `kvm_amd` + `kvm`. `irqbypass` is normal.
-
-If present → **done**. No file to create.
-
-> [!failure] No output
-> Means `vmx`/`svm` not exposed to kernel. Re-check UEFI: **VT-x/SVM + VT-d/AMD-Vi** enabled, *not* mitigated by `kvm-intel.nested=0`. On custom kernels ensure `CONFIG_KVM=y/m`, `CONFIG_KVM_INTEL`/`CONFIG_KVM_AMD`.
-
-## 2. Manual load (current boot only)
-
-```bash
-# Intel
-sudo modprobe kvm_intel
-# AMD
-sudo modprobe kvm_amd
-
-lsmod | grep kvm   # verify
-ls -l /dev/kvm     # crw-rw-rw- 1 root kvm
-```
-
-## 3. Persistent autoload (only if udev truly fails)
-
-```bash
-echo "kvm_intel" | sudo tee /etc/modules-load.d/kvm.conf  # or kvm_amd
-cat /etc/modules-load.d/kvm.conf
-systemctl reboot
-```
-
-> [!info] What this file does
-> `systemd-modules-load.service` reads `/etc/modules-load.d/*.conf` before the graphical session and calls `modprobe`. The pipeline's `05_virtio_iso.py:verify_kvm_capability` checks `/dev/kvm` + `flags: vmx/svm` + `/sys/class/iommu` before proceeding — if those gates pass, this note is already satisfied.
-
-## 4. Quick validate
-
-```bash
+```sh
 ls -l /dev/kvm
-virt-host-validate | grep -i kvm
+lsmod
+lscpu
 ```
 
-Related: [[Verify VT-x and Kernel Modules and IOMMU]] (IOMMUFD/ACS deeper), [[KVM Packages]].
+If support is modular and missing, load **the host CPU's vendor module**:
+
+```sh
+# Intel host only:
+sudo modprobe kvm_intel
+# AMD host only:
+sudo modprobe kvm_amd
+```
+
+Run the applicable command, not both. Read its error instead of assuming missing
+output means virtualization is disabled. Check firmware virtualization, kernel
+configuration and `journalctl -k -b`. `/proc/config.gz` exists only when the kernel
+provides it. Do not expect a fixed `/dev/kvm` permission string across systems.
+
+Only if an otherwise working module genuinely needs explicit boot loading,
+put its name in `/etc/modules-load.d/kvm.conf`. That file contains a module
+name such as `kvm_intel`, not modprobe options. No host reboot is required just
+to test `modprobe` now.
+
+Verify `virt-host-validate qemu`, then [[libvert Modular daemon enable]].

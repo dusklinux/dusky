@@ -1,34 +1,23 @@
 ---
-title: "Disable Unnecessary Startup Programs"
+title: "Windows startup apps — optional cleanup"
 tags:
   - kvm
+  - manual
   - windows
-  - performance
+reviewed: 2026-10-25
 ---
 
-# Disable Unnecessary Startup Programs
+# Windows startup apps — optional cleanup
 
-> [!abstract] Goal
-> Cut VM boot time and idle RAM by disabling apps that auto-start. No effect on installed software itself.
+In Windows Task Manager → **Startup apps**, or Settings → Apps → Startup,
+disable user applications you do not want at sign-in. This changes startup
+behavior, not the installed application's functionality. Record what changed and
+re-enable it there if needed; compare boot/idle behavior rather than assuming
+every disabled entry improves a workload.
 
-## Inside Windows VM
+Startup apps are not the same inventory as services or scheduled tasks. Preserve
+components selected for integration: the Looking Glass interactive helper,
+QEMU Guest Agent, SPICE agent, VirtIO-FS and optional SSH/balloon services. Do not
+apply a blanket service-disable list while editing user startup apps.
 
-### Method A — Task Manager (Win11 22H2+)
-
-1. `Ctrl + Shift + Esc` → **Startup apps** (or **Startup** tab)
-2. For each non-essential entry (e.g. OneDrive, Teams, Spotify, Adobe updater) → **Disable**
-3. Keep: **Windows Security**, **VirtIO / QEMU Guest Agent**, **Realtek / audio**, **VDD** (if passthrough)
-
-### Method B — Settings
-
-1. **Settings → Apps → Startup** → toggle **Off** for noise apps
-
-## Verify
-
-Reboot VM → Task Manager → **Startup apps** shows disabled list; `msconfig` → **Startup** mirrors it.
-
-> [!warning] Don’t disable
-> - `VirtIO-FS Service` / `QEMU Guest Agent` / `spice-agent` — needed for shared folder & clipboard ([[Setting up Shared Directory Between Guest_win11 and Host]], [[Add QEMU Guest Agent Channel]])
-> - `Microsoft Defender` if you rely on built-in AV (on Defender-stripped custom ISOs this service is absent — bonus).
-
-See: [[Optimize Windows Performance]], [[Disable Unnecessary Scheduled Tasks]].
+See [[Optimize Windows Performance]] and [[Verification — Windows VM]].

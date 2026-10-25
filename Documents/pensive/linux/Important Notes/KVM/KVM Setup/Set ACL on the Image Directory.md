@@ -1,81 +1,70 @@
 ---
-title: "ACLs on the Image Directory (POSIX.1e)"
+title: "VM image access — discover QEMU identity and apply ACLs"
 tags:
   - kvm
-  - storage
-  - acl
-  - arch
-  - libvirt
+  - manual
+reviewed: 2026-10-25
 ---
 
-# ACLs on the Image Directory — POSIX.1e
+# VM image access — discover QEMU identity and apply ACLs
 
-> [!abstract] Goal
-> Give the human operator `rwx` on `/var/lib/libvirt/images` (or your custom/ephemeral pool) **without** changing `root:root` ownership, and inherit it for every new qcow2. Canonical: `07_storage_setup.py:provision_acls`.
+Three identities matter: the desktop operator, the libvirt management daemon,
+and the QEMU process. A root daemon does not imply root QEMU. Commented
+`user="root"` examples in `qemu.conf` do not reveal the distribution default.
 
-## Why not `chmod 777` / `chown`?
+## Discover, then grant access
 
-- `chmod 777` is world-writable.
-- `chown $USER` fights libvirt defaults and breaks idempotent pipelines that assume `root:root` owner.
-- POSIX ACLs are per-user/per-default entries that coexist with the traditional owner.
+With modular libvirt available:
 
-## What the pipeline does (fact, not guess)
-
-1. **Resolves QEMU identity** — parses **only uncommented** `user=`/`group=` in `/etc/libvirt/qemu.conf` (`07_*:resolve_qemu_identity`). Arch ships them **commented → root:root** (privileged). ACLs then needed **only for operator**; when de-privileged, adds `u:qemu:rwx` too.
-2. **Traversal `--x` on every parent** above pool (e.g. `/`, skipped; `/var`, `/var/lib`, `/var/lib/libvirt`). Each parent gets `setfacl -m u:operator:x` if not already satisfied (checked via `getfacl -cEp` + `perm_value`).
-3. **Full `rwx` + `default:rwx` on pool itself** (`setfacl -m u:operator:rwx` + `setfacl -d -m u:operator:rwx`).
-4. **Validates FS supports ACLs** — if `setfacl` returns `Operation not supported` (e.g. FAT USB), bails with `mount_facts(fstype)` hint: choose `ext4/xfs/btrfs/tmpfs`.
-
-## Manual reproduction
-
-```bash
-TARGET=/var/lib/libvirt/images   # or your 07_*-chosen path
-
-# 1. Verify restriction
-ls -ld "$TARGET"
-ls -l "$TARGET" 2>&1 | head
-
-# 2. Check current ACL graph
-getfacl -cEp -- "$TARGET"
-getfacl -cEp -- /var/lib /var/lib/libvirt  # parents
-
-# 3. Clean only if you intentionally want to reset (pipeline never strips blindly)
-# sudo setfacl -R -b "$TARGET"   # ← removes all extended ACLs; avoid unless resetting
-
-# 4. Traversal on parents (repeat for each parent dir)
-sudo setfacl -m u:"$(id -un)":x /var /var/lib /var/lib/libvirt
-
-# 5. Full + inheritable on pool
-sudo setfacl -m u:"$(id -un)":rwx "$TARGET"
-sudo setfacl -d -m u:"$(id -un)":rwx "$TARGET"
-
-# 6. If QEMU is de-privileged (user="qemu" active), also:
-# sudo setfacl -m u:qemu:rwx "$TARGET" && sudo setfacl -d -m u:qemu:rwx "$TARGET"
-# sudo setfacl -m u:qemu:x /var /var/lib /var/lib/libvirt
-
-# 7. Verify
-getfacl -- "$TARGET"
-# expect:
-# user:<you>:rwx
-# default:user:<you>:rwx
-# (and if unprivileged: user:qemu:rwx / default:user:qemu:rwx)
-
-# 8. Test without sudo
-touch "$TARGET"/test_file && ls -l "$TARGET"/test_file && rm "$TARGET"/test_file
+```sh
+virsh -c qemu:///system capabilities
+ps -C qemu-system-x86_64 -o user:24,group:24,pid
+getfacl /var/lib/libvirt/images
+namei -l /var/lib/libvirt/images
 ```
 
-> [!tip] `rwX` vs `rwx`
-> `X` (capital) = execute only on directories / already-executable files. Pipeline uses explicit `rwx` on the pool directory (always `x` needed for `cd`) and `--x` on parents — no ambiguity.
+In capabilities, the DAC `baselabel` for KVM reports numeric owner/group, such as
+`+UID:+GID`. Resolve those with `getent passwd UID` and `getent group GID`.
+The example numbers from another computer are not your account settings.
+Explicit uncommented `user`/`group` settings override package defaults; after
+changing them, account for daemon restart and existing guests before proceeding.
 
-## Troubleshooting
+The corrected `07_storage_setup.py` discovers omitted defaults through these
+capabilities. The Windows profile runs daemon setup first. It no longer assumes
+root when it cannot discover the account.
 
-| Symptom | Cause | Fix |
-|---|---|---|
-| `setfacl: Operation not supported` | pool on FAT/NTFS/no-ACL fs | move pool to `ext4/xfs/btrfs/tmpfs` |
-| `Permission denied` even after ACL | missing `--x` on an ancestor | audit `getfacl /var /var/lib…`, add `x` |
-| New qcow2 owned `root:root` with no ACL | `default` entry missing | re-add `setfacl -d …` and check `d:u:…` in `getfacl` |
-| `ls -l` shows `+` but no effective perms | `mask::` limited | pipeline re-applies `rwx`; ensure mask `rwx` |
+## Manual ACL example
 
-State record: `qemu_user`/`qemu_group` + `storage_dir` in `/var/lib/arsonix/state.json`.
+Set these to your selected directory and discovered QEMU account:
 
-See: [[Symbolic link to zram for image file]], `07_storage_setup.py`.
+```sh
+vm_pool_dir=/var/lib/libvirt/images
+vm_operator=$(id -un)
+# Replace SERVICE_ACCOUNT with the account resolved above:
+vm_qemu_user=SERVICE_ACCOUNT
+sudo setfacl -m "u:$vm_operator:rwx,u:$vm_qemu_user:rwx" -- "$vm_pool_dir"
+sudo setfacl -d -m "u:$vm_operator:rwx,u:$vm_qemu_user:rwx" -- "$vm_pool_dir"
+getfacl -- "$vm_pool_dir"
+```
+
+Run the ACL commands only after replacing the placeholder. If QEMU genuinely
+runs as root, it does not need an extra named-user ACL. Parent directories need
+**search/execute** access. Inspect the full ancestry with `namei`/`getfacl` and
+add only the missing traversal rights, for example `setfacl -m u:ACCOUNT:x DIR`.
+A protected home-directory ancestor can block an otherwise accessible image.
+
+Default ACLs affect newly created entries, not old images retroactively. A
+program's requested creation mode can still limit the effective ACL mask.
+For an existing qcow2, grant the needed read/write ACL to that specific file and
+check `getfacl`'s effective permissions. Do not recursively strip permissions or
+change an entire media mount's owner as a generic repair.
+
+A filesystem must support the ACL operations used here. Test the actual mount
+rather than asserting all NTFS, network or removable filesystems behave alike.
+No ACL fixes a missing mount, wrong disk path or inaccessible backing image.
+
+Verify as the desktop user with a uniquely named scratch file, remove that file,
+and inspect QEMU/libvirt startup errors. The service account's ability to open
+an image is distinct from the user's permission to manage the VM.
+
+Source: [libvirt capabilities](https://libvirt.org/formatcaps.html).

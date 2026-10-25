@@ -1,28 +1,37 @@
 ---
-title: "Optimize Windows Performance — Hub"
+title: "Windows performance — establish a baseline, then measure"
 tags:
   - kvm
+  - manual
   - windows
-  - performance
+reviewed: 2026-10-25
 ---
 
-# Optimize Windows Performance — Hub
+# Windows performance — establish a baseline, then measure
 
-> [!summary] Goal
-> Strip stock Win11 bloat that burns RAM/CPU in a VM. Apply in this order; each links to a focused guide.
+A usable Windows VM does not require blanket “debloat”. Begin with correct
+storage/NIC drivers, sensible CPU/RAM, healthy GPU drivers if assigned, and a
+working desktop transport. Record idle CPU/RAM, boot time and the workload that
+actually matters before changing one setting at a time.
 
-| Area | Note | Action |
-|---|---|---|
-| Prefetch | [[Disable SysMain]] | `services.msc` → `SysMain` → **Disabled** + Stop |
-| Search | [[Disable Windows Web Search]] | `regedit` `HKCU\Software\Policies\Microsoft\Windows\Explorer` → `DisableSearchBoxSuggestions=1` |
-| Clock | [[Disable useplatformclock]] | `bcdedit /set useplatformclock No` (with Hyper-V clocks `hpet=no`, `hypervclock=yes`) |
-| Background work | [[Disable Unnecessary Scheduled Tasks]] | `Get-ScheduledTask` → `Disable-ScheduledTask` (`\Microsoft\Windows\Defrag\ScheduledDefrag`, etc.) |
-| Boot | [[Disable Unnecessary Startup Programs]] | Task Manager → **Startup** → Disable non-essential |
-| Aesthetics | [[Adjust the Visual Effects in Windows 11]] | `Adjust the appearance and performance` → *Adjust for best performance* or custom (no transparency) |
+| Optional topic | Reason to consider it |
+|---|---|
+| [[Disable Unnecessary Startup Programs]] | Remove unwanted user-app startup work |
+| [[Adjust the Visual Effects in Windows 11]] | Preference or a demonstrated software-rendering cost |
+| [[Disable SysMain]] | Diagnose measured I/O/background behavior; not a universal VM default |
+| [[Disable Unnecessary Scheduled Tasks]] | Inspect/reschedule a proven conflicting task |
+| [[Disable useplatformclock]] | Undo an earlier forced debug setting, not a mandatory timer tweak |
+| [[Disable Windows Web Search]] | Search preference with build/edition limitations |
+| [[Optional Enable Hardware Security on Windows]] | Understand optional nested/VBS implications, not a default change |
 
-> [!tip] Also consider
-> - [[Optional Enable Hardware Security on Windows]] — **not** recommended for gaming (Memory Integrity cost).
-> - Custom de-bloated ISO tip: see [[Conclusion Win]].
-> - After storage passthrough, run `winsat formal` only if Windows complains about drive assessment.
+Do not remove guest agents, the IDD helper or filesystem services while trimming
+startup apps. `discard=unmap` does not replace guest retrim. A fixed CPU pin map,
+large vCPU count, hugepages or a power profile is not automatically faster.
+For RAM constraints use [[07 Memory — Fixed and Ballooning]] with actual host
+measurements; ballooning is not an application-speed optimization.
 
-Next: [[Setting up Shared Directory Between Guest_win11 and Host]] (virtiofs).
+The scripts do not automatically disable Defender, Windows Update, SysMain,
+maintenance tasks or the pagefile. The old recommendations to prefer stripped
+third-party ISOs or assume a stock image cannot perform were unmeasured and
+could remove components the workflow needs. Keep a known working install and
+compare changes against it. See [[Verification — Windows VM]].

@@ -1,32 +1,35 @@
 ---
-title: "Disable Bing Web Search in Start"
+title: "Windows search preferences — avoid a universal registry promise"
 tags:
   - kvm
+  - manual
   - windows
-  - performance
-  - registry
+reviewed: 2026-10-25
 ---
 
-# Disable Bing Web Search in Start
+# Windows search preferences — avoid a universal registry promise
 
-> [!info] Why
-> Start/Taskbar search querying Bing adds latency and telemetry in a VM — disable for instant local search.
+This is a desktop preference, not required VM setup. Windows edition/build and
+policy support determine which search controls are available. Use the supported
+Search/Start policy in the installed edition, read its applicability and test
+actual Start results after sign-out/restart as directed.
 
-## Registry (Current User)
+The older recipe set `DisableSearchBoxSuggestions` under the Explorer policy key
+and promised instant local-only Start search. Microsoft's documented policy is
+about **File Explorer search history/suggestions**. Some builds have applied
+additional effects to Start/Bing, but that is not a future-proof contract for
+all Windows 11 releases. The old broad speed/result guarantee is removed.
 
-1. `Win + R` → `regedit` → **Yes** (UAC)
-2. Navigate:
+For that documented Explorer preference, inspect the original value first:
 
+```powershell
+Get-ItemProperty 'HKCU:\Software\Policies\Microsoft\Windows\Explorer' -Name DisableSearchBoxSuggestions -ErrorAction SilentlyContinue
 ```
-Computer\HKEY_CURRENT_USER\Software\Policies\Microsoft\Windows
-```
 
-3. Right-click `Windows` → **New → Key** → name `Explorer`
-4. Select `Explorer` → right-click pane → **New → DWORD (32-bit) Value** → name `DisableSearchBoxSuggestions`
-5. Double-click → **Value data:** `1` (Hex or Decimal) → **OK**
-6. Log off/on or reboot.
+If deliberately configuring that policy, use its Local Group Policy setting or
+a managed value according to the linked policy documentation, preserving whether
+it was originally absent. Undo by restoring the previous state, not by deleting
+an entire Explorer policy key. No search-policy registry changes were applied
+to the live VM during this notes review.
 
-Verify: `reg query "HKCU\Software\Policies\Microsoft\Windows\Explorer" /v DisableSearchBoxSuggestions` → `0x1`.
-
-> [!tip] Undo
-> Delete the `DisableSearchBoxSuggestions` value or set `0`.
+Source: [Microsoft Explorer search policy](https://learn.microsoft.com/en-us/windows/client-management/mdm/policy-csp-admx-windowsexplorer#disablesearchboxsuggestions).

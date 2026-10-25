@@ -1,95 +1,86 @@
 ---
-title: "KVM Default Network (NAT) — Provision & Autostart"
+title: "Libvirt NAT network — provision, start and verify"
 tags:
   - kvm
-  - libvirt
-  - networking
-  - nftables
-  - dnsmasq
-  - arch
+  - manual
+reviewed: 2026-10-25
 ---
 
-# KVM Default Network — Provision & Autostart
+# Libvirt NAT network — provision, start and verify
 
-> [!info] NAT mental model
-> Like a home router: VMs **outbound** full internet via host NAT; **inbound** from LAN not visible. For LAN-visible hosting use [[Network Bridging for LAN access]] (Option 3 `br0`). Canonical: `20_networking_nmcli.py`.
+NAT gives guests outbound connectivity and normally lets the **host** contact
+them directly. It does not automatically expose guest services to other LAN
+machines. The guest firewall and listening service still matter.
 
-## 1. Diagnose
-
-```bash
+```sh
 virsh -c qemu:///system net-list --all
-virsh -c qemu:///system net-info default 2>/dev/null || echo "no default"
-systemctl is-active virtnetworkd.socket   # must be active — Phase 2 gates this
+virsh -c qemu:///system net-info default
+virsh -c qemu:///system net-dumpxml default
 ```
 
-- Empty / `inactive` / `Persistent no` → provision §2.
-- `nft` present + `network.conf` `firewall_backend="nftables"` → libvirt owns `table inet libvirt_network`; no iptables shim.
+If `default` exists, preserve its DHCP/subnet configuration. Start it only if
+inactive and enable autostart:
 
-## 2. Pristine provision (idempotent, durable /tmp via mkstemp)
+```sh
+virsh -c qemu:///system net-autostart default
+# If currently inactive:
+virsh -c qemu:///system net-start default
+```
 
-`20_*.py:define_network` never writes world-writable `/tmp/libvirt-default.xml` — uses `mkstemp` + `os.fsync` + `os.replace`. This note mirrors it:
+Do not destroy/undefine an existing network to repair an ordinary startup issue.
+
+## Only if the network is absent
+
+Check `ip -4 route` for collisions first. This example uses 192.168.122.0/24;
+choose another non-overlapping subnet if already routed elsewhere. Run in Bash:
 
 ```bash
-# 1. Purge broken state (ignore errors)
-sudo virsh -c qemu:///system net-destroy default 2>/dev/null || true
-sudo virsh -c qemu:///system net-undefine default 2>/dev/null || true
-
-# 2. Inject (uuid/mac auto-generated if omitted)
-cat <<'EOF' | sudo tee /tmp/libvirt-default.xml >/dev/null
+vm_net_xml=$(mktemp --suffix=.xml)
+cat > "$vm_net_xml" <<'XML'
 <network>
   <name>default</name>
-  <forward mode='nat'>
-    <nat><port start='1024' end='65535'/></nat>
-  </forward>
+  <forward mode='nat'/>
   <bridge name='virbr0' stp='on' delay='0'/>
   <ip address='192.168.122.1' netmask='255.255.255.0'>
     <dhcp><range start='192.168.122.2' end='192.168.122.254'/></dhcp>
   </ip>
 </network>
-EOF
-sudo virsh -c qemu:///system net-define /tmp/libvirt-default.xml
-rm /tmp/libvirt-default.xml
-
-# 3. Autostart + start
-sudo virsh -c qemu:///system net-autostart default
-sudo virsh -c qemu:///system net-start default
+XML
+virsh -c qemu:///system net-define "$vm_net_xml"
+rm -- "$vm_net_xml"
+virsh -c qemu:///system net-autostart default
+virsh -c qemu:///system net-start default
 ```
 
-> [!note] Preserve vs purge
-> `20_*.py:provision_nat(purge=False)` *preserves* an existing `default` with custom DHCP — only `purge=True` destroys it. The block above is the `purge` variant (clean-room).
+The network daemon uses dnsmasq and the configured libvirt firewall backend.
+`firewall_backend="nftables"` in `/etc/libvirt/network.conf` selects this setup's
+backend. An nftables executable alone does not prove that backend is active.
+Do not flush the host ruleset or disable its firewall to diagnose guest routing.
+Inspect the actual network, DHCP lease and filtering rules first.
 
-## 3. Firewall (Aug 2026 = `nftables`)
+## Attach by libvirt network name
 
-Libvirt manages its own `nft` table; most hosts need **nothing**. Only inject if you run a filtering frontend that defaults `FORWARD` to `DROP`:
-
-```bash
-# UFW active?
-sudo ufw status | head -1   # Status: active → needs rules
-sudo ufw route allow in on virbr0
-sudo ufw route allow out on virbr0
-sudo ufw reload
-# firewalld: firewall-cmd --reload (zone auto-detected)
+```xml
+<interface type='network'>
+  <source network='default'/>
+  <model type='virtio'/>
+</interface>
 ```
 
-Check:
+Use `e1000e` for the optional Windows inbox-driver route. `virbr0` is the host
+bridge made by the NAT network; referencing it directly as an unmanaged bridge
+bypasses the named network relationship. That caused a first-start dependency
+failure in the live test and was corrected to `source network='default'`.
 
-```bash
-sudo nft list table inet libvirt_network 2>/dev/null | head -n 40
-sudo virsh -c qemu:///system net-dumpxml default | grep -A4 '<ip'
-# Host IP 192.168.122.1   DHCP .2-.254
-```
-
-## 4. Verify
-
-```bash
-sudo virsh -c qemu:///system net-list --all
-# Name      State   Autostart  Persistent
-# default   active  yes        yes
+```sh
 ip -4 addr show virbr0
 virsh -c qemu:///system net-dhcp-leases default
+virsh -c qemu:///system domifaddr win11 --source lease
+# Once QGA is ready:
+virsh -c qemu:///system domifaddr win11 --source agent
 ```
 
-> [!tip] NAT subnet collision
-> `20_*.py:host_owns_nat_subnet` warns if `192.168.122.0/24` already routed via another device — guest DHCP will black-hole. Move NAT CIDR or disable conflicting docker/lxd route.
-
-See: [[Network Bridging for LAN access]], `20_networking_nmcli.py`.
+Missing lease output does not prove the guest has no IP; static addressing and
+other network modes need guest/agent discovery. LAN-visible alternative:
+[[Host Networking — NAT and Wired Bridge]]. Source:
+[libvirt network XML](https://libvirt.org/formatnetwork.html).

@@ -1,32 +1,23 @@
 ---
-title: "Visual Effects — Tune for Speed"
+title: "Windows visual effects — preference and measured trade-off"
 tags:
   - kvm
+  - manual
   - windows
-  - performance
+reviewed: 2026-10-25
 ---
 
-# Visual Effects — Tune for Speed
+# Windows visual effects — preference and measured trade-off
 
-> [!info] Why
-> Transparency, animations, and shadows burn guest GPU/CPU for little benefit in a VM — especially with `virtio`/`QXL` emulated video. Turn them down for snappier UX and lower Looking Glass bandwidth.
+Reducing animations/transparency can make a software-rendered desktop feel
+more responsive, but this setup has no measured universal FPS or transport
+bandwidth saving from doing so. Treat it as a preference or a workload test.
 
-## Steps (inside Windows VM)
+Open **Adjust the appearance and performance of Windows** from Start, choose
+Custom or Adjust for best performance, and retain font smoothing/thumbnails if
+wanted. Settings → Accessibility → Visual effects also exposes animation and
+transparency preferences on supported builds. Labels can move between releases.
 
-1. Press `Win` → type `performance` → **Adjust the appearance and performance of Windows**
-
-2. **Visual Effects** tab:
-   - Choose **Adjust for best performance** (disables all), then optionally re-tick:
-     - ☑ *Show thumbnails instead of icons*
-     - ☑ *Smooth edges of screen fonts*
-   - Or pick **Custom** and keep only those two.
-
-3. **Apply** → **OK**
-
-> [!tip] Also trim
-> **Settings → Personalization → Colors** → **Transparency effects → Off**
-> **Settings → Accessibility → Visual effects → Animation effects → Off**
-
-Revert by choosing **Let Windows choose** or **Adjust for best appearance**.
-
-See: [[Optimize Windows Performance]].
+Restore the recorded choices or Let Windows choose if the change is unwanted.
+Changing visual effects does not repair a missing GPU driver, inactive IDD
+monitor or black sign-in screen: [[Looking Glass]].

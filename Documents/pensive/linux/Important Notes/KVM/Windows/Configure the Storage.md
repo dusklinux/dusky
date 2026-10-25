@@ -1,48 +1,28 @@
 ---
-title: "Storage Performance — Disk Bus / Cache / io_uring (Windows Delta)"
+title: "Windows disk controller and driver choice"
 tags:
   - kvm
-  - storage
-  - virtio
+  - manual
   - windows
-  - qemu
 aliases:
   - Windows Storage Stub
+reviewed: 2026-10-25
 ---
 
-# Storage Performance — Disk Bus / Cache / io_uring (Windows)
+# Windows disk controller and driver choice
 
-> [!tip] Merged — canonical source
-> **Shared bus/cache/io_uring/discard/queues + CLI lives in [[KVM Setup/VM Creation/03 Storage — Virtio Bus, Cache, io_uring, Discard]].** Follow that note for virt-manager **Disk bus → `VirtIO` / `VirtIO SCSI`**, **Cache `none` → `io_uring`/`native` → `unmap`**, and IOThread Virtqueue Mapping (QEMU 9.0+ blk / 10.0+ scsi). This stub keeps **only Windows-specific driver-load** delta.
+Configure image format, cache/I/O and discard using
+[[03 Storage — Virtio Bus, Cache, io_uring, Discard]]. The Windows-specific part is
+matching the controller to its driver:
 
-## Windows delta
-
-| Canonical | Windows note |
+| Disk hardware | Driver to stage/load |
 |---|---|
-| `VirtIO` / `VirtIO SCSI` + `cache=none` + `io=io_uring` + `discard=unmap` | **identical** — set before first boot; pipeline `30_*:build_command --disk …bus=virtio,driver.cache=none,driver.io=io_uring,driver.discard=unmap`. (Use `driver.cache=writeback` for RAM-backed pools like `/mnt/zram1` to avoid O_DIRECT bypass penalties per canonical [[03 Storage — Virtio Bus, Cache, io_uring, Discard]]). |
-| Queue count auto = vCPU, IOThreads binding | **identical** — see canonical Step 4 XML; Red Hat 4–8 iothreads, pin away from vCPUs |
-| `qcow2` vs `raw` | **identical** — `qcow2` `cluster_size=64k,lazy_refcounts=on` thin; `raw` faster but no snapshots |
+| VirtIO block disk | viostor |
+| VirtIO SCSI controller / SCSI disk | vioscsi |
+| SATA AHCI | Inbox Windows AHCI |
 
-**Windows-only step — storage driver at install (no Linux equivalent):**
-
-At **Where do you want to install Windows?** (empty list):
-
-1. **Load driver → Browse → CD Drive (E:)** (`virtio-win.iso` 2nd CDROM from [[Mount the VirtIO-Win ISO Image]])
-2. **`viostor → w10` or `w11` → `amd64` → OK**
-3. **Red Hat VirtIO SCSI controller → Next** → drive appears → select → Next
-
-Without this, `virtio` disk stays invisible (Windows has no in-kernel virtio). After install, `virtio-win-guest-tools.exe` keeps `viostor`/`vioinput` installed.
-
-> [!info] Linux route — no driver load
-> Arch/Fedora kernels ship `virtio_blk` built-in — disk `vda` appears immediately; no 2nd ISO, no `Load driver`. Canonical note marks this explicitly.
-
-## Verify
-
-```bash
-virsh -c qemu:///system dumpxml win11 | grep -A2 "<driver name='qemu'"
-# cache='none' io='io_uring' discard='unmap'
-qemu-img info /var/lib/libvirt/images/win11.qcow2 | grep -E 'virtual size|cluster_size'
-# inside Windows: Device Manager → Storage controllers → Red Hat VirtIO SCSI pass-through controller
-```
-
-See: canonical [[KVM Setup/VM Creation/03 Storage — Virtio Bus, Cache, io_uring, Discard]], [[Install a Windows Virtual Machine on KVM]] (§1 `viostor`), [[Mount the VirtIO-Win ISO Image]], [[Resize aka extend storage after os is already installed]] (grow).
+Load the matching media version/architecture at the Setup disk picker:
+[[Install a Windows Virtual Machine on KVM]]. An installed guest needs the new
+controller's boot driver ready before switching its OS disk bus. Device labels
+can contain “SCSI”; do not use that label alone to choose an unrelated driver.
+Growth is covered by [[Resize aka extend storage after os is already installed]].

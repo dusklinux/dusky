@@ -1,96 +1,69 @@
 ---
-title: "Storage Topology — Persistent vs RAM-Backed (ZRAM)"
+title: "VM storage — persistent disks and RAM-backed experiments"
 tags:
   - kvm
-  - storage
-  - zram
-  - libvirt
-  - arch
+  - manual
 aliases:
   - Relocating Storage to ZRAM
+reviewed: 2026-10-25
 ---
 
-# Storage Topology — Persistent vs RAM-Backed
+# VM storage — persistent disks and RAM-backed experiments
 
-> [!abstract] Goal
-> Choose where qcow2 images live. Canonical: `07_storage_setup.py` — persistent `/var/lib/libvirt/images` vs ephemeral `zram`/`tmpfs` vs custom, with POSIX ACL + backing-fstype audit.
+A libvirt storage pool is an inventory of a host directory. It is not the guest
+RAM allocation and does not make storage persistent. A qcow2 has a **virtual
+capacity**, **allocated host space**, and possibly **backing images**; these are
+three different things.
 
-## Options (interactive, `--path` for non-interactive)
+Choose a real directory on your intended filesystem rather than replacing
+`/var/lib/libvirt/images` with a symlink. Persistent examples include that default
+or a mounted media drive. `/mnt/zram1` is a local convention, not proof of zram:
+on the tested host it is **tmpfs**. Zram block devices are compressed RAM devices;
+tmpfs is a memory filesystem. Both lose data on host reboot.
 
-| Choice | Example path | Volatile | Use case |
-|---|---|---|---|
-| **Persistent** | `/var/lib/libvirt/images` | no | daily driver, survives reboot |
-| **Ephemeral** | `/mnt/zram1` / `/mnt/tmpfs` | **yes** | throw-away lab, SSD wear avoid, max I/O |
-| **Custom** | `/mnt/media/…/kvm` | depends on mount | external NVMe, NAS cache |
-
-```bash
-# probe backing fact (longest-prefix /proc/self/mountinfo)
+```sh
 findmnt --target /mnt/zram1
-grep zram /proc/self/mountinfo
+findmnt --target /var/lib/libvirt/images
+df -h /mnt/zram1
+free -h
 ```
 
-> [!danger] Volatile = data loss on reboot
-> Anything on `tmpfs`, `ramfs`, or `/dev/zram*` **vanishes** on power-off/reboot. Use only for VMs you can afford to lose. `07_*.py` warns if you pick persistent atop volatile or vice-versa.
+For an external/encrypted disk, mount and unlock it before creating the directory
+or starting the VM. Otherwise a missing mount can leave you writing to the host
+root filesystem at the same pathname.
 
-## Legacy pattern (symlink) — retired
+## Create a directory pool
 
-Old notes did:
+Choose the path and an unused pool name. These example assignments are explicit:
 
-```bash
-sudo rmdir /var/lib/libvirt/images
-sudo mkdir -p /mnt/zram1/os
-sudo ln -nfs /mnt/zram1/os /var/lib/libvirt/images
-ls -la /var/lib/libvirt/  # images -> /mnt/zram1/os
+```sh
+vm_pool_dir=/var/lib/libvirt/images
+vm_pool_name=manual-images
+sudo install -d -m 0711 -- "$vm_pool_dir"
+# Apply access for the actual operator/QEMU account first; see the ACL guide.
+virsh -c qemu:///system pool-list --all
+virsh -c qemu:///system pool-define-as "$vm_pool_name" dir --target "$vm_pool_dir"
+virsh -c qemu:///system pool-start "$vm_pool_name"
+virsh -c qemu:///system pool-autostart "$vm_pool_name"
+virsh -c qemu:///system pool-refresh "$vm_pool_name"
 ```
 
-> [!warning] Legacy — why symlink is no longer recommended
-> - Breaks libvirt `dir` pool bookkeeping (`pool-dumpxml` shows symlink target, not declared path).
-> - Mount ordering: if `zram` device mounts late, libvirt starts with dangling link.
-> - ACL traversal audit (`07_*:provision_acls`) expects a **real directory**, not a symlink chase.
-> Prefer a **real pool**: create the directory, provision ACLs, then declare it as a libvirt pool (see below).
+Reuse a pool already covering the directory instead of defining duplicates.
+`install -d` is for a directory you are provisioning; preserve the existing
+permissions of an established mount root. Autostarting a pool does not unlock
+an encrypted drive or guarantee its mount ordering.
 
-## Current approach (no symlink)
+## Budget RAM-backed disks explicitly
 
-```bash
-# 1. Create the target
-TARGET=/var/lib/libvirt/images          # or /mnt/zram1 / /mnt/media/kvm
-sudo mkdir -p "$TARGET"
-sudo chmod 0711 "$TARGET"               # pipeline default before ACLs
+A sparse 80 GiB qcow2 need not immediately consume 80 GiB, but it can grow.
+Budget actual/possible image growth **plus guest RAM plus host/app overhead**.
+Compression and swap do not guarantee capacity or latency. The Linux deployment
+helper has a particular conservative heuristic; it is not a universal filesystem
+requirement or a measured performance rule for every VM.
 
-# 2. Provision ACLs (07_storage_setup.py does this atomically with getfacl/setfacl, never strips)
-# --x on every parent above TARGET, rwx + default:rwx on TARGET itself
-# Verify:
-getfacl "$TARGET"
+Disk-cache settings belong to [[03 Storage — Virtio Bus, Cache, io_uring, Discard]].
+Do not infer an I/O speedup merely from a RAM-backed pathname.
 
-# 3. Expose as libvirt pool so virt-manager sees it
-sudo virsh pool-define-as arsonix-images dir --target "$TARGET"
-sudo virsh pool-build arsonix-images
-sudo virsh pool-start arsonix-images
-sudo virsh pool-autostart arsonix-images
-sudo virsh pool-refresh arsonix-images
-```
-
-## Verify
-
-```bash
-ls -ld "$TARGET"
-findmnt --target "$TARGET"
-virsh pool-list --all --details
-virsh pool-dumpxml arsonix-images | grep -A2 '<target>'
-```
-
-## When ephemeral makes sense & RAM Budgeting
-
-- You explicitly want a throwaway Windows/Linux lab and will copy out artifacts before reboot.
-- SSD wear avoidance for heavy snapshot churn.
-
-> [!important] RAM Capacity Heuristic (from `linux/deploy_vm.py:ram_storage_reason`)
-> When hosting a VM disk in RAM (`/mnt/zram1` / `tmpfs`):
-> 1. Host must have $\ge 24\,\text{GiB}$ free RAM available.
-> 2. Total host RAM must cover: $\text{Disk Capacity} + \text{Guest RAM} + 4\,\text{GiB host safety reserve}$.
-> 3. Example: A $4\,\text{GiB}$ guest with a $20\,\text{GiB}$ qcow2 disk requires at least $28\,\text{GiB}$ RAM available on the host and $20\,\text{GiB}$ free on the tmpfs filesystem.
-> 4. Disks created on RAM filesystems should use `driver.cache=writeback` (not `none`) to avoid bypassing tmpfs page cache buffers.
-
-Otherwise: **keep persistent** and use `qcow2` `lazy_refcounts` / `cluster_size=64k` (see `30_kvm_vm_deploy.py:provision_disk`).
-
-See: [[Set ACL on the Image Directory]] (ACL deep dive), `07_storage_setup.py`.
+Before host reboot, preserve a stopped guest's complete disk chain and its
+firmware/TPM state: [[08 Backup and Restore — Disks, Firmware and TPM]].
+Next: [[Set ACL on the Image Directory]].

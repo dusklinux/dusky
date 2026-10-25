@@ -1,75 +1,77 @@
 ---
-title: "Libvirt Connection & Permissions (qemu:///system)"
+title: "System libvirt — user access and connection URI"
 tags:
   - kvm
-  - libvirt
-  - permissions
-  - polkit
-  - arch
+  - manual
+reviewed: 2026-10-25
 ---
 
-# Libvirt Connection & Permissions — Modern Modular
+# System libvirt — user access and connection URI
 
-> [!abstract] Goal
-> Seamlessly use `qemu:///system` (passthrough, bridges) as a regular user — no `sudo virt-manager`. Uses polkit + `libvirt` group + systemd way, not `.bashrc`. Supersedes the old `Give the User System-Wide Permission_old` (`disk/kvm/input` blanket).
+Use `qemu:///system` for this workflow. The system daemon is privileged, but QEMU
+processes can run under a separate service account. `qemu:///session` is a
+separate per-user inventory with different networking/device arrangements.
+Neither an empty GUI nor a session URI means your system VM was deleted.
 
-## 1. Two URIs — pick system
+## User membership
 
-| URI | Runs as | Passthrough | Net |
-|---|---|---|---|
-| `qemu:///session` (default for plain user) | `$USER` via user session | **no** | slirp/user only |
-| `qemu:///system` ✅ | `root` via `virtqemud` | **yes** | NAT + `br0` |
+Run as the desktop account:
 
-We want **system**.
-
-## 2. Polkit + socket perms (Aug 2026)
-
-- Daemon `virtqemud` runs as `root` listening on `/run/libvirt/virtqemud-sock` (0660 `root:libvirt` via drop-in — `10_virt_modular_daemon.py`).
-- Regular user gains RW by being in `libvirt` group (Arch polkit rules map that group to allow).
-
-```bash
+```sh
 sudo usermod -aG libvirt "$(id -un)"
-groups; sleep 1; # then fully log out & back in (Wayland/systemd — newgrp insufficient)
-groups  # must show libvirt after re-login
+# Looking Glass's chosen group for its shared-memory file:
+sudo usermod -aG kvm "$(id -un)"
 ```
 
-> [!warning] Do **not** add `disk`/`input`/`kvm` as blanket
-> - `disk` → raw write over *every* block device (root FS).
-> - `input` → global keylog bypassing Wayland isolation.
-> - `kvm` → auto-granted to seated user via `uaccess`; `virtqemud` already holds `/dev/kvm`. Only add `kvm`/`input` if the specific lab needs it (pipeline adds `kvm,input` for completeness; `disk` never).
+Refresh the desktop login after adding groups; existing processes retain old
+credentials. Compare `id` with `id "$(id -un)"`. The `input` group is relevant only
+to a deliberate evdev/input-device workflow, not ordinary SPICE or IDD input.
+No `disk` membership is needed for a file-backed VM. The current phase 05 also
+adds `input`; do not interpret that script policy as a universal prerequisite.
 
-> [!important] Re-login required
-> Group creds are per-session. Log out of **all** sessions (or reboot). `id -nG` confirms.
+## Two permission checks
 
-## 3. Default URI — systemd-way (Wayland-safe)
+1. The connection must reach its socket: [[libvert Modular daemon enable]].
+2. The requested API action must be authorized by polkit.
 
-Do **not** use `.bashrc`/`.zshrc` — GUI launchers (wofi/rofi/Steam) don't read them and `virt-manager` falls back to `qemu:///session`.
+A Hyprland session can use its configured polkit agent for interactive prompts.
+For a deliberate full-management group policy, the script installs a rule
+covering `org.libvirt.unix.*` for `libvirt` and `wheel` members. A manual
+libvirt-group-only equivalent is:
 
-```bash
-mkdir -p ~/.config/environment.d
-printf "LIBVIRT_DEFAULT_URI='qemu:///system'\n" > ~/.config/environment.d/libvirt.conf
-# Takes effect next login (systemd — user env generator). Or export for current shell:
-export LIBVIRT_DEFAULT_URI='qemu:///system'
+```javascript
+// /etc/polkit-1/rules.d/50-local-libvirt.rules
+polkit.addRule(function(action, subject) {
+    if (action.id.indexOf("org.libvirt.unix.") === 0 && subject.isInGroup("libvirt")) {
+        return polkit.Result.YES;
+    }
+});
 ```
 
-> [!tip] Dusk/UWSM already sets this
-> If you run the Dusk UWSM env files, `LIBVIRT_DEFAULT_URI` is already exported — skip manual step.
+This authorizes full system VM management for that group; it is not a QEMU file
+ownership setting. Keep this distinction when troubleshooting storage access.
 
-## 4. Verify
+## Explicit connection first
 
-```bash
-# as regular user, no sudo
-virsh uri                          # → qemu:///system
-virsh -c qemu:///system -q version # socket RW OK
-virt-manager --connect qemu:///system  # explicit fallback test
+```sh
 virsh -c qemu:///system list --all
+virt-manager --connect qemu:///system
 ```
 
-If you get `Permission denied` / `qemu:///session`:
+Optionally set `LIBVIRT_DEFAULT_URI=qemu:///system` in the environment actually
+used by your desktop launcher. A systemd user-environment drop-in can supply:
 
-1. `groups | grep libvirt` → missing → re-login
-2. `systemctl status virtqemud.socket` → must be `active (listening)`
-3. `ls -l /run/libvirt/virtqemud-sock` → `srwxrwx---  root libvirt`
-4. `loginctl user-status $USER | grep -i libvirt` (polkit session)
+```ini
+# ~/.config/environment.d/60-libvirt.conf
+LIBVIRT_DEFAULT_URI=qemu:///system
+```
 
-See: [[KVM Group Add]], [[libvert Modular daemon enable]], [[Set ACL on the Image Directory]] (ACLs after group perms).
+It affects processes inheriting that user-manager environment; it is not a
+promise that every shell/compositor launch path imports it. Explicit `-c` or
+`--connect` remains unambiguous. Check `virsh uri` and
+`systemctl --user show-environment` after a new login.
+
+Troubleshoot in order: correct URI → listening socket → current group membership
+→ polkit agent/rule → individual error. Do not launch the desktop GUI with sudo
+as a general repair. Sources: [libvirt authentication](https://libvirt.org/auth.html),
+[systemd environment.d](https://www.freedesktop.org/software/systemd/man/latest/environment.d.html).

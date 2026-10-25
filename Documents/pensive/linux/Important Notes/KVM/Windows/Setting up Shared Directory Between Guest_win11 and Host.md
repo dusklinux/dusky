@@ -5,6 +5,7 @@ tags:
   - windows
   - virtiofs
   - sharing
+reviewed: 2026-10-25
 ---
 
 # Shared Folder — Virtiofs (Host ↔ Win11)
@@ -17,7 +18,7 @@ Default: **Linux `/mnt/zram1` ↔ Windows `Z:`**. The host folder and Windows dr
 letter are configurable. The host folder must exist before the VM starts.
 Sharing does not copy files or include them in VM snapshots.
 
-## Scripted setup
+## Windows requirements and scripted equivalent
 
 Prepare the Arch `virtiofsd` package, VirtIO-Win guest tools including `viofs`,
 and the official [WinFsp MSI](https://github.com/winfsp/winfsp/releases) for offline
@@ -65,44 +66,10 @@ upstream; the single VirtioFsSvc service is not a multi-share mount manager.
 
 ## Manual host setup
 
-Power Windows off. In virt-manager hardware details:
-
-1. **Memory → Enable shared memory → Apply**.
-2. **Add Hardware → Filesystem → Driver: virtiofs**.
-3. **Source path:** `/mnt/zram1`, or another existing host directory.
-4. **Target path:** `dusky-host`, a mount tag, not a Windows path.
-
-Equivalent domain XML:
-
-```xml
-<memoryBacking>
-  <source type='memfd'/>
-  <access mode='shared'/>
-</memoryBacking>
-```
-
-Inside `<devices>`:
-
-```xml
-<filesystem type='mount' accessmode='passthrough'>
-  <driver type='virtiofs' queue='1024'/>
-  <binary>
-    <cache mode='none'/>
-  </binary>
-  <source dir='/mnt/zram1'/>
-  <target dir='dusky-host'/>
-</filesystem>
-```
-
-Let libvirt allocate PCI addresses and find the installed virtiofsd backend.
-Shared memory is required for the vhost-user backend; this does **not** establish
-that DAX is enabled. Preserve the intended backing of an existing hugepage or
-file-backed memory setup while enabling shared access.
-
-The backend uses no caching to keep edits from both sides visible; application
-caches are separate. Coordinate simultaneous edits to the same file.
-Power the VM off/start it after hardware changes: an in-guest restart does not
-apply new libvirt devices.
+Follow [[09 Shared Folders — VirtIO-FS]] for shared memory, the filesystem XML,
+source/tag distinction, permissions and full power-cycle requirements. This is
+identical for Windows and Linux guests; the Windows-specific mount is below.
+The Windows helper uses tag `dusky-host` and defaults to source `/mnt/zram1`.
 
 ## Manual Windows setup
 
@@ -197,7 +164,7 @@ fresh ISO or other physical hardware. These versions describe a test, not pins.
 - 500 guest reads during 500 host atomic replacements passed.
 - Host rerun changed no XML; guest rerun retained the service PID.
 - Windows restart automatically restored the drive; file hashing passed.
-- All 38 Windows host tests passed, including seven shared-folder tests.
+- At the sharing test, all 38 Windows host tests passed, including seven shared-folder tests. Later memory/notes regressions are recorded in [[Verification — Windows VM]].
 
 These checks do not establish a throughput figure or qualify every application
 and filesystem operation.

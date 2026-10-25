@@ -1,88 +1,69 @@
 ---
-title: "KVM Packages (Aug 2026)"
+title: "KVM host packages and offline inputs"
 tags:
   - kvm
-  - arch
-  - packages
-  - libvirt
-  - qemu
+  - manual
 aliases:
   - Hypervisor Packages
+reviewed: 2026-10-25
 ---
 
-# KVM Packages — Arch Rolling (Aug 2026)
+# KVM host packages and offline inputs
 
-> [!info] Canonical source
-> `05_virtio_iso.py:REPO_PACKAGES` is the source of truth. All names below verified against `pacman -Si` on Aug 2026 Arch.
+The shared package list is `05_virtio_iso.py:REPO_PACKAGES`. Understand the roles
+before adding optional components. On a connected Arch installation, update the
+system consistently before installing from its repositories; do not perform a
+partial upgrade with `pacman -Sy` followed by selective upgrades.
 
-## Repo set (pacman)
-
-```bash
-sudo pacman -S --needed \
-  qemu-desktop libvirt virt-install virt-manager virt-viewer \
-  dnsmasq edk2-ovmf swtpm nftables libosinfo \
-  pciutils dmidecode python-rich
+```sh
+sudo pacman -Syu
+sudo pacman -S --needed qemu-desktop libvirt virt-install virt-manager virt-viewer \
+  dnsmasq edk2-ovmf swtpm nftables libosinfo pciutils dmidecode \
+  virtiofsd acl openssh wl-clipboard python-rich
 ```
 
-| Package | Role (Aug 2026) |
+| Component | Why it is here |
 |---|---|
-| `qemu-desktop` | Superset for passthrough incl. `spice/gtk/virtio-gpu/ovmf`. Replaces `qemu-full` (all foreign archs, ~2× deps). See script comment `qemu-full not needed`. |
-| `libvirt` | 12.6+ modular daemons `virtqemud`/`virtnetworkd`/`virtstoraged` etc. |
-| `virt-install` | `virt-install`/`virt-xml`/`virt-clone` (`--osinfo` not `--os-variant`) |
-| `virt-manager` / `virt-viewer` | GTK frontend / SPICE viewer |
-| `dnsmasq` | libvirt NAT/DHCP backend |
-| `edk2-ovmf` | `/usr/share/qemu/firmware/*.json` descriptors + `OVMF_CODE.secboot.4m.fd` / `OVMF_VARS.4m.fd` (libvirt picks blob via JSON, no hard-coded `fd` path) |
-| `swtpm` | TPM 2.0 emulation (mandatory for `win11` osinfo) |
-| `nftables` | `firewall_backend=nftables` in `/etc/libvirt/network.conf` (no iptables shim since libvirt 10.3) |
-| `libosinfo` | `osinfo-db` for `--osinfo` |
-| `pciutils` / `dmidecode` | `lspci`/`dmidecode` topology probes (Phase 3) |
-| `python-rich` | pipeline TUI |
+| qemu-desktop | Desktop x86 VM device backends; qemu-full is unnecessary unless its additional emulators are wanted |
+| libvirt | Management daemons and `virsh` |
+| virt-install / virt-manager / virt-viewer | CLI definition generator, GUI editor, setup viewer |
+| edk2-ovmf / swtpm | Guest UEFI firmware / emulated TPM |
+| dnsmasq / nftables | Libvirt-managed NAT DHCP/DNS / packet filtering |
+| virtiofsd / acl | Optional host-folder backend / directory permissions |
+| openssh / wl-clipboard | Optional Linux guest management/native Wayland text integration |
+| pciutils / dmidecode | Hardware discovery |
+| python-rich | Script UI; manual configuration does not depend on it |
 
-> [!tip] Why `qemu-desktop` not `qemu-full`
-> `qemu-full` builds every foreign-arch usermode (`qemu-arm`, `qemu-riscv`…) — irrelevant for x86 KVM passthrough and pulls extra deps. `qemu-desktop` is the Arch-recommended superset that already includes `virtio-gpu`, `spice`, `gtk`, `vhost-user` needed for passthrough.
+`qemu-img` is a real Arch package providing the image utility; it is pulled in
+by this QEMU installation. Verify ownership with `pacman -Qo /usr/bin/qemu-img`
+instead of treating the package name as obsolete. `osinfo-db` supplies OS data
+through the installed dependency set; inspect `virt-install --osinfo list`.
 
-Optional host tools:
+For Windows prepare the Windows ISO, VirtIO-Win ISO, and, if selected, WinFsp,
+OpenSSH offline inputs and a **paired** Looking Glass client/IDD installer.
+See [[Mount the VirtIO-Win ISO Image]] and [[Looking Glass]]. A stable legacy LG
+package name alone does not prove compatibility with the development IDD.
 
-```bash
-sudo pacman -S --needed iproute2 openbsd-netcat  # debugging
-# tuned is optional — conflicts with TLP (see Optimize the Host with TuneD)
-# guestfs-tools is optional — only if you offline-edit qcow2
+For an offline install, make a consistent package repository/cache and all
+selected guest installers available beforehand. `pacman -U /path/to/package…`
+installs supplied archives but does not invent missing dependencies. Keep the
+prepared package set consistent with the target ISO; the ISO has not shipped,
+so its final versions remain to be checked. Source builds additionally need
+prepared compiler dependencies and source/submodule inputs.
+
+```sh
+pacman -Q qemu-desktop qemu-img libvirt virt-install virt-manager edk2-ovmf swtpm virtiofsd
+virsh --version
+qemu-system-x86_64 --version
+python3 -VV
 ```
 
-### AUR
+If a temporary custom Python is first in PATH, distribution GUI bindings may
+still belong to `/usr/bin/python3`. Launch the packaged GUI with its interpreter:
+`/usr/bin/python3 /usr/bin/virt-manager --connect qemu:///system`. The setup
+scripts themselves use Python 3.15+. Do not copy a runtime-directory UID or a
+Wayland socket name from another login session.
 
-```bash
-paru -S --needed virtio-win   # → /usr/share/virtio-win/virtio-win.iso or pool symlink
-# looking-glass / libvirt custom builds via AUR use same pattern, see 05_virtio_iso.py:install_aur (paru as operator, not root)
-```
-
-Check ISO location idempotently (never hardcode):
-
-```bash
-pacman -Qlq virtio-win | grep '\.iso$'
-ls -l /var/lib/libvirt/images/virtio-win.iso   # symlink → AUR file, or standalone download
-```
-
-> [!warning] Legacy — packages to *remove* from old guides
-> - `qemu-full` → `qemu-desktop` (above)
-> - `vde2`, `ebtables-git`, `bridge-utils` — legacy bridge/ebtables; replaced by `nftables` + `iproute2`/`nmcli` (`bridge-utils` dropped in Arch 2025)
-> - `iptables-nft` / `iptables` — libvirt now speaks `nftables` natively; no shim needed
-> - `qemu-img` — now part of `qemu-desktop`/`qemu-base` (`qemu-img create -o cluster_size=64k,lazy_refcounts=on` still valid)
-> - `libvirtd` monolith — package still ships it but `10_virt_modular_daemon.py` masks it; do not `enable libvirtd.service`
-> - `--os-variant` — deprecated; use `--osinfo` (see virt-install notes)
-
-## Verify
-
-```bash
-pacman -Q qemu-desktop libvirt virt-manager edk2-ovmf swtpm nftables
-virt-host-validate  # QEMU/KVM should PASS; IOMMU WARN expected before Phase 3
-virsh --version     # ≥12.6
-qemu-system-x86_64 --version  # ≥11.1
-```
-
-## Next
-
-- [[KVM Group Add]] + [[Give the User System-Wide Permission]] → groups + `LIBVIRT_DEFAULT_URI`
-- `07_storage_setup.py` — ACLs, `qemu.conf` `root:root` note
-
-See also: `05_virtio_iso.py`, [[KVM Services]] (legacy monolith doc retained as warning).
+Next: [[libvert Modular daemon enable]]. Reference:
+[Arch package database](https://archlinux.org/packages/),
+[libvirt daemon architecture](https://libvirt.org/daemons.html).

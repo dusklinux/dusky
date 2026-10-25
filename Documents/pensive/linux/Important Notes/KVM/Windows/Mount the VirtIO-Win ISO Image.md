@@ -1,44 +1,44 @@
 ---
-title: "Mount virtio-win ISO"
+title: "VirtIO-Win ISO — prepare and attach driver media"
 tags:
   - kvm
+  - manual
   - windows
-  - virtio
-  - arch
+reviewed: 2026-10-25
 ---
 
-# Mount virtio-win ISO
+# VirtIO-Win ISO — prepare and attach driver media
 
-> [!abstract] Why
-> Windows has no virtio drivers built-in. Without `virtio-win` the guest cannot see `virtio` disks/NICs at install. We attach the ISO as a second CD-ROM; Windows loads drivers from it.
+Windows needs drivers for the selected VirtIO devices. The disk bus determines
+whether it needs viostor or vioscsi; NetKVM handles VirtIO networking. Guest tools
+also provide management/integration components. SATA/e1000e can use inbox
+Windows drivers, but do not supply QGA/clipboard services by themselves.
 
-## Prereq (already staged by `05_virtio_iso.py`)
+Obtain VirtIO-Win media from the [project's distribution instructions](https://github.com/virtio-win/virtio-win-pkg-scripts/blob/master/README.md).
+Stage it on persistent media for an offline reinstall. If the AUR package is
+already installed, discover its actual ISO location:
 
-```bash
-pacman -Qlq virtio-win | grep '\.iso$'
-ls -l /var/lib/libvirt/images/virtio-win.iso   # symlink → AUR file, or standalone
-# fallback AUR helper:
-paru -S --needed virtio-win
-# manual:
-# sudo curl -L https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/virtio-win.iso -o /var/lib/libvirt/images/virtio-win.iso
+```sh
+pacman -Qlq virtio-win
 ```
 
-## Virt-manager steps
+`05_virtio_iso.py` can reuse a staged ISO/package or ask for a local path/download.
+Do not treat a printed local SHA-256 as authentication against an independent
+publisher checksum, or a minimum-size check as proof the complete ISO is good.
+Do not write a new download over a mounted/in-use ISO.
 
-1. VM Details (lightbulb) → **Add Hardware** (bottom-left)
-2. **Storage** → **Device type:** `CDROM device`
-3. **Manage…** → select `virtio-win.iso` (under pool that covers target, e.g. `arsonix-…` or `default`) → **Choose Volume**
-4. **Finish** → **Apply**
+With the VM powered off, virt-manager → **Add Hardware → Storage → CD-ROM**:
+select the ISO and use SATA. Keep the OS installer and driver ISO on separate
+CD-ROM devices. Windows drive letters are assigned by the guest; do not assume
+its VirtIO DVD is always E:.
 
-You now have:
-- `SATA CDROM 1` → Windows ISO
-- `SATA CDROM 2` → `virtio-win.iso`
+```sh
+virsh -c qemu:///system domblklist win11 --inactive --details
+```
 
-> [!tip] Can't find ISO?
-> - Check `virsh pool-list --all --details` — your pool path is `07_storage_setup.py`-chosen. `virt-manager` only lists volumes under declared pools (`pool-define-as`).
-> - AUR alt location: `/usr/share/virtio/virtio-win.iso` (older `virtio-win` revisions).
-> - CLI add: `virsh attach-disk win11 /var/lib/libvirt/images/virtio-win.iso sdc --type cdrom --mode readonly --config`
+Browse the DVD in Windows or Windows Setup. Confirm the required driver paths
+exist for that media version and guest architecture. Keep the media available
+until installation/guest tools are complete, then eject/remove media deliberately.
+An unavailable ISO path can prevent a later VM start just like a missing disk.
 
-After install, leave the virtio CD attached or keep the file in pool; guest tools can be reinstalled without re-mount. Next: [[Install a Windows Virtual Machine on KVM]].
-
-See: `05_virtio_iso.py:stage_virtio` (symlink vs download, 80 MiB floor, Range-resume, sha256).
+Continue with [[Install a Windows Virtual Machine on KVM]].

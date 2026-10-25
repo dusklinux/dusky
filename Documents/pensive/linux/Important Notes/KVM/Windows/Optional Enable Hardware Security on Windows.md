@@ -1,62 +1,30 @@
 ---
-title: "Core Isolation / Memory Integrity (Optional)"
+title: "Optional VBS and nested virtualization — separate from baseline"
 tags:
   - kvm
+  - manual
   - windows
-  - security
-  - vbs
+reviewed: 2026-10-25
 ---
 
-# Core Isolation / Memory Integrity — Optional
+# Optional VBS and nested virtualization — separate from baseline
 
-> [!warning] Optional — perf cost
-> Enabling VBS + **Memory integrity** adds virtualization overhead (nested EPT). For gaming passthrough it can cost FPS/latency. Keep it **off** unless compliance demands it. Standard Q35+UEFI+TPM 2.0+virtio already covers normal Win11 security.
+This page explains an existing optional topic; it does not change the VM's
+security configuration. UEFI, TPM readiness, Secure Boot enforcement, Hyper-V
+enlightenments and Windows Memory Integrity/VBS are different mechanisms.
+Ordinary Windows-on-KVM enlightenments do not mean the guest is running Hyper-V.
 
-## Prereqs
+If deliberately enabling a feature requiring a nested hypervisor, verify host
+nested support, compatible CPU features and the Windows feature's current VM
+requirements. Exposing VMX on Intel or SVM on AMD is not by itself proof VBS
+will run. Do not copy Intel evmcs onto AMD or claim one CPU XML snippet meets
+all Windows VBS requirements.
 
-- CPU meets [Microsoft CPU requirements](https://learn.microsoft.com/en-us/windows-hardware/design/minimum/windows-processor-requirements)
-- Host already on `host-passthrough` + correct topology
+In Windows inspect `msinfo32` and Windows Security → Device security → Core
+isolation. Keep the requested settings and measure workload behavior; nested
+virtualization can change performance and interact with memory/device support.
+No universal FPS penalty or mandatory enable/disable recommendation is established
+here. Do not confuse Kernel DMA Protection with proof VBS is active.
 
-## Enable nested feature (XML edit — VM must be shut off)
-
-In `virsh edit win11`, find single-line:
-
-```xml
-<cpu mode="host-passthrough" check="none" migratable="on"/>
-```
-
-Replace per vendor:
-
-**Intel (`vmx`):**
-
-```xml
-<cpu mode="host-passthrough" check="none" migratable="on">
-  <feature policy="require" name="vmx"/>
-</cpu>
-```
-
-**AMD (`svm`):**
-
-```xml
-<cpu mode="host-passthrough" check="none" migratable="on">
-  <feature policy="require" name="svm"/>
-</cpu>
-```
-
-→ **Apply**.
-
-> [!tip] Alternative via `virt-xml`
-> ```bash
-> virsh shutdown win11
-> virt-xml win11 --edit --cpu host-passthrough,vmx.require=on  # or svm
-> ```
-
-## Inside Windows
-
-1. **Settings → Privacy & security → Windows Security → Device security → Core isolation details**
-2. **Memory integrity → On** → Reboot when prompted → verify stays **On**.
-
-> [!note] If toggle stays gray
-> Re-check `msinfo32` → **Virtualization-based security** should be `Running` and `Kernel DMA Protection`. If `Off`, re-edit `<cpu>` above and ensure no duplicate `<cpu>` entries (duplicate kills the second `feature`; `10_virt_modular_daemon:enforce_kv_config` collapses duplicates — `virsh define` does similarly).
-
-See: [[+ MOC Windows Installation Through Virt Manager]], `30_kvm_vm_deploy.py` (no VBS by default).
+Reference: [Microsoft Memory Integrity deployment](https://learn.microsoft.com/en-us/windows/security/hardware-security/enable-virtualization-based-protection-of-code-integrity),
+[QEMU Hyper-V features](https://www.qemu.org/docs/master/system/i386/hyperv.html).

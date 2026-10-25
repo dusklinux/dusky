@@ -1,27 +1,30 @@
 ---
-title: "Disable SysMain (SuperFetch) in VM"
+title: "SysMain — optional troubleshooting experiment"
 tags:
   - kvm
+  - manual
   - windows
-  - performance
+reviewed: 2026-10-25
 ---
 
-# Disable SysMain (SuperFetch) in VM
+# SysMain — optional troubleshooting experiment
 
-> [!note] Why
-> `SysMain` preloads apps into RAM — useful on bare-metal HDD, wasteful in a VM where host already caches and RAM is scarce. Disabling frees CPU/RAM.
+SysMain manages Windows prefetch behavior. Its usefulness depends on the guest
+workload and storage. Host caching is not a proof it is redundant, especially
+when the virtual disk uses direct host I/O. There is no measured universal
+CPU/RAM saving here and no setup requirement to disable it.
 
-## Inside Windows VM
+If a trace or repeatable observation implicates SysMain, record the original
+state before an experiment. In Administrator PowerShell:
 
-1. `Win + R` → `services.msc` → Enter
-2. Scroll to **SysMain** (press `S` to jump)
-3. Right-click → **Properties**:
-   - **Startup type:** `Disabled`
-   - **Service status:** **Stop** (if Running)
-4. **Apply** → **OK**
+```powershell
+Get-CimInstance Win32_Service -Filter "Name='SysMain'" | Select-Object Name,State,StartMode
+# Deliberate experiment only:
+Stop-Service SysMain
+Set-Service SysMain -StartupType Disabled
+```
 
-Verify: `services.msc` shows `SysMain` — `Disabled` / `Stopped`.
-
-> [!success] Done — persists across reboot.
-
-See: [[Optimize Windows Performance]] hub, [[Disable Unnecessary Scheduled Tasks]].
+Compare the same workload and restore the recorded startup/running state if
+there is no benefit. For a service that was originally automatic/running,
+restore with `Set-Service SysMain -StartupType Automatic` and `Start-Service SysMain`.
+Do not apply that restore example if the recorded state was different.

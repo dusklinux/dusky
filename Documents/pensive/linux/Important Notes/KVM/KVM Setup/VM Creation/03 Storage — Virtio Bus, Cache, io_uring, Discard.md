@@ -1,102 +1,89 @@
 ---
-title: "Storage Performance — Disk Bus / Cache / io_uring / iothreads (Unified)"
+title: "Guest storage — format, bus, caching and discard"
 tags:
   - kvm
-  - storage
-  - virtio
-  - qemu
-  - arch
+  - manual
 aliases:
   - Storage Unified
+reviewed: 2026-10-25
 ---
 
-# Storage Performance — Disk Bus / Cache / io_uring / iothreads (Unified)
+# Guest storage — format, bus, caching and discard
 
-> [!abstract] Goal
-> Near-bare NVMe speed via four levers: **bus**, **cache**, **async API**, **host-thread fanout**. Verified against **Linux 7.3+** + **QEMU 11.1** + **libvirt 12.6+** (Aug 2026). Pipeline `30_kvm_vm_deploy.py:build_command` uses `cache=none,io=io_uring,discard=unmap` for persistent storage, and `cache=writeback` for RAM-backed storage. **Identical for Windows and Linux** — only driver-load moment differs.
+Start with one simple virtual disk. A guest disk's controller/bus, image format,
+cache policy and host filesystem are independent choices. No combination in
+this note is a universal performance winner; measure your actual workload.
 
-## Quick glance
+## Format and creation
 
-- **Bus:** `virtio-blk` (`virtio`) for peak single-disk IOPS/throughput; `VirtIO SCSI` (`virtio-scsi`, “SCSI single” + dedicated IOThread) for multi-digit disk counts / full SCSI — *not* a “must SCSI” rule
-- **Format:** `qcow2` (snapshots/thin) or `raw` (max speed, zero metadata overhead)
-- **Cache:** `none` (O_DIRECT, no double cache)
-- **IO API:** `io_uring` (simple single-IOThread) or `native` + IOThread Virtqueue Mapping (multi-queue scaling)
-- **Discard:** `unmap` (TRIM passthrough)
-- **Queues:** leave unset — auto = vCPU count on `virtio-blk` — then layer IOThreads for real parallelism
+For a new image, with an unused destination filename:
 
-### Step 1 — Select disk
-
-VM details (lightbulb) → **SATA Disk 1** (the volume you created in [[KVM Setup/VM Creation/01 Wizard — Create VM|01 Wizard]])
-
-### Step 2 — Disk bus
-
-- Right pane → **Disk bus** → `VirtIO` (`virtio-blk`) *or* `VirtIO SCSI`
-
-> [!info] `virtio-blk` vs `virtio-scsi` in 2026
-> QEMU docs still say `virtio-blk` has thinner stack → best single-disk IOPS; `virtio-scsi` wins past ~28 LUNs / when you need SCSI reservations. The old multiqueue gap **closed**: `virtio-blk` got IOThread Virtqueue Mapping in **QEMU 9.0**, `virtio-scsi` in **10.0** (Step 4). Proxmox et al default to “VirtIO SCSI single” + IOThread per disk for manageability — fine for most. Neither has exclusive discard advantage now. **Same choice for Windows and Linux.**
-
-### Step 3 — Advanced options
-
-1. **Cache mode** → `none`
-2. **IO mode** → `io_uring` (or `native` if doing Step 4 mapping — Red Hat docs benchmark `native` with that feature, not `io_uring`)
-3. **Discard mode** → `unmap`
-
-> [!important] Triad fine print
-> - **`none` vs `writeback`**:
->   - **Persistent disks (`ext4`/`xfs`/`btrfs`)**: use `cache=none` (`O_DIRECT`, bypassing host page cache, no double-cache, stable).
->   - **RAM-backed disks (`tmpfs`/`zram`)**: use `cache=writeback`! On RAM filesystems, `cache=none` conflicts with or bypasses the memory-backed buffer cache; `writeback` achieves full memory-speed I/O.
-> - **`io_uring`**: lowest overhead API since Linux 5.1, but had ordering bug on BTRFS-backed disks fixed in **QEMU 10.2** (Dec 2025) — stay ≥10.2 (current 11.1). Hardened distros may set `kernel.io_uring_disabled` (60% of 2022 exploit bounties hit io_uring) — check `sysctl kernel.io_uring_disabled`. Linux 7.0 added BPF filtering for it.
-> - **`unmap`**: TRIM guest→host, identical on both buses in modern QEMU.
-
-Pipeline CLI equivalent (both OSes):
-
-```bash
---disk path=/var/lib/libvirt/images/win11.qcow2,format=qcow2,bus=virtio,driver.cache=none,driver.io=io_uring,driver.discard=unmap
---disk path=/var/lib/libvirt/images/archlinux.qcow2,format=qcow2,bus=virtio,driver.cache=none,driver.io=io_uring,driver.discard=unmap
+```sh
+qemu-img create -f qcow2 -o cluster_size=64k,lazy_refcounts=on /path/to/new.qcow2 80G
+qemu-img info /path/to/new.qcow2
 ```
 
-> [!info] Windows route — driver load
-> Bus `virtio` is chosen **before first boot**, but Windows has no in-kernel virtio. At install the drive list will be **empty** until you load `viostor` from the 2nd CDROM (`virtio-win.iso`): **Load driver → Browse → `E:\viostor\w11\amd64` → Red Hat VirtIO SCSI controller** (see [[Install a Windows Virtual Machine on KVM]] §1). Without this, `virtio` disk stays invisible. Keep `virtio-win.iso` attached as SATA CDROM ([[Mount the VirtIO-Win ISO Image]]).
+`80G` is virtual capacity. Sparse host allocation grows as the guest writes.
+`lazy_refcounts` trades some crash-recovery work for less metadata updating;
+it does not preserve data through host RAM loss. Raw images avoid qcow2 metadata,
+but external overlays/snapshots remain possible; “raw has no snapshots” is too
+broad. Backing chains must be preserved together.
 
-> [!info] Linux route — no driver load
-> Arch / Fedora / Ubuntu kernels ship `virtio_blk` + `virtio_pci` built-in. No extra ISO, no “Load driver” step — disk appears immediately. After install, verify `lsblk` shows `vda` (virtio) not `sda`.
+## Bus and Windows drivers
 
-### Step 4 — NVMe parallelism (Queues + IOThreads)
+| Device | Windows driver | Linux driver / use |
+|---|---|---|
+| VirtIO block (`bus='virtio'`) | `viostor` | `virtio_blk`; straightforward single disk |
+| VirtIO SCSI controller + SCSI disk | `vioscsi` | `virtio_scsi`; SCSI functions/many disks |
+| Emulated SATA | Inbox AHCI | Common inbox driver; explicit compatibility choice |
 
-- **Queue count:** unspecified already auto-matches vCPU count on `virtio-blk` — usually leave blank.
-- **IOThreads:** by default one thread services all virtqueues → high queue count not parallel. **IOThread Virtqueue Mapping** (QEMU 9.0+ blk / 10.0+ scsi) binds virtqueues round-robin to multiple host threads.
+For a VirtIO block disk, load **viostor**, not vioscsi, during Windows Setup.
+Do not change an installed Windows boot disk's bus until its destination driver
+is installed and the transition is planned; otherwise Windows may not boot.
 
-> [!tip] Mapping example (4 vCPU, 2 iothreads, `virtio-blk`) — same for both OSes
-> ```xml
-> <domain>
->   <vcpu>4</vcpu>
->   <iothreads>2</iothreads>
->   <devices><disk type='file' device='disk'>
->     <driver name='qemu' type='raw' cache='none' io='native' discard='unmap'/>
->     <iothreads><iothread id='1'/><iothread id='2'/></iothreads>
->   </disk></devices>
-> </domain>
-> ```
-> `virtio-scsi` mapping sits on the **controller** (one ctrl, many LUNs) — check `man virsh` for current attr syntax (new enough to verify per release). Needs `virt-manager` XML tab / `virsh edit`; not a dropdown in virt-manager 5.1. Red Hat: 4–8 iothreads, pin via `<iothreadpin>` away from vCPUs.
+## Persistent-file baseline
 
-> [!warning] Version floor
-> Needs QEMU 9.0+ (blk) / 10.0+ (scsi) + libvirt 10+ — met on any 2026 Arch. Older stack: “queues = vCPUs and stop.”
+The Windows deployment uses this disk driver policy:
 
-### Step 5 — Format
-
-- For file images: `qcow2` (snapshots) vs `raw` (no block-translation). Passing raw physical NVMe via VFIO skips virtio entirely — peak but no migration/snapshots (see [[Host PC  Preparation for GPU isolation]]).
-
-### Step 6 — Apply
-
-**Apply** → next: [[KVM Setup/VM Creation/04 Network — Virtio NIC (NAT vs Bridge)]].
-
-## Verify
-
-```bash
-virsh -c qemu:///system dumpxml win11 | grep -A2 "<driver name='qemu'"
-virsh -c qemu:///system dumpxml archlinux | grep -A2 "<driver name='qemu'"
-# expect: cache='none' io='io_uring' discard='unmap'
-qemu-img info /var/lib/libvirt/images/win11.qcow2 | grep -E 'virtual size|cluster_size'
+```xml
+<disk type='file' device='disk'>
+  <driver name='qemu' type='qcow2' cache='none' io='io_uring' discard='unmap'/>
+  <source file='/path/to/new.qcow2'/>
+  <target dev='vda' bus='virtio'/>
+</disk>
 ```
 
-See: [[KVM Setup/VM Creation/00 Index — VM Creation (Unified)]], [[Mount the VirtIO-Win ISO Image]] (Windows ISO attach), [[Install a Windows Virtual Machine on KVM]] (viostor load), [[Resize aka extend storage after os is already installed]] (grow), `30_kvm_vm_deploy.py:provision_disk`.
+`cache='none'` requests direct host I/O, avoiding a second host file-data cache.
+It is not “never cache anything”: Windows still caches. `io='io_uring'` chooses
+an asynchronous host API. Filesystem support and actual backend behavior matter.
+Do not call one API lowest-overhead on every device without measuring it.
+
+The separate Linux deployment deliberately uses a different RAM-storage policy.
+Tmpfs-backed images need an appropriate buffered path; do not prescribe O_DIRECT
+as a RAM-filesystem speed optimization or claim both deployment scripts choose
+identical disk policies. For a manual tmpfs file image, `cache='writeback'` with
+`io='threads'` is a buffered starting point, subject to local validation. Retain
+normal guest flushes; do not substitute `cache='unsafe'` for performance claims.
+
+## Discard and maintenance
+
+`discard='unmap'` allows guest discard requests to pass through; it does **not**
+generate those requests. Guest TRIM/retrim still matters, and the backing chain
+and filesystem determine how much host allocation can be released. Windows
+ScheduledDefrag includes optimization/retrim work; do not disable it because
+`unmap` exists. See [[Disable Unnecessary Scheduled Tasks]].
+
+An IOThread or multiple queues can help a demonstrated bottleneck. They also add
+configuration and host scheduling work. Do not assume unspecified queue count
+equals vCPU count or paste a machine-specific pinning map. If needed, obtain
+valid `<driver><iothreads>…</iothreads></driver>` syntax from the installed libvirt
+schema rather than putting a guessed `<iothreads>` child directly under a disk.
+The baseline here needs no manual queue mapping.
+
+Inspect running domains with `virsh domblklist win11 --details` and their XML.
+Use qemu-img modifications/checks only on stopped, unowned images; do not bypass
+QEMU's image locking. Growing a Windows disk:
+[[Resize aka extend storage after os is already installed]].
+Sources: [QEMU image utility](https://www.qemu.org/docs/master/tools/qemu-img.html),
+[QEMU disk/cache options](https://www.qemu.org/docs/master/system/invocation.html),
+[libvirt disk XML](https://libvirt.org/formatdomain.html#hard-drives-floppy-disks-cdroms).

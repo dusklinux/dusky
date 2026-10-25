@@ -1,25 +1,16 @@
 ---
-title: "Virt-Manager — Enable XML Editing & New VM (Redirect)"
+title: "Windows hardware editor — entry point"
 tags:
   - kvm
-  - virt-manager
+  - manual
   - windows
 aliases:
   - Virt-Manager XML Stub
+reviewed: 2026-10-25
 ---
 
-# Virt-Manager — Enable XML Editing & New VM
+# Windows hardware editor — entry point
 
-> [!tip] Merged — canonical source
-> **Shared prereq lives in [[KVM Setup/VM Creation/01 Wizard — Create VM#Prerequisites]].** Follow that note + [[KVM Setup/VM Creation/00 Index — VM Creation (Unified)]]. This stub keeps filename for `[[wikilink]]` stability.
+Use virt-manager on the system connection. Enable its XML editing preference when using the XML tab, or use virsh edit separately; that GUI preference is not a hypervisor requirement.
 
-## Steps retained (both OSes)
-
-1. Launch: `virt-manager --connect qemu:///system` (ensure **system**, not `qemu:///session`)
-2. **Edit → Preferences → General → ✅ Enable XML editing** ← mandatory for Hyper-V/TPM/pinning/`<shmem>` edits later
-3. Toolbar → **Create a new virtual machine** (computer icon) → proceed to [[KVM Setup/VM Creation/01 Wizard — Create VM]]
-
-> [!important] Skip = blocked
-> Without XML editing you cannot apply [[Enable Hyper-V Enlightenments]], [[KVM Setup/VM Creation/05 CPU — Host-Passthrough & Topology|05 CPU]] topology, or [[Looking Glass]] `<shmem>`.
-
-See: [[KVM Setup/VM Creation/01 Wizard — Create VM]], [[KVM Setup/VM Creation/00 Index — VM Creation (Unified)]], [[+ MOC Windows Installation Through Virt Manager]].
+Continue with [[00 Index — VM Creation (Unified)]]. This filename is retained so existing links still work; the complete procedure is maintained in the linked guide.
