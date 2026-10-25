@@ -7,12 +7,12 @@ dirs = ["."]
 
 [sequence]
 tasks = [
-    { script = "05_virtio_iso.py", args = ["--virtio"] },
+    { script = "05_virtio_iso.py" },
     { script = "07_storage_setup.py" },
     { script = "10_virt_modular_daemon.py" },
-    { script = "15_gpu_probing_kernal_param_mkinit.py" },
+    { script = "15_gpu_probing_kernal_param_mkinit.py", prompt = "Configure host GPU isolation for passthrough (may require a host reboot)?" },
     { script = "20_networking_nmcli.py" },
-    { script = "windows/25_looking_glass.py" },
+    { script = "windows/25_looking_glass.py", args = ["--optional"] },
     { script = "windows/60_configure_client_ini.py" },
     { script = "30_kvm_vm_deploy.py", args = ["--windows"], always = true, forward_args = true },
 ]

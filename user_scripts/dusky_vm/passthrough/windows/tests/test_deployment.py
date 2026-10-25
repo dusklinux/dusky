@@ -30,6 +30,7 @@ class DeploymentTests(unittest.TestCase):
               patch.object(deploy, "host_ram_mib", return_value=32768),
               patch.object(deploy.os, "cpu_count", return_value=16),
               patch.object(deploy, "ask_path", return_value=None),
+              patch.object(deploy.Confirm, "ask", return_value=False),
               patch.object(deploy.Prompt, "ask", side_effect=lambda *a, **k: k["default"]),
               patch.object(deploy.IntPrompt, "ask", side_effect=lambda *a, **k: k["default"])):
             vm, size = deploy.interview({"storage_dir": str(self.storage)}, self.storage)
@@ -76,6 +77,25 @@ class DeploymentTests(unittest.TestCase):
 
     def test_missing_phase_25_stops_before_disk_changes(self):
         self.assertEqual(self.run_main([], {}), 1)
+
+    def test_access_and_device_choices_are_independent(self):
+        import xml.etree.ElementTree as ET
+        for access in ("both", "looking-glass", "rdp", "spice"):
+            for virtio in (True, False):
+                for graphics in ("spice", "passthrough"):
+                    with self.subTest(access=access, virtio=virtio, graphics=graphics):
+                        self.vm.access, self.vm.virtio, self.vm.graphics = access, virtio, graphics
+                        self.assertEqual(deploy.needs_looking_glass(self.vm), access in ("both", "looking-glass"))
+                        command = deploy.build_command(self.vm)
+                        self.assertIn("bus=virtio" if virtio else "bus=sata", command[command.index("--disk")+1])
+                        root = ET.fromstring(deploy.record_windows_choices("<domain><devices/></domain>", self.vm))
+                        selected = root.find(f"./metadata/{{{deploy.WINDOWS_NS}}}windows")
+                        self.assertEqual(selected.get("access"), access)
+                        self.assertEqual(selected.get("virtio"), "yes" if virtio else "no")
+
+    def test_rdp_only_preview_does_not_require_shared_memory(self):
+        self.vm.access = "rdp"
+        self.assertEqual(self.run_main(["--dump-only"], {"shm_mib": 96}), 0)
 
 
 if __name__ == "__main__":

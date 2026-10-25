@@ -4,7 +4,7 @@ from pathlib import Path
 import runpy
 import sys
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 
 GUEST = Path(__file__).resolve().parents[1]
@@ -41,13 +41,13 @@ class OpenSshServicingTests(unittest.TestCase):
         self.install = HELPERS["setup_ssh.py"].__globals__["install_server"]
 
     def test_existing_service_does_not_reinstall(self):
-        execute = unittest.mock.Mock(return_value="Installed")
+        execute = Mock(return_value="Installed")
         with patch.dict(self.install.__globals__, powershell=execute):
             self.assertFalse(self.install(None, None))
         execute.assert_called_once()
 
     def test_fod_restart_is_propagated(self):
-        execute = unittest.mock.Mock(side_effect=["", "RestartRequired"])
+        execute = Mock(side_effect=["", "RestartRequired"])
         with patch.dict(self.install.__globals__, powershell=execute):
             self.assertTrue(self.install(Path("FoD media"), None))
         command = execute.call_args.args[0]
@@ -55,12 +55,12 @@ class OpenSshServicingTests(unittest.TestCase):
         self.assertIn("RestartNeeded", command)
 
     def test_completed_fod_install_does_not_require_restart(self):
-        execute = unittest.mock.Mock(side_effect=["", ""])
+        execute = Mock(side_effect=["", ""])
         with patch.dict(self.install.__globals__, powershell=execute):
             self.assertFalse(self.install(Path("FoD media"), None))
 
     def test_missing_offline_media_is_actionable(self):
-        with patch.dict(self.install.__globals__, powershell=unittest.mock.Mock(return_value="")):
+        with patch.dict(self.install.__globals__, powershell=Mock(return_value="")):
             with self.assertRaisesRegex(RuntimeError, "offline Windows"):
                 self.install(None, None)
 

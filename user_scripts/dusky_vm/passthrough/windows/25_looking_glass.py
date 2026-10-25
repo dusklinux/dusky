@@ -642,6 +642,7 @@ def main() -> None:
     parser.add_argument("--force-recreate", action="store_true", help="always rebuild the region")
     parser.add_argument("--no-packages", action="store_true", help="skip package installation")
     parser.add_argument("--domain", help="non-interactive: patch this domain")
+    parser.add_argument("--optional", action="store_true", help="ask whether to set up Looking Glass for this host")
     args = parser.parse_args()
     elevate()
 
@@ -656,8 +657,16 @@ def main() -> None:
     )
 
     operator = resolve_operator()
+    want_lg = not args.optional or Confirm.ask("Configure Looking Glass?", default=True)
+    want_rdp = not args.optional or Confirm.ask("Install the FreeRDP client for Windows RDP access?", default=True)
+    if not want_lg:
+        if want_rdp and not args.no_packages:
+            install_packages(["freerdp"], operator)
+        state_merge(looking_glass_enabled=False, rdp_enabled=want_rdp)
+        console.print("Looking Glass setup skipped by choice.")
+        return
     if not args.no_packages:
-        packages = ["freerdp"]
+        packages = ["freerdp"] if want_rdp else []
         if not current_client_available(operator):
             packages.append("looking-glass-git")
         install_packages(packages, operator)
@@ -681,6 +690,8 @@ def main() -> None:
         shm_mib=mib,
         shm_bytes=size,
         phase_25="complete",
+        looking_glass_enabled=True,
+        rdp_enabled=want_rdp,
     )
 
     console.print("\n[bold green]=== PHASE 5 COMPLETE ===[/bold green]")

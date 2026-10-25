@@ -580,9 +580,6 @@ def stage_virtio(operator: pwd.struct_passwd, pool: Path, timeout: float) -> Non
     source = aur_virtio_iso()
 
     if source is not None:
-        if target.is_symlink() and target.resolve() == source.resolve():
-            console.print(f"[bold green]  ok[/bold green] Symlink already points at {source}.")
-            return
         if target.exists() or target.is_symlink():
             target.unlink()
         target.symlink_to(source)

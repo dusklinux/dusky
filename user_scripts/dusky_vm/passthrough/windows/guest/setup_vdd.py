@@ -13,6 +13,25 @@ import subprocess
 import sys
 
 
+IDD_STATUS = r"""
+$shared = @(Get-PnpDevice -PresentOnly | Where-Object InstanceId -like 'PCI\VEN_1AF4&DEV_1110*')
+if (-not $shared -or @($shared | Where-Object Status -ne 'OK').Count -gt 0) {
+    'IVSHMEMNotReady'
+    return
+}
+$devices = @(Get-PnpDevice -Class Display,HIDClass -PresentOnly | ForEach-Object {
+    $ids = (Get-PnpDeviceProperty -InstanceId $_.InstanceId -KeyName 'DEVPKEY_Device_HardwareIds' -ErrorAction SilentlyContinue).Data
+    if ($ids -contains 'Root\LGIdd' -or $ids -contains 'Root\LGInput') {
+        [pscustomobject]@{ Device = $_; HardwareIds = $ids }
+    }
+})
+$display = @($devices | Where-Object { $_.HardwareIds -contains 'Root\LGIdd' })
+$inputDevice = @($devices | Where-Object { $_.HardwareIds -contains 'Root\LGInput' })
+$service = Get-Service -Name LGIddHelper -ErrorAction SilentlyContinue
+if (-not $display -or -not $inputDevice -or @($devices | Where-Object { $_.Device.Status -ne 'OK' }).Count -gt 0 -or
+    -not $service -or $service.Status -ne 'Running') { 'RestartRequired' } else { 'Ready' }
+"""
+
 def find_installer(explicit: Path | None) -> Path:
     if explicit is not None:
         path = explicit.expanduser().resolve()
@@ -100,24 +119,7 @@ def main() -> int:
         )
     # The NSIS wrapper sets its reboot flag for helper exit 12, but can itself
     # return 0. Query the exact hardware IDs from LGIddInstall.c, not names.
-    status = powershell(r"""
-$shared = @(Get-PnpDevice -PresentOnly | Where-Object InstanceId -like 'PCI\VEN_1AF4&DEV_1110*')
-if (-not $shared -or @($shared | Where-Object Status -ne 'OK').Count -gt 0) {
-    'IVSHMEMNotReady'
-    return
-}
-$devices = @(Get-PnpDevice -Class Display,HIDClass -PresentOnly | ForEach-Object {
-    $ids = (Get-PnpDeviceProperty -InstanceId $_.InstanceId -KeyName 'DEVPKEY_Device_HardwareIds' -ErrorAction SilentlyContinue).Data
-    if ($ids -contains 'Root\LGIdd' -or $ids -contains 'Root\LGInput') {
-        [pscustomobject]@{ Device = $_; HardwareIds = $ids }
-    }
-})
-$display = @($devices | Where-Object { $_.HardwareIds -contains 'Root\LGIdd' })
-$inputDevice = @($devices | Where-Object { $_.HardwareIds -contains 'Root\LGInput' })
-$service = Get-Service -Name LGIddHelper -ErrorAction SilentlyContinue
-if (-not $display -or -not $inputDevice -or @($devices | Where-Object { $_.Device.Status -ne 'OK' }).Count -gt 0 -or
-    -not $service -or $service.Status -ne 'Running') { 'RestartRequired' } else { 'Ready' }
-""")
+    status = powershell(IDD_STATUS)
     if result.returncode == 3010 or status != "Ready":
         if status == "IVSHMEMNotReady" and result.returncode != 3010:
             raise RuntimeError("The VM's IVSHMEM device/driver is not ready. Verify its domain "

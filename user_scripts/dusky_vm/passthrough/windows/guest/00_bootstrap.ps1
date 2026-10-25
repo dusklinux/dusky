@@ -18,16 +18,50 @@ param(
     [string]$OpenSshZip,
     [switch]$EnableRdp,
     [switch]$SkipSsh,
-    [switch]$SkipSpice
+    [switch]$SkipSpice,
+    [switch]$SkipLookingGlass,
+    [switch]$Interactive
 )
 $ErrorActionPreference = 'Stop'
 $scriptDir = $PSScriptRoot
 
 function Quote-PS([string]$Value) { "'" + $Value.Replace("'", "''") + "'" }
 
+function Ask-YesNo([string]$Question, [bool]$Default) {
+    $hint = if ($Default) { '[Y/n]' } else { '[y/N]' }
+    while ($true) {
+        $answer = (Read-Host "$Question $hint").Trim().ToLowerInvariant()
+        if (-not $answer) { return $Default }
+        if ($answer -in @('y', 'yes')) { return $true }
+        if ($answer -in @('n', 'no')) { return $false }
+        Write-Host 'Enter y or n.'
+    }
+}
+
 # Resolve caller-relative media paths before crossing the UAC boundary. A bad
 # explicit path is an input error, not a reason to choose some other runtime.
 try {
+    if ($Interactive -or $PSBoundParameters.Count -eq 0) {
+        if (-not $PSBoundParameters.ContainsKey('SkipLookingGlass')) { $SkipLookingGlass = -not (Ask-YesNo 'Install Looking Glass IDD?' $true) }
+        if (-not $PSBoundParameters.ContainsKey('EnableRdp')) { $EnableRdp = Ask-YesNo 'Enable Windows Remote Desktop?' $true }
+        if (-not $PSBoundParameters.ContainsKey('SkipSsh')) { $SkipSsh = -not (Ask-YesNo 'Configure OpenSSH Server?' $false) }
+        if (-not $PSBoundParameters.ContainsKey('SkipSpice')) { $SkipSpice = -not (Ask-YesNo 'Install/verify VirtIO and SPICE guest tools?' $true) }
+        if (-not $SkipLookingGlass -and -not $TrustIddPublisher -and -not $IddPublisherCertificate -and -not $PSBoundParameters.ContainsKey('TrustIddPublisher')) {
+            $TrustIddPublisher = Ask-YesNo 'Trust the Windows-verified IDD installer publisher for silent installation?' $true
+        }
+        if (-not $SkipSsh -and -not $OpenSshSource -and -not $OpenSshZip -and -not (Get-Service sshd -ErrorAction SilentlyContinue)) {
+            $OpenSshZip = Read-Host 'Offline OpenSSH ZIP path (blank to enter a Features-on-Demand directory)'
+            if (-not $OpenSshZip) { $OpenSshSource = Read-Host 'Offline Features-on-Demand directory' }
+        }
+        foreach ($name in @('SkipLookingGlass','EnableRdp','SkipSsh','SkipSpice','TrustIddPublisher')) {
+            $PSBoundParameters[$name] = [Management.Automation.SwitchParameter](Get-Variable $name -ValueOnly)
+        }
+        $null = $PSBoundParameters.Remove('Interactive')
+    }
+    if (-not $SkipLookingGlass -and -not $IddInstaller) { $IddInstaller = Join-Path $scriptDir 'looking-glass-idd-setup.exe' }
+    if (-not $SkipLookingGlass -and -not (Test-Path -LiteralPath $IddInstaller -PathType Leaf)) {
+        throw 'Provide the matching looking-glass-idd-setup.exe beside this bootstrapper or pass -IddInstaller PATH. See README.md.'
+    }
     foreach ($name in @('PythonExe', 'PythonIndex', 'IddInstaller', 'IddPublisherCertificate', 'VirtioIso', 'OpenSshSource', 'OpenSshZip')) {
         $value = Get-Variable -Name $name -ValueOnly
         if ($value) {
@@ -93,12 +127,22 @@ function Get-SpiceAgent {
     Get-CimInstance Win32_Service | Where-Object { $_.PathName -match '(?i)[\\/]vdservice\.exe(?:"|\s|$)' } | Select-Object -First 1
 }
 
+function Save-Choices {
+    $directory = Join-Path $env:ProgramData 'DuskyVM'
+    $path = Join-Path $directory 'choices.json'
+    $payload = [ordered]@{schema=1;lookingGlass=(-not $SkipLookingGlass);rdp=[bool]$EnableRdp;ssh=(-not $SkipSsh);spice=(-not $SkipSpice)} | ConvertTo-Json -Compress
+    if ((Test-Path -LiteralPath $path) -and (Get-Content -LiteralPath $path -Raw) -eq $payload) { return }
+    $null = New-Item -ItemType Directory -Force -Path $directory
+    $temporary = Join-Path $directory ([IO.Path]::GetRandomFileName())
+    try {
+        [IO.File]::WriteAllText($temporary, $payload, [Text.UTF8Encoding]::new($false))
+        if (Test-Path -LiteralPath $path) { [IO.File]::Replace($temporary, $path, $null) }
+        else { [IO.File]::Move($temporary, $path) }
+    } finally { if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary } }
+}
+
 try {
-    if (-not $IddInstaller) { $IddInstaller = Join-Path $scriptDir 'looking-glass-idd-setup.exe' }
-    if (-not (Test-Path -LiteralPath $IddInstaller -PathType Leaf)) {
-        throw 'Provide the matching looking-glass-idd-setup.exe beside this bootstrapper or pass -IddInstaller PATH. See README.md.'
-    }
-    if (-not (Test-Path -LiteralPath (Join-Path $scriptDir 'setup_vdd.py') -PathType Leaf)) {
+    if (-not $SkipLookingGlass -and -not (Test-Path -LiteralPath (Join-Path $scriptDir 'setup_vdd.py') -PathType Leaf)) {
         throw 'Copy the complete guest directory, including setup_vdd.py.'
     }
     if (-not $SkipSsh) {
@@ -109,20 +153,24 @@ try {
             throw 'Supply offline OpenSSH media with -OpenSshSource or -OpenSshZip, or use -SkipSsh. No package is downloaded automatically.'
         }
     }
-    $python = Find-Python
-    if (-not $python) {
-        if (-not $PythonIndex) { $PythonIndex = Join-Path $scriptDir 'python\index.json' }
-        if (-not (Test-Path -LiteralPath $PythonIndex -PathType Leaf)) {
-            throw 'Python 3.15+ is missing. Supply -PythonExe with a bundled runtime, or install Python install manager and supply -PythonIndex with offline runtime media. See README.md.'
-        }
-        $manager = Get-Command pymanager.exe -ErrorAction SilentlyContinue
-        if (-not $manager) { throw 'Install Python install manager before using -PythonIndex, or supply -PythonExe.' }
-        & $manager.Source install "--source=$PythonIndex" 3.15
-        if ($LASTEXITCODE -ne 0) { throw "Offline Python installation failed ($LASTEXITCODE)." }
+    $python = $null
+    if (-not $SkipLookingGlass -or -not $SkipSsh) {
         $python = Find-Python
-        if (-not $python) { throw 'Python 3.15+ could not be resolved after installation.' }
+        if (-not $python) {
+            if (-not $PythonIndex) { $PythonIndex = Join-Path $scriptDir 'python\index.json' }
+            if (-not (Test-Path -LiteralPath $PythonIndex -PathType Leaf)) {
+                throw 'Python 3.15+ is missing. Supply -PythonExe with a bundled runtime, or install Python install manager and supply -PythonIndex with offline runtime media. See README.md.'
+            }
+            $manager = Get-Command pymanager.exe -ErrorAction SilentlyContinue
+            if (-not $manager) { throw 'Install Python install manager before using -PythonIndex, or supply -PythonExe.' }
+            & $manager.Source install "--source=$PythonIndex" 3.15
+            if ($LASTEXITCODE -ne 0) { throw "Offline Python installation failed ($LASTEXITCODE)." }
+            $python = Find-Python
+            if (-not $python) { throw 'Python 3.15+ could not be resolved after installation.' }
+        }
+        Write-Host "Using Python: $python"
     }
-    Write-Host "Using Python: $python"
+    Save-Choices
     $restartRequired = $false
 
     if (-not $SkipSpice) {
@@ -185,13 +233,15 @@ try {
         }
         if ($LASTEXITCODE -ne 0) { throw "SSH setup failed ($LASTEXITCODE)." }
     }
-    $iddArgs = @((Join-Path $scriptDir 'setup_vdd.py'))
-    if ($IddInstaller) { $iddArgs += @('--installer', $IddInstaller) }
-    if ($IddPublisherCertificate) { $iddArgs += @('--publisher-certificate', $IddPublisherCertificate) }
-    if ($TrustIddPublisher) { $iddArgs += '--trust-installer-publisher' }
-    & $python @iddArgs
-    if ($LASTEXITCODE -eq 3010) { $restartRequired = $true }
-    elseif ($LASTEXITCODE -ne 0) { throw "Looking Glass IDD setup failed ($LASTEXITCODE)." }
+    if (-not $SkipLookingGlass) {
+        $iddArgs = @((Join-Path $scriptDir 'setup_vdd.py'))
+        if ($IddInstaller) { $iddArgs += @('--installer', $IddInstaller) }
+        if ($IddPublisherCertificate) { $iddArgs += @('--publisher-certificate', $IddPublisherCertificate) }
+        if ($TrustIddPublisher) { $iddArgs += '--trust-installer-publisher' }
+        & $python @iddArgs
+        if ($LASTEXITCODE -eq 3010) { $restartRequired = $true }
+        elseif ($LASTEXITCODE -ne 0) { throw "Looking Glass IDD setup failed ($LASTEXITCODE)." }
+    }
 
     if ($restartRequired) {
         Write-Host 'Guest installers completed. Restart Windows before verifying display, input and clipboard.'

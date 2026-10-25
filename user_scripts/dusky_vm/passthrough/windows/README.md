@@ -79,8 +79,10 @@ host. After an ordinary interrupted setup, rerun with `--setup-only --manual`
 without resetting to resume. Complete any requested host reboot before creating
 a RAM-backed VM. Refresh your login session if new group membership is needed.
 
-If using software IDD rendering without GPU passthrough, skip the GPU probing /
-VFIO phase at the manual prompt. The other host setup phases are still needed.
+GPU isolation has its own yes/no question (default No). Leave it declined for
+software IDD rendering. Resuming remembers the choice; resetting the profile
+opens the choices again. Phase 25 separately asks whether to set up Looking
+Glass and FreeRDP; Phase 60 skips client configuration when LG is declined.
 For VirtIO media, an existing staged ISO or installed ISO package is reused;
 otherwise supply your local ISO path at the prompt. Enter selects a download.
 Phase 25 creates shared memory; Phase 60 writes the desktop user's client config.
@@ -91,9 +93,12 @@ Create the VM separately, so rerunning host setup does not create another VM:
 python3 000_dusky_vm.py --windows --deploy-only
 ```
 
-The deployment defaults now select Windows 11 and Looking Glass with a SPICE
-setup console. GPU passthrough is a separate choice. Both Windows choices get
-IVSHMEM and guest-agent channels. `--dump-only` previews XML without creating
+Deployment asks for Looking Glass + RDP, LG only, RDP only, or SPICE console
+only. GPU passthrough is independent. Disk/network devices can use VirtIO or
+SATA/e1000e; missing VirtIO media requires an explicit choice to retain devices
+whose drivers must already be available. Only LG selections get IVSHMEM; all
+Windows selections retain the setup console and guest-agent channels. Each
+domain records these choices for diagnosis. `--dump-only` previews XML without creating
 disks, pools or a domain; for example:
 
 ```sh
@@ -117,6 +122,34 @@ Use the actual domain name if you chose another. RDP needs a Windows account
 password; a Hello PIN is not that password. On first IDD setup, finish sign-in
 in the SPICE console, close that viewer, then launch Looking Glass. Opening a
 second SPICE viewer can close the Looking Glass client's SPICE connection.
+
+To check a VM and repair known configuration drift:
+
+```sh
+python3 windows/50_win.py doctor --vm win11 --guest
+python3 windows/50_win.py repair --vm win11 --guest
+```
+
+The doctor is read-only; repair requests sudo and rechecks the result. It repairs
+managed client options, shared-memory permissions, tmpfiles rules, missing agent
+channels and installed guest services. It follows saved setup choices. For an
+older domain without choices, it infers LG from IVSHMEM and leaves RDP alone;
+use `--access both` or another explicit access choice when appropriate. `--ssh`
+adds guest SSH checks. `--json` emits a report; exits are 0 for passing selected
+checks, 1 for unresolved issues and 2 for pending checks. Without `--guest`, the
+report covers the host only. QGA must already be installed to inspect Windows.
+
+Repair does not download packages, reinstall drivers, bind GPUs, change disks
+or reboot. Persistent hardware changes require a guest power-off/start; active
+shared memory is never resized or replaced. The canonical mapping supports one
+running LG VM at a time. Missing offline inputs and unsupported package versions
+are reported for correction. This is an on-demand command, with no background
+polling service.
+
+If LG stays at its splash screen after sign-in, focus its window and press a
+key or move the pointer to wake the display. If it still has no picture, inspect
+the IDD logs described in the guest guide. Passing configuration checks cannot
+certify visible pixels, physical audio, or GPU performance.
 
 The [live-test report](guest/LIVE_TEST_NOTES.md) distinguishes exercised behavior
 from untested GPU, HDR and physical audio paths.

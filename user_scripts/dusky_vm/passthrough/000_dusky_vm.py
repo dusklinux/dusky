@@ -48,6 +48,7 @@ class Task:
     always: bool
     forward_args: bool
     key: str
+    prompt: str = ""
 
     def command(self, extra: list[str]) -> list[str]:
         if self.script.suffix == ".py":
@@ -120,7 +121,10 @@ def load_profile(filepath: Path) -> Profile:
         context = f"{filepath.name}, task {index}"
         if not isinstance(table, dict):
             raise ValueError(f"{context}: expected a table")
-        check_keys(table, {"script", "args", "mode", "always", "forward_args"}, context)
+        check_keys(table, {"script", "args", "mode", "always", "forward_args", "prompt"}, context)
+        prompt = table.get("prompt", "")
+        if not isinstance(prompt, str):
+            raise ValueError(f"{context}: prompt must be a string")
         script = table.get("script")
         args = table.get("args", [])
         mode = table.get("mode", "U")
@@ -145,11 +149,13 @@ def load_profile(filepath: Path) -> Profile:
         identity = (mode, str(path), tuple(args))
         occurrence = occurrences.get(identity, 0)
         occurrences[identity] = occurrence + 1
-        material = json.dumps([identity, checksum, occurrence, table.get("always", False),
-                               table.get("forward_args", False)]).encode()
+        fields = [identity, checksum, occurrence, table.get("always", False), table.get("forward_args", False)]
+        if prompt:
+            fields.append(prompt)
+        material = json.dumps(fields).encode()
         key = hashlib.blake2b(material, digest_size=16).hexdigest()
         task = Task(path, tuple(args), mode, table.get("always", False),
-                    table.get("forward_args", False), key)
+                    table.get("forward_args", False), key, prompt)
         task.command([])  # Validate every interpreter before executing any task.
         tasks.append(task)
     if sum(task.forward_args for task in tasks) > 1:
@@ -255,6 +261,20 @@ def run_profile(profile: Profile, tasks: tuple[Task, ...], state: Path,
         for task, receipt, done, command in plan:
             if done:
                 continue
+            if task.prompt:
+                while True:
+                    try:
+                        answer = input(task.prompt + " [y/N]: ").strip().casefold()
+                    except EOFError:
+                        raise ValueError(f"{task.script.name} needs an interactive choice.") from None
+                    if answer in {"", "n", "no", "y", "yes"}:
+                        break
+                    print("Enter y or n.")
+                if answer not in {"y", "yes"}:
+                    report["tasks"].append({"command": command, "status": "declined"})
+                    if not task.always:
+                        write_json(receipt, {"command": command, "selected": False})
+                    continue
             if manual:
                 answer = input(f"Run {task.script.name}? [Enter=run / s=skip / q=quit]: ").strip().casefold()
                 if answer in {"q", "quit"}:

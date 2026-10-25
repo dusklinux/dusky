@@ -425,6 +425,7 @@ def print_help():
     actions_table.add_row("view", "show, lg", "Launch looking-glass-client")
     actions_table.add_row("launch", "play", "Start VM and wait to launch Looking Glass")
     actions_table.add_row("rdp", "connect", "Connect to the VM via FreeRDP rescue bridge")
+    actions_table.add_row("doctor", "repair", "Check configuration; repair fixes verified drift")
     actions_table.add_row("edit", "-", "Edit the VM XML topology configuration")
     actions_table.add_row("select", "-", "Change the default preferred VM")
     
@@ -450,6 +451,10 @@ def main():
         sys.exit(0)
 
     action = sys.argv[1].lower()
+    if action in ("doctor", "repair"):
+        doctor = Path(__file__).with_name("doctor.py")
+        extra = ["--repair"] if action == "repair" else []
+        sys.exit(subprocess.run([sys.executable, str(doctor), *extra, *sys.argv[2:]]).returncode)
     if action in ("rdp", "connect"):
         rdp_script = Path(__file__).with_name("55_rdp.py")
         sys.exit(subprocess.run([sys.executable, str(rdp_script), *sys.argv[2:]]).returncode)

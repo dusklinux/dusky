@@ -10,6 +10,7 @@ import json
 import os
 import pwd
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -26,6 +27,7 @@ STATE_DIR = Path("/var/lib/arsonix")
 STATE_FILE = STATE_DIR / "state.json"
 STATE_SCHEMA = 2
 SHM_NAME = "looking-glass"
+WINDOWS_NS = "urn:dusky:vm:windows:1"
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,49}$")
 
 
@@ -330,6 +332,12 @@ class Spec:
     virtio_iso: Path | None
     hostdevs: list[str]
     disk_gib: int = 80
+    access: str = "both"   # both | looking-glass | rdp | spice
+    virtio: bool = True
+
+
+def needs_looking_glass(spec: Spec) -> bool:
+    return spec.access in ("both", "looking-glass") if spec.windows else spec.graphics == "passthrough"
 
 
 def build_command(spec: Spec) -> list[str]:
@@ -353,9 +361,9 @@ def build_command(spec: Spec) -> list[str]:
         "--channel", "spicevmc,target.type=virtio,target.name=com.redhat.spice.0",
         "--channel", "unix,target.type=virtio,target.name=org.qemu.guest_agent.0",
         "--disk",
-        f"path={spec.disk},size={spec.disk_gib},format=qcow2,bus=virtio,driver.cache=none,"
+        f"path={spec.disk},size={spec.disk_gib},format=qcow2,bus={'virtio' if spec.virtio else 'sata'},driver.cache=none,"
         "driver.io=io_uring,driver.discard=unmap",
-        "--network", f"network={spec.network},model=virtio",
+        "--network", f"network={spec.network},model={'virtio' if spec.virtio else 'e1000e'}",
         "--boot", "uefi,cdrom,hd,menu=on",
     ]
 
@@ -429,6 +437,24 @@ def inject_shmem(xml_text: str, mib: int) -> str:
     return ET.tostring(root, encoding="unicode") + "\n"
 
 
+def record_windows_choices(xml_text: str, spec: Spec) -> str:
+    """Keep per-domain intent for diagnosis; do not infer RDP from a global cache."""
+    if not spec.windows:
+        return xml_text
+    ET.register_namespace("dusky", WINDOWS_NS)
+    root = ET.fromstring(xml_text)
+    metadata = root.find("metadata")
+    if metadata is None:
+        metadata = ET.SubElement(root, "metadata")
+    settings = metadata.find(f"{{{WINDOWS_NS}}}windows")
+    if settings is None:
+        settings = ET.SubElement(metadata, f"{{{WINDOWS_NS}}}windows")
+    settings.set("access", spec.access)
+    settings.set("virtio", "yes" if spec.virtio else "no")
+    ET.indent(root, space="  ")
+    return ET.tostring(root, encoding="unicode") + "\n"
+
+
 def define_domain(name: str, xml_text: str) -> None:
     console.print("\n[bold blue]==>[/bold blue] [bold]Registering the domain[/bold]")
     fd, tmp_name = tempfile.mkstemp(prefix=f"arsonix-{name}-", suffix=".xml")
@@ -488,10 +514,23 @@ def interview(state: dict, home: Path) -> tuple[Spec, int]:
                                 default="linux2024")
             windows = osinfo.startswith("win")
 
-    console.print("\n[bold cyan]Display topology[/bold cyan]")
+    access, virtio = "both", True
     if windows:
-        console.print("  [1] Looking Glass + SPICE setup console (software rendering)")
-        console.print("  [2] GPU passthrough + Looking Glass + SPICE setup console")
+        console.print("\n[bold cyan]Windows access[/bold cyan]")
+        console.print("  [1] Looking Glass and RDP\n  [2] Looking Glass\n  [3] RDP\n  [4] SPICE console only")
+        want_lg = state.get("looking_glass_enabled", True)
+        want_rdp = state.get("rdp_enabled", True)
+        default_access = "1" if want_lg and want_rdp else "2" if want_lg else "3" if want_rdp else "4"
+        choice = Prompt.ask("Access", choices=["1", "2", "3", "4"], default=default_access)
+        access = {"1": "both", "2": "looking-glass", "3": "rdp", "4": "spice"}[choice]
+        console.print("\n  [1] VirtIO disk/network (preferred; load drivers from VirtIO ISO)")
+        console.print("  [2] SATA disk / e1000e network (Windows inbox drivers)")
+        virtio = Prompt.ask("Disk/network devices", choices=["1", "2"], default="1") == "1"
+
+    console.print("\n[bold cyan]GPU / setup console[/bold cyan]")
+    if windows:
+        console.print("  [1] Emulated VGA + SPICE console (no GPU passthrough)")
+        console.print("  [2] GPU passthrough + VGA/SPICE setup console")
         gfx_choice = Prompt.ask("Choice", choices=["1", "2"], default="1")
         graphics = {"1": "spice", "2": "passthrough"}[gfx_choice]
     else:
@@ -548,6 +587,11 @@ def interview(state: dict, home: Path) -> tuple[Spec, int]:
             console.print(f"[green]  Using {candidate} for VirtIO drivers.[/green]")
         else:
             virtio_iso = ask_path("Path to virtio-win.iso", home)
+        if virtio and virtio_iso is None and not Confirm.ask(
+            "No VirtIO ISO selected. Keep VirtIO devices with preinstalled guest drivers?", default=False
+        ):
+            virtio = False
+            console.print("Using SATA/e1000e inbox devices instead.")
 
     return Spec(
         name=name,
@@ -562,6 +606,8 @@ def interview(state: dict, home: Path) -> tuple[Spec, int]:
         virtio_iso=virtio_iso,
         hostdevs=hostdevs,
         disk_gib=disk_gib,
+        access=access,
+        virtio=virtio,
     ), disk_gib
 
 
@@ -610,7 +656,7 @@ def main() -> None:
         return
 
     spec, disk_gib = interview(state, home)
-    needs_shmem = spec.windows or spec.graphics == "passthrough"
+    needs_shmem = needs_looking_glass(spec)
     mib = 0
     if needs_shmem:
         try:
@@ -629,6 +675,7 @@ def main() -> None:
     if needs_shmem:
         xml_text = inject_shmem(xml_text, mib)
         console.print(f"[bold green]  ok[/bold green] <shmem> ivshmem-plain {mib} MiB injected.")
+    xml_text = record_windows_choices(xml_text, spec)
 
     if args.dump_only:
         console.print(xml_text)
@@ -642,12 +689,20 @@ def main() -> None:
         f"virsh -c qemu:///system start {spec.name}",
         f"virsh -c qemu:///system dumpxml {spec.name} | grep -E 'shmem|hostdev|memballoon'",
     ]
-    if needs_shmem:
-        steps.append(f"After guest setup: python3 windows/50_win.py view --vm {spec.name}")
     if spec.windows:
-        steps.append("In Windows Setup, load viostor/w11/amd64 from the VirtIO CD-ROM for the virtio disk.")
-        steps.append("Install NetKVM/w11/amd64 if Windows Setup needs its VirtIO network driver.")
-        steps.append("Sign in through the SPICE console; follow windows/guest/README.md for guest setup.")
+        if spec.virtio:
+            steps.append("In Windows Setup, load viostor/w11/amd64 from the VirtIO CD-ROM for the virtio disk.")
+            steps.append("Install NetKVM/w11/amd64 if Windows Setup needs its VirtIO network driver.")
+        steps.append(f"Sign in through the SPICE console; follow {Path(__file__).parent / 'guest/README.md'} for guest setup.")
+        flags = []
+        if not needs_shmem:
+            flags.append("-SkipLookingGlass")
+        if spec.access in ("both", "rdp"):
+            flags.append("-EnableRdp")
+        steps.append("Selected Windows access: " + spec.access + "; bootstrap options: " + (" ".join(flags) or "Looking Glass only"))
+    if needs_shmem:
+        view = [sys.executable, str(Path(__file__).with_name("50_win.py")), "view", "--vm", spec.name]
+        steps.append("After guest setup: " + shlex.join(view))
     console.print(Panel("\n".join(f"  {i}. {s}" for i, s in enumerate(steps, 1)),
                         title="Next", border_style="cyan"))
 

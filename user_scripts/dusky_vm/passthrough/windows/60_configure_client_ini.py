@@ -137,6 +137,13 @@ def merge_config(content: str, shm_file: str) -> str:
 
 
 def main() -> None:
+    try:
+        state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        state = {}
+    if isinstance(state, dict) and state.get("looking_glass_enabled") is False:
+        print("Looking Glass configuration skipped by the host setup choice.")
+        return
     home_dir, uid, gid = get_caller_identity()
     config_home = Path(os.environ.get("XDG_CONFIG_HOME") or home_dir / ".config")
     if not config_home.is_absolute():
