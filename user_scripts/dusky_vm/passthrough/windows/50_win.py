@@ -426,6 +426,7 @@ def print_help():
     actions_table.add_row("launch", "play", "Start VM and wait to launch Looking Glass")
     actions_table.add_row("rdp", "connect", "Connect to the VM via FreeRDP rescue bridge")
     actions_table.add_row("doctor", "repair", "Check configuration; repair fixes verified drift")
+    actions_table.add_row("share", "-", "Configure host folder (default /mnt/zram1) or Windows drive")
     actions_table.add_row("edit", "-", "Edit the VM XML topology configuration")
     actions_table.add_row("select", "-", "Change the default preferred VM")
     
@@ -451,6 +452,8 @@ def main():
         sys.exit(0)
 
     action = sys.argv[1].lower()
+    if action == "share":
+        sys.exit(subprocess.run([sys.executable, str(Path(__file__).with_name("share_folder.py")), *sys.argv[2:]]).returncode)
     if action in ("doctor", "repair"):
         doctor = Path(__file__).with_name("doctor.py")
         extra = ["--repair"] if action == "repair" else []

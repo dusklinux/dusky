@@ -111,6 +111,60 @@ the network driver. Sign in and follow [guest setup](guest/README.md).
 
 ## Everyday use
 
+### Shared host folder
+
+VirtIO-FS sharing works with Looking Glass, SPICE or RDP. It requires the host
+`virtiofsd` package, Windows VirtIO-Win tools including the `viofs` driver/service,
+and [WinFsp Core](https://github.com/winfsp/winfsp/releases). Keep the WinFsp MSI
+with your offline guest installers. No Samba server or RDP drive redirection is
+needed. The default host folder is `/mnt/zram1`; it must already be mounted.
+Custom folders must already exist and permit the desktop user to read/write.
+Existing ownership, permissions and contents are preserved.
+
+With Windows powered off, configure the host folder:
+
+```sh
+python3 windows/50_win.py share --vm win11
+# Or choose another folder:
+python3 windows/50_win.py share --vm win11 --dir /path/to/folder
+python3 windows/50_win.py share --vm win11 --status
+```
+
+The chosen path is saved in the VM XML. Repeating `share` retains that selection
+and makes no change when already configured. The pre-share XML is retained under
+`~/.local/state/dusky/vm-share/DOMAIN_UUID/before-share.xml`.
+Start Windows, install the VirtIO-Win tools, then configure its drive through
+the QEMU guest agent:
+
+```sh
+python3 windows/50_win.py share --vm win11 --guest --winfsp-installer 'C:\path\winfsp.msi'
+```
+
+This uses the host desktop user's UID/GID for guest-created files. Once WinFsp
+is installed, omit `--winfsp-installer` on reruns. The drive defaults to `Z:`;
+use `--drive-letter Y` to choose another. The service starts automatically on
+Windows boot. There is no host/guest automatic reboot or automatic download.
+If an installer requests a restart, restart Windows and rerun `share --guest`.
+An in-guest restart does not apply newly added libvirt hardware: power it off
+and start it to apply the host filesystem device and shared memory backing.
+
+Without QGA, run `guest/setup_share.ps1` in an Administrator PowerShell terminal
+inside Windows, supplying `-Owner HOST_UID:HOST_GID` (from Linux `id -u` and
+`id -g`), `-WinFspInstaller C:\path\winfsp.msi` if needed, and optionally
+`-DriveLetter Y`. If the VirtIO-FS device is not healthy, install the `viofs`
+driver from your VirtIO-Win media before rerunning. This helper configures one
+VirtIO-FS drive; it leaves other filesystem devices alone and rejects an existing
+second VirtIO-FS share instead of changing its mount behavior.
+
+The host folder must exist whenever the VM starts. For a custom folder under
+temporary storage, arrange to recreate that directory after host boot; the
+default shares the mount root itself. Sharing does not copy or preserve files,
+and libvirt snapshots do not snapshot shared-folder contents. Both sides should
+coordinate edits to the same file. The managed VirtIO-FS backend uses no caching
+to keep edits visible across both sides; application caches remain independent.
+
+### Display and management
+
 From this `passthrough` directory, as your Wayland desktop user:
 
 ```sh
