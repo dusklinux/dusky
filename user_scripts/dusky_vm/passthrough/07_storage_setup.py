@@ -420,7 +420,7 @@ def provision_acls(target: Path, qemu: QemuIdentity, operator: pwd.struct_passwd
         principals.append(("u", qemu.user))
     else:
         console.print(
-            "[dim]  QEMU runs privileged (root:root per qemu.conf) -- traversal ACLs are "
+            "[dim]  QEMU runs with UID 0 -- traversal ACLs are "
             "provisioned for the operator only.[/dim]"
         )
 
@@ -581,7 +581,7 @@ def main() -> None:
     console.print(table)
 
     console.print("\n[bold green]=== PHASE 1.5 COMPLETE ===[/bold green]")
-    console.print("Next: 10_virt_modular_daemon.py (socket-activated libvirt 12.6+ topology).\n")
+    console.print("Storage is ready. Continue the selected profile's GPU/network setup.\n")
 
 
 if __name__ == "__main__":

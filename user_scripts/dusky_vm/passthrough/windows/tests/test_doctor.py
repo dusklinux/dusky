@@ -32,7 +32,8 @@ phase = load("doctor_memory_tests", BASE / "25_looking_glass.py")
 class DoctorTests(unittest.TestCase):
     def test_looking_glass_preserves_explicit_balloon_choice(self):
         for model in ('virtio', 'none'):
-            root = ET.fromstring(f"<domain><devices><memballoon model='{model}'><stats period='5'/></memballoon></devices></domain>")
+            stats = "<stats period='5'/>" if model == 'virtio' else ''
+            root = ET.fromstring(f"<domain><devices><memballoon model='{model}'>{stats}</memballoon></devices></domain>")
             before = ET.tostring(root.find('./devices/memballoon'))
             phase.apply_latency_tuning(root)
             self.assertEqual(ET.tostring(root.find('./devices/memballoon')), before)
