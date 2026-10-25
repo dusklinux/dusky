@@ -130,7 +130,7 @@ sudo cp --reflink=auto /path/to/boxes-disk.qcow2 /var/lib/libvirt/images/boxes-i
 sudo chown root:root /var/lib/libvirt/images/boxes-import.qcow2
 
 virt-install --connect qemu:///system --name boxes-import --memory 4096 --vcpus 4 \
-  --disk path=/var/lib/libvirt/images/boxes-import.qcow2,format=qcow2,bus=virtio \
+  --disk path=/var/lib/libvirt/images/boxes-import.qcow2,format=qcow2,bus=virtio,driver.cache=none,driver.io=io_uring,driver.discard=unmap \
   --network network=default,model=virtio --graphics spice --video virtio --boot uefi --import
 ```
 

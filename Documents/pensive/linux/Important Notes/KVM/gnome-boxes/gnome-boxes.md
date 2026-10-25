@@ -16,7 +16,7 @@ tags:
 > - **View/edit same VMs in virt-manager:** `virt-manager --connect qemu:///session` (`virsh --connect qemu:///session list --all`)
 > - **Arch guest (Hyprland):** `spice-vdagent` + `xorg-xwayland` + user agent in session; optional `wl-clipboard`+`xclip` bridge is **guest-side** only
 > - **Do not** enable `libvirtd.service` or mass-add groups for Boxes-default use
-> - **Do not** symlink `~/.local/share/gnome-boxes/images` → `zram` unless you want **RAM-ephermeral disks**
+> - **Do not** symlink `~/.local/share/gnome-boxes/images` → `zram` unless you want **RAM-ephemeral disks**
 
 *This file is intentionally **comprehensive** (670-line original retained in structure) — it is already Aug 2026-current for Boxes.*
 
@@ -105,9 +105,18 @@ sudo systemctl enable --now spice-vdagentd.service
 
 ```ini
 # ~/.config/systemd/user/spice-vdagent-user.service
-[Unit] Description=SPICE user agent; PartOf=graphical-session.target; After=graphical-session.target
-[Service] ExecStart=/usr/bin/spice-vdagent; Restart=on-failure; RestartSec=2
-[Install] WantedBy=graphical-session.target
+[Unit]
+Description=SPICE user agent
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/spice-vdagent
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target
 ```
 ```bash
 systemctl --user daemon-reload; systemctl --user enable --now spice-vdagent-user.service
@@ -131,9 +140,18 @@ Hyprland `spice-vdagent` still uses X11/Xwayland path → needs `xorg-xwayland` 
 
 ```ini
 # ~/.config/systemd/user/spice-wayland-clipboard-bridge.service
-[Unit] Description=Bridge Wayland clipboard to X11 for SPICE; PartOf=graphical-session.target; After=graphical-session.target spice-vdagent-user.service
-[Service] ExecStart=/usr/bin/wl-paste --type text --watch /usr/bin/xclip -selection clipboard; Restart=on-failure; RestartSec=2
-[Install] WantedBy=graphical-session.target
+[Unit]
+Description=Bridge Wayland clipboard to X11 for SPICE
+PartOf=graphical-session.target
+After=graphical-session.target spice-vdagent-user.service
+
+[Service]
+ExecStart=/usr/bin/wl-paste --type text --watch /usr/bin/xclip -selection clipboard
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target
 ```
 ```bash
 systemctl --user daemon-reload; systemctl --user enable --now spice-wayland-clipboard-bridge.service
@@ -170,7 +188,7 @@ printf 'DISPLAY=%s WAYLAND=%s\n' "${DISPLAY-}" "${WAYLAND_DISPLAY-}"
 > ```bash
 > mkdir -p /mnt/zram1/boxes_vm/
 > rm -rf ~/.local/share/gnome-boxes/images
-> ln -nfs /mnt/zram1/boxes_vm ~/.local/share/gnome-boxes/images  # RAM-ephermeral VMs!
+> ln -nfs /mnt/zram1/boxes_vm ~/.local/share/gnome-boxes/images  # RAM-ephemeral VMs!
 > ```
 
 If you want temp RAM backing only for installer scratch:

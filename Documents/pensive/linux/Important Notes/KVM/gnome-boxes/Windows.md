@@ -30,7 +30,14 @@ Clipboard (`spice-vdagent` / `spice-guest-tools`) ≠ Shared Folders.
 
 For **folder sharing** via SPICE WebDAV need **Spice WebDAV daemon** inside Windows guest:
 
-- <https://www.spice-space.org/download/windows/spice-webdavd/> → install → plus **SPICE WebDAV channel** in VM XML (Boxes usually omits; add via `virt-manager --connect qemu:///session` → Add Hardware → Channel → `org.spice-space.webdav.0` per SPICE manual: <https://www.spice-space.org/spice-user-manual.html#_folder_sharing>)
+- <https://www.spice-space.org/download/windows/spice-webdavd/> → install → plus **SPICE WebDAV channel** in VM XML (Boxes usually omits; add via `virt-manager --connect qemu:///session` → Add Hardware → Channel → `org.spice-space.webdav.0` per SPICE manual: <https://www.spice-space.org/spice-user-manual.html#_folder_sharing>):
+
+```xml
+<channel type='spiceport'>
+  <source channel='org.spice-space.webdav.0'/>
+  <target type='virtio' name='org.spice-space.webdav.0'/>
+</channel>
+```
 
 > [!note] virtiofs vs WebDAV
 > `virtiofs` (`host_zram` shared folder for `qemu:///system` VMs) is different stack (see [[Setting up Shared Directory Between Guest_win11 and Host]]). Boxes `session` VMs typically use **WebDAV**, not `virtiofs`, for folder sharing.
