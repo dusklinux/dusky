@@ -12,9 +12,11 @@ param(
     [string]$PythonIndex,
     [string]$IddInstaller,
     [string]$IddPublisherCertificate,
+    [switch]$TrustIddPublisher,
     [string]$VirtioIso,
     [string]$OpenSshSource,
     [string]$OpenSshZip,
+    [switch]$EnableRdp,
     [switch]$SkipSsh,
     [switch]$SkipSpice
 )
@@ -22,6 +24,27 @@ $ErrorActionPreference = 'Stop'
 $scriptDir = $PSScriptRoot
 
 function Quote-PS([string]$Value) { "'" + $Value.Replace("'", "''") + "'" }
+
+# Resolve caller-relative media paths before crossing the UAC boundary. A bad
+# explicit path is an input error, not a reason to choose some other runtime.
+try {
+    foreach ($name in @('PythonExe', 'PythonIndex', 'IddInstaller', 'IddPublisherCertificate', 'VirtioIso', 'OpenSshSource', 'OpenSshZip')) {
+        $value = Get-Variable -Name $name -ValueOnly
+        if ($value) {
+            $resolved = (Resolve-Path -LiteralPath $value).ProviderPath
+            if ($name -ne 'OpenSshSource' -and -not (Test-Path -LiteralPath $resolved -PathType Leaf)) {
+                throw "-$name must name a file: $value"
+            }
+            Set-Variable -Name $name -Value $resolved
+            $PSBoundParameters[$name] = $resolved
+        }
+    }
+    if ($OpenSshSource -and $OpenSshZip) { throw 'Choose -OpenSshSource or -OpenSshZip, not both.' }
+    if ($TrustIddPublisher -and $IddPublisherCertificate) { throw 'Choose -TrustIddPublisher or -IddPublisherCertificate, not both.' }
+} catch {
+    Write-Error -ErrorAction Continue $_
+    exit 1
+}
 
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
@@ -50,7 +73,10 @@ function Find-Python {
         try {
             $output = & $candidate -c $probe 2>$null
             if ($LASTEXITCODE -eq 0 -and $output) { return ([string]($output | Select-Object -Last 1)).Trim() }
-        } catch { }
+            if ($candidate -eq $PythonExe) { throw 'The selected runtime is not Python 3.15+.' }
+        } catch {
+            if ($candidate -eq $PythonExe) { throw "Cannot use -PythonExe '$PythonExe': $_" }
+        }
     }
     $launcher = Get-Command py.exe -ErrorAction SilentlyContinue
     if ($launcher) {
@@ -68,6 +94,21 @@ function Get-SpiceAgent {
 }
 
 try {
+    if (-not $IddInstaller) { $IddInstaller = Join-Path $scriptDir 'looking-glass-idd-setup.exe' }
+    if (-not (Test-Path -LiteralPath $IddInstaller -PathType Leaf)) {
+        throw 'Provide the matching looking-glass-idd-setup.exe beside this bootstrapper or pass -IddInstaller PATH. See README.md.'
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $scriptDir 'setup_vdd.py') -PathType Leaf)) {
+        throw 'Copy the complete guest directory, including setup_vdd.py.'
+    }
+    if (-not $SkipSsh) {
+        if (-not (Test-Path -LiteralPath (Join-Path $scriptDir 'setup_ssh.py') -PathType Leaf)) {
+            throw 'Copy the complete guest directory, including setup_ssh.py, or pass -SkipSsh.'
+        }
+        if (-not (Get-Service sshd -ErrorAction SilentlyContinue) -and -not $OpenSshSource -and -not $OpenSshZip) {
+            throw 'Supply offline OpenSSH media with -OpenSshSource or -OpenSshZip, or use -SkipSsh. No package is downloaded automatically.'
+        }
+    }
     $python = Find-Python
     if (-not $python) {
         if (-not $PythonIndex) { $PythonIndex = Join-Path $scriptDir 'python\index.json' }
@@ -118,6 +159,19 @@ try {
         } else { throw 'SPICE agent service was not installed by the supplied guest tools.' }
     }
 
+    if ($EnableRdp) {
+        $edition = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').EditionID
+        if ($edition -notmatch '^(Professional|Enterprise|Education|IoTEnterprise)') {
+            throw "Windows edition '$edition' does not support this Remote Desktop host setup. Pro, Enterprise or Education is required."
+        }
+        $settings = Get-CimInstance -Namespace 'root/cimv2/TerminalServices' -ClassName Win32_TerminalServiceSetting
+        $result = Invoke-CimMethod -InputObject $settings -MethodName SetAllowTSConnections -Arguments @{ AllowTSConnections = [uint32]1; ModifyFirewallException = [uint32]1 }
+        if ($result.ReturnValue -ne 0) { throw "Enabling Remote Desktop failed ($($result.ReturnValue))." }
+        Start-Service TermService
+        (Get-Service TermService).WaitForStatus('Running', [TimeSpan]::FromSeconds(30))
+        Write-Host 'Remote Desktop and its firewall exception are enabled. Use the Windows account password, not a Hello PIN; existing NLA policy was preserved.'
+    }
+
     if (-not $SkipSsh) {
         # A non-interactive PowerShell process can still attach a Windows
         # console. Do not let Python's isatty() trigger a hidden password prompt.
@@ -125,11 +179,16 @@ try {
         if ($OpenSshSource) { $sshArgs += @('--source', $OpenSshSource) }
         if ($OpenSshZip) { $sshArgs += @('--openssh-zip', $OpenSshZip) }
         & $python @sshArgs
+        if ($LASTEXITCODE -eq 3010) {
+            Write-Host 'OpenSSH requires a restart. Restart Windows and rerun this bootstrapper to complete setup.'
+            exit 3010
+        }
         if ($LASTEXITCODE -ne 0) { throw "SSH setup failed ($LASTEXITCODE)." }
     }
     $iddArgs = @((Join-Path $scriptDir 'setup_vdd.py'))
     if ($IddInstaller) { $iddArgs += @('--installer', $IddInstaller) }
     if ($IddPublisherCertificate) { $iddArgs += @('--publisher-certificate', $IddPublisherCertificate) }
+    if ($TrustIddPublisher) { $iddArgs += '--trust-installer-publisher' }
     & $python @iddArgs
     if ($LASTEXITCODE -eq 3010) { $restartRequired = $true }
     elseif ($LASTEXITCODE -ne 0) { throw "Looking Glass IDD setup failed ($LASTEXITCODE)." }

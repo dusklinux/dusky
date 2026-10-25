@@ -45,11 +45,28 @@ def powershell(command: str) -> str:
     return result.stdout.strip()
 
 
+def trust_installer_publisher(installer: Path) -> None:
+    quoted = "'" + str(installer).replace("'", "''") + "'"
+    print(powershell(r"""
+$signature = Get-AuthenticodeSignature -LiteralPath """ + quoted + r"""
+if ($signature.Status -ne 'Valid' -or -not $signature.SignerCertificate) {
+    throw ('Cannot trust the installer publisher: ' + $signature.StatusMessage)
+}
+$store = [Security.Cryptography.X509Certificates.X509Store]::new('TrustedPublisher', 'LocalMachine')
+$store.Open('ReadWrite')
+try { $store.Add($signature.SignerCertificate) } finally { $store.Close() }
+'Trusted verified installer publisher: ' + $signature.SignerCertificate.Subject
+"""))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument("--installer", type=Path, help="matching local Looking Glass IDD installer")
-    parser.add_argument("--publisher-certificate", type=Path,
-                        help="explicitly trust this supplied publisher certificate for silent driver installation")
+    publisher = parser.add_mutually_exclusive_group()
+    publisher.add_argument("--publisher-certificate", type=Path,
+                           help="explicitly trust this supplied publisher certificate for silent driver installation")
+    publisher.add_argument("--trust-installer-publisher", action="store_true",
+                           help="trust the installer's publisher after Windows verifies its Authenticode signature")
     args = parser.parse_args()
     if sys.platform != "win32":
         parser.error("Run this script inside Windows 11.")
@@ -58,6 +75,8 @@ def main() -> int:
     if not ctypes.windll.shell32.IsUserAnAdmin():
         parser.error("Run 00_bootstrap.ps1 or an Administrator terminal first.")
     installer = find_installer(args.installer)
+    if args.trust_installer_publisher:
+        trust_installer_publisher(installer)
     if args.publisher_certificate is not None:
         certificate = args.publisher_certificate.expanduser().resolve(strict=True)
         quoted = "'" + str(certificate).replace("'", "''") + "'"

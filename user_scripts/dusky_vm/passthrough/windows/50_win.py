@@ -589,7 +589,8 @@ def main():
         cmd = [client, "app:transport=lgmp", "-f", shm_file, "-m", active_key]
         if endpoint is None:
             cmd.append("spice:enable=no")
-            print_warn("No SPICE listener: clipboard, audio and SPICE input fallback are unavailable.")
+            print_warn("No SPICE listener: SPICE fallback and USB audio are unavailable. "
+                       "The IDD can still provide display, direct input and clipboard.")
         else:
             host, port = endpoint
             cmd.extend(["spice:enable=yes", f"spice:host={host}", f"spice:port={port}"])

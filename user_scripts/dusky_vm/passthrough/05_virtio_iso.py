@@ -3,11 +3,9 @@
 Arsonix KVM/VFIO Pipeline -- Phase 1 (05_virtio_iso.py)
 Hypervisor staging: packages, KVM capability gate, group membership, VirtIO media.
 
-Target : Arch Linux rolling (Aug 2026) / Linux 7.1.8+ / Python 3.14.7+ / systemd 261+
+Target : Arch Linux / Linux 7.3+ / Python 3.15+ / systemd 262+
 Policy : Zero legacy. Idempotent. Atomic. Strict. One job: STAGE THE HOST.
 
-Notes on Python 3.14: PEP 649/749 makes annotations lazily evaluated by default,
-so future-annotations import (PEP 563) is intentionally absent per Aug 2026 zero-legacy rule.
 """
 
 import argparse
@@ -32,7 +30,7 @@ from typing import Never
 # ==============================================================================
 # PRE-FLIGHT (stdlib only -- runs before any third-party import)
 # ==============================================================================
-MIN_PY: tuple[int, int, int] = (3, 14, 7)
+MIN_PY: tuple[int, int, int] = (3, 15, 0)
 STATE_DIR = Path("/var/lib/arsonix")
 STATE_FILE = STATE_DIR / "state.json"
 STATE_SCHEMA = 2
@@ -574,8 +572,12 @@ def stage_virtio(operator: pwd.struct_passwd, pool: Path, timeout: float) -> Non
     pool.mkdir(parents=True, exist_ok=True)
     target = pool / "virtio-win.iso"
 
-    aur_ok = install_aur(["virtio-win"], operator)
-    source = aur_virtio_iso() if aur_ok else None
+    if target.is_file() and target.stat().st_size >= 80_000_000:
+        console.print(f"[bold green]  ok[/bold green] VirtIO ISO already staged at {target}.")
+        return
+    # Local media must work without contacting AUR first. A packaged ISO may
+    # already be installed; otherwise offer the local-path/download choice.
+    source = aur_virtio_iso()
 
     if source is not None:
         if target.is_symlink() and target.resolve() == source.resolve():
@@ -587,9 +589,6 @@ def stage_virtio(operator: pwd.struct_passwd, pool: Path, timeout: float) -> Non
         console.print(f"[bold green]  ok[/bold green] {target} -> {source}")
         return
 
-    if target.is_file() and not target.is_symlink() and target.stat().st_size >= 80_000_000:
-        console.print(f"[bold green]  ok[/bold green] Standalone ISO already staged at {target}.")
-        return
     if target.is_symlink():  # dangling link from a removed AUR package
         target.unlink()
 
@@ -662,13 +661,16 @@ def main() -> None:
     console.print(
         Panel(
             "[bold green]Arsonix Phase 1 -- Hypervisor Staging[/bold green]\n"
-            "Arch rolling / Linux 7.1.8+ / Python 3.14.7+ / systemd 261+",
+            "Arch rolling / Linux 7.3+ / Python 3.15+ / systemd 262+",
             expand=False,
             border_style="green",
         )
     )
 
-    if not pacman_db_is_fresh():
+    missing = [pkg for pkg in REPO_PACKAGES if not installed(pkg)]
+    # An ISO containing the complete package set needs no transaction or sync
+    # database lookup. Its offline setup must not expire merely with DB age.
+    if missing and not pacman_db_is_fresh():
         bail(
             "The pacman sync database is missing or older than 7 days.\n"
             "Run a full system upgrade first (partial upgrades are unsupported on Arch):\n"
@@ -679,7 +681,7 @@ def main() -> None:
     console.print(f"[dim]operator = {operator.pw_name} ({operator.pw_dir})[/dim]")
 
     console.print("\n[bold blue]==>[/bold blue] [bold]Synchronizing hypervisor packages[/bold]")
-    repo, aur = split_repo_aur(REPO_PACKAGES)
+    repo, aur = split_repo_aur(missing) if missing else ([], [])
     if aur:
         console.print(f"[yellow]  ! Not in any sync repo, deferring to AUR: {', '.join(aur)}[/yellow]")
     install_repo(repo)

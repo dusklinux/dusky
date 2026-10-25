@@ -329,6 +329,7 @@ class Spec:
     install_iso: Path | None
     virtio_iso: Path | None
     hostdevs: list[str]
+    disk_gib: int = 80
 
 
 def build_command(spec: Spec) -> list[str]:
@@ -352,7 +353,7 @@ def build_command(spec: Spec) -> list[str]:
         "--channel", "spicevmc,target.type=virtio,target.name=com.redhat.spice.0",
         "--channel", "unix,target.type=virtio,target.name=org.qemu.guest_agent.0",
         "--disk",
-        f"path={spec.disk},format=qcow2,bus=virtio,driver.cache=none,"
+        f"path={spec.disk},size={spec.disk_gib},format=qcow2,bus=virtio,driver.cache=none,"
         "driver.io=io_uring,driver.discard=unmap",
         "--network", f"network={spec.network},model=virtio",
         "--boot", "uefi,cdrom,hd,menu=on",
@@ -373,7 +374,10 @@ def build_command(spec: Spec) -> list[str]:
 
     match spec.graphics:
         case "spice":
-            cmd += ["--graphics", "spice,listen=127.0.0.1", "--video", "virtio"]
+            # Windows has an inbox VGA setup driver. The IDD supplies its
+            # desktop after installation; virtio display drivers are optional.
+            video = "vga" if spec.windows else "virtio"
+            cmd += ["--graphics", "spice,listen=127.0.0.1", "--video", video]
         case "spice-gl":
             cmd += ["--graphics", "spice,listen=socket,gl.enable=yes",
                     "--video", "virtio,accel3d=yes"]
@@ -385,7 +389,9 @@ def build_command(spec: Spec) -> list[str]:
     for nodedev in spec.hostdevs:
         cmd += ["--hostdev", nodedev]
 
-    cmd += ["--noautoconsole", "--print-xml"]
+    # --print-xml alone can create storage through libvirt. Disk provisioning
+    # belongs to main(); XML generation must never create devices or volumes.
+    cmd += ["--noautoconsole", "--dry-run", "--print-xml"]
     return cmd
 
 
@@ -458,7 +464,7 @@ def interview(state: dict, home: Path) -> tuple[Spec, int]:
         bail("No active libvirt network. Run Phase 4 (20_networking_nmcli.py).")
 
     while True:
-        name = Prompt.ask("\n[bold cyan]Domain name[/bold cyan]", default="arsonix-guest").strip()
+        name = Prompt.ask("\n[bold cyan]Domain name[/bold cyan]", default="win11").strip()
         if not NAME_RE.fullmatch(name):
             console.print("[red]  x Use [A-Za-z0-9._+-], max 50 chars, no spaces.[/red]")
             continue
@@ -471,7 +477,7 @@ def interview(state: dict, home: Path) -> tuple[Spec, int]:
     console.print("  [1] Arch Linux")
     console.print("  [2] Windows 11 (TPM 2.0 + SMM + Hyper-V enlightenments)")
     console.print("  [3] Other (enter an osinfo id)")
-    os_choice = Prompt.ask("Choice", choices=["1", "2", "3"], default="1")
+    os_choice = Prompt.ask("Choice", choices=["1", "2", "3"], default="2")
     match os_choice:
         case "1":
             osinfo, windows = "archlinux", False
@@ -483,11 +489,17 @@ def interview(state: dict, home: Path) -> tuple[Spec, int]:
             windows = osinfo.startswith("win")
 
     console.print("\n[bold cyan]Display topology[/bold cyan]")
-    console.print("  [1] SPICE + virtio 2D")
-    console.print("  [2] SPICE + virgl 3D acceleration")
-    console.print("  [3] VFIO passthrough + Looking Glass (Windows VGA setup fallback)")
-    gfx_choice = Prompt.ask("Choice", choices=["1", "2", "3"], default="1")
-    graphics = {"1": "spice", "2": "spice-gl", "3": "passthrough"}[gfx_choice]
+    if windows:
+        console.print("  [1] Looking Glass + SPICE setup console (software rendering)")
+        console.print("  [2] GPU passthrough + Looking Glass + SPICE setup console")
+        gfx_choice = Prompt.ask("Choice", choices=["1", "2"], default="1")
+        graphics = {"1": "spice", "2": "passthrough"}[gfx_choice]
+    else:
+        console.print("  [1] SPICE + virtio 2D")
+        console.print("  [2] SPICE + virgl 3D acceleration")
+        console.print("  [3] VFIO passthrough + Looking Glass")
+        gfx_choice = Prompt.ask("Choice", choices=["1", "2", "3"], default="1")
+        graphics = {"1": "spice", "2": "spice-gl", "3": "passthrough"}[gfx_choice]
 
     hostdevs: list[str] = []
     if graphics == "passthrough":
@@ -523,6 +535,8 @@ def interview(state: dict, home: Path) -> tuple[Spec, int]:
     if vcpus > (os.cpu_count() or 1):
         bail("More vCPUs than host threads is a latency trap; reduce the count.")
     disk_gib = IntPrompt.ask("Disk (GiB)", default=80)
+    if ram_gib <= 0 or vcpus <= 0 or disk_gib <= 0:
+        bail("RAM, vCPU count and disk size must be positive.")
 
     console.print("\n[bold cyan]Installation media[/bold cyan]")
     install_iso = ask_path("Path to the OS installer ISO", home)
@@ -547,6 +561,7 @@ def interview(state: dict, home: Path) -> tuple[Spec, int]:
         install_iso=install_iso,
         virtio_iso=virtio_iso,
         hostdevs=hostdevs,
+        disk_gib=disk_gib,
     ), disk_gib
 
 
@@ -556,7 +571,7 @@ def interview(state: dict, home: Path) -> tuple[Spec, int]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Arsonix Phase 6: domain deployment")
     parser.add_argument("--force-disk", action="store_true", help="recreate the qcow2 unprompted")
-    parser.add_argument("--dump-only", action="store_true", help="print the XML, do not define")
+    parser.add_argument("--dump-only", action="store_true", help="print XML without creating disks, pools or a domain")
     args = parser.parse_args()
     elevate()
 
@@ -595,14 +610,23 @@ def main() -> None:
         return
 
     spec, disk_gib = interview(state, home)
-    provision_disk(spec.disk, disk_gib, str(state.get("qemu_user") or "root"), args.force_disk)
-    ensure_pool(spec.disk.parent)
+    needs_shmem = spec.windows or spec.graphics == "passthrough"
+    mib = 0
+    if needs_shmem:
+        try:
+            mib = int(state.get("shm_mib") or 64)
+        except (TypeError, ValueError):
+            bail("Invalid shared-memory size in setup state. Rerun windows/25_looking_glass.py.")
+        if mib <= 0 or mib & (mib - 1):
+            bail("Looking Glass shared-memory size must be a positive power of two in MiB.")
+        if not args.dump_only and (not state.get("shm_mib") or not Path("/dev/shm/looking-glass").is_file()):
+            bail("Run windows/25_looking_glass.py before deployment to prepare shared-memory permissions.")
+    if not args.dump_only:
+        provision_disk(spec.disk, disk_gib, str(state.get("qemu_user") or "root"), args.force_disk)
+        ensure_pool(spec.disk.parent)
 
     xml_text = generate_xml(spec)
-    if spec.graphics == "passthrough":
-        mib = int(state.get("shm_mib") or 0)
-        if not mib:
-            mib = IntPrompt.ask("Looking Glass region (MiB, power of two)", default=64)
+    if needs_shmem:
         xml_text = inject_shmem(xml_text, mib)
         console.print(f"[bold green]  ok[/bold green] <shmem> ivshmem-plain {mib} MiB injected.")
 
@@ -618,10 +642,12 @@ def main() -> None:
         f"virsh -c qemu:///system start {spec.name}",
         f"virsh -c qemu:///system dumpxml {spec.name} | grep -E 'shmem|hostdev|memballoon'",
     ]
-    if spec.graphics == "passthrough":
-        steps.append("looking-glass-client -f /dev/shm/looking-glass")
+    if needs_shmem:
+        steps.append(f"After guest setup: python3 windows/50_win.py view --vm {spec.name}")
     if spec.windows:
-        steps.append("Load the VirtIO storage driver from the second CD-ROM during Setup.")
+        steps.append("In Windows Setup, load viostor/w11/amd64 from the VirtIO CD-ROM for the virtio disk.")
+        steps.append("Install NetKVM/w11/amd64 if Windows Setup needs its VirtIO network driver.")
+        steps.append("Sign in through the SPICE console; follow windows/guest/README.md for guest setup.")
     console.print(Panel("\n".join(f"  {i}. {s}" for i, s in enumerate(steps, 1)),
                         title="Next", border_style="cyan"))
 

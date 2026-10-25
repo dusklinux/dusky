@@ -1,6 +1,6 @@
 [profile]
 name = "Windows 11"
-description = "Existing Windows VFIO/Looking Glass workflow; guest modernization is separate"
+description = "Windows 11 host setup, Looking Glass client configuration and VM deployment"
 
 [search_dirs]
 dirs = ["."]
@@ -13,5 +13,6 @@ tasks = [
     { script = "15_gpu_probing_kernal_param_mkinit.py" },
     { script = "20_networking_nmcli.py" },
     { script = "windows/25_looking_glass.py" },
+    { script = "windows/60_configure_client_ini.py" },
     { script = "30_kvm_vm_deploy.py", args = ["--windows"], always = true, forward_args = true },
 ]

@@ -36,9 +36,10 @@ def powershell(command: str) -> str:
     return result.stdout.strip()
 
 
-def install_server(source: Path | None, archive: Path | None) -> None:
+def install_server(source: Path | None, archive: Path | None) -> bool:
+    """Return True when Windows servicing requires a restart before setup."""
     if powershell("if (Get-Service sshd -ErrorAction SilentlyContinue) { 'Installed' }") == "Installed":
-        return
+        return False
     if archive is not None:
         # The ZIP must be supplied for this Windows architecture. Do not fetch
         # an old beta or guess a download/version independently of the ISO.
@@ -56,7 +57,11 @@ def install_server(source: Path | None, archive: Path | None) -> None:
             raise RuntimeError("OpenSSH Server is absent. Supply --source with offline Windows "
                                "Features-on-Demand media or --openssh-zip with a local package.")
         options = f" -Source {ps_quote(str(source.resolve()))} -LimitAccess"
-        powershell("Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0" + options)
+        status = powershell("$result = Add-WindowsCapability -Online "
+                            "-Name OpenSSH.Server~~~~0.0.1.0" + options + "; "
+                            "if ($result.RestartNeeded) { 'RestartRequired' }")
+        return status == "RestartRequired"
+    return False
 
 
 def main() -> int:
@@ -74,7 +79,9 @@ def main() -> int:
         parser.error("Python 3.15+ is required.")
     if not ctypes.windll.shell32.IsUserAnAdmin():
         parser.error("Run 00_bootstrap.ps1 or an Administrator terminal first.")
-    install_server(args.source, args.openssh_zip)
+    if install_server(args.source, args.openssh_zip):
+        print("OpenSSH installation requires a Windows restart. Restart and rerun setup to finish configuration.")
+        return 3010
     powershell(r"""
 if (-not (Get-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue)) {
     New-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -DisplayName 'OpenSSH Server (sshd)' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 | Out-Null
