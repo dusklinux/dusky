@@ -129,7 +129,7 @@ Snippets belong inside an existing XML element as stated; do not create duplicat
 
 Replace uppercase placeholders before running a command. Stop on an error and
 resolve it before continuing; a command accepting an option is not proof the
-requested change succeeded. Code blocks marked `xml`, `ini`, `javascript` or
+requested change succeeded. Code blocks marked `xml`, `ini`, `javascript`,
 `fstab` or `conf` are file contents, not commands to paste into a terminal.
 
 The planned ISO floor is Linux 7.3+, systemd 262+, Python 3.15+, current
