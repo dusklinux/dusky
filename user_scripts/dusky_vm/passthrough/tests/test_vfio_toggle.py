@@ -72,6 +72,19 @@ class ToggleTests(unittest.TestCase):
         self.assertFalse(m.MODPROBE.exists())
         self.assertFalse(m.MODULES.exists())
 
+    def test_fresh_machine_discovers_claim_without_phase3_or_toggle_state(self):
+        self.assertFalse(m.PHASE_STATE.exists())
+        self.assertFalse(m.STATE.exists())
+        before=self.boot.read_text()
+        self.args.slot=None
+        with patch.object(sys.stdin,'isatty',return_value=False):
+            claim,_,_,desired,*_=m.plan(self.args,{})
+        self.assertEqual(claim.addrs,['0000:01:00.0','0000:01:00.1'])
+        self.assertEqual(desired['vfio-pci.ids'],'10de:1234,10de:5678')
+        self.assertEqual(self.boot.read_text(),before)
+        self.assertFalse(m.STATE.exists())
+        self.assertFalse(m.MODPROBE.exists())
+
     def test_phase3_adoption_preserves_unrelated_vfio_ids_and_options(self):
         m.MODPROBE.write_text('# Managed by Arsonix (Phase 3).\noptions vfio-pci ids=10de:1234,10de:5678,abcd:9876 disable_idle_d3=1\nblacklist nvidia\nsoftdep nvidia pre: vfio-pci\n')
         *_,files,host_options,host_files=m.plan(self.args,{})

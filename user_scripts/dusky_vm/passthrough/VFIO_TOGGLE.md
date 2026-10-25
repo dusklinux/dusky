@@ -60,6 +60,15 @@ return 1. A status check without permission to read private boot files reports
 that limitation and returns 2; it does not label unreadable files as drift.
 Staging success alone does not mean a live GPU has changed driver.
 
+A passing status check verifies boot configuration and driver assignment.
+Guest device health, rendering, reset reuse and kernel DMA errors need workload
+checks too. Install the guest GPU vendor's driver before judging acceleration;
+the Windows Basic Display driver is insufficient for that test. A domain that
+retains managed PCI hostdev devices can detach them from host drivers when it
+starts; remove its GPU assignments when you want that VM to run without them.
+See [the hardware test report](VFIO_LIVE_TEST_NOTES.md) for measured results and
+remaining limits.
+
 For RAM-backed VMs, shut down the guest and copy its disk to persistent storage
 before a host reboot. Verify the copied qcow2 and update the domain's disk path.
 Back up the domain, NVRAM and TPM together using

@@ -415,7 +415,7 @@ def status(state):
     if state['mode'] == 'bind' and ok:
         check_groups(common.Claim([live[r['addr']] for r in state['functions']]), require=True)
     if matches is not None:
-        print('Live state verified.' if ok else 'Reboot is pending or a driver/device needs investigation. Rerun the requested action if staging was interrupted.')
+        print('Boot configuration and live driver assignments verified.' if ok else 'Reboot is pending or a driver/device needs investigation. Rerun the requested action if staging was interrupted.')
     return 0 if ok else 2
 
 
