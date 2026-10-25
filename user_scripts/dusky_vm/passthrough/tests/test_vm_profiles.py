@@ -165,12 +165,12 @@ if os.environ.get('FAIL_TASK')==Path(__file__).name:sys.exit(37)
         sudo.write_text(f"#!{sys.executable}\nimport json,sys\nprint(json.dumps(sys.argv[1:]))\n")
         sudo.chmod(0o755)
         result = subprocess.run([sys.executable, str(ENTRY.with_name("30_kvm_vm_deploy.py")),
-                                 "--windows", "--help"], capture_output=True, text=True,
+                                 "--windows", "--force-disk"], capture_output=True, text=True,
                                 env=self.env | {"PATH": str(fakebin) + os.pathsep + os.environ["PATH"]}, timeout=5)
         self.assertEqual(result.returncode, 0, result.stderr)
         forwarded = json.loads(result.stdout)
         self.assertIn(str(ENTRY.parent / "windows/deploy_vm.py"), forwarded)
-        self.assertIn("--help", forwarded)
+        self.assertIn("--force-disk", forwarded)
 
     def test_sigterm_stops_child_group_and_does_not_mark_completed(self):
         marker = self.root / "pid"
