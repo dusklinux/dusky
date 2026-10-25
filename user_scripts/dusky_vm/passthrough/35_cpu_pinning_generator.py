@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Phase 6: CPU Topology & Contiguous Pinning Generator
-Target: Arch Linux rolling (Aug 2026) / Kernel 7.1.8+ / Python 3.14.7+ / systemd 261+ / libvirt 12.6+
+Target: Arch Linux rolling (Aug 2026) / Kernel 7.3+ / Python 3.15+ / systemd 262+ / libvirt 12.6+
 Philosophy: Smart core alignment (P/E Core detection, SMT grouping), idempotent XML modification via ET.
 """
 
@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Never
 
-MIN_PY: tuple[int, int, int] = (3, 14, 7)
+MIN_PY: tuple[int, int, int] = (3, 15, 0)
 
 def _hard_exit(msg: str) -> Never:
     sys.stderr.write(f"\n[FATAL] {msg}\n\n")
