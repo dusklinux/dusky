@@ -1,0 +1,69 @@
+# --- Windows 11 KVM & Looking Glass Manager ---
+# Wrapper and auto-completions for the python-based VM manager utility
+
+win() {
+    "${HOME}/user_scripts/dusky_vm/passthrough/windows/50_win.py" "$@"
+}
+
+# Aliases for convenience and backward compatibility
+alias win11="win"
+alias win10="win"
+
+# --- Dynamic VM Name Completion ---
+_win_vms() {
+    local -a vm_list
+    vm_list=(${(f)"$(virsh -c qemu:///system list --all --name 2>/dev/null)"})
+    (( $#vm_list )) && _describe -t vms 'virtual machine' vm_list
+}
+
+# --- Auto-Completion for 'win', 'win11', and 'win10' ---
+_win_completion() {
+    local -a subcommands
+    subcommands=(
+        'start:Start the virtual machine (or resume/wake)'
+        'stop:Send a graceful shutdown signal'
+        'shutdown:Send a graceful shutdown signal'
+        'kill:Forcefully power off/destroy the VM'
+        'destroy:Forcefully power off/destroy the VM'
+        'reboot:Reboot the VM'
+        'status:Display current running state'
+        'list:List all defined virtual machines'
+        'view:Launch looking-glass-client'
+        'lg:Launch looking-glass-client'
+        'show:Launch looking-glass-client'
+        'launch:Start VM and wait to launch Looking Glass'
+        'play:Start VM and wait to launch Looking Glass'
+        'rdp:Connect to the VM via FreeRDP rescue bridge'
+        'connect:Connect to the VM via FreeRDP rescue bridge'
+        'doctor:Check configuration for topology, permission and driver drift'
+        'repair:Check configuration and repair verified drift'
+        'edit:Edit the VM XML topology configuration'
+        'select:Change the default preferred VM'
+        'help:Show help manual'
+    )
+
+    local -a global_flags
+    global_flags=(
+        '-h:Show help manual'
+        '--help:Show help manual'
+        '-l:List all defined virtual machines'
+        '--list:List all defined virtual machines'
+    )
+
+    if (( CURRENT == 2 )); then
+        _describe -t subcommands 'action' subcommands
+        _describe -t global_flags 'global option' global_flags
+    else
+        local -a action_opts
+        action_opts=(
+            '(-h --help)'{-h,--help}'[Show help manual]'
+            '--vm=[Override target virtual machine]:virtual machine:_win_vms'
+            '(-k --key)'{-k+,--key=}'[Set Looking Glass escape key]:escape key:(F6 F12 ScrollLock RightCtrl Pause)'
+        )
+        _arguments -s $action_opts
+    fi
+}
+
+if (( $+functions[compdef] )); then
+    compdef _win_completion win win11 win10
+fi
