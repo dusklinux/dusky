@@ -11,6 +11,12 @@ tags:
 
 # GNOME Boxes — `virt-manager` SPICE Clipboard (Arch + Hyprland/UWSM)
 
+> [!note] Linux guest review pending
+> This page retains older Linux/Boxes or example-XML instructions. It can
+> conflict with the current Hyprland/Wayland-only baseline, including older
+> clipboard/display recipes. Use [[+ MOC KVM]] for the reviewed
+> shared host setup; this page is not yet the current Linux guest guide.
+
 > [!summary]
 > - **Boxes scope:** `qemu:///session` (per-user, not `qemu:///system`)
 > - **View/edit same VMs in virt-manager:** `virt-manager --connect qemu:///session` (`virsh --connect qemu:///session list --all`)

@@ -10,6 +10,12 @@ tags:
 
 # Snippet — Intel iGPU Guest Accel (Virtio + SPICE GL)
 
+> [!note] Linux guest review pending
+> This page retains older Linux/Boxes or example-XML instructions. It can
+> conflict with the current Hyprland/Wayland-only baseline, including older
+> clipboard/display recipes. Use [[+ MOC KVM]] for the reviewed
+> shared host setup; this page is not yet the current Linux guest guide.
+
 > [!abstract] Goal
 > Paravirtual guest GPU (`virtio` + `virgl`) backed by host Intel iGPU via `rendernode`, NOT VFIO passthrough. For actual dGPU passthrough use [[Host PC  Preparation for GPU isolation]] + `<shmem>` + `video none`.
 

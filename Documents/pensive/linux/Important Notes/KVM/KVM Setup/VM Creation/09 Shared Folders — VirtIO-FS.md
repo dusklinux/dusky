@@ -17,6 +17,8 @@ Install `virtiofsd`, choose an existing directory, and check access. The Windows
 helper defaults to `/mnt/zram1` and preserves an explicitly selected path.
 That pathname must be mounted when it is the intended RAM-backed filesystem.
 Do not create files under an absent media/RAM mount and assume it is active.
+For a fresh host without this mount, see the optional tmpfs setup in
+[[Symbolic link to zram for image file]].
 
 ## Powered-off host XML changes
 

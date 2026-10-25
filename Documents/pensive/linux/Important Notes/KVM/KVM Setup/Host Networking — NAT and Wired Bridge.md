@@ -39,11 +39,14 @@ placeholders with the discovered interface/profile. Static addressing requires
 moving the host addresses/gateway/DNS to the bridge rather than using this DHCP
 example unchanged.
 
+Use new profile names only when creating a new bridge. Inspect and reuse an
+existing `br0` rather than adding another profile with the same name.
+
 ```sh
 vm_uplink=YOUR_WIRED_INTERFACE
 vm_old_profile=YOUR_EXISTING_PROFILE
 sudo nmcli connection add type bridge ifname br0 con-name br0 \
-  ipv4.method auto ipv6.method auto connection.autoconnect yes
+  ipv4.method auto ipv6.method auto connection.autoconnect yes connection.autoconnect-ports 1
 sudo nmcli connection add type ethernet ifname "$vm_uplink" \
   con-name vm-br0-port controller br0 port-type bridge connection.autoconnect yes
 sudo nmcli connection modify "$vm_old_profile" connection.autoconnect no
@@ -52,6 +55,12 @@ sudo nmcli --wait 20 connection up br0
 ip -4 route
 nmcli device status
 ```
+
+`connection.autoconnect-ports=1` explicitly activates the bridge's port profiles
+when the bridge is brought up. This is separate from each profile's own
+`connection.autoconnect`; an unspecified global port policy can otherwise leave
+the wired port inactive. The option was checked with nmcli's offline profile
+generation, without changing the host network.
 
 Verify host connectivity and router DHCP before attaching the VM. If activation
 fails, bring down the new bridge, restore autoconnect on the original profile
@@ -78,4 +87,5 @@ Attach the VM with `source network='host-bridge'`. This libvirt definition
 its own NAT/DHCP server. The physical LAN normally supplies guest addressing.
 
 References: [NetworkManager nmcli](https://networkmanager.dev/docs/api/latest/nmcli.html),
+[NetworkManager port activation](https://www.networkmanager.dev/docs/api/latest/settings-connection.html),
 [libvirt network XML](https://libvirt.org/formatnetwork.html).

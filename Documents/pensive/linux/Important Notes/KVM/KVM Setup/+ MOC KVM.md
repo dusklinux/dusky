@@ -1,5 +1,5 @@
 ---
-title: "KVM host setup — shared Windows and Linux steps"
+title: "KVM — manual setup and learning route"
 tags:
   - kvm
   - manual
@@ -8,13 +8,98 @@ aliases:
 reviewed: 2026-10-25
 ---
 
-# KVM host setup — shared Windows and Linux steps
+# KVM — manual setup and learning route
 
-Start at [[00 Start Here — KVM Manual]]. Prepare the host once, then follow the
-OS-specific installation guide. Basic virtualization does not require VFIO,
-GPU isolation, an IOMMU or a special performance profile.
+This is a manual learning route for an Arch host running Hyprland on Wayland.
+Read the explanation, make one change, then run its verification command.
+The scripts under `~/user_scripts/dusky_vm/passthrough` are implementations to
+compare against, not prerequisites for following the manual instructions.
 
-## Manual order
+## The route
+
+1. Follow [[#Host preparation|Host preparation]] below: packages, KVM, system libvirt, storage
+   and networking. This work is shared by Windows and Linux guests.
+2. [[00 Index — VM Creation (Unified)|Choose virtual hardware]]: firmware,
+   disk/NIC models, CPU, RAM, console and guest-agent channels.
+3. [[+ MOC Windows Installation Through Virt Manager|Install and integrate Windows 11]].
+4. Optionally add [[GPU Passthrough — Host Isolation and Return|GPU passthrough]],
+   [[Looking Glass]], [[Remote Desktop — FreeRDP on Wayland|RDP]],
+   [[OpenSSH Server — Windows|SSH]] or [[09 Shared Folders — VirtIO-FS|a shared folder]].
+5. [[Verification — Windows VM|Verify the selected features]], then retain a
+   [[08 Backup and Restore — Disks, Firmware and TPM|consistent backup]]. Before
+   changing an existing VM, make that backup first.
+
+Linux installation and guest desktop integration have a separate follow-up pass.
+The shared host/hardware guides already distinguish the OS requirements.
+Existing `gnome-boxes/` and Linux XML pages are older material, not the current
+Wayland guest-integration instructions. macOS remains a separate, unreviewed
+workflow. Neither is required to complete the Windows route.
+
+## Choose the options before creating the guest
+
+| Decision | Choices to make |
+|---|---|
+| Disk location | Persistent storage, or a deliberate RAM-backed experiment |
+| Network topology | NAT for host access/internet, or a wired bridge for LAN visibility |
+| Disk/NIC devices | VirtIO with prepared Windows drivers, or SATA/e1000e inbox devices |
+| Resources | Custom RAM/vCPUs that fit the host; Windows script defaults to fixed 8 GiB |
+| Ballooning | Optional, off by default; evaluate separately from configured capacity |
+| Desktop access | Setup console, Looking Glass, RDP, or selected combinations |
+| Physical GPU | Optional VFIO assignment; keep a host display and guest recovery path |
+| File/command access | Optional VirtIO-FS folder and/or Windows SSH server |
+
+Pick the Windows edition accordingly: Home can use the local console/Looking
+Glass path but cannot host the supported Remote Desktop service described here.
+Prepare the installers for the choices you make before going offline.
+
+## Understand the parts
+
+| Part | Responsibility |
+|---|---|
+| KVM | Kernel support for hardware-assisted CPU virtualization |
+| QEMU | VM hardware model and guest process |
+| libvirt | VM definitions, lifecycle, networks, storage and device assignment |
+| virt-manager / virt-viewer | Configuration GUI / setup console |
+| VirtIO | Efficient virtual disk, network and other devices; guest drivers required |
+| QGA | QEMU guest agent: management commands, separate from desktop display |
+| SPICE | Setup display and optional clipboard/audio with guest tools |
+| VFIO | Give a physical PCI device to a guest; optional |
+| Looking Glass | Windows display/input transport; not a network or file share |
+| VirtIO-FS | Shared host directory; unrelated to Looking Glass's frame buffer |
+
+`qemu:///system` and `qemu:///session` have separate VM inventories. These guides
+use **system** explicitly. The privileged management daemon and the account
+running each QEMU process are different concepts.
+
+## Conventions and limits
+
+Examples use VM name `win11`, storage directory `/var/lib/libvirt/images` and
+NAT network `default`. A pool name is separate from its directory path. Replace
+examples with the values you chose. PCI addresses, account IDs,
+interface names, disk devices and UUIDs must be discovered on your machine.
+Run Linux shell blocks on the host. PowerShell blocks run inside Windows, with
+Administrator access where stated; current-user preferences use the intended
+Windows account.
+Snippets belong inside an existing XML element as stated; do not create duplicate
+`<features>`, `<cpu>` or `<devices>` sections.
+
+Replace uppercase placeholders before running a command. Stop on an error and
+resolve it before continuing; a command accepting an option is not proof the
+requested change succeeded. Code blocks marked `xml`, `ini`, `javascript` or
+`fstab` are file contents, not commands to paste into a terminal.
+
+The planned ISO floor is Linux 7.3+, systemd 262+, Python 3.15+, current
+Hyprland/Wayland and Bash 5.3.20+. Final ISO package versions still need checking.
+The live checks used kernel 7.3.0-rc7; a release candidate is not certification
+of that final floor. See [[Verification — Windows VM]] for observed results,
+including the unresolved isolated DMA fault from GPU testing.
+
+Before a host reboot, preserve any needed RAM-backed disk. A guest reboot and a
+host reboot are different: guest restart keeps host tmpfs, host restart clears it.
+Before changing devices, power the guest **off and start it again**; an in-guest
+restart keeps the same QEMU hardware model.
+
+## Host preparation
 
 1. [[Verify VT-x and Kernel Modules and IOMMU|Check firmware and KVM]]. Enable
    CPU virtualization; add IOMMU checks only if assigning physical PCI devices.

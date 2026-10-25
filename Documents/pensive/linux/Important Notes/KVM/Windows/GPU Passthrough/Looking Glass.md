@@ -141,7 +141,11 @@ With the publisher ready:
 
 ```powershell
 $process = Start-Process .\looking-glass-idd-setup.exe -ArgumentList @('/S','/ivshmem') -Wait -PassThru
-$process.ExitCode
+if ($process.ExitCode -eq 3010) {
+    Write-Host 'Restart Windows when ready, then finish verification.'
+} elseif ($process.ExitCode -ne 0) {
+    throw "IDD installation failed with exit code $($process.ExitCode)."
+}
 ```
 
 `/S` is uppercase. Restart Windows when requested (including exit 3010), then

@@ -15,6 +15,9 @@ Prepare [[+ MOC KVM|the host]] first. Follow these shared explanations, then the
 Windows or Linux guest route. Shared does not mean all guests use identical
 settings: devices must have drivers and the workload determines resource sizes.
 
+Follow the reading order below. Existing filenames retain their earlier numbers
+for stable links; those numbers are not script phases or a second installation order.
+
 | Order | Shared guide | Windows 11 | Linux distinction |
 |---|---|---|---|
 | 1 | [[01 Wizard — Create VM]] | Select Windows 11 profile and media | Select the actual distribution |

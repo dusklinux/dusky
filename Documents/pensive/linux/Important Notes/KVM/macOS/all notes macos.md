@@ -9,6 +9,11 @@ tags:
 
 # macOS KVM — All Notes
 
+> [!note] Separate workflow — not reviewed in the Windows pass
+> This page retains older macOS-specific instructions. Its packages, firmware,
+> device examples and commands have not been validated by the Windows/shared
+> review. Start at [[+ MOC KVM]] for the reviewed scope.
+
 > [!info] Base repo: **OSX-KVM** (<https://github.com/kholia/OSX-KVM>) + Dortania. Notes collected here are **host-side Arch** adaptations (Arch uses `pacman`/`systemd-boot`/`mkinitcpio`, not `apt`/`update-grub`).
 
 ## Sonoma support

@@ -9,6 +9,12 @@ tags:
 
 # Reference XML — Arch (Intel Virtio-GL Accel, Full)
 
+> [!note] Linux guest review pending
+> This page retains older Linux/Boxes or example-XML instructions. It can
+> conflict with the current Hyprland/Wayland-only baseline, including older
+> clipboard/display recipes. Use [[+ MOC KVM]] for the reviewed
+> shared host setup; this page is not yet the current Linux guest guide.
+
 > [!info] Scope
 > Full domain dump for an Arch guest on Intel iGPU with `virtio`+`virgl` (not VFIO). Mirrors `virt-manager --connect qemu:///system` export then modernized (`ovmf` JSON firmware, `host-passthrough`, `memballoon virtio` retained here as accel labs often keep balloon; passthrough variants use `none`). For passthrough see [[Host PC  Preparation for GPU isolation]].
 

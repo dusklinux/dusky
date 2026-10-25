@@ -11,6 +11,12 @@ aliases:
 
 # GNOME Boxes — Arch Guest Agents (QXL/SPICE)
 
+> [!note] Linux guest review pending
+> This page retains older Linux/Boxes or example-XML instructions. It can
+> conflict with the current Hyprland/Wayland-only baseline, including older
+> clipboard/display recipes. Use [[+ MOC KVM]] for the reviewed
+> shared host setup; this page is not yet the current Linux guest guide.
+
 > [!tip] Merged — canonical Q35/virtio/CPU lives elsewhere
 > **Creating an Arch/Fedora/Ubuntu VM via `virt-manager` (`qemu:///system`, NAT `192.168.122.x`, `host-passthrough`)? Follow [[KVM Setup/VM Creation/00 Index — VM Creation (Unified)]] — shared wizard ([[KVM Setup/VM Creation/01 Wizard — Create VM|01 Wizard]]), chipset/Firmware ([[KVM Setup/VM Creation/02 Chipset & Firmware — Q35 + UEFI|02 Chipset]]), storage ([[KVM Setup/VM Creation/03 Storage — Virtio Bus, Cache, io_uring, Discard|03 Storage]]), network ([[KVM Setup/VM Creation/04 Network — Virtio NIC (NAT vs Bridge)|04 Network]]), CPU ([[KVM Setup/VM Creation/05 CPU — Host-Passthrough & Topology|05 CPU]]), guest integration ([[KVM Setup/VM Creation/06 Guest Integration — Agent, Clipboard & Input|06 Integration]]).** This note now keeps **only Boxes `qemu:///session` SPICE plumbing** (no duplicate Q35/virtio explanation).
 

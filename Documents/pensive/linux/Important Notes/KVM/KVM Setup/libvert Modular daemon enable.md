@@ -15,19 +15,35 @@ its daemon on demand. This can reduce idle daemon residency, but it does not
 promise zero VM overhead or that every daemon immediately exits after use.
 `virtlogd` and `virtlockd` serve running guests and must not be stopped casually.
 
-## Inspect before changing an existing host
+## 1. Inspect the installed units
 
 ```sh
-virsh -c qemu:///system list --all
 systemctl list-unit-files 'libvirtd*' 'virt*.socket' 'virt*.service'
 systemctl cat virtqemud.socket
 systemctl cat libvirt-guests.service
 ```
 
-On an existing monolithic installation, gracefully stop guests and back up their
-state before migrating daemon models. Do not run monolithic and modular drivers
-against the same resources. For the fresh-install route, enable only installed
-sockets needed by QEMU and its supporting drivers:
+## 2. Choose the fresh-install or migration route
+
+On a fresh host, continue to socket activation below. A system connection may
+not answer yet because its socket has not been started.
+
+On an existing host, first inspect its current inventory as an administrator:
+
+```sh
+sudo virsh -c qemu:///system list --all
+```
+
+If migrating from the monolithic daemon, gracefully stop guests and back up
+their state. Inspect `Requires=`, `Requisite=` and `BindsTo=` relationships, then
+stop/disable the installed `libvirtd` service and its sockets before activating
+the modular set. Do not mask a dependency still required by `libvirt-guests`,
+and do not run both driver models against the same resources. The supplied
+phase 10 discovers the unit fleet and checks these dependencies.
+
+## 3. Activate the required sockets
+
+Enable only installed sockets needed by QEMU and its supporting drivers:
 
 ```sh
 sudo systemctl enable --now virtqemud.socket virtnetworkd.socket virtstoraged.socket \
@@ -38,12 +54,6 @@ Confirm these units exist in your installed build. `virtproxyd.socket` is useful
 for clients needing the compatibility/proxy endpoint; direct modular clients do
 not require every alternate-hypervisor daemon. Do not blindly enable nonexistent
 `virtvboxd`, LXC or Cloud Hypervisor sockets from an old exhaustive loop.
-
-For migration, stop/disable the installed `libvirtd` service and its sockets
-before activating the modular set. Inspect `Requires=`, `Requisite=` and
-`BindsTo=` relationships first; do not mask a dependency still required by the
-installed `libvirt-guests` unit. The supplied phase 10 discovers the unit fleet
-and checks these dependencies rather than assuming one package layout.
 
 ## Socket permissions and authorization are separate
 
@@ -85,11 +95,14 @@ RAM state is not a disk backup, and nothing preserves host tmpfs through reboot.
 
 ```sh
 systemctl is-active virtqemud.socket virtnetworkd.socket
-virsh -c qemu:///system version
-virsh -c qemu:///system list --all
+sudo virsh -c qemu:///system version
+sudo virsh -c qemu:///system list --all
 systemctl status virtqemud.service --no-pager
 ```
 
-An active service after these queries is normal. Source:
+These initial queries use sudo because regular-user access is the next step.
+Repeat them without sudo after that access is configured; everyday GUI/VM use
+should run as the desktop user. An active service after a query is normal. Source:
 [libvirt daemons and systemd activation](https://libvirt.org/daemons.html).
-Next: [[Give the User System-Wide Permission]], then [[Set ACL on the Image Directory]].
+Next: [[Give the User System-Wide Permission]], then
+[[Symbolic link to zram for image file|choose storage and apply its directory ACLs]].

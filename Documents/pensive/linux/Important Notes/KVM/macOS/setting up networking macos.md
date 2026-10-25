@@ -11,6 +11,11 @@ tags:
 
 # macOS — QEMU Networking
 
+> [!note] Separate workflow — not reviewed in the Windows pass
+> This page retains older macOS-specific instructions. Its packages, firmware,
+> device examples and commands have not been validated by the Windows/shared
+> review. Start at [[+ MOC KVM]] for the reviewed scope.
+
 > [!info] Context (Aug 2026)
 > `OSX-KVM` boot scripts directly invoke `qemu-system-x86_64` (not libvirt). This note maps QEMU network backends; libvirt-managed `virbr0` (`default` NAT) and `br0` paths from [[Activating Network and Setting it to Autostart]] / [[Network Bridging for LAN access]] apply if you import the macOS VM into libvirt via `macOS-libvirt-*.xml`.
 

@@ -11,6 +11,12 @@ tags:
 
 # SSH into QEMU/KVM Guests — Arch (Boxes vs System, Aug 2026)
 
+> [!note] Linux guest review pending
+> This page retains older Linux/Boxes or example-XML instructions. It can
+> conflict with the current Hyprland/Wayland-only baseline, including older
+> clipboard/display recipes. Use [[+ MOC KVM]] for the reviewed
+> shared host setup; this page is not yet the current Linux guest guide.
+
 > [!abstract] Detection
 > `10.0.2.15` → **user-mode (`slirp`)** → **outbound-only** (host cannot SSH to `10.0.2.15` without port forward). `192.168.122.x` → **libvirt NAT `default`** → **host ↔ guest**. `192.168.1.x` → **bridge `br0`** → LAN-visible. This note gives both **correct** paths for Arch + Hyprland/UWSM.
 

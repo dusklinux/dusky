@@ -37,7 +37,9 @@ adds `input`; do not interpret that script policy as a universal prerequisite.
 A Hyprland session can use its configured polkit agent for interactive prompts.
 For a deliberate full-management group policy, the script installs a rule
 covering `org.libvirt.unix.*` for `libvirt` and `wheel` members. A manual
-libvirt-group-only equivalent is:
+libvirt-group-only equivalent follows.
+
+Save the following using `sudoedit /etc/polkit-1/rules.d/50-local-libvirt.rules`:
 
 ```javascript
 // /etc/polkit-1/rules.d/50-local-libvirt.rules

@@ -9,6 +9,12 @@ tags:
 
 # Reference XML — Arch Linux (Ephemeral, 6 GiB)
 
+> [!note] Linux guest review pending
+> This page retains older Linux/Boxes or example-XML instructions. It can
+> conflict with the current Hyprland/Wayland-only baseline, including older
+> clipboard/display recipes. Use [[+ MOC KVM]] for the reviewed
+> shared host setup; this page is not yet the current Linux guest guide.
+
 > [!danger] Ephemeral — contents die on reboot
 > Image at **`/mnt/zram1/archlinux.qcow2`** (RAM-backed per [[Symbolic link to zram for image file]]). For persistent Arch use `/var/lib/libvirt/images`. This XML is a throwaway-lab example (Arch rolling).
 

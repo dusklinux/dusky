@@ -91,7 +91,12 @@ vfio-review, share-review and memory-review directories. Those are this machine'
 records, not paths new users need to create. The script source has
 `VFIO_LIVE_TEST_NOTES.md`, `windows/guest/LIVE_TEST_NOTES.md` and regression suites.
 This notes review retains original notes/diffs and validation results under
-`~/.local/state/dusky/kvm-notes-review-20261025`.
+`~/.local/state/dusky/kvm-notes-review-20261025`. A second documentation pass is
+recorded in `~/.local/state/dusky/kvm-notes-second-pass-20261025`: fresh-host
+ordering, tmpfs/fstab syntax, offline bridge-profile generation, a scratch qcow2
+copy/hash check, and isolated Windows key-file encoding/deduplication checks.
+The last check tests file preparation, not an authenticated SSH connection.
+It did not change the live network, VM hardware or actual SSH key files.
 
 Reproduce the selected workload checks after meaningful kernel, guest driver,
 IDD/client or hardware changes. Avoid an unconditional “future-proof on every
