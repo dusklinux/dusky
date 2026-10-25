@@ -30,6 +30,16 @@ phase = load("doctor_memory_tests", BASE / "25_looking_glass.py")
 
 
 class DoctorTests(unittest.TestCase):
+    def test_looking_glass_preserves_explicit_balloon_choice(self):
+        for model in ('virtio', 'none'):
+            root = ET.fromstring(f"<domain><devices><memballoon model='{model}'><stats period='5'/></memballoon></devices></domain>")
+            before = ET.tostring(root.find('./devices/memballoon'))
+            phase.apply_latency_tuning(root)
+            self.assertEqual(ET.tostring(root.find('./devices/memballoon')), before)
+        root = ET.fromstring('<domain><devices/></domain>')
+        phase.apply_latency_tuning(root)
+        self.assertEqual(root.find('./devices/memballoon').get('model'), 'none')
+
     def test_recorded_access_wins_over_device_inference(self):
         root = ET.fromstring("<domain><metadata><d:windows xmlns:d='urn:dusky:vm:windows:1' access='rdp'/></metadata><devices><shmem name='looking-glass'/></devices></domain>")
         self.assertEqual(doctor.access_method(root), "rdp")

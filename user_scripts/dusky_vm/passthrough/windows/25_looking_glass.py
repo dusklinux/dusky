@@ -476,12 +476,9 @@ def apply_latency_tuning(root: ET.Element) -> list[str]:
 
     balloon = devices.find("memballoon")
     if balloon is None:
-        balloon = ET.SubElement(devices, "memballoon")
-    if balloon.get("model") != "none":
-        notes.append("memballoon -> none")
-    balloon.set("model", "none")
-    for child in list(balloon):
-        balloon.remove(child)
+        ET.SubElement(devices, "memballoon", model="none")
+        notes.append("default memballoon -> none")
+    # Preserve an explicit memory-mode choice, including balloon statistics.
 
     # Ensure SPICE graphics listener binds to localhost (not none)
     graphics = devices.find("graphics[@type='spice']")

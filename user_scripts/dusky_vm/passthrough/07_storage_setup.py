@@ -3,7 +3,7 @@
 Arsonix KVM/VFIO Pipeline -- Phase 1.5 (07_storage_setup.py)
 Storage topology selection + POSIX.1e ACL traversal + cross-phase state.
 
-Target : Arch Linux rolling (Aug 2026) / Linux 7.1.8+ / Python 3.14.7+ / systemd 261+
+Target : Arch Linux / Linux 7.3+ / Python 3.15+ / systemd 262+
 Policy : Never hardcode the QEMU identity. Never claim success on a silent setfacl
          failure. Never persist pipeline state in world-writable /tmp.
 """
@@ -19,12 +19,13 @@ import stat
 import subprocess
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Never
 
-MIN_PY: tuple[int, int, int] = (3, 14, 7)
+MIN_PY: tuple[int, int, int] = (3, 15, 0)
 STATE_DIR = Path("/var/lib/arsonix")
 STATE_FILE = STATE_DIR / "state.json"
 STATE_SCHEMA = 2
@@ -62,7 +63,6 @@ def elevate() -> None:
 
 
 require_python()
-elevate()
 
 try:
     from rich.console import Console
@@ -270,10 +270,8 @@ def _lookup_group(token: str) -> tuple[str, int] | None:
 
 def resolve_qemu_identity() -> QemuIdentity:
     """
-    Read the ACTIVE (uncommented) user/group from /etc/libvirt/qemu.conf.
-    Arch ships every key commented out; the upstream compiled default on Arch is
-    root:root, i.e. QEMU is privileged and ACLs exist only for the human operator
-    and for hosts that have deliberately de-privileged QEMU.
+    Honor explicit qemu.conf overrides and discover omitted defaults from the
+    system libvirt daemon's DAC capabilities. Commented examples are not defaults.
     """
     user_tok = group_tok = None
     if QEMU_CONF.is_file():
@@ -293,8 +291,24 @@ def resolve_qemu_identity() -> QemuIdentity:
         bail(f"qemu.conf sets user = {user_tok!r} but that account does not exist.")
     if group_tok and resolved_group is None:
         bail(f"qemu.conf sets group = {group_tok!r} but that group does not exist.")
-    name, uid = resolved_user or ("root", 0)
-    gname, gid = resolved_group or ("root", 0)
+    if resolved_user is None or resolved_group is None:
+        result = run(["virsh", "-c", "qemu:///system", "capabilities"], timeout=30)
+        if not result.ok:
+            bail("Cannot discover QEMU's default account. Configure/start the modular daemons "
+                 "with 10_virt_modular_daemon.py first. " + (result.err or result.out))
+        try:
+            label = ET.fromstring(result.out).findtext("./host/secmodel[model='dac']/baselabel[@type='kvm']", "")
+        except ET.ParseError as exc:
+            bail(f"Invalid libvirt capabilities XML: {exc}")
+        match = re.fullmatch(r'\+?(\d+):\+?(\d+)', label.strip())
+        if not match:
+            bail("Libvirt did not report a usable KVM DAC account; set explicit user/group in qemu.conf.")
+        resolved_user = resolved_user or _lookup_user(match[1])
+        resolved_group = resolved_group or _lookup_group(match[2])
+        if resolved_user is None or resolved_group is None:
+            bail("Libvirt's QEMU UID/GID does not resolve to installed accounts.")
+    name, uid = resolved_user
+    gname, gid = resolved_group
     return QemuIdentity(name, gname, uid, gid)
 
 
@@ -510,6 +524,7 @@ def main() -> None:
     parser.add_argument("--path", help="non-interactive absolute target directory")
     parser.add_argument("--yes", action="store_true", help="assume yes for volatile confirmation")
     args = parser.parse_args()
+    elevate()
 
     console.clear()
     console.print(
