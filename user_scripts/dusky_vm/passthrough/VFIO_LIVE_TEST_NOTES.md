@@ -95,8 +95,26 @@ Windows shut down cleanly, its tested GPU assignments were removed, and the
 current domain/firmware/TPM backup was verified. The actual --unbind rebuilt and
 verified the boot images/options. Its converged rerun retained the journal
 inode/mtime and skipped rebuilding. The final shutdown added no further DMAR
-faults. Pending: host reboot and verification of native NVIDIA/audio binding
-and the Intel display. Native driver return is not yet counted as passed.
+faults. The second host reboot returned NVIDIA video to `nvidia`, its HDMI
+audio to `snd_hda_intel`, and Intel to `i915`. Privileged toggle status returned
+0; host `nvidia-smi` worked with Linux driver 615.78.08. No DMAR fault or NVIDIA
+Xid was present in the inspected new-boot log. This does not close the isolated
+fault from the previous boot.
+
+The temporary boot audit ran at 17:40:49, before HDMI audio bound at 17:40:50,
+and correctly returned 2 at that instant. A later status check passed. Status
+is an immediate observation, not a wait-for-initialization service; check again
+after login before diagnosing a persistent failure. The temporary audit unit
+was removed after both boot modes were checked; its log was retained.
+
+Windows booted from persistent storage without GPU hostdevs, and QGA returned
+Windows 11 build 26300. Its existing interface referenced `virbr0` directly;
+the first start preceded the lazy-started NAT network and failed. After that
+network became active, startup passed. The saved domain was updated to refer
+to libvirt network `default`, preserving its MAC and e1000e model. The deployment
+script already creates named-network interfaces. This VM correction allows
+libvirt to manage the network dependency rather than relying on the bridge
+already existing.
 
 ## Saved evidence
 
@@ -104,8 +122,9 @@ Machine-specific files are under the persistent VM directory in
 `vfio-review-20261025-124548/`: original scripts/XML/boot images, verified VM-state
 backup, source references, `RESUME.md`, and `postboot-bind/` test programs,
 results, telemetry and kernel events. The temporary
-`dusky-vfio-postboot-check.service` records driver assignments across the test
-reboots; remove it after completing both modes.
+`dusky-vfio-postboot-check.service` recorded driver assignments across the test
+reboots and has now been removed. Final return evidence includes
+`return-host-status.log`, `return-host-kernel.log` and `vfio-postboot-complete.log`.
 
 References: [NVIDIA 621.01 notebook release](https://www.nvidia.com/en-us/geforce/drivers/details/282413/),
 [NVIDIA silent installation](https://docs.nvidia.com/datacenter/tesla/driver-installation-guide/windows.html),

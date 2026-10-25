@@ -58,7 +58,10 @@ rebuilding. `--status` returns 0 only when saved configuration and actual driver
 match, and 2 for unconfigured, pending or drifted state; operation failures
 return 1. A status check without permission to read private boot files reports
 that limitation and returns 2; it does not label unreadable files as drift.
-Staging success alone does not mean a live GPU has changed driver.
+Staging success alone does not mean a live GPU has changed driver. Run status
+after device initialization has finished: an early boot check can return 2
+while a native audio or GPU driver is still loading. Check again after login
+before treating that result as a persistent failure.
 
 A passing status check verifies boot configuration and driver assignment.
 Guest device health, rendering, reset reuse and kernel DMA errors need workload
