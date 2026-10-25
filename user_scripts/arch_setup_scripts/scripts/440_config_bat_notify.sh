@@ -4,9 +4,40 @@
 set -euo pipefail
 
 #===============================================================================
-# CONFIGURATION
+# CONFIGURATION & PATH RESOLUTION
 #===============================================================================
-readonly NOTIFY_SCRIPT="${HOME}/user_scripts/battery/notify/battery_notify.sh"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+USER_SCRIPTS_DIR="$(cd -- "${SCRIPT_DIR}/../.." && pwd -P)"
+
+# Resolve user and home context (handles direct user, sudo, orchestrator, and installer execution)
+if (( EUID == 0 )); then
+    TARGET_USER=""
+    for candidate in "${TARGET_USER:-}" "${DUSKY_TARGET_USER:-}" "${DUSKY_USER:-}" "${SUDO_USER:-}" "${DOAS_USER:-}"; do
+        if [[ -n "$candidate" && "$candidate" != "root" ]] && id "$candidate" &>/dev/null; then
+            TARGET_USER="$candidate"
+            break
+        fi
+    done
+    if [[ -z "$TARGET_USER" ]]; then
+        # Find first non-root interactive user (UID >= 1000)
+        TARGET_USER="$(awk -F: '$3 >= 1000 && $3 < 60000 && $7 !~ /nologin|false/ {print $1; exit}' /etc/passwd 2>/dev/null || true)"
+        [[ -n "$TARGET_USER" ]] || TARGET_USER="root"
+    fi
+    TARGET_HOME="${DUSKY_USER_HOME:-$(getent passwd "$TARGET_USER" 2>/dev/null | cut -d: -f6)}"
+    [[ -n "$TARGET_HOME" ]] || TARGET_HOME="${HOME}"
+else
+    TARGET_USER="$(id -un)"
+    TARGET_HOME="${HOME}"
+fi
+
+if [[ -f "${USER_SCRIPTS_DIR}/battery/notify/battery_notify.sh" ]]; then
+    readonly NOTIFY_SCRIPT="${USER_SCRIPTS_DIR}/battery/notify/battery_notify.sh"
+    readonly DUSKY_TUI_DIR="${USER_SCRIPTS_DIR}/dusky_tui"
+else
+    readonly NOTIFY_SCRIPT="${TARGET_HOME}/user_scripts/battery/notify/battery_notify.sh"
+    readonly DUSKY_TUI_DIR="${TARGET_HOME}/user_scripts/dusky_tui"
+fi
+
 readonly SERVICE_NAME="dusky_battery.service"
 readonly SCRIPT_NAME="${0##*/}"
 
@@ -69,6 +100,20 @@ is_valid_percent() {
     [[ ${1:-} =~ ^[0-9]{1,4}$ ]] && (( 10#$1 >= 1 && 10#$1 <= 100 ))
 }
 
+run_user_systemctl() {
+    if (( EUID == 0 )) && [[ -n "${TARGET_USER:-}" && "$TARGET_USER" != "root" ]]; then
+        local user_uid
+        user_uid=$(id -u "$TARGET_USER" 2>/dev/null || true)
+        if [[ -n "$user_uid" && -d "/run/user/$user_uid" ]]; then
+            runuser -u "$TARGET_USER" -- env XDG_RUNTIME_DIR="/run/user/$user_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$user_uid/bus" systemctl --user "$@"
+        else
+            return 1
+        fi
+    else
+        systemctl --user "$@"
+    fi
+}
+
 #===============================================================================
 # BATTERY DETECTION
 #===============================================================================
@@ -77,10 +122,11 @@ check_battery() {
     # DisplayDevice excludes peripheral batteries and includes system UPS devices.
     if command -v upower >/dev/null &&
         info=$(LC_ALL=C upower --show-info /org/freedesktop/UPower/devices/DisplayDevice 2>/dev/null); then
-        [[ $info =~ present:[[:space:]]*yes([[:space:]]|$) &&
-           $info =~ power\ supply:[[:space:]]*yes([[:space:]]|$) &&
-           $info =~ $'\n'[[:space:]]*(battery|ups)([[:space:]]|$) ]]
-        return
+        if [[ $info =~ present:[[:space:]]*yes([[:space:]]|$) &&
+              $info =~ power\ supply:[[:space:]]*yes([[:space:]]|$) &&
+              $info =~ $'\n'[[:space:]]*(battery|ups)([[:space:]]|$) ]]; then
+            return 0
+        fi
     fi
     # Allow configuration while the daemon is unavailable, using kernel metadata.
     for type_file in /sys/class/power_supply/*/type; do
@@ -112,10 +158,10 @@ get_current_value() {
     fi
 
     local line value
-    local pattern='^[[:space:]]*readonly[[:space:]]+'"$var_name"'="\$\{'"$var_name"':-([0-9]{1,4})\}"([[:space:]]*(#.*)?)$'
+    local pattern='^[[:space:]]*(readonly[[:space:]]+)?'"$var_name"'=["'\'']?(\$\{'"$var_name"':-)?([0-9]{1,4})\}?["'\'']?([[:space:]]*(#.*)?)$'
     while IFS= read -r line; do
         if [[ $line =~ $pattern ]]; then
-            value=${BASH_REMATCH[1]}
+            value=${BASH_REMATCH[3]}
             if is_valid_percent "$value"; then
                 printf '%s' "$((10#$value))"
                 return 0
@@ -133,38 +179,90 @@ update_config() {
     full=$((10#$full)) low=$((10#$low)) critical=$((10#$critical))
     (( critical < low && low < full )) || die "Thresholds must satisfy CRITICAL < LOW < FULL"
 
-    # Reuse the TUI writer's atomic replacement and permission preservation.
-    python3 - "$NOTIFY_SCRIPT" "$HOME/user_scripts/dusky_tui" "$full" "$low" "$critical" <<'PYTHON'
+    # Reuse the TUI writer's atomic replacement, falling back to direct atomic Python if dusky_tui is unavailable.
+    python3 - "$NOTIFY_SCRIPT" "$DUSKY_TUI_DIR" "$full" "$low" "$critical" <<'PYTHON'
+import os
+import re
 import sys
-sys.path.insert(0, sys.argv[2])
-from python.engines.shell_fallback import ShellFallbackEngine
+import tempfile
+import shutil
+from pathlib import Path
 
-engine = ShellFallbackEngine(sys.argv[1])
-engine.load_state()
-keys = ("BATTERY_FULL_THRESHOLD", "BATTERY_LOW_THRESHOLD", "BATTERY_CRITICAL_THRESHOLD")
-ok, message, _ = engine.write_batch([
-    (key, "DEFAULT", value, "int") for key, value in zip(keys, sys.argv[3:], strict=True)
-])
-if not ok:
-    print(message, file=sys.stderr)
-    raise SystemExit(1)
+script_path = Path(sys.argv[1])
+tui_dir = sys.argv[2]
+full_val, low_val, crit_val = sys.argv[3], sys.argv[4], sys.argv[5]
+
+# Attempt dusky_tui ShellFallbackEngine first
+try:
+    sys.path.insert(0, tui_dir)
+    from python.engines.shell_fallback import ShellFallbackEngine
+    engine = ShellFallbackEngine(str(script_path))
+    engine.load_state()
+    keys = ("BATTERY_FULL_THRESHOLD", "BATTERY_LOW_THRESHOLD", "BATTERY_CRITICAL_THRESHOLD")
+    ok, message, _ = engine.write_batch([
+        (k, "DEFAULT", v, "int") for k, v in zip(keys, (full_val, low_val, crit_val), strict=True)
+    ])
+    if ok:
+        sys.exit(0)
+except Exception:
+    pass
+
+# Direct atomic fallback if dusky_tui engine is unavailable or failed
+if not script_path.exists():
+    print(f"Error: {script_path} does not exist", file=sys.stderr)
+    sys.exit(1)
+
+with open(script_path, "r", encoding="utf-8") as f:
+    lines = f.readlines()
+
+new_lines = []
+changes = {
+    "BATTERY_FULL_THRESHOLD": full_val,
+    "BATTERY_LOW_THRESHOLD": low_val,
+    "BATTERY_CRITICAL_THRESHOLD": crit_val,
+}
+
+for line in lines:
+    replaced = False
+    for k, v in changes.items():
+        pattern = rf'^([ \t]*(?:readonly[ \t]+)?{k}=["\']?(?:\$\{{{k}:-)?)[0-9]+(\}}?["\']?.*)$'
+        m = re.match(pattern, line)
+        if m:
+            new_lines.append(f'{m.group(1)}{v}{m.group(2)}\n')
+            replaced = True
+            break
+    if not replaced:
+        new_lines.append(line)
+
+with tempfile.NamedTemporaryFile("w", dir=script_path.parent, delete=False, encoding="utf-8") as tf:
+    tf.writelines(new_lines)
+    temp_name = tf.name
+
+orig_stat = script_path.stat()
+os.chmod(temp_name, orig_stat.st_mode)
+try:
+    os.chown(temp_name, orig_stat.st_uid, orig_stat.st_gid)
+except (PermissionError, OSError):
+    pass
+shutil.move(temp_name, str(script_path))
 PYTHON
 }
 
 restart_service() {
     # Check if service unit exists
-    if ! systemctl --user cat "$SERVICE_NAME" &>/dev/null; then
-        info "Service '$SERVICE_NAME' not found - skipping restart"
+    if ! run_user_systemctl cat "$SERVICE_NAME" &>/dev/null; then
+        info "Service '$SERVICE_NAME' not installed - skipping restart"
         return 0
     fi
 
-    if systemctl --user is-active --quiet "$SERVICE_NAME" 2>/dev/null ||
-       systemctl --user is-failed --quiet "$SERVICE_NAME" 2>/dev/null; then
-        if systemctl --user restart "$SERVICE_NAME" 2>/dev/null; then
+    if run_user_systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+        if run_user_systemctl restart "$SERVICE_NAME" 2>/dev/null; then
             success "Service restarted"
         else
             warn "Failed to restart service"
         fi
+    elif run_user_systemctl is-enabled --quiet "$SERVICE_NAME" 2>/dev/null; then
+        info "Service enabled (will start automatically with Hyprland session)"
     else
         info "Service not running (start with: systemctl --user start $SERVICE_NAME)"
     fi

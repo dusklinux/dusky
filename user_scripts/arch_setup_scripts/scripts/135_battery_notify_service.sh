@@ -11,13 +11,43 @@ readonly BLUE=$'\033[0;34m'
 readonly BOLD=$'\033[1m'
 readonly NC=$'\033[0m' # No Color
 
-# --- Configuration ---
+# --- Configuration & Path Resolution ---
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+USER_SCRIPTS_DIR="$(cd -- "${SCRIPT_DIR}/../.." && pwd -P)"
+
+# Resolve user and home context (handles direct user, sudo, orchestrator, and installer execution)
+if (( EUID == 0 )); then
+    TARGET_USER=""
+    for candidate in "${TARGET_USER:-}" "${DUSKY_TARGET_USER:-}" "${DUSKY_USER:-}" "${SUDO_USER:-}" "${DOAS_USER:-}"; do
+        if [[ -n "$candidate" && "$candidate" != "root" ]] && id "$candidate" &>/dev/null; then
+            TARGET_USER="$candidate"
+            break
+        fi
+    done
+    if [[ -z "$TARGET_USER" ]]; then
+        # Find first non-root interactive user (UID >= 1000)
+        TARGET_USER="$(awk -F: '$3 >= 1000 && $3 < 60000 && $7 !~ /nologin|false/ {print $1; exit}' /etc/passwd 2>/dev/null || true)"
+        [[ -n "$TARGET_USER" ]] || TARGET_USER="root"
+    fi
+    TARGET_HOME="${DUSKY_USER_HOME:-$(getent passwd "$TARGET_USER" 2>/dev/null | cut -d: -f6)}"
+    [[ -n "$TARGET_HOME" ]] || TARGET_HOME="${HOME}"
+else
+    TARGET_USER="$(id -un)"
+    TARGET_HOME="${HOME}"
+fi
+
 readonly SERVICE_NAME="dusky_battery.service"
-readonly CONFIG_DIR="${XDG_CONFIG_HOME:-"${HOME}/.config"}"
+readonly CONFIG_DIR="${XDG_CONFIG_HOME:-"${TARGET_HOME}/.config"}"
 readonly SYSTEMD_USER_DIR="${CONFIG_DIR}/systemd/user"
-readonly SOURCE_FILE="${HOME}/user_scripts/battery/notify/${SERVICE_NAME}"
+
+if [[ -f "${USER_SCRIPTS_DIR}/battery/notify/${SERVICE_NAME}" ]]; then
+    readonly SOURCE_FILE="${USER_SCRIPTS_DIR}/battery/notify/${SERVICE_NAME}"
+    readonly SCRIPT_FILE="${USER_SCRIPTS_DIR}/battery/notify/battery_notify.sh"
+else
+    readonly SOURCE_FILE="${TARGET_HOME}/user_scripts/battery/notify/${SERVICE_NAME}"
+    readonly SCRIPT_FILE="${TARGET_HOME}/user_scripts/battery/notify/battery_notify.sh"
+fi
 readonly TARGET_FILE="${SYSTEMD_USER_DIR}/${SERVICE_NAME}"
-readonly SCRIPT_FILE="${HOME}/user_scripts/battery/notify/battery_notify.sh"
 
 # --- Helper Functions ---
 log_info() {
@@ -34,6 +64,20 @@ log_warn() {
 
 log_error() {
     printf '%s[ERROR]%s %s\n' "${RED}" "${NC}" "$1" >&2
+}
+
+run_user_systemctl() {
+    if (( EUID == 0 )) && [[ -n "${TARGET_USER:-}" && "$TARGET_USER" != "root" ]]; then
+        local user_uid
+        user_uid=$(id -u "$TARGET_USER" 2>/dev/null || true)
+        if [[ -n "$user_uid" && -d "/run/user/$user_uid" ]]; then
+            runuser -u "$TARGET_USER" -- env XDG_RUNTIME_DIR="/run/user/$user_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$user_uid/bus" systemctl --user "$@"
+        else
+            return 1
+        fi
+    else
+        systemctl --user "$@"
+    fi
 }
 
 TEMP_UNIT=""
@@ -59,10 +103,11 @@ has_battery() {
     # DisplayDevice excludes peripheral batteries and includes system UPS devices.
     if command -v upower >/dev/null &&
         info=$(LC_ALL=C upower --show-info /org/freedesktop/UPower/devices/DisplayDevice 2>/dev/null); then
-        [[ $info =~ present:[[:space:]]*yes([[:space:]]|$) &&
-           $info =~ power\ supply:[[:space:]]*yes([[:space:]]|$) &&
-           $info =~ $'\n'[[:space:]]*(battery|ups)([[:space:]]|$) ]]
-        return
+        if [[ $info =~ present:[[:space:]]*yes([[:space:]]|$) &&
+              $info =~ power\ supply:[[:space:]]*yes([[:space:]]|$) &&
+              $info =~ $'\n'[[:space:]]*(battery|ups)([[:space:]]|$) ]]; then
+            return 0
+        fi
     fi
     # Allow installation while the daemon is unavailable, using kernel metadata.
     for type_file in /sys/class/power_supply/*/type; do
@@ -86,15 +131,15 @@ is_service_installed() {
 }
 
 is_service_loaded() {
-    [[ $(systemctl --user show --property=LoadState --value "${SERVICE_NAME}" 2>/dev/null) == loaded ]]
+    [[ $(run_user_systemctl show --property=LoadState --value "${SERVICE_NAME}" 2>/dev/null) == loaded ]]
 }
 
 is_service_enabled() {
-    systemctl --user is-enabled --quiet "${SERVICE_NAME}" 2>/dev/null
+    run_user_systemctl is-enabled --quiet "${SERVICE_NAME}" 2>/dev/null || [[ -e "${SYSTEMD_USER_DIR}/hyprland-session.target.wants/${SERVICE_NAME}" || -L "${SYSTEMD_USER_DIR}/hyprland-session.target.wants/${SERVICE_NAME}" ]]
 }
 
 is_service_active() {
-    systemctl --user is-active --quiet "${SERVICE_NAME}" 2>/dev/null
+    run_user_systemctl is-active --quiet "${SERVICE_NAME}" 2>/dev/null
 }
 
 # --- Action Functions ---
@@ -124,6 +169,9 @@ do_install() {
     if [[ ! -d "${SYSTEMD_USER_DIR}" ]]; then
         log_info "Creating systemd user directory: ${SYSTEMD_USER_DIR}"
         mkdir -p "${SYSTEMD_USER_DIR}"
+        if (( EUID == 0 )) && [[ -n "${TARGET_USER:-}" && "$TARGET_USER" != "root" ]]; then
+            chown -R "$TARGET_USER:$TARGET_USER" "${CONFIG_DIR}/systemd" 2>/dev/null || true
+        fi
     fi
 
     # 3. Replace atomically, including a stale symlink, after a successful copy.
@@ -134,16 +182,36 @@ do_install() {
     mv --force --no-target-directory -- "$TEMP_UNIT" "${TARGET_FILE}"
     TEMP_UNIT=""
 
+    if (( EUID == 0 )) && [[ -n "${TARGET_USER:-}" && "$TARGET_USER" != "root" ]]; then
+        chown "$TARGET_USER:$TARGET_USER" "${TARGET_FILE}" 2>/dev/null || true
+    fi
+
     # 4. Systemd registration
     log_info "Reloading systemd user daemon..."
-    systemctl --user daemon-reload
+    run_user_systemctl daemon-reload 2>/dev/null || true
 
-    # 5. Enable and (re)start — restart covers both fresh start and re-install
-    log_info "Enabling and (re)starting ${SERVICE_NAME}..."
-    systemctl --user enable "${SERVICE_NAME}"
-    systemctl --user restart "${SERVICE_NAME}"
+    # 5. Enable service (with direct wants symlink fallback for offline/chroot environments)
+    log_info "Enabling ${SERVICE_NAME}..."
+    if ! run_user_systemctl enable "${SERVICE_NAME}" 2>/dev/null; then
+        local wants_dir="${SYSTEMD_USER_DIR}/hyprland-session.target.wants"
+        mkdir -p "$wants_dir"
+        ln -sf "${TARGET_FILE}" "${wants_dir}/${SERVICE_NAME}"
+        if (( EUID == 0 )) && [[ -n "${TARGET_USER:-}" && "$TARGET_USER" != "root" ]]; then
+            chown -h "$TARGET_USER:$TARGET_USER" "${wants_dir}/${SERVICE_NAME}" 2>/dev/null || true
+            chown "$TARGET_USER:$TARGET_USER" "$wants_dir" 2>/dev/null || true
+        fi
+    fi
 
-    log_success "Battery notification service installed and enabled; start requested."
+    # 6. Restart/Start if running in an active user session
+    if run_user_systemctl is-active --quiet "${SERVICE_NAME}" 2>/dev/null; then
+        log_info "Restarting active service ${SERVICE_NAME}..."
+        run_user_systemctl restart "${SERVICE_NAME}" 2>/dev/null || true
+    elif run_user_systemctl is-active --quiet hyprland-session.target 2>/dev/null; then
+        log_info "Starting service ${SERVICE_NAME} in active session..."
+        run_user_systemctl start "${SERVICE_NAME}" 2>/dev/null || true
+    fi
+
+    log_success "Battery notification service installed and enabled."
 }
 
 do_uninstall() {
@@ -151,33 +219,40 @@ do_uninstall() {
 
     local changed=false
 
-    # Stop loaded units even while they are activating or waiting to restart.
-    if is_service_loaded; then
+    # 1. Stop loaded units even while they are activating or waiting to restart.
+    if is_service_loaded || is_service_active; then
         log_info "Stopping ${SERVICE_NAME}..."
-        systemctl --user stop "${SERVICE_NAME}"
+        run_user_systemctl stop "${SERVICE_NAME}" 2>/dev/null || true
         changed=true
     fi
 
     # 2. Disable the service if it's currently enabled
     if is_service_enabled; then
         log_info "Disabling ${SERVICE_NAME}..."
-        systemctl --user disable "${SERVICE_NAME}"
+        run_user_systemctl disable "${SERVICE_NAME}" 2>/dev/null || true
         changed=true
     fi
 
-    # 3. Remove the installed service file
+    # 3. Clean up wants symlinks (ensures no dangling symlinks)
+    local wants_link="${SYSTEMD_USER_DIR}/hyprland-session.target.wants/${SERVICE_NAME}"
+    if [[ -L "$wants_link" || -f "$wants_link" ]]; then
+        log_info "Removing symlink: ${wants_link}"
+        rm -f "$wants_link"
+        changed=true
+    fi
+
+    # 4. Remove the installed service file
     if is_service_installed; then
         log_info "Removing service file: ${TARGET_FILE}"
         rm -f "${TARGET_FILE}"
         changed=true
     fi
 
-    # 4. Reload daemon so systemd forgets the unit
+    # 5. Reload daemon so systemd forgets the unit
     if [[ "${changed}" == true ]]; then
         log_info "Reloading systemd user daemon..."
-        systemctl --user daemon-reload
-        # Reset any failed state that might linger
-        systemctl --user reset-failed "${SERVICE_NAME}" 2>/dev/null || true
+        run_user_systemctl daemon-reload 2>/dev/null || true
+        run_user_systemctl reset-failed "${SERVICE_NAME}" 2>/dev/null || true
     fi
 
     log_success "Battery notification service has been fully removed."
@@ -278,10 +353,6 @@ show_interactive_ui() {
 # --- Main Logic ---
 
 main() {
-    if (( $# > 1 )); then
-        log_error "Expected at most one option: --auto or --help"
-        return 2
-    fi
     case "${1:-}" in
         --auto)
             if ! has_battery; then
@@ -291,13 +362,20 @@ main() {
             do_install
             return
             ;;
+        -u|--uninstall|--remove)
+            do_uninstall
+            return
+            ;;
         -h|--help)
-            printf 'Usage: %s [--auto | --help]\n' "${0##*/}"
+            printf 'Usage: %s [--auto | --uninstall | --help]\n' "${0##*/}"
             printf 'Without options, manage the battery service interactively.\n'
             return 0
             ;;
         "") ;;
-        *) log_error "Unknown option: $1"; return 2 ;;
+        *)
+            log_error "Unknown option: $1"
+            return 2
+            ;;
     esac
 
     # --- Interactive Mode: Always show UI ---
