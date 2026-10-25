@@ -39,6 +39,46 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(vm.graphics, "spice")
         self.assertEqual(vm.hostdevs, [])
         self.assertEqual(vm.disk_gib, size)
+        self.assertEqual(vm.ram_mib, 8192)
+        self.assertFalse(vm.balloon)
+
+    def test_memory_default_stays_eight_gib_on_small_and_large_hosts(self):
+        for host in (7680, 8192, 16384, 65536, 262144):
+            with (self.subTest(host_mib=host), patch.object(deploy, "console", MagicMock()),
+                  patch.object(deploy, "host_ram_mib", return_value=host),
+                  patch.object(deploy.IntPrompt, "ask", side_effect=lambda *a, **k: k['default']),
+                  patch.object(deploy.Confirm, "ask", side_effect=lambda *a, **k: k['default'])):
+                self.assertEqual(deploy.choose_memory(passthrough=False), (8192, False))
+
+    def test_custom_memory_and_balloon_choice_are_not_clamped(self):
+        for gib in (4, 8, 50):
+            for balloon in (False, True):
+                with (self.subTest(gib=gib, balloon=balloon), patch.object(deploy, "console", MagicMock()),
+                      patch.object(deploy, "host_ram_mib", return_value=8192),
+                      patch.object(deploy.IntPrompt, "ask", return_value=gib),
+                      patch.object(deploy.Confirm, "ask", return_value=balloon)):
+                    self.assertEqual(deploy.choose_memory(passthrough=True), (gib * 1024, balloon))
+
+    def test_invalid_ram_reprompts_instead_of_building_bad_xml(self):
+        with (patch.object(deploy, "console", MagicMock()),
+              patch.object(deploy, "host_ram_mib", return_value=8192),
+              patch.object(deploy.IntPrompt, "ask", side_effect=[0, -4, 4]),
+              patch.object(deploy.Confirm, "ask", return_value=False)):
+            self.assertEqual(deploy.choose_memory(passthrough=False), (4096, False))
+
+    def test_memory_amount_and_mode_reach_command_and_metadata(self):
+        import xml.etree.ElementTree as ET
+        for gib in (4, 8, 50):
+            for balloon in (False, True):
+                with self.subTest(gib=gib, balloon=balloon):
+                    self.vm.ram_mib, self.vm.balloon = gib * 1024, balloon
+                    command = deploy.build_command(self.vm)
+                    self.assertEqual(command[command.index('--memory') + 1], str(gib * 1024))
+                    self.assertEqual(command[command.index('--memballoon') + 1],
+                                     'virtio,stats.period=5' if balloon else 'none')
+                    root = ET.fromstring(deploy.record_windows_choices('<domain><devices/></domain>', self.vm))
+                    settings = root.find(f'./metadata/{{{deploy.WINDOWS_NS}}}windows')
+                    self.assertEqual(settings.get('memory'), 'balloon' if balloon else 'fixed')
 
     def test_xml_generation_requests_no_storage_side_effects(self):
         command = deploy.build_command(self.vm)

@@ -334,6 +334,7 @@ class Spec:
     disk_gib: int = 80
     access: str = "both"   # both | looking-glass | rdp | spice
     virtio: bool = True
+    balloon: bool = False
 
 
 def needs_looking_glass(spec: Spec) -> bool:
@@ -354,7 +355,7 @@ def build_command(spec: Spec) -> list[str]:
         "--memory", str(spec.ram_mib),
         "--vcpus", f"{spec.vcpus},sockets=1,cores={cores},threads={threads}",
         "--cpu", "host-passthrough,migratable=off,cache.mode=passthrough",
-        "--memballoon", "none",
+        "--memballoon", "virtio,stats.period=5" if spec.balloon else "none",
         "--rng", "/dev/urandom",
         "--controller", "type=usb,model=qemu-xhci",
         "--input", "type=tablet,bus=usb",
@@ -451,6 +452,7 @@ def record_windows_choices(xml_text: str, spec: Spec) -> str:
         settings = ET.SubElement(metadata, f"{{{WINDOWS_NS}}}windows")
     settings.set("access", spec.access)
     settings.set("virtio", "yes" if spec.virtio else "no")
+    settings.set("memory", "balloon" if spec.balloon else "fixed")
     ET.indent(root, space="  ")
     return ET.tostring(root, encoding="unicode") + "\n"
 
@@ -477,6 +479,28 @@ def define_domain(name: str, xml_text: str) -> None:
 # ==============================================================================
 # INTERVIEW
 # ==============================================================================
+def choose_memory(*, passthrough: bool) -> tuple[int, bool]:
+    total = host_ram_mib()
+    console.print(f"\n[bold cyan]Memory[/bold cyan] Host RAM: {total / 1024:.1f} GiB.")
+    while True:
+        gib = IntPrompt.ask("Guest RAM capacity (GiB; custom amounts such as 4 or 50 are allowed)", default=8)
+        if gib > 0:
+            break
+        console.print("[red]RAM must be a positive whole number of GiB.[/red]")
+    if gib * 1024 > total - 2048:
+        console.print("[yellow]  ! This leaves under 2 GiB of physical RAM for Linux, or exceeds host RAM. "
+                      "Host/guest overhead also needs memory; heavy use can cause swapping or OOM. "
+                      "The requested amount is retained.[/yellow]")
+    console.print("Fixed memory is the default. Optional VirtIO ballooning allows a live memory target "
+                  "up to this capacity; it requires the guest balloon driver. It does not automatically "
+                  "balance host/guest demand.")
+    if passthrough:
+        console.print("[yellow]  ! PCI/GPU passthrough can prevent ballooned pages being reclaimed by Linux. "
+                      "Fixed memory is recommended for this configuration.[/yellow]")
+    balloon = Confirm.ask("Enable VirtIO memory ballooning?", default=False)
+    return gib * 1024, balloon
+
+
 def interview(state: dict, home: Path) -> tuple[Spec, int]:
     storage = Path(str(state.get("storage_dir") or "/var/lib/libvirt/images"))
     if not storage.is_dir():
@@ -566,15 +590,12 @@ def interview(state: dict, home: Path) -> tuple[Spec, int]:
                     "Phase 3?[/yellow]"
                 )
 
-    total_ram = host_ram_mib()
-    ram_gib = IntPrompt.ask(f"\nRAM (GiB) [dim]host has {total_ram // 1024} GiB[/dim]", default=8)
-    if ram_gib * 1024 > total_ram - 2048:
-        console.print("[yellow]  ! Leaves under 2 GiB for the host; the OOM killer will act.[/yellow]")
-    vcpus = IntPrompt.ask(f"vCPUs [dim]host has {os.cpu_count()} threads[/dim]", default=6)
+    ram_mib, balloon = choose_memory(passthrough=bool(hostdevs))
+    vcpus = IntPrompt.ask(f"vCPUs [dim]host has {os.cpu_count()} threads[/dim]", default=min(6, os.cpu_count() or 1))
     if vcpus > (os.cpu_count() or 1):
         bail("More vCPUs than host threads is a latency trap; reduce the count.")
     disk_gib = IntPrompt.ask("Disk (GiB)", default=80)
-    if ram_gib <= 0 or vcpus <= 0 or disk_gib <= 0:
+    if vcpus <= 0 or disk_gib <= 0:
         bail("RAM, vCPU count and disk size must be positive.")
 
     console.print("\n[bold cyan]Installation media[/bold cyan]")
@@ -597,7 +618,7 @@ def interview(state: dict, home: Path) -> tuple[Spec, int]:
         name=name,
         osinfo=osinfo,
         windows=windows,
-        ram_mib=ram_gib * 1024,
+        ram_mib=ram_mib,
         vcpus=vcpus,
         disk=storage / f"{name}.qcow2",
         network=network,
@@ -608,6 +629,7 @@ def interview(state: dict, home: Path) -> tuple[Spec, int]:
         disk_gib=disk_gib,
         access=access,
         virtio=virtio,
+        balloon=balloon,
     ), disk_gib
 
 
@@ -694,6 +716,9 @@ def main() -> None:
             steps.append("In Windows Setup, load viostor/w11/amd64 from the VirtIO CD-ROM for the virtio disk.")
             steps.append("Install NetKVM/w11/amd64 if Windows Setup needs its VirtIO network driver.")
         steps.append(f"Sign in through the SPICE console; follow {Path(__file__).parent / 'guest/README.md'} for guest setup.")
+        if spec.balloon:
+            steps.append("Install the VirtIO-Win Balloon driver/service, even with SATA/e1000e. "
+                         "Use virsh dommemstat to verify live targets; enabling the device is not automatic RAM balancing.")
         flags = []
         if not needs_shmem:
             flags.append("-SkipLookingGlass")

@@ -105,6 +105,56 @@ disks, pools or a domain; for example:
 python3 000_dusky_vm.py --windows --deploy-only -- --dump-only
 ```
 
+Deployment also asks for guest RAM in GiB, with **8 GiB as the default** on
+every host. Enter any positive whole number, such as 4 or 50; it is not clamped
+to the host's physical RAM. The prompt shows detected host RAM and warns when
+less than 2 GiB would remain for Linux. An 8 GiB guest on an 8 GiB host leaves
+insufficient physical headroom for the host and VM overhead; choose a smaller
+amount when needed. Overcommitting RAM can cause swapping or OOM failures.
+
+Memory mode is a separate yes/no choice: **fixed by default**, optional VirtIO
+ballooning. This choice is independent of the disk/network device selection;
+Windows still needs its VirtIO balloon driver and BalloonService even with
+SATA/e1000e. Install them from the prepared VirtIO-Win tools/media. The selected
+RAM is the guest's configured capacity and initial target, not a promise that
+Linux can always supply it. Merely enabling ballooning does not install an
+automatic host/guest memory-balancing controller.
+
+For a running VM with ballooning enabled, inspect statistics and adjust its
+live target from Linux, for example with an 8 GiB capacity:
+
+```sh
+virsh -c qemu:///system dommemstat win11
+virsh -c qemu:///system setmem win11 6G --live
+virsh -c qemu:///system setmem win11 8G --live
+```
+
+The target must not exceed the configured capacity. These live adjustments do
+not change the next-boot target; use `--config` as well only when intentionally
+persisting a target. To increase capacity or change fixed/balloon mode for an
+existing VM, power it off, adjust Memory in virt-manager and the balloon device
+in the domain XML, then start it again. Fixed mode uses `<memballoon model='none'/>`;
+the optional mode uses `<memballoon model='virtio'><stats period='5'/></memballoon>`.
+
+Watch the reported `actual` target and physical host memory use: an accepted
+command alone does not prove RAM was reclaimed. Statistics also require the
+guest driver/service. Reducing the target can evict useful Windows caches or
+cause paging and stutter. GPU/PCI passthrough can prevent ordinary balloon
+reclamation; fixed RAM remains the recommended mode for those domains. Do not
+budget host RAM on an assumed balloon saving that has not been measured.
+
+Live verification on 2026-10-25 (Windows 11 build 26300, QEMU 11.1.2,
+libvirt 12.8, kernel 7.3.0-rc7): targets 8 → 6 → 4 → 8 → 6 → 8 GiB worked
+with VirtIO-FS attached and no PCI passthrough. QEMU RSS fell from about
+8.10 GiB to 4.10 GiB at the 4 GiB target; host shared-memory use also fell by
+about 4 GiB. A separate 512 MiB application buffer retained its full SHA-256
+hash across a 4 → 8 GiB target cycle. These are reclamation/correctness checks,
+not an application performance benchmark. Six real XML previews for 4, 8 and
+50 GiB in both modes validated without provisioning disks. A physical 8 GiB
+host, a running 50 GiB guest and ballooning with GPU passthrough were not tested.
+The test VM was returned to fixed 8 GiB afterward.
+See [libvirt's balloon interface](https://libvirt.org/formatdomain.html#memory-balloon-device).
+
 Start the new VM in virt-manager. In Windows Setup, load `viostor/w11/amd64`
 from the VirtIO CD for the virtio disk; use `NetKVM/w11/amd64` if Setup needs
 the network driver. Sign in and follow [guest setup](guest/README.md).
