@@ -1017,12 +1017,14 @@ def sorted_dropins(directory: Path, *, extra: Path | None = None) -> list[Path]:
     return [directory / name for name in result.stdout.split("\0") if name]
 
 
-def effective_config(*, managed_payload: str | None = None) -> tuple[list[str], list[str], list[str]]:
+def effective_config(*, managed_payload: str | None = None,
+                     managed_dropin: Path | None = None) -> tuple[list[str], list[str], list[str]]:
     """Evaluate Bash arrays in the same version order as mkinitcpio 42.2."""
+    managed_dropin = managed_dropin or MKINITCPIO_DROPIN
     sources = [f"source {shlex.quote(str(MKINITCPIO_CONF))}"]
     for path in sorted_dropins(MKINITCPIO_DROPIN_DIR,
-                               extra=MKINITCPIO_DROPIN if managed_payload is not None else None):
-        if path == MKINITCPIO_DROPIN:
+                               extra=managed_dropin if managed_payload is not None else None):
+        if path == managed_dropin:
             if managed_payload is not None:
                 sources.append(managed_payload)
         else:
@@ -1089,7 +1091,8 @@ def configure_initramfs(*, enable: bool) -> None:
         console.print(f"[bold green]  ok[/bold green] {MKINITCPIO_DROPIN.name} already convergent.")
 
 
-def preflight(entry: BootEntry, *, enable: bool) -> list[Path]:
+def preflight(entry: BootEntry, *, enable: bool,
+              managed_cmdline: Path | None = None) -> list[Path]:
     """Validate the supported boot pipeline before touching persistent config."""
     for command in ("mkinitcpio", "bash", "udevadm", "sort", "lsinitcpio"):
         if shutil.which(command) is None:
@@ -1101,7 +1104,7 @@ def preflight(entry: BootEntry, *, enable: bool) -> list[Path]:
         initramfs_payload()
     if entry.kind == "type2":
         for fragment in CMDLINE_D.glob("*.conf"):
-            if fragment != CMDLINE_D_DROPIN and parse_managed_keys(fragment.read_text(encoding="utf-8")):
+            if fragment != (managed_cmdline or CMDLINE_D_DROPIN) and parse_managed_keys(fragment.read_text(encoding="utf-8")):
                 bail(f"{fragment} sets managed parameters; consolidate them in {KERNEL_CMDLINE} first.")
     outputs = []
     for preset in presets:

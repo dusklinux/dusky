@@ -1,370 +1,473 @@
 #!/usr/bin/env python3
-"""
-Phase 4: VFIO Dynamic State Manager
-Target: Arch Linux (Kernel 7.1.0+), Python 3.14.5+, systemd 260
-Scope: Toggles GPU isolation state (VFIO <-> Host).
-Features: JSON Bootctl tracking, UKI (Type #2) Awareness, Non-Destructive Config Toggling, Permission Inheritance.
-Usage: ./gpu_manager.py --bind   (Isolate GPU for VM)
-       ./gpu_manager.py --unbind (Return GPU to Host)
+"""Stage a GPU slot for VFIO or return it to its host drivers on the next boot.
+
+Arch, Python 3.15+, kernel 7.3+, systemd 262, systemd-boot and mkinitcpio.
+The historical filename is retained; selection and drivers are vendor independent.
+No live GPU unbinding, PCI removal, firmware power gating or automatic reboot.
+Keep user_scripts/gpu/gpu_disable_toggle.py alongside this tree: its PCI,
+boot-entry, durable-write and mkinitcpio inspection helpers are shared here.
 """
 
-import os
-import sys
-import re
 import argparse
-import subprocess
+import fcntl
+import importlib.util
 import json
-import tempfile
-import shlex
-import shutil
+import os
 from pathlib import Path
-from typing import Never
+import re
+import shlex
+import subprocess
+import sys
+import xml.etree.ElementTree as ET
 
-# ==============================================================================
-# BOOTSTRAP
-# ==============================================================================
-def require_root() -> None:
-    """Enforce eUID 0. Auto-elevates via sudo if executed as standard user."""
-    if os.geteuid() != 0:
-        print("\n[INFO] Elevating to root...")
-        try:
-            os.execvp("sudo", ["sudo", sys.executable] + sys.argv)
-        except OSError as e:
-            print(f"\n[FATAL] Failed to elevate: {e}")
-            sys.exit(1)
+if sys.version_info < (3, 15):
+    sys.exit('Python 3.15+ is required.')
 
-require_root()
+# Load the supplied companion as a library; its main/elevation never runs.
+COMMON_PATH = Path(__file__).resolve().parents[2] / 'gpu/gpu_disable_toggle.py'
+_spec = importlib.util.spec_from_file_location('dusky_gpu_common', COMMON_PATH)
+common = importlib.util.module_from_spec(_spec)
+sys.modules[_spec.name] = common
+_spec.loader.exec_module(common)
 
-try:
-    from rich.console import Console
-    from rich.panel import Panel
-except ImportError:
-    print("[FATAL] 'python-rich' is missing. Install it via pacman.")
-    sys.exit(1)
+STATE = Path('/var/lib/arsonix/vfio-toggle.json')
+PHASE_STATE = Path('/var/lib/arsonix/state.json')
+MODPROBE = Path('/etc/modprobe.d/arsonix-vfio.conf')
+MODULES = Path('/etc/mkinitcpio.conf.d/99-arsonix-vfio.conf')
+CMDLINE_FRAGMENT = Path('/etc/cmdline.d/99-arsonix-vfio.conf')
+KEYS = (*common.MANAGED_KEYS, 'modprobe.blacklist')
+MARKER = '# Managed by Dusky VFIO toggle.'
 
-console = Console()
 
-# ==============================================================================
-# CORE UTILITIES
-# ==============================================================================
-def bail(msg: str) -> Never:
-    """Exit gracefully with a clear error panel."""
-    console.print(Panel(f"[bold red]FATAL ERROR:[/bold red] {msg}", border_style="red"))
-    sys.exit(1)
+def fail(message):
+    raise RuntimeError(message)
 
-def atomic_write(target_path: Path, new_content: str) -> bool:
-    """Safely writes data using a temporary file and atomic swap, inheriting permissions."""
-    if target_path.exists() and target_path.read_text(encoding="utf-8") == new_content:
-        return False
-        
-    orig_mode = 0o644
-    if target_path.exists():
-        orig_mode = target_path.stat().st_mode & 0o777
 
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_path_str = tempfile.mkstemp(dir=target_path.parent, prefix=f".{target_path.name}.tmp.")
-    tmp_path = Path(tmp_path_str)
-    
+def checked(args, **kwargs):
+    result = common.run(args, **kwargs)
+    if result.returncode:
+        fail(f"{' '.join(args)}: {result.stderr.strip() or result.stdout.strip()}")
+    return result.stdout
+
+
+def load_json(path):
     try:
-        with os.fdopen(fd, 'w') as f:
-            f.write(new_content)
-        os.chmod(tmp_path, orig_mode)
-        shutil.move(tmp_path, target_path)
-        return True
-    except Exception as e:
-        if tmp_path.exists():
-            tmp_path.unlink()
-        bail(f"Atomic write failed on {target_path}: {e}")
+        data = json.loads(path.read_text(encoding='utf-8'))
+    except FileNotFoundError:
+        return {}
+    if not isinstance(data, dict):
+        fail(f'{path} must contain an object.')
+    return data
 
-# ==============================================================================
-# SYSTEM INTELLIGENCE
-# ==============================================================================
-def get_cpu_iommu_flag() -> str:
-    """Detects CPU architecture to set the correct IOMMU flag."""
-    cpuinfo = Path("/proc/cpuinfo").read_text(encoding="utf-8")
-    if "GenuineIntel" in cpuinfo:
-        return "intel_iommu"
-    elif "AuthenticAMD" in cpuinfo:
-        return "amd_iommu"
-    return "intel_iommu"
 
-def get_vfio_ids() -> str:
-    """Dynamically extracts hardware IDs from Phase 3 configs or active cmdlines."""
-    paths = [Path("/etc/modprobe.d/vfio.conf"), Path("/etc/modprobe.d/vfio.conf.disabled")]
-    for p in paths:
-        if p.exists():
-            content = p.read_text(encoding="utf-8")
-            match = re.search(r'^options\s+vfio-pci\s+ids=([0-9a-fA-F:,]+)', content, re.MULTILINE)
-            if match:
-                return match.group(1)
-                
-    cmd_paths = [Path("/etc/kernel/cmdline"), Path("/proc/cmdline")]
-    for p in cmd_paths:
-        if p.exists():
-            content = p.read_text(encoding="utf-8")
-            match = re.search(r'vfio-pci\.ids=([0-9a-fA-F:,]+)', content)
-            if match:
-                return match.group(1)
+def saved_state():
+    data = load_json(STATE)
+    if data and (data.get('schema') != 1 or data.get('mode') not in ('bind', 'unbind')
+                 or not isinstance(data.get('pending'), bool)):
+        fail('Unsupported or incomplete VFIO state. Restore the saved config before selecting another GPU.')
+    if data and (not isinstance(data.get('host_options'), dict) or not isinstance(data.get('host_files'), dict)
+                 or not isinstance(data.get('functions'), list) or not data['functions']
+                 or not all(isinstance(r, dict) and isinstance(r.get('addr'), str) and isinstance(r.get('ids'), str) for r in data['functions'])):
+        fail('Malformed VFIO recovery state; the recorded claim/baseline is unusable.')
+    return data
 
-    bail("Could not locate VFIO IDs in modprobe rules or cmdline. Please run Phase 3 Setup first.")
 
-def resolve_boot_path() -> Path:
-    """Resolves XBOOTLDR or ESP via systemd 260 bootctl flags."""
-    try:
-        res = subprocess.run(["bootctl", "-x"], capture_output=True, text=True, check=True)
-        return Path(res.stdout.strip())
-    except Exception:
-        pass
-    try:
-        res = subprocess.run(["bootctl", "-p"], capture_output=True, text=True, check=True)
-        return Path(res.stdout.strip())
-    except Exception:
-        return Path("/boot")
+def save(data):
+    common.atomic_write(STATE, json.dumps(data, indent=2, sort_keys=True) + '\n')
 
-def get_systemd_boot_target() -> tuple[Path, str, str]:
-    """Uses JSON output to locate the optimal default active entry (Type #1 or Type #2)."""
-    try:
-        res = subprocess.run(["bootctl", "list", "--json=short"], capture_output=True, text=True, check=True)
-        entries = json.loads(res.stdout)
-        
-        default_entry = next((e for e in entries if e.get("is_default")), None)
-        selected_entry = next((e for e in entries if e.get("is_selected")), None)
-        target_entry = default_entry or selected_entry
-        
-        if target_entry:
-            source_path = target_entry.get("source")
-            entry_type = target_entry.get("type", "Type #1")
-            options = target_entry.get("options", "")
-            
-            if source_path and Path(source_path).exists():
-                return Path(source_path), entry_type, options
-    except Exception:
-        pass
 
-    boot_dir = resolve_boot_path()
-    entries_dir = boot_dir / "loader" / "entries"
-    
-    for name in ["arch-linux.conf", "arch.conf"]:
-        candidate = entries_dir / name
-        if candidate.exists():
-            return candidate, "Type #1", ""
+def parameters(text):
+    result = {}
+    for token in common.cmdline_tokens(text):
+        if token == '--':
+            break
+        key, sep, value = token.partition('=')
+        key = key.replace('vfio_pci.', 'vfio-pci.')
+        if key in KEYS:
+            if key in result:
+                fail(f'Duplicate managed kernel option: {key}. Consolidate it before proceeding.')
+            result[key] = value if sep else ''
+    return result
 
-    bail("Could not dynamically resolve the target boot entry or configuration.")
 
-# ==============================================================================
-# STATE MANAGEMENT
-# ==============================================================================
-def generate_parameter_string(current_opts: list[str], state: str, vfio_ids: str) -> str:
-    """Deduplicates and recalculates kernel parameters, safely merging state."""
-    new_opts: list[str] = []
-    
-    merged_params: dict[str, set[str]] = {
-        "intel_iommu": set(),
-        "amd_iommu": set(),
-        "iommu": set(),
-        "vfio-pci.ids": set(),
-        "module_blacklist": set(),
-        "modprobe.blacklist": set()
-    }
-    
-    # 1. Parse current cmdline
-    for opt in current_opts:
-        if "=" in opt:
-            k, v = opt.split("=", 1)
-            norm_k = k.replace("vfio_pci", "vfio-pci")
-            if norm_k in merged_params:
-                merged_params[norm_k].update(filter(None, v.split(",")))
+def merge_options(text, desired):
+    result, tail = [], []
+    after = False
+    for token in common.cmdline_tokens(text):
+        if after:
+            tail.append(token)
+        elif token == '--':
+            after = True
+        elif token.split('=', 1)[0].replace('vfio_pci.', 'vfio-pci.') not in KEYS:
+            result.append(token)
+    result.extend(f'{key}={desired[key]}' for key in KEYS if key in desired)
+    if after:
+        result.extend(['--', *tail])
+    return ' '.join(result)
+
+
+def remove_claim(options, ids, drivers):
+    result = dict(options)
+    for key, removed in (('vfio-pci.ids', ids), ('module_blacklist', drivers), ('modprobe.blacklist', drivers)):
+        if key in result:
+            values = set(result[key].strip('"').split(',')) - set(removed) - {''}
+            if values:
+                result[key] = ','.join(sorted(values))
             else:
-                new_opts.append(opt)
-        else:
-            norm_opt = opt.replace("vfio_pci", "vfio-pci")
-            if norm_opt in merged_params:
-                continue
-            new_opts.append(opt)
-            
-    cpu_flag = get_cpu_iommu_flag()
-    target_ids = set(filter(None, vfio_ids.split(",")))
-    vfio_targets = {"nouveau", "nvidia", "nvidia_drm", "nvidia_modeset", "nvidia_uvm"}
+                result.pop(key)
+    return result
 
-    if state == "bind":
-        merged_params[cpu_flag].add("on")
-        merged_params["iommu"].add("pt")
-        merged_params["vfio-pci.ids"].update(target_ids)
-        merged_params["module_blacklist"].update(vfio_targets)
-    elif state == "unbind":
-        # Remove ONLY the GPU IDs, preserving other VFIO devices
-        merged_params["vfio-pci.ids"].difference_update(target_ids)
-        merged_params["module_blacklist"].difference_update(vfio_targets)
-        merged_params["modprobe.blacklist"].difference_update(vfio_targets)
-        
-    # Cross-vendor cleanup
-    if cpu_flag == "intel_iommu":
-        merged_params["amd_iommu"].clear()
-    elif cpu_flag == "amd_iommu":
-        merged_params["intel_iommu"].clear()
 
-    # Reconstruct
-    for k, vals in merged_params.items():
-        if vals:
-            new_opts.append(f"{k}={','.join(sorted(vals))}")
+def claim_for(devices, args, state):
+    saved = state.get('functions') or []
+    if saved:
+        if args.slot and common.normalize_slot(args.slot, state['slots']) is None:
+            fail('A different slot is recorded. Finish --unbind before changing the selection.')
+        live = {d.addr: d for d in devices}
+        functions = []
+        for record in saved:
+            current = live.get(record['addr'])
+            if current is None or current.ids != record['ids']:
+                fail(f"Recorded device {record['addr']} is absent or changed. Resolve GPU-disable/firmware settings or restore the original hardware first.")
+            functions.append(current)
+        if {d.addr for d in devices if d.slot in state['slots']} != {d.addr for d in functions}:
+            fail('The selected slot has changed functions; do not reuse its previous claim.')
+        return common.Claim(functions)
+    phase = load_json(PHASE_STATE)
+    slot = args.slot or phase.get('vfio_slot')
+    if slot:
+        normalized = common.normalize_slot(slot, common.gpu_slots(devices))
+        if normalized is None:
+            fail(f'GPU slot {slot} was not found.')
+        return common.Claim([d for d in devices if d.slot == normalized])
+    selection = argparse.Namespace(slot=None, all=False, auto=not sys.stdin.isatty())
+    return common.select_claim(devices, common.gpu_slots(devices), selection)
 
-    return " ".join(new_opts)
 
-def toggle_mkinitcpio(state: str) -> None:
-    """Surgically injects or strips VFIO modules across all mkinitcpio configurations."""
-    conf_paths = [Path("/etc/mkinitcpio.conf")]
-    
-    conf_d = Path("/etc/mkinitcpio.conf.d")
-    if conf_d.exists() and conf_d.is_dir():
-        conf_paths.extend(sorted(conf_d.glob("*.conf")))
-
-    for mk_path in conf_paths:
-        if not mk_path.exists():
+def check_groups(claim, *, require):
+    selected = set(claim.addrs)
+    for dev in claim.functions:
+        group = common.SYS_PCI / dev.addr / 'iommu_group'
+        if not group.is_dir():
+            if require:
+                fail(f'{dev.addr} has no IOMMU group. Enable VT-d/AMD-Vi in firmware and boot with IOMMU enabled first.')
+            print(f'{dev.addr}: no live IOMMU group yet; reboot and run --status before assigning it.')
             continue
-            
-        original_content = mk_path.read_text(encoding="utf-8")
-        
-        def patch_modules(match: re.Match) -> str:
-            mods = shlex.split(match.group(1), comments=True, posix=True)
-            vfio_reqs = ['vfio_pci', 'vfio', 'vfio_iommu_type1']
-            
-            if state == "bind":
-                for req in vfio_reqs:
-                    if req not in mods:
-                        mods.append(req)
-            elif state == "unbind":
-                mods = [m for m in mods if m not in vfio_reqs]
-                
-            return f"MODULES=({' '.join(mods)})"
-        
-        content = re.sub(r'^MODULES=\(([^)]*)\)', patch_modules, original_content, flags=re.MULTILINE)
-        
-        if content != original_content:
-            if atomic_write(mk_path, content):
-                console.print(f"[bold green]  ✓ {state.capitalize()}ed VFIO initramfs modules in {mk_path.name}[/bold green]")
-        else:
-            console.print(f"  [dim]Initramfs configuration {mk_path.name} already optimized for {state} state.[/dim]")
+        for member in (group / 'devices').iterdir():
+            klass = common._read(member / 'class').removeprefix('0x')
+            if member.name not in selected and not klass.startswith('0604'):
+                fail(f'IOMMU group {group.resolve().name} also contains {member.name}; select a separately isolated GPU. No ACS override is added.')
 
-def toggle_bootloader(state: str, vfio_ids: str) -> None:
-    """Surgically alters kernel command lines in .conf or /etc/kernel/cmdline."""
-    target_path, entry_type, baked_options = get_systemd_boot_target()
-    
-    # TYPE #1: Standard Conf
-    if "Type #1" in entry_type or target_path.suffix == ".conf":
-        content = target_path.read_text(encoding="utf-8")
-        opt_match = re.search(r'^options\s+(.*)', content, re.MULTILINE)
-        
-        if not opt_match:
-            bail(f"Could not locate the 'options' line in {target_path.name}.")
-            
-        current_opts = shlex.split(opt_match.group(1), posix=False)
-        updated_opts_line = "options " + generate_parameter_string(current_opts, state, vfio_ids)
-        new_content = content[:opt_match.start()] + updated_opts_line + content[opt_match.end():]
-        
-        if atomic_write(target_path, new_content):
-            console.print(f"[bold green]  ✓ {state.capitalize()}ed VFIO parameters in {target_path.name}.[/bold green]")
-        else:
-            console.print(f"  [dim]Bootloader already properly configured for {state} state.[/dim]")
 
-    # TYPE #2: UKI (/etc/kernel/cmdline)
-    else:
-        cmdline_path = Path("/etc/kernel/cmdline")
-        current_opts = []
-        
-        if cmdline_path.exists():
-            current_opts = shlex.split(cmdline_path.read_text(encoding="utf-8").strip(), posix=False)
-        elif baked_options:
-            current_opts = shlex.split(baked_options, posix=False)
-        else:
-            proc_content = Path("/proc/cmdline").read_text(encoding="utf-8").strip()
-            volatile_flags = {"single", "1", "s", "S", "rescue", "emergency", "nomodeset", "systemd.unit=rescue.target", "systemd.unit=emergency.target"}
-            raw_opts = shlex.split(proc_content, posix=False)
-            
-            for opt in raw_opts:
-                if opt in volatile_flags or opt.startswith("BOOT_IMAGE=") or opt.startswith("initrd="):
-                    continue
-                current_opts.append(opt)
-                
-        updated_opts = generate_parameter_string(current_opts, state, vfio_ids)
-        if atomic_write(cmdline_path, updated_opts + "\n"):
-            console.print(f"[bold green]  ✓ {state.capitalize()}ed persistent parameters in /etc/kernel/cmdline (UKI).[/bold green]")
-        else:
-            console.print(f"  [dim]cmdline already properly configured for {state} state.[/dim]")
+def active_guest_claims(claim):
+    if not common.shutil.which('virsh'):
+        return
+    names = checked(['virsh', '-c', 'qemu:///system', 'list', '--name']).splitlines()
+    for name in names:
+        if not name.strip():
+            continue
+        root = ET.fromstring(checked(['virsh', '-c', 'qemu:///system', 'dumpxml', name]))
+        for address in root.findall('./devices/hostdev/source/address'):
+            if address.get('domain') is None:
+                continue
+            bdf = f"{int(address.get('domain'), 16):04x}:{int(address.get('bus'), 16):02x}:{int(address.get('slot'), 16):02x}.{int(address.get('function'), 16):x}"
+            if bdf in claim.addrs:
+                fail(f'Running VM {name} uses {bdf}. Shut that guest down before changing its boot configuration.')
 
-def toggle_modprobe(state: str) -> None:
-    """Safely activates/deactivates modprobe rules via renaming to preserve IDs."""
-    active = Path("/etc/modprobe.d/vfio.conf")
-    disabled = Path("/etc/modprobe.d/vfio.conf.disabled")
-    
-    if state == "bind":
-        if disabled.exists():
-            shutil.move(disabled, active)
-            console.print(f"[bold green]  ✓ Restored modprobe rules ({active.name}).[/bold green]")
-        elif active.exists():
-            console.print(f"  [dim]Modprobe rules already active.[/dim]")
+
+def foreign_config_check():
+    disabled = common.state_load()
+    if disabled.get('action') == 'disabled' or disabled.get('pending_action') or any(
+            p.exists() for p in (common.UDEV_RULE, common.MODPROBE_FILE, common.MKINITCPIO_DROPIN, common.ASUS_TMPFILES)):
+        fail('GPU-disable configuration is active. Run gpu_disable_toggle.py --enable and complete its recovery before using VFIO.')
+    seen = set()
+    for directory in ('/etc/modprobe.d', '/run/modprobe.d', '/usr/local/lib/modprobe.d', '/usr/lib/modprobe.d'):
+        for path in sorted(Path(directory).glob('*.conf')):
+            if path.name in seen:
+                continue
+            seen.add(path.name)
+            if path == MODPROBE:
+                continue
+            text = path.read_text(encoding='utf-8').replace('\\\n', '')
+            if re.search(r'^\s*options\s+vfio[-_]pci\b.*\bids=', text, re.MULTILINE):
+                fail(f'{path} also sets vfio-pci ids. Consolidate it into the Phase 3 configuration first.')
+
+
+def host_modprobe(text, ids, drivers):
+    """Adopt a Phase 3 file, retaining rules for other VFIO devices."""
+    output = []
+    has_other_ids = False
+    for line in text.splitlines():
+        if re.prefixmatch(r'\s*options\s+vfio[-_]pci\b', line):
+            tokens = shlex.split(line, comments=True)
+            kept = []
+            for token in tokens[2:]:
+                if token.startswith('ids='):
+                    values = set(token[4:].split(',')) - set(ids) - {''}
+                    if values:
+                        has_other_ids = True
+                        kept.append('ids=' + ','.join(sorted(values)))
+                else:
+                    kept.append(token)
+            if kept:
+                output.append('options vfio-pci ' + ' '.join(kept))
+        elif re.prefixmatch(r'\s*blacklist\s+', line):
+            tokens = shlex.split(line, comments=True)
+            if len(tokens) < 2 or tokens[1].replace('-', '_') not in drivers:
+                output.append(line)
         else:
-            bail("No vfio configuration found. Please run Phase 3 Setup.")
-            
-    elif state == "unbind":
-        if active.exists():
-            shutil.move(active, disabled)
-            console.print(f"[bold green]  ✓ Disabled modprobe rules (renamed to {disabled.name}).[/bold green]")
-        elif disabled.exists():
-            console.print(f"  [dim]Modprobe rules already disabled.[/dim]")
-        else:
-            console.print("  [dim]No active vfio configuration found to disable.[/dim]")
+            output.append(line)
+    if not has_other_ids:
+        output = [line for line in output if not re.prefixmatch(r'\s*softdep\s+.*\bpre:\s+vfio[-_]pci\s*$', line)]
+    return '\n'.join(output).rstrip() + '\n' if any(line.strip() and not line.lstrip().startswith('#') for line in output) else None
 
-def rebuild_initramfs() -> None:
-    console.print("\n[bold blue]==>[/bold blue] [bold]Recompiling Initramfs (mkinitcpio -P)...[/bold]")
-    try:
-        with console.status("[cyan]Building images... this may take a moment.[/cyan]"):
-            subprocess.run(["mkinitcpio", "-P"], check=True, capture_output=True, text=True)
-        console.print("[bold green]  ✓ Initramfs regeneration successful.[/bold green]")
-    except subprocess.CalledProcessError as e:
-        console.print(Panel(f"[bold red]mkinitcpio failed![/bold red]\n{e.stderr}", border_style="red"))
-        sys.exit(1)
 
-def prompt_reboot() -> None:
-    print()
-    try:
-        choice = input("Reboot system now to apply changes? [y/N]: ").strip().lower()
-        if choice == 'y':
-            console.print("[bold yellow]Initiating reboot...[/bold yellow]")
-            subprocess.run(["reboot"])
-    except KeyboardInterrupt:
-        print()
+def module_payload():
+    return (MARKER + '\nMODULES=(vfio_pci "${MODULES[@]}")\n'
+            'if [[ ! " ${HOOKS[*]} " == *" modconf "* ]]; then HOOKS+=(modconf); fi\n')
 
-# ==============================================================================
-# MAIN EXECUTION
-# ==============================================================================
-def main() -> None:
-    parser = argparse.ArgumentParser(description="VFIO GPU State Manager")
-    group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--bind", action="store_true", help="Isolate GPU for VM (VFIO Mode)")
-    group.add_argument("--unbind", action="store_true", help="Return GPU to Host (NVIDIA Mode)")
-    
-    args = parser.parse_args()
-    console.clear()
-    
-    vfio_ids = get_vfio_ids()
-    
+
+def validate_modules(payload):
+    modules, _, hooks = common.effective_config(managed_payload=payload, managed_dropin=MODULES)
+    if not modules or modules[0].replace('-', '_') != 'vfio_pci' or 'modconf' not in hooks:
+        fail('Later mkinitcpio configuration overrides the early VFIO modules or modconf hook.')
+    if 'kms' in hooks and hooks.index('modconf') > hooks.index('kms'):
+        fail('modconf must precede kms in the effective mkinitcpio HOOKS.')
+
+
+def boot_payload(entry, desired):
+    if entry.kind == 'type1':
+        text = entry.path.read_text(encoding='utf-8')
+        result, added = [], False
+        for line in text.splitlines(keepends=True):
+            if re.prefixmatch(r'[ \t]*options(?:[ \t]|$)', line):
+                if not added:
+                    result.append('options ' + merge_options(common.read_target_options(entry), desired) + '\n')
+                    added = True
+            else:
+                result.append(line)
+        if not added:
+            result.append('options ' + merge_options('', desired) + '\n')
+        return {str(entry.path): ''.join(result)}
+    base = next((p for p in (common.KERNEL_CMDLINE, common.VENDOR_CMDLINE) if p.is_file()), None)
+    foreign = [p for p in common.CMDLINE_D.glob('*.conf') if p != CMDLINE_FRAGMENT]
+    if base is None and foreign:
+        # Fragments already own persistent root/options; own only our fragment.
+        payload = ' '.join(f'{key}={desired[key]}' for key in KEYS if key in desired)
+        return {str(CMDLINE_FRAGMENT): payload + '\n' if payload else None}
+    seed = base.read_text(encoding='utf-8') if base else entry.options
+    if not seed:
+        seed = ' '.join(t for t in common.cmdline_tokens(common._read(Path('/proc/cmdline')))
+                        if t not in common.VOLATILE_TOKENS and not t.startswith(common.VOLATILE_PREFIXES))
+    return {str(common.KERNEL_CMDLINE): merge_options(seed, desired) + '\n', str(CMDLINE_FRAGMENT): None}
+
+
+def plan(args, state):
+    if state.get('mode') == 'unbind' and not state.get('pending') and args.slot and common.normalize_slot(args.slot, state['slots']) is None:
+        state = {}
+    if state and args.entry and args.entry != state['boot_id']:
+        fail('The saved claim belongs to another boot entry. Finish --unbind before selecting a new entry.')
+    devices = common.enumerate_pci()
+    claim = claim_for(devices, args, state)
+    if not claim.functions:
+        fail('No GPU slot selected.')
+    foreign_config_check()
     if args.bind:
-        console.print(Panel(f"[bold green]Engaging VFIO Mode[/bold green]\nTarget IDs: {vfio_ids}", expand=False))
-        toggle_modprobe("bind")
-        toggle_mkinitcpio("bind")
-        toggle_bootloader("bind", vfio_ids)
-        rebuild_initramfs()
-        console.print("\n[bold green]=== SYSTEM READY FOR VM ===[/bold green]")
-        
-    elif args.unbind:
-        console.print(Panel(f"[bold yellow]Engaging Host Mode[/bold yellow]\nReleasing IDs: {vfio_ids}", expand=False))
-        toggle_modprobe("unbind")
-        toggle_mkinitcpio("unbind")
-        toggle_bootloader("unbind", vfio_ids)
-        rebuild_initramfs()
-        console.print("\n[bold green]=== SYSTEM READY FOR HOST GRAPHICS ===[/bold green]")
+        common.guard_claim(claim, devices, args.allow_boot_vga)
+        common.check_id_collisions(devices, claim)
+        check_groups(claim, require=False)
+    active_guest_claims(claim)
+    entry = common.resolve_boot_entry(state if state else ({'boot_id': args.entry} if args.entry else None))
+    images = common.preflight(entry, enable=True, managed_cmdline=CMDLINE_FRAGMENT)
+    softdeps, blacklist = common.drm_blacklist_for(devices, claim)
+    # The Phase 3 selection can include vendors sharing a host driver. Never
+    # blacklist survivors, including shared HDMI/audio/USB infrastructure.
+    drivers = {*common.VENDOR_DRM.get(d.vendor, ()) for d in claim.functions if d.klass4 in common.GPU_CLASSES}
+    if state:
+        host_options = state['host_options']
+        host_files = state['host_files']
+    else:
+        adopted = MODPROBE.exists()
+        for path in (MODPROBE, MODULES, CMDLINE_FRAGMENT):
+            if path.exists() and not re.search(r'^# Managed by (?:Arsonix|Dusky)', path.read_text(encoding='utf-8'), re.MULTILINE):
+                fail(f'{path} is not a recognized managed file. Preserve/consolidate it before adopting this toggle.')
+        current = parameters(common.read_target_options(entry))
+        host_options = remove_claim(current, claim.ids, drivers) if adopted else current
+        host_files = {str(MODPROBE): host_modprobe(MODPROBE.read_text(encoding='utf-8'), claim.ids, drivers) if adopted else None,
+                      str(MODULES): None}
+    desired = dict(host_options)
+    files = dict(host_files)
+    if args.bind:
+        vendor = common.cpu_vendor()
+        if vendor in ('intel', 'amd'):
+            key = vendor + '_iommu'
+            values = set(desired.get(key, '').strip('"').split(',')) - {'', 'off'}
+            if vendor == 'intel':
+                values.add('on')
+            elif args.amd_force_enable:
+                values.add('force_enable')
+            if values:
+                desired[key] = ','.join(sorted(values))
+            else:
+                desired.pop(key, None)
+        desired['iommu'] = 'pt'
+        for key, values in (('vfio-pci.ids', claim.ids), ('module_blacklist', blacklist)):
+            values = set(values) | set(desired.get(key, '').strip('"').split(',')) - {''}
+            if values:
+                desired[key] = ','.join(sorted(values))
+        inherited = host_files.get(str(MODPROBE)) or ''
+        extra_options = []
+        for line in inherited.splitlines():
+            if re.prefixmatch(r'\s*options\s+vfio[-_]pci\b', line):
+                for option in shlex.split(line, comments=True)[2:]:
+                    if option.startswith('ids='):
+                        desired['vfio-pci.ids'] = ','.join(sorted(set(desired['vfio-pci.ids'].split(',')) | set(option[4:].split(','))))
+                    else:
+                        extra_options.append(option)
+        inherited = re.sub(r'^\s*options\s+vfio[-_]pci\s+.*\n?', '', inherited, flags=re.MULTILINE)
+        files[str(MODPROBE)] = (MARKER + '\n' + inherited + 'options vfio-pci ids=' + desired['vfio-pci.ids']
+                               + (' ' + shlex.join(extra_options) if extra_options else '') + '\n'
+                               + ''.join(f'softdep {m} pre: vfio-pci\n' for m in sorted(softdeps))
+                               + ''.join(f'blacklist {m}\n' for m in sorted(blacklist)))
+        files[str(MODULES)] = module_payload()
+        validate_modules(files[str(MODULES)])
+    files.update(boot_payload(entry, desired))
+    return claim, entry, images, desired, files, host_options, host_files
 
-    prompt_reboot()
 
-if __name__ == "__main__":
-    main()
+def apply_files(files):
+    changed = False
+    for name, payload in files.items():
+        path = Path(name)
+        if payload is None:
+            if path.exists():
+                common.remove_file(path)
+                changed = True
+        else:
+            changed = common.atomic_write(path, payload) or changed
+    return changed
+
+
+def files_match(files):
+    return all((not Path(name).exists() if payload is None else
+                Path(name).is_file() and Path(name).read_text(encoding='utf-8') == payload)
+               for name, payload in files.items())
+
+
+def verify_images(images, binding):
+    for image in images:
+        listing = checked(['lsinitcpio', '--nocolor', '--list', str(image)], timeout=120)
+        paths = {line.removeprefix('./') for line in listing.splitlines()}
+        if binding and str(MODPROBE).lstrip('/') not in paths:
+            fail(f'{image} is missing the VFIO modprobe configuration.')
+        if binding and not any(re.search(r'/vfio[-_]pci\.ko(?:\.|$)', p) for p in paths):
+            fail(f'{image} is missing vfio_pci.')
+        if not binding and not MODPROBE.exists() and str(MODPROBE).lstrip('/') in paths:
+            fail(f'{image} still contains the removed VFIO configuration.')
+
+
+def status(state):
+    devices = common.enumerate_pci()
+    common.render_gpus(devices, common.gpu_slots(devices))
+    if not state:
+        print('No toggle state recorded. Use --bind or --unbind to select/adopt a slot.')
+        return 2
+    print(f"Staged mode: {state['mode']}; incomplete operation: {state['pending']}; entry: {state['boot_id']}")
+    live = {d.addr: d for d in devices}
+    ok = not state['pending'] and files_match(state.get('staged_files', {}))
+    if not files_match(state.get('staged_files', {})):
+        print('Staged configuration has drifted; rerun the requested action to repair it.')
+    for record in state['functions']:
+        dev = live.get(record['addr'])
+        good = bool(dev and dev.ids == record['ids'] and
+                    (dev.driver == 'vfio-pci' if state['mode'] == 'bind' else dev.driver not in (None, 'vfio-pci')))
+        print(f"{record['addr']}: {dev.driver if dev else 'absent'}; {'applied' if good else 'not applied'}")
+        ok = ok and good
+    if state['mode'] == 'bind' and ok:
+        check_groups(common.Claim([live[r['addr']] for r in state['functions']]), require=True)
+    print('Live state verified.' if ok else 'Reboot is pending or a driver/device needs investigation. Rerun the requested action if staging was interrupted.')
+    return 0 if ok else 2
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
+    actions = parser.add_mutually_exclusive_group(required=True)
+    actions.add_argument('--bind', action='store_true', help='stage VFIO isolation for next boot')
+    actions.add_argument('--unbind', action='store_true', help='stage host-driver return for next boot')
+    actions.add_argument('--status', action='store_true', help='compare saved intent and actual drivers')
+    parser.add_argument('--slot', help='PCI GPU slot, with optional domain/function')
+    parser.add_argument('--entry', help='systemd-boot entry ID on first use')
+    parser.add_argument('--allow-boot-vga', action='store_true', help='explicitly allow the host boot/last GPU')
+    parser.add_argument('--amd-force-enable', action='store_true', help='force AMD-Vi only for firmware requiring it')
+    parser.add_argument('--dry-run', action='store_true', help='preflight and show plan without writes/build/reboot')
+    parser.add_argument('--no-rebuild', action='store_true', help='stage only; leave an incomplete journal until rebuilt')
+    args = parser.parse_args()
+    if args.status and any((args.slot, args.entry, args.allow_boot_vga, args.amd_force_enable, args.dry_run, args.no_rebuild)):
+        parser.error('--status takes no additional options')
+    common.check_versions()
+    if not args.status:
+        common.elevate()
+    # Same lock as the GPU disabler: mutually exclusive operations across tools.
+    with COMMON_PATH.open('rb') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            fail('Another GPU toggle operation is running.')
+        state = saved_state()
+        if args.status:
+            return status(state)
+        claim, entry, images, desired, files, host_options, host_files = plan(args, state)
+        mode = 'bind' if args.bind else 'unbind'
+        print(f"Stage {mode}: {', '.join(claim.addrs)}; IDs {', '.join(claim.ids)}; boot entry {entry.ident}")
+        for name, payload in files.items():
+            print(f"{'Remove' if payload is None else 'Write'} {name}")
+            if payload is not None:
+                print(payload.rstrip())
+        if args.dry_run:
+            print('Preview complete; no writes, image rebuild or reboot.')
+            return 0
+        converged = bool(state and not state['pending'] and state['mode'] == mode
+                         and state.get('staged_files') == files and files_match(files))
+        if converged:
+            try:
+                verify_images(images, args.bind)
+                refreshed = common.find_boot_entry(ident=entry.ident)
+                converged = bool(refreshed and parameters(refreshed.options if entry.kind == 'type2' else common.read_target_options(refreshed)) == desired)
+            except RuntimeError:
+                converged = False
+        if converged:
+            print('Already convergent; no writes or rebuild. Use --status to verify the live drivers.')
+            return 0
+        data = {'schema': 1, 'mode': mode, 'pending': True, 'boot_id': entry.ident,
+                'slots': claim.slots, 'functions': [{'addr': d.addr, 'ids': d.ids} for d in claim.functions],
+                'host_options': host_options, 'host_files': host_files, 'staged_files': files}
+        # Durable journal precedes the first configuration write; retry the same
+        # action after a build/write interruption. Never snapshot a partial bind.
+        save(data)
+        apply_files(files)
+        if args.no_rebuild:
+            print('Configuration staged, images NOT rebuilt. Rerun without --no-rebuild before rebooting.')
+            return 2
+        subprocess.run(['mkinitcpio', '-P'], check=True, stdin=subprocess.DEVNULL)
+        verify_images(images, args.bind)
+        refreshed = common.find_boot_entry(ident=entry.ident)
+        if refreshed is None or parameters(refreshed.options if entry.kind == 'type2' else common.read_target_options(refreshed)) != desired:
+            fail('Staged boot options do not match the requested mode. Journal retained; do not reboot.')
+        data['pending'] = False
+        save(data)
+        phase = load_json(PHASE_STATE)
+        phase.setdefault('schema', 2)
+        phase.update(vfio_ids=claim.ids, vfio_addrs=claim.addrs, vfio_nodedevs=['pci_' + a.replace(':', '_').replace('.', '_') for a in claim.addrs],
+                     vfio_slot=claim.slots[0])
+        common.atomic_write(PHASE_STATE, json.dumps(phase, indent=2, sort_keys=True) + '\n')
+        print('Boot configuration verified. Reboot to apply; --status verifies actual drivers afterward. No reboot was initiated.')
+        return 0
+
+
+if __name__ == '__main__':
+    try:
+        raise SystemExit(main())
+    except KeyboardInterrupt:
+        sys.exit('Interrupted. If staging began, its journal is retained; rerun the requested action before rebooting.')
+    except (OSError, ValueError, KeyError, RuntimeError, subprocess.CalledProcessError, ET.ParseError) as exc:
+        sys.exit(f'VFIO toggle failed: {exc}')
