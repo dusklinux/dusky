@@ -13,6 +13,11 @@ installed already. Keep the shared-memory size large enough for the maximum
 guest resolution. New Windows passthrough domains retain VGA/SPICE for setup and
 recovery before the IDD is installed.
 
+Deployment runs the packaged `virt-install` with system executable paths first,
+so a local `python3` override does not mix its interpreter with another Python
+version's compiled bindings. The setup scripts themselves require Python 3.15+;
+the final ISO must ship a matching set of Python and distribution bindings.
+
 Copy this guest directory and `looking-glass-idd-setup.exe` into Windows. The
 `setup_vdd.py` filename is retained for the bootstrapper, but it now installs the
 official IDD, bundled IVSHMEM driver and direct input driver. It does not install
@@ -31,14 +36,53 @@ For an offline installation, provide:
 Run from PowerShell:
 
 ```powershell
-.\00_bootstrap.ps1 -PythonExe .\python\python.exe -VirtioIso .\virtio-win.iso -OpenSshSource .\FoD
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\00_bootstrap.ps1 -PythonExe .\python\python.exe -VirtioIso .\virtio-win.iso -OpenSshSource .\FoD
 ```
 
+The process-only execution policy above allows the local bootstrapper to start
+on fresh Windows without changing the machine's execution policy.
 The bootstrapper requests Administrator access when necessary. Use `-SkipSpice`
 only when intentionally omitting SPICE clipboard setup. Failures stop the
 bootstrapper. Exit code `3010` requests a Windows restart. Rerun the bootstrapper afterward to
 finish any remaining steps, then verify the Looking Glass display, direct input
 and clipboard before relying on them.
+
+For a first silent IDD installation, Windows must already trust the driver
+publisher. Approve the publisher during an interactive driver installation, or
+provide its certificate explicitly with `-IddPublisherCertificate .\publisher.cer`
+(`setup_vdd.py --publisher-certificate .\publisher.cer` when used directly).
+This imports that supplied certificate into the local machine's Trusted
+Publishers store. It does not modify the root certificate store or enable test
+signing. Prepare the certificate with the paired IDD files before an offline
+installation. For example, after the installer has extracted its files:
+
+```powershell
+$catalog = Join-Path $env:ProgramFiles 'Looking Glass (IDD)\LGIdd.cat'
+$signature = Get-AuthenticodeSignature $catalog
+$signature | Format-List Status,StatusMessage,SignerCertificate
+# Verify the expected publisher and a Valid signature before exporting.
+if ($signature.Status -ne 'Valid') { throw 'Resolve the certificate chain before continuing.' }
+Export-Certificate -Cert $signature.SignerCertificate -FilePath .\publisher.cer
+```
+
+An unknown publisher can cause a silent installer to exit with code 1. Its
+driver log is `%SystemRoot%\inf\setupapi.dev.log`; rerun with the supplied
+publisher certificate after resolving that cause. Microsoft documents this
+[requirement for silent driver installation](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/trusted-publishers-certificate-store).
+
+For initial setup, sign in through the VGA/QXL SPICE console. With both
+monitors present, Windows can show the sign-in screen only on the original
+display. The IDD's user helper starts after sign-in and, by default, makes
+Looking Glass the only active monitor. The SPICE console can then go black.
+Close that viewer and launch `50_win.py view --vm VM_NAME` to use Looking Glass.
+Opening another SPICE viewer can disconnect Looking Glass's SPICE connection
+and close its client; relaunch Looking Glass after finishing console access.
+A connected client and valid frame metadata alone do not prove that a usable
+desktop is visible.
+
+`60_configure_client_ini.py` selects `autoResize=no` and `setGuestRes=yes`:
+Windows follows the client window size. Enabling both options prevents the
+current client from starting.
 
 Python install manager also supports offline runtime indexes. Prepare one on a
 connected Windows machine with `py install --download=python 3.15`, copy that
@@ -46,12 +90,54 @@ whole directory, install Python install manager in the guest, and pass
 `-PythonIndex .\python\index.json`. See the [Python offline installation
 instructions](https://docs.python.org/3.15/using/windows.html#offline-installs).
 
-SSH setup preserves existing passwords when unattended. An interactive run
+The bootstrapper preserves existing passwords and never prompts to change one.
+A direct interactive `setup_ssh.py` run
 allows a password change; Enter keeps the current password. To append a host
 public key, run `python .\setup_ssh.py --public-key .\host.pub` after installation.
+Pass `--non-interactive` for automation, including guest-agent commands: a
+Windows process can still have a console despite being launched unattended.
 
 For RDP, enable Remote Desktop in Windows Settings and use a supported Windows
 11 Pro/Enterprise/Education edition; Home cannot host RDP. Authenticate with the
 account password, rather than a Windows Hello PIN. For an intentionally blank
 local-account password, the launcher accepts `--pass ''`; Windows must already
 allow this logon and have NLA disabled. The scripts do not change those policies.
+
+## Initial access with the QEMU guest agent
+
+New domains created by `deploy_vm.py` include both SPICE and QEMU guest-agent
+channels. For an existing VM, add this inside `<devices>` in its libvirt XML:
+
+```xml
+<channel type='unix'>
+  <target type='virtio' name='org.qemu.guest_agent.0'/>
+</channel>
+```
+
+Mount the VirtIO-Win ISO in the VM, then open **This PC → VirtIO-Win DVD** and run
+`virtio-win-guest-tools.exe` as Administrator with its default components.
+Power the guest off and start it again if its device configuration changed;
+an in-guest restart does not apply new persistent libvirt hardware. After the
+drivers and service start, check from Linux:
+
+```sh
+virsh -c qemu:///system qemu-agent-command VM_NAME '{"execute":"guest-ping"}'
+```
+
+A successful reply is `{"return":{}}`. This provides management access without
+the Microsoft account password; the Windows Hello PIN is not an SSH/RDP password.
+For RDP, enable **Settings → System → Remote Desktop**, retain NLA for a
+password-based account, and allow the built-in Remote Desktop firewall rules.
+
+A guest power cycle preserves a disk stored in host tmpfs. A host reboot does
+not. `backup_restore_virt_xml_config.py` backs up configuration, not VM disks:
+copy the powered-off disk to persistent storage separately before rebooting
+the host.
+
+See [LIVE_TEST_NOTES.md](LIVE_TEST_NOTES.md) for exercised versions, results and
+remaining validation limits.
+
+The regression checks do not install or change services. From the host's
+`windows` directory, run `python3 -m unittest discover -s tests -v`. Inside the
+copied guest directory, run `python .\tests\test_powershell_helpers.py -v` to
+check missing-service handling and real PowerShell error propagation.

@@ -23,11 +23,16 @@ def ps_quote(value: str) -> str:
 def powershell(command: str) -> str:
     prefix = "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); "
     result = subprocess.run(
-        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", prefix + command],
+        # Optional service probes can leave $? false without a fatal error.
+        # Return success only after the block finishes; Stop still propagates
+        # terminating errors before this explicit exit.
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+         prefix + "& { " + command + "\n}; exit 0"],
         capture_output=True, text=True, encoding="utf-8", check=False,
     )
     if result.returncode:
-        raise RuntimeError(result.stderr.strip() or result.stdout.strip())
+        raise RuntimeError(result.stderr.strip() or result.stdout.strip()
+                           or f"PowerShell failed (exit {result.returncode}).")
     return result.stdout.strip()
 
 
@@ -60,6 +65,8 @@ def main() -> int:
     media.add_argument("--source", type=Path, help="offline Windows Features-on-Demand source")
     media.add_argument("--openssh-zip", type=Path, help="local Win32-OpenSSH ZIP for this architecture")
     parser.add_argument("--public-key", type=Path, help="append this host key for the administrator account")
+    parser.add_argument("--non-interactive", action="store_true",
+                        help="keep the account password without prompting, even with a console attached")
     args = parser.parse_args()
     if sys.platform != "win32":
         parser.error("Run this script inside Windows 11.")
@@ -79,7 +86,7 @@ Start-Service sshd
 (Get-Service sshd).WaitForStatus('Running', [TimeSpan]::FromSeconds(30))
 """)
     username = os.environ["USERNAME"]
-    if sys.stdin.isatty():
+    if not args.non_interactive and sys.stdin.isatty():
         while True:
             password = getpass.getpass(f"New password for {username} (Enter to keep current): ")
             if not password:

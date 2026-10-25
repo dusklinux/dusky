@@ -107,6 +107,9 @@ def merge_config(content: str, shm_file: str) -> str:
     required = {
         "lgmp": {"shmdevice": f"shmDevice={shm_file}"},
         "spice": {"enable": "enable=yes", "clipboard": "clipboard=yes"},
+        # Current IDD clients default to setGuestRes=yes. Legacy autoResize=yes
+        # makes that configuration fatal rather than merely changing sizing.
+        "win": {"autoresize": "autoResize=no", "setguestres": "setGuestRes=yes"},
     }
     emitted: set[str] = set()
     result: list[str] = []
@@ -157,7 +160,8 @@ fractionScale=yes
 warpSupport=yes
 
 [win]
-autoResize=yes
+autoResize=no
+setGuestRes=yes
 keepAspect=yes
 dontUpscale=yes
 noScreensaver=yes

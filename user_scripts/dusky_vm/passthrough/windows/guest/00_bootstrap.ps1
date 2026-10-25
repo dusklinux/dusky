@@ -11,6 +11,7 @@ param(
     [string]$PythonExe,
     [string]$PythonIndex,
     [string]$IddInstaller,
+    [string]$IddPublisherCertificate,
     [string]$VirtioIso,
     [string]$OpenSshSource,
     [string]$OpenSshZip,
@@ -118,7 +119,9 @@ try {
     }
 
     if (-not $SkipSsh) {
-        $sshArgs = @((Join-Path $scriptDir 'setup_ssh.py'))
+        # A non-interactive PowerShell process can still attach a Windows
+        # console. Do not let Python's isatty() trigger a hidden password prompt.
+        $sshArgs = @((Join-Path $scriptDir 'setup_ssh.py'), '--non-interactive')
         if ($OpenSshSource) { $sshArgs += @('--source', $OpenSshSource) }
         if ($OpenSshZip) { $sshArgs += @('--openssh-zip', $OpenSshZip) }
         & $python @sshArgs
@@ -126,6 +129,7 @@ try {
     }
     $iddArgs = @((Join-Path $scriptDir 'setup_vdd.py'))
     if ($IddInstaller) { $iddArgs += @('--installer', $IddInstaller) }
+    if ($IddPublisherCertificate) { $iddArgs += @('--publisher-certificate', $IddPublisherCertificate) }
     & $python @iddArgs
     if ($LASTEXITCODE -eq 3010) { $restartRequired = $true }
     elseif ($LASTEXITCODE -ne 0) { throw "Looking Glass IDD setup failed ($LASTEXITCODE)." }

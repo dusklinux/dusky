@@ -203,12 +203,17 @@ def in_repos(pkg: str) -> bool:
     return run(["pacman", "-Si", pkg], timeout=30).ok
 
 
-def current_client_available() -> bool:
+def current_client_available(operator: pwd.struct_passwd) -> bool:
     client = shutil.which("looking-glass-client")
     if client is None:
         return False
     # --help prints to stderr and may return nonzero; inspect the option list.
-    help_result = run([client, "--help"], timeout=15)
+    # The client refuses even --help as root. Phase 5 elevates before probing,
+    # so inspect it as the desktop user instead of rejecting a working build.
+    argv = [client, "--help"]
+    if os.geteuid() == 0:
+        argv = ["sudo", "-u", operator.pw_name, "--", *argv]
+    help_result = run(argv, timeout=15)
     options = help_result.out + "\n" + help_result.err
     return all(name in options for name in (
         "lgmp:shmDevice", "spice:enable", "spice:host", "spice:port",
@@ -653,10 +658,10 @@ def main() -> None:
     operator = resolve_operator()
     if not args.no_packages:
         packages = ["freerdp"]
-        if not current_client_available():
+        if not current_client_available(operator):
             packages.append("looking-glass-git")
         install_packages(packages, operator)
-    if not current_client_available():
+    if not current_client_available(operator):
         bail("A current Looking Glass IDD client with Wayland and SPICE support is required. "
              "Install the matching development build (looking-glass-git), or build the "
              "client from the same source release as your Windows IDD installer.")
@@ -689,7 +694,7 @@ def main() -> None:
             "  <memballoon model='none'/>\n\n"
             "No xmlns:qemu, no <qemu:commandline>, no kvmfr kernel module.\n"
             f"Client:  looking-glass-client -f /dev/shm/{SHM_NAME}\n"
-            "Guest:   install the Looking Glass IDD (or host application) matching the client build.",
+            "Guest:   install the Looking Glass IDD matching the client build.",
             title="libvirt-native configuration",
             border_style="cyan",
         )

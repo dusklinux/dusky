@@ -83,11 +83,13 @@ class Cmd:
         return self.code == 0
 
 
-def run(argv: list[str], *, check: bool = False, timeout: float = 300.0) -> Cmd:
+def run(argv: list[str], *, check: bool = False, timeout: float = 300.0,
+        env: dict[str, str] | None = None) -> Cmd:
     try:
         proc = subprocess.run(
             argv, check=False, timeout=timeout, text=True,
             capture_output=True, stdin=subprocess.DEVNULL,
+            env=env,
         )
         res = Cmd(argv, proc.returncode, (proc.stdout or "").strip(), (proc.stderr or "").strip())
     except subprocess.TimeoutExpired:
@@ -348,6 +350,7 @@ def build_command(spec: Spec) -> list[str]:
         "--controller", "type=usb,model=qemu-xhci",
         "--input", "type=tablet,bus=usb",
         "--channel", "spicevmc,target.type=virtio,target.name=com.redhat.spice.0",
+        "--channel", "unix,target.type=virtio,target.name=org.qemu.guest_agent.0",
         "--disk",
         f"path={spec.disk},format=qcow2,bus=virtio,driver.cache=none,"
         "driver.io=io_uring,driver.discard=unmap",
@@ -390,13 +393,13 @@ def generate_xml(spec: Spec) -> str:
     console.print("\n[bold blue]==>[/bold blue] [bold]Composing baseline with virt-install[/bold]")
     cmd = build_command(spec)
     console.print(f"[dim]{' '.join(cmd)}[/dim]")
-    res = run(cmd, timeout=300)
+    # Packaged virt-install uses /usr/bin/env python3. Prefer the distribution's
+    # executable path so its interpreter and compiled bindings stay paired,
+    # even when this script runs with a locally installed Python in PATH.
+    env = {**os.environ, "PATH": os.defpath + os.pathsep + os.environ.get("PATH", "")}
+    res = run(cmd, timeout=300, env=env)
     if not res.ok or not res.out.lstrip().startswith("<"):
-        retry = run([*cmd[:-1], "--print-xml", "2"], timeout=300)
-        if retry.ok and retry.out.lstrip().startswith("<"):
-            res = retry
-        else:
-            bail(f"virt-install refused the specification:\n{res.err or res.out}")
+        bail(f"virt-install refused the specification:\n{res.err or res.out}")
     console.print("[bold green]  ok[/bold green] Baseline domain XML generated.")
     return res.out
 

@@ -32,17 +32,24 @@ def find_installer(explicit: Path | None) -> Path:
 def powershell(command: str) -> str:
     prefix = "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); "
     result = subprocess.run(
-        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", prefix + command],
+        # An absent optional Get-Service leaves $? false even with
+        # SilentlyContinue. Explicit success avoids a spurious exit 1; genuine
+        # terminating errors still stop the command before exit 0.
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+         prefix + "& { " + command + "\n}; exit 0"],
         capture_output=True, text=True, encoding="utf-8", check=False,
     )
     if result.returncode:
-        raise RuntimeError(result.stderr.strip() or result.stdout.strip())
+        raise RuntimeError(result.stderr.strip() or result.stdout.strip()
+                           or f"PowerShell failed (exit {result.returncode}).")
     return result.stdout.strip()
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument("--installer", type=Path, help="matching local Looking Glass IDD installer")
+    parser.add_argument("--publisher-certificate", type=Path,
+                        help="explicitly trust this supplied publisher certificate for silent driver installation")
     args = parser.parse_args()
     if sys.platform != "win32":
         parser.error("Run this script inside Windows 11.")
@@ -51,6 +58,11 @@ def main() -> int:
     if not ctypes.windll.shell32.IsUserAnAdmin():
         parser.error("Run 00_bootstrap.ps1 or an Administrator terminal first.")
     installer = find_installer(args.installer)
+    if args.publisher_certificate is not None:
+        certificate = args.publisher_certificate.expanduser().resolve(strict=True)
+        quoted = "'" + str(certificate).replace("'", "''") + "'"
+        powershell(f"Import-Certificate -FilePath {quoted} "
+                   r"-CertStoreLocation Cert:\LocalMachine\TrustedPublisher | Out-Null")
     print(f"Installing Looking Glass IDD from {installer}")
     # NSIS customGUIInit selects the old-host disabling section only in GUI
     # mode. A silent install must stop that competing shared-memory server.
@@ -61,7 +73,12 @@ def main() -> int:
     if result.returncode not in (0, 3010):
         if result.returncode == 13:
             raise RuntimeError("IDD installation failed and requires a Windows restart before retrying (exit 13).")
-        raise RuntimeError(f"IDD installer failed (exit {result.returncode}).")
+        raise RuntimeError(
+            f"IDD installer failed (exit {result.returncode}). Check "
+            r"%SystemRoot%\inf\setupapi.dev.log. A fresh Windows installation may "
+            "require publisher approval before a silent driver install; see README.md "
+            "and --publisher-certificate."
+        )
     # The NSIS wrapper sets its reboot flag for helper exit 12, but can itself
     # return 0. Query the exact hardware IDs from LGIddInstall.c, not names.
     status = powershell(r"""
