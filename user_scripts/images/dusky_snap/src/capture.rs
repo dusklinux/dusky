@@ -150,6 +150,70 @@ fn window_targets(
 
 pub use crate::process::command;
 
+struct WindowCaptureStyle {
+    cleanup: String,
+}
+
+impl WindowCaptureStyle {
+    fn new(identifier: &str) -> Result<Self> {
+        let identifier = serde_json::to_string(identifier)?;
+        let select =
+            format!("for _,w in ipairs(hl.get_windows()) do if w.stable_id=={identifier} then ");
+        let style = Self {
+            cleanup: format!(
+                "{select}hl.dispatch(hl.dsp.window.tag({{window=w,tag=\"-dusky-snap-capture\"}})) end end"
+            ),
+        };
+        // A single reusable rule, scoped to the selected window by a temporary
+        // tag. no_anim makes the dim change settle on the capture frame, without
+        // a sleep or changing focus. Removing the tag restores the user's rules.
+        let script = format!(
+            "hl.window_rule({{name=\"dusky_snap_capture\",match={{tag=\"dusky-snap-capture\"}},no_dim=true,no_anim=true}}); \
+             for _,w in ipairs(hl.get_windows({{tag=\"dusky-snap-capture\"}})) do \
+             hl.dispatch(hl.dsp.window.tag({{window=w,tag=\"-dusky-snap-capture\"}})) end; \
+             {select}hl.dispatch(hl.dsp.window.tag({{window=w,tag=\"+dusky-snap-capture\"}})) end end"
+        );
+        let reply = command("hyprctl", &["eval", &script], None, Duration::from_secs(2))?;
+        if reply.trim_ascii() != b"ok" {
+            return Err(format!(
+                "Cannot prepare window capture: {}",
+                String::from_utf8_lossy(&reply)
+            )
+            .into());
+        }
+        Ok(style)
+    }
+}
+
+impl Drop for WindowCaptureStyle {
+    fn drop(&mut self) {
+        if let Err(error) = command(
+            "hyprctl",
+            &["eval", &self.cleanup],
+            None,
+            Duration::from_secs(2),
+        ) {
+            eprintln!("Cannot restore captured window appearance: {error}");
+        }
+    }
+}
+
+fn output_image(
+    conn: &libwayshot::WayshotConnection,
+    output: &libwayshot::output::OutputInfo,
+    cursor: bool,
+) -> Result<RgbaImage> {
+    let mut output = output.clone();
+    if conn.image_copy_support() {
+        // Hyprland sends ext-image-copy frames in NORMAL orientation, with
+        // the output transform already applied. libwayshot 0.9 instead uses
+        // wl_output.transform and would rotate/flip those pixels a second time.
+        // WLR screencopy still needs the original output transform.
+        output.transform = wayland_client::protocol::wl_output::Transform::Normal;
+    }
+    Ok(conn.screenshot_single_output(output, cursor)?.into_rgba8())
+}
+
 pub fn window(identifier: &str, cursor: bool) -> Result<Option<RgbaImage>> {
     if identifier.is_empty() {
         return Ok(None);
@@ -166,6 +230,7 @@ pub fn window(identifier: &str, cursor: bool) -> Result<Option<RgbaImage>> {
     else {
         return Ok(None);
     };
+    let _style = WindowCaptureStyle::new(identifier)?;
     let mut image = conn.screenshot_toplevel(window, cursor)?.into_rgba8();
     straight_alpha(&mut image);
     Ok(Some(image))
@@ -203,9 +268,7 @@ pub fn take(o: &Options) -> Result<Capture> {
         .iter()
         .find(|m| m.name == monitor.name)
         .ok_or("Focused output was disconnected")?;
-    let source = conn
-        .screenshot_single_output(output, o.cursor)?
-        .into_rgba8();
+    let source = output_image(&conn, output, o.cursor)?;
     let sx = source.width() as f64 / output.logical_size().width as f64;
     let sy = source.height() as f64 / output.logical_size().height as f64;
     let bounds = Rect {
@@ -259,7 +322,7 @@ pub fn frame(monitor: &Monitor, crop: Rect, cursor: bool) -> Result<RgbaImage> {
         .iter()
         .find(|m| m.name == monitor.name)
         .ok_or("Output was disconnected")?;
-    let image = conn.screenshot_single_output(output, cursor)?.into_rgba8();
+    let image = output_image(&conn, output, cursor)?;
     let x = crop.x.max(0.0) as u32;
     let y = crop.y.max(0.0) as u32;
     let w = (crop.w as u32).min(image.width().saturating_sub(x));
