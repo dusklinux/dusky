@@ -8,6 +8,7 @@ from collections import deque
 from collections.abc import Iterator
 from concurrent.futures import CancelledError, FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from contextlib import contextmanager
+import ctypes
 from dataclasses import dataclass, field
 from enum import StrEnum
 import fcntl
@@ -261,8 +262,8 @@ FORMAT_LABELS: Final = {
     TargetFormat.AUDIO_WAV: "WAV PCM; lossy input stays lossy",
     TargetFormat.VIDEO_BEST: "best video; MKV when a merge is required",
     TargetFormat.VIDEO: "compatible MP4; AVC/H.264 video and AAC audio only",
-    TargetFormat.VIDEO_AV1: "AV1 video only; no codec fallback",
-    TargetFormat.VIDEO_VP9: "VP9 video only; no codec fallback",
+    TargetFormat.VIDEO_AV1: "AV1 video with audio when available; no codec fallback",
+    TargetFormat.VIDEO_VP9: "VP9 video with audio when available; no codec fallback",
     TargetFormat.VIDEO_MKV: "best video remuxed to MKV",
 }
 QUALITY_CAPS: Final = (2160, 1440, 1080, 720, 480, 360)
@@ -912,12 +913,12 @@ def format_arguments(mode: TargetFormat, height: int | None) -> list[str]:
     cap = f"[height<=?{height}]" if height is not None else ""
     if not mode.is_video:
         audio = {
-            TargetFormat.AUDIO_BEST: ["ba/worst/b", "best"],
-            TargetFormat.AUDIO_OPUS: ["ba[acodec^=opus]/ba/worst/b", "opus"],
-            TargetFormat.AUDIO_MP3: ["ba/worst/b", "mp3"],
-            TargetFormat.AUDIO_FLAC: ["ba/worst/b", "flac"],
-            TargetFormat.AUDIO_M4A: ["ba/worst/b", "m4a"],
-            TargetFormat.AUDIO_WAV: ["ba/worst/b", "wav"],
+            TargetFormat.AUDIO_BEST: ["ba/b[acodec!=?none]", "best"],
+            TargetFormat.AUDIO_OPUS: ["ba[acodec^=opus]/ba/b[acodec!=?none]", "opus"],
+            TargetFormat.AUDIO_MP3: ["ba/b[acodec!=?none]", "mp3"],
+            TargetFormat.AUDIO_FLAC: ["ba/b[acodec!=?none]", "flac"],
+            TargetFormat.AUDIO_M4A: ["ba/b[acodec!=?none]", "m4a"],
+            TargetFormat.AUDIO_WAV: ["ba/b[acodec!=?none]", "wav"],
         }[mode]
         result = ["-f", audio[0], "-x", "--audio-format", audio[1]]
         if mode is TargetFormat.AUDIO_MP3:
@@ -933,12 +934,12 @@ def format_arguments(mode: TargetFormat, height: int | None) -> list[str]:
         return ["-f", f"{v}{cap}+{a}/{combined}{cap}", "-S", "res,fps,quality",
                 "--merge-output-format", "mp4", "--remux-video", "mp4"]
     if mode in {TargetFormat.VIDEO_AV1, TargetFormat.VIDEO_VP9}:
-        codec = "[vcodec^=av01]" if mode is TargetFormat.VIDEO_AV1 else "[vcodec~='^(vp9|vp09)']"
-        unknown_codec = codec.replace("~=", "~=?").replace("^=", "^=?")
-        v, combined = f"bv{codec}{cap}", f"b{unknown_codec}{cap}"
+        codec = "[vcodec~='^(av01|av1)']" if mode is TargetFormat.VIDEO_AV1 else "[vcodec~='^(vp9|vp09)']"
+        unknown_codec = codec.replace("~=", "~=?")
+        v, combined = f"bv*{codec}{cap}", f"b{unknown_codec}{cap}"
         return ["-f", f"{v}+ba/{combined}/{v}", "-S", "res,fps,quality",
                 "--merge-output-format", "mkv"]
-    best = f"bv{cap}+ba/b{cap}/bv{cap}"
+    best = f"bv*{cap}+ba/b{cap}/bv*{cap}"
     result = ["-f", best, "-S", "res,fps,quality", "--merge-output-format", "mkv"]
     if mode is TargetFormat.VIDEO_MKV:
         result += ["--remux-video", "mkv"]
@@ -962,21 +963,52 @@ def exclusive_lock(path: Path) -> Iterator[None]:
         os.close(descriptor)
 
 
-def archive_snapshot(state: Path, archive: Path, work_dir: Path) -> tuple[Path, set[bytes]]:
-    with exclusive_lock(state / "locks" / (archive.name + ".lock")):
-        with os.fdopen(private_file(archive, os.O_RDONLY), "rb") as source:
-            original = source.read()
+def job_archive(work_dir: Path) -> Path:
+    """The shared archive is history; only a valid output receipt can skip a job."""
     descriptor, name = tempfile.mkstemp(prefix=".dusky-archive-", dir=work_dir)
-    with os.fdopen(descriptor, "wb") as copy:
-        copy.write(original)
-    return Path(name), set(original.splitlines())
+    os.close(descriptor)
+    return Path(name)
 
 
-def new_archive_entry(snapshot: Path, old_lines: set[bytes]) -> bytes:
-    new = list(dict.fromkeys(line for line in snapshot.read_bytes().splitlines() if line and line not in old_lines))
+def new_archive_entry(snapshot: Path) -> bytes:
+    new = list(dict.fromkeys(line for line in snapshot.read_bytes().splitlines() if line))
     if len(new) != 1 or len(new[0]) > 2048:
         raise ValueError(f"Expected one yt-dlp archive record for one job; found {len(new)}")
     return new[0]
+
+
+def receipt_path(state: Path, job: Job, target: Path) -> Path:
+    profile = json.dumps([job.mode.value, job.height, job.url, str(target.resolve())])
+    identity = hashlib.sha256(profile.encode()).hexdigest()
+    return private_dir(state / "receipts") / f"{identity}.json"
+
+
+def completed_output(receipt: Path) -> Path | None:
+    try:
+        data = json.loads(receipt.read_text(encoding="utf-8"))
+        path = Path(data["path"])
+        info = path.stat()
+        if (path.is_file() and info.st_size > 0 and info.st_size == data["size"]
+                and info.st_mtime_ns == data["mtime_ns"]):
+            return path
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return None
+
+
+def record_output(receipt: Path, output: Path) -> None:
+    info = output.stat()
+    descriptor, name = tempfile.mkstemp(prefix=".receipt-", dir=receipt.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump({"path": str(output.resolve()), "size": info.st_size,
+                       "mtime_ns": info.st_mtime_ns}, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(receipt)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def commit_archive(state: Path, archive: Path, line: bytes) -> None:
@@ -1017,6 +1049,7 @@ class MediaState:
     stream_key: str = ""
     attempted: bool = False
     archive_skip: bool = False
+    incomplete_download: bool = False
     final_paths: list[str] = field(default_factory=list)
     errors: deque[str] = field(default_factory=lambda: deque(maxlen=8))
     tail: deque[str] = field(default_factory=lambda: deque(maxlen=8))
@@ -1081,6 +1114,8 @@ class ProgressParser:
                 return
         if "has already been recorded in the archive" in text:
             self.state.archive_skip = True
+        if re.search(r"\bSkipping fragment \d+|\bSegment \d+ .*?, skipping\b", text, re.IGNORECASE):
+            self.state.incomplete_download = True
         for tag, label in (("[Merger]", "Merging"), ("[VideoRemuxer]", "Remuxing"),
                            ("[VideoConvertor]", "Reencoding"), ("[ExtractAudio]", "Extracting audio")):
             if text.startswith(tag):
@@ -1123,6 +1158,10 @@ class ProgressParser:
 
 def translate_error(message: str, mode: TargetFormat) -> str:
     lowered = message.lower()
+    if "requested format is not available" in lowered and mode in {TargetFormat.VIDEO_AV1, TargetFormat.VIDEO_VP9}:
+        codec = "AV1" if mode is TargetFormat.VIDEO_AV1 else "VP9"
+        return (f"{message} | No matching source {codec} stream at the requested height. "
+                "Try video-best or another height; this mode downloads source codecs without re-encoding.")
     hints = (
         ("requested format is not available", "Requested codec/height is absent; try video-best or a higher cap."),
         ("sign in", "This source may require valid login cookies."),
@@ -1300,12 +1339,18 @@ def job_guard(state: Path, job: Job, controller: QueueController, slot: Slot) ->
 
 
 def ytdlp_command(job: Job, work: Path, state: Path, archive: Path, cookie_args: list[str]) -> list[str]:
-    template = str(work / "%(title).180B [%(id)s].%(ext)s")
+    # Separate codec/quality requests must not collide at publication or on resume.
+    profile = job.mode.value
+    if job.mode.is_video:
+        profile += f"-{job.height}p" if job.height else "-best"
+    variant = f" [{profile}]"
+    template = str(work).replace("%", "%%") + f"/%(title).150B [%(id).60B]{variant}.%(ext)s"
     return [
         "yt-dlp", "--ignore-config", "--no-js-runtimes",
         "--js-runtimes", "node", "--color", "never", "--encoding", "utf-8",
         "--cache-dir", str(state / "yt-dlp-cache"), "--no-playlist", "--no-simulate",
-        "--abort-on-error", "--abort-on-unavailable-fragment",
+        "--abort-on-error", "--abort-on-unavailable-fragments",
+        "--downloader", "m3u8:native",
         "--newline", "--progress", "--progress-delta", "0.5",
         "--progress-template", "download:RAW|%(progress)j",
         "--progress-template", "postprocess:POST|%(progress)j",
@@ -1437,7 +1482,7 @@ def verify_media(
     path: Path, mode: TargetFormat, height: int | None,
     controller: QueueController, slot: Slot, work: Path,
 ) -> None:
-    command = ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,codec_name,height",
+    command = ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,codec_name,height:stream_disposition=attached_pic",
                "-of", "json", "-i", str(path)]
     proc = controller.spawn(slot, command, work)
     if proc is None:
@@ -1462,7 +1507,8 @@ def verify_media(
     streams = metadata.get("streams") if isinstance(metadata, dict) else None
     if not isinstance(streams, list) or not all(isinstance(stream, dict) for stream in streams):
         raise ValueError(f"ffprobe did not return a stream list for {path.name}")
-    video_streams = [stream for stream in streams if stream.get("codec_type") == "video"]
+    video_streams = [stream for stream in streams if stream.get("codec_type") == "video"
+                     and not stream.get("disposition", {}).get("attached_pic")]
     video = {stream["codec_name"] for stream in video_streams
              if isinstance(stream.get("codec_name"), str) and stream["codec_name"] != "unknown"}
     audio = {stream["codec_name"] for stream in streams if stream.get("codec_type") == "audio"
@@ -1529,11 +1575,19 @@ def mark_url_downloaded(urls_path: Path, url: str) -> None:
                 else:
                     new_lines.append(line)
             if changed:
-                temp_path = urls_path.with_name(f".tmp-{urls_path.name}-{os.getpid()}")
-                temp_path.write_text("".join(new_lines), encoding="utf-8")
-                temp_path.replace(urls_path)
-        except OSError:
-            pass
+                descriptor, name = tempfile.mkstemp(prefix=".dusky-urls-", dir=urls_path.parent)
+                temp_path = Path(name)
+                try:
+                    with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+                        os.fchmod(output.fileno(), stat.S_IMODE(urls_path.stat().st_mode))
+                        output.write("".join(new_lines))
+                        output.flush()
+                        os.fsync(output.fileno())
+                    temp_path.replace(urls_path)
+                finally:
+                    temp_path.unlink(missing_ok=True)
+        except OSError as exc:
+            console.print(f"[yellow]Media completed, but URL list update failed: {escape(str(exc))}[/]")
 
 
 def publish(source: Path, destination: Path, move_to: Path | None = None) -> tuple[Path, bool]:
@@ -1545,24 +1599,49 @@ def publish(source: Path, destination: Path, move_to: Path | None = None) -> tup
         source.unlink()
         return target, True
     if move_to is not None:
-        temp_name = f".part-{os.getpid()}-{hashlib.sha256(target.name.encode()).hexdigest()[:16]}.tmp"
-        temp_target = target_dir / temp_name
+        descriptor, name = tempfile.mkstemp(prefix=".dusky-part-", dir=target_dir)
+        os.close(descriptor)
+        temp_target = Path(name)
         try:
             shutil.copyfile(source, temp_target)
-            temp_target.replace(target)
+            with temp_target.open("rb") as output:
+                os.fsync(output.fileno())
+            try:
+                rename_no_replace(temp_target, target)
+                existed = False
+            except FileExistsError:
+                if not target.is_file() or not same_content(source, target):
+                    raise ValueError(f"Output name collision; refusing to replace a different file: {target}") from None
+                existed = True
+            directory_fd = os.open(target_dir, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
         finally:
             temp_target.unlink(missing_ok=True)
         source.unlink()
-        return target, False
+        return target, existed
     try:
-        os.link(source, target)
+        rename_no_replace(source, target)
         existed = False
     except FileExistsError:
         if not target.is_file() or not same_content(source, target):
             raise ValueError(f"Output name collision; refusing to replace a different file: {target}") from None
         existed = True
-    source.unlink()
+    source.unlink(missing_ok=True)
     return target, existed
+
+
+def rename_no_replace(source: Path, target: Path) -> None:
+    """Atomic Linux publication, including filesystems without hard links."""
+    renameat2 = ctypes.CDLL(None, use_errno=True).renameat2
+    renameat2.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint)
+    renameat2.restype = ctypes.c_int
+    # AT_FDCWD = -100, RENAME_NOREPLACE = 1 (Linux/glibc).
+    if renameat2(-100, os.fsencode(source), -100, os.fsencode(target), 1):
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error), str(target))
 
 
 def execute_job(
@@ -1582,14 +1661,21 @@ def execute_job(
         with job_guard(state, job, controller, slot) as identity:
             if controller.cancellation(slot):
                 raise StopRequested
+            receipt = receipt_path(state, job, move_to if move_to is not None else destination)
+            completed = completed_output(receipt)
+            if completed is not None:
+                if urls_file is not None:
+                    mark_url_downloaded(urls_file, job.url)
+                return Report(job.title, Status.SKIPPED, path=completed, size=completed.stat().st_size,
+                              error="completed output still present; size and timestamp match")
             work_parent = private_dir(destination / ".dusky-work")
             if work_parent.stat().st_dev != destination.stat().st_dev:
                 raise ValueError(f"Work directory is another filesystem: {work_parent}")
-            work = private_dir(work_parent / identity)
+            work = private_dir(work_parent / f"{identity}-{job.height or 'best'}")
             if work.stat().st_dev != destination.stat().st_dev:
                 raise ValueError(f"Job directory is another filesystem: {work}")
             archive = archive_path(state, job.mode)
-            scratch_archive, old_lines = archive_snapshot(state, archive, work)
+            scratch_archive = job_archive(work)
             with cookie_flags(cookies, work) as flags:
                 command = ytdlp_command(job, work, state, scratch_archive, flags)
                 proc = controller.spawn(slot, command, work)
@@ -1609,11 +1695,15 @@ def execute_job(
                 errors = list(parser.state.errors) or list(parser.state.tail)
                 message = " | ".join(errors[-3:]) if errors else f"yt-dlp exited {code}"
                 return Report(title, Status.FAILED, error=translate_error(message, job.mode))
+            if parser.state.incomplete_download:
+                # A finalized truncated file would make yt-dlp skip downloading on retry.
+                for path_text in parser.state.final_paths:
+                    checked_file(path_text, work).unlink()
+                return Report(title, Status.FAILED,
+                              error="Downloader skipped media fragments; refusing to publish incomplete media")
             if not parser.state.final_paths:
                 if parser.state.archive_skip:
-                    if urls_file is not None:
-                        mark_url_downloaded(urls_file, job.url)
-                    return Report(title, Status.SKIPPED, error="already in the per-format archive")
+                    return Report(title, Status.FAILED, error="unexpected archive skip without an output receipt")
                 return Report(title, Status.FAILED,
                               error="yt-dlp exited without an after_move filepath or confirmed archive skip")
             if len(parser.state.final_paths) != 1:
@@ -1622,15 +1712,16 @@ def execute_job(
             verify_media(final, job.mode, job.height, controller, slot, work)
             if controller.cancellation(slot):
                 raise StopRequested
-            entry = new_archive_entry(scratch_archive, old_lines)
+            entry = new_archive_entry(scratch_archive)
             if controller.cancellation(slot):
                 raise StopRequested
             published, existed = publish(final, destination, move_to=move_to)
             try:
                 commit_archive(state, archive, entry)
+                record_output(receipt, published)
             except OSError as exc:
                 return Report(title, Status.FAILED, path=published,
-                              error=f"Media published, archive commit failed: {exc}; retry safely")
+                              error=f"Media published, completion record failed: {exc}; retry safely")
             if urls_file is not None:
                 mark_url_downloaded(urls_file, job.url)
             return Report(title, Status.SKIPPED if existed else Status.SUCCESS,
@@ -1934,9 +2025,9 @@ def self_test() -> None:
         directory = Path(name)
         private_dir(directory / "locks")
         archive = archive_path(directory, TargetFormat.AUDIO_BEST)
-        scratch, previous = archive_snapshot(directory, archive, directory)
+        scratch = job_archive(directory)
         scratch.write_bytes(b"youtube sample-id\n")
-        record = new_archive_entry(scratch, previous)
+        record = new_archive_entry(scratch)
         commit_archive(directory, archive, record)
         commit_archive(directory, archive, record)
         assert archive.read_bytes() == b"youtube sample-id\n"
@@ -1993,6 +2084,8 @@ def main() -> int:
     args = argument_parser().parse_args()
     if args.concurrent is not None and args.concurrent < 1:
         raise ValueError("--concurrent must be positive")
+    if not math.isfinite(args.min_free_gb) or args.min_free_gb < 0:
+        raise ValueError("--min-free-gb must be finite and nonnegative")
     if args.gui:
         from dusky_downloader_gui import main as gui_main
         return gui_main(args)
