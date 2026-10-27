@@ -1,38 +1,16 @@
-Ensuring the system clock is accurate is a critical step. An incorrect clock can cause issues with network connections, package signature verification, and other time-sensitive operations.
+# Check the live system clock
 
-### 1. Set the Timezone
-
-First, you need to set the correct timezone for your location.
-
-> [!TIP] Find Your Timezone
-> If you are unsure of your timezone's exact name, you can list all available timezones with the following command. You can use `grep` to filter the list for your city or region.
-> ```bash
-> timedatectl list-timezones | grep Kolkata
-> ```
-
-Once you know your timezone, set it using the `timedatectl set-timezone` command. Replace `Asia/Kolkata` with your specific `Region/City`.
-
-```bash
-timedatectl set-timezone Asia/Kolkata
-```
-
-### 2. Enable Network Time Protocol (NTP)
-
-Next, enable NTP to allow the system to automatically synchronize its clock with a remote server over the network. This ensures the time remains accurate.
-
-```bash
-timedatectl set-ntp true
-```
-
-> [!NOTE] Importance of NTP
-> Keeping NTP enabled is highly recommended. It automatically corrects for clock drift, ensuring your system time is always precise.
-
-### 3. Verify the Configuration
-
-Finally, verify that the system clock is synchronized and the correct timezone has been applied.
+Correct time matters for certificate and package-signature validity. Run this in the live environment:
 
 ```bash
 timedatectl status
 ```
 
-Running this command will display the current local time, universal time (UTC), your configured timezone, and confirm that the NTP service is active.
+On a networked live system with an available time synchronization service, enable synchronization if needed:
+
+```bash
+timedatectl set-ntp true
+timedatectl status
+```
+
+An enabled service is not proof that synchronization succeeded: check the reported synchronization state and network access. Offline installation can proceed without NTP if the clock is already correct; otherwise set it using a reliable time source. Changing the timezone changes how time is displayed, not the underlying instant. Set the **installed system's** timezone separately in [[Setting Time Zone]].

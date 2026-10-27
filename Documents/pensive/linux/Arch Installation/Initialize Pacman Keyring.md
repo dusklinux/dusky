@@ -1,25 +1,14 @@
+# Pacman keyring in the live environment
 
-# Initialize Pacman Keyring
+Pacman uses a keyring to verify package signatures. The live environment may already initialize its keyring; check its status and the ISO's instructions before changing it. An offline ISO may also have its own repository and signing keys, so follow its procedure rather than assuming the official Arch keys cover every package.
 
-To ensure the authenticity and integrity of all downloaded packages, you must initialize the `pacman` keyring. This process sets up a local web of trust, verifying that packages are from official sources and have not been tampered with.
-
-> [!WARNING]
-> An active internet connection is required to download the Arch Linux keys. If you are not yet connected, perform this step after establishing a network connection (e.g., after completing the steps in [[IWD]]).
-
-### 1. Initialize the Keyring
-First, set up the local keyring. This command creates the necessary files and a master signing key for your system.
+When a keyring needs initialization, the local `pacman-key --help` documents these commands:
 
 ```bash
 pacman-key --init
-```
-
-### 2. Populate with Arch Linux Keys
-Next, download and add the official Arch Linux master signing keys to your keyring. This tells `pacman` to trust packages signed by Arch Linux developers and Trusted Users.
-
-```bash
 pacman-key --populate archlinux
 ```
 
-> [!INFO]
-> **What is the Pacman Keyring?**
-> The `pacman` keyring is a collection of PGP keys that `pacman` uses to verify package signatures. When you download a package, `pacman` checks its signature against the keys in your keyring. If the signature is valid and trusted, the installation proceeds. This is a critical security feature that protects your system from malicious or corrupted packages.
+`--populate` loads keyring material already present in `/usr/share/pacman/keyrings`; it does not itself download the Arch keys. The relevant `archlinux-keyring` package and a usable clock must be present. A stale keyring may need updating from a trusted source; an offline installation cannot assume network access. Errors in key initialization or signature verification must be resolved before installing packages.
+
+`pacstrap` normally copies the live keyring into the target, while `pacstrap -K` initializes a fresh target keyring. See [[Install Kernel and Base Packages]] and [ArchWiki: offline installation](https://wiki.archlinux.org/title/Offline_installation).

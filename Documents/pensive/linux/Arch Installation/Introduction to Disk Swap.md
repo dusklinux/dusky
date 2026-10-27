@@ -1,14 +1,7 @@
-### Introduction to Disk Swap
+# Disk swap
 
-A **swap partition** (or swap file) is a space on a disk that the Linux kernel uses as virtual memory. When your system's physical RAM (Random Access Memory) is full, the kernel moves inactive pages of memory to the swap space, freeing up RAM for active processes.
+A swap partition or file provides storage for anonymous memory pages that the kernel chooses to reclaim. Swap can be used before RAM is entirely full, and adding it does not guarantee that a system under memory pressure will avoid an out-of-memory condition. Its effect depends on the workload and storage.
 
-**Key Use Cases:**
-*   **Extending RAM:** Prevents system instability or crashes when physical memory is exhausted.
-*   **Hibernation:** Allows the system to save the entire state of RAM to the disk before powering off, enabling a quick resume.
+A persistent swap area can also be used for hibernation when it is large enough and early resume is configured correctly. Zram cannot itself preserve a hibernation image across power loss. See [ArchWiki: hibernation](https://wiki.archlinux.org/title/Power_management/Suspend_and_hibernate#Hibernation).
 
-> [!NOTE] Relationship with ZRAM
-> While disk swap is useful, it is significantly slower than RAM. For performance, it's highly recommended to use [[ZRAM Setup]] as your primary swap mechanism. ZRAM creates a compressed swap device directly in your RAM, which is orders of magnitude faster.
->
-> A common and effective strategy is to use both:
-> 1.  **ZRAM:** As a high-priority swap for performance.
-> 2.  **Disk Swap:** As a low-priority fallback and/or for enabling hibernation.
+Zram swap and disk swap can coexist. Swap priorities influence which area the kernel uses first; choose and test priorities for your workload. See [[ZRAM Setup]], [[Creating Swap Partition (During Arch Install)]], and [[Tuning Swap Performance (Advanced)]].

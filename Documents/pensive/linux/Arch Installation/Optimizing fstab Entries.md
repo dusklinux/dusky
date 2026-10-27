@@ -1,37 +1,12 @@
+# Review fstab entries
 
-After generating the `/etc/fstab` file, this crucial step involves verifying its entries and adding specific mount options to optimize filesystem performance, especially for Btrfs on an SSD. A correctly configured `fstab` is essential for the system to boot properly.
+Run this step inside the target chroot after [[Generate the fstab File]]. `/etc/fstab` records mounts to configure at boot. Verify the filesystem UUID, mount point, type and subvolume for each entry against the layout you actually created. The root and home subvolumes of one Btrfs filesystem share a filesystem UUID but use different `subvol=` options. Check the ESP separately. Do not copy UUIDs or device names from [[fstab reference]].
 
-> [!WARNING] Critical System File
-> Incorrectly editing `/etc/fstab` can prevent your system from booting. Double-check all changes before saving the file.
-
-#### 1. Open the `fstab` File
-
-First, open the file in a text editor.
-
-```sh
-nvim /etc/fstab
+```bash
+cat /etc/fstab
+blkid
 ```
 
-#### 2. Verify and Modify Mount Options
+The mount options in [[Mounting Partitions]] express the example's choices. Compression and `noatime` are workload-dependent choices, not guaranteed speed improvements. Btrfs normally detects SSDs and appropriate discard behavior; the first mounted subvolume controls most filesystem-wide options. Keep consistent options across entries and change them only for a reason relevant to your hardware and workload. `genfstab` may include kernel-reported defaults; do not remove or add flags merely because an unrelated example does so.
 
-Your goal is to inspect the lines for your Btrfs partitions (typically root `/` and home `/home`) and verify their mount options.
-
-1.  **Verify UUIDs**: Confirm that `genfstab` correctly assigned the `UUID`s for your root (`/`) and EFI System Partition (`/boot`).
-2.  **Optimize Btrfs Options**: Modify the options string for each Btrfs subvolume to enhance performance and enable compression.
-
-> [!NOTE] Apply to All Btrfs Subvolumes (SSD)
-> If you created separate subvolumes for root (`@`) and home (`@home`), you must apply these changes to the mount options for **both** entries in your `fstab` file.
-
-The key changes are:
-*   **Add** performance-enhancing options.
-*   **Remove** `discard=async` to use periodic TRIM instead of continuous TRIM.
-
-The table below explains the recommended options.
-
-| Option | Description | Action |
-| :--- | :--- | :--- |
-| `noatime` | Disables writing file access times to disk with every read, reducing I/O. | **Add/Ensure Present** |
-| `compress=zstd` | Enables transparent, real-time compression with the efficient Zstandard algorithm. | **Add/Ensure Present** |
-| `ssd` | Enables SSD-specific optimizations within the Btrfs driver. | **Add/Ensure Present** |
-| `space_cache=v2` | Uses the more robust and modern V2 space cache for | **Add/Ensure Present** |
-
+Consult `man fstab`, `man btrfs` and [Btrfs mount options](https://btrfs.readthedocs.io/en/latest/ch-mount-options.html). Inspect the result carefully before rebooting.

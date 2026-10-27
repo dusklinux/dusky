@@ -7,7 +7,7 @@ With the packages installed and configured, the next step is to install the GRUB
 This command installs the necessary files into the `--efi-directory` and creates a boot entry named by `--bootloader-id`.
 
 ```bash
-grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB --recheck
+grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB
 ```
 
 > [!IMPORTANT] Verify Your EFI Directory Path
@@ -24,7 +24,6 @@ Here is a breakdown of the command's flags:
 | `--target=x86_64-efi` | Specifies that we are installing for a 64-bit UEFI system. |
 | `--efi-directory=/boot` | The mount point of your EFI System Partition (ESP). **Adjust this path as needed.** |
 | `--bootloader-id=GRUB` | The name of the bootloader entry in the UEFI boot menu. It also creates a corresponding directory at `/boot/EFI/GRUB`. |
-| `--recheck` | Forces `grub-install` to re-probe devices, which can prevent errors. |
 
 ### 2. Verify the Installation
 
@@ -34,6 +33,6 @@ After the command completes successfully, verify that the main GRUB EFI file has
 ls /boot/EFI/GRUB/grubx64.efi
 ```
 
-If this command returns the file path, the installation was successful. If it returns an error, double-check your `--efi-directory` path and re-run the `grub-install` command.
+The file confirms that this EFI binary exists, not that the firmware entry or generated boot menu works. Inspect `efibootmgr -v`, review the command output and continue to [[Generating the Final Grub File]]. Adjust the path for an ESP mounted elsewhere.
 
 ***

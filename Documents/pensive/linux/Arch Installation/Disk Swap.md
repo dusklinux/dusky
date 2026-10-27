@@ -2,12 +2,12 @@
 This section provides a comprehensive guide to configuring and managing disk swap space in Arch Linux. Each note covers a specific aspect, from fundamental concepts to advanced performance tuning.
 
 *   **[[Introduction to Disk Swap]]**
-    Learn the fundamentals of disk swap, its purpose as virtual memory, and its role alongside [[ZRAM Setup]] for optimal system performance and hibernation.
+    Learn the fundamentals of disk swap, its purpose as virtual memory, and its role alongside [[ZRAM Setup]] and possible use with persistent swap for hibernation.
 
 ---
 
 *   **[[Creating Swap Partition (During Arch Install)]]**
-    A step-by-step guide to formatting a swap partition and configuring `/etc/fstab` during the Arch Linux installation, ensuring it's active on first boot.
+    A step-by-step guide to formatting a swap partition and configuring `/etc/fstab` during the Arch Linux installation, so it can be activated at boot.
 
 ---
 
@@ -17,5 +17,5 @@ This section provides a comprehensive guide to configuring and managing disk swa
 ---
 
 *   **[[Tuning Swap Performance (Advanced)]]**
-    Explore advanced techniques to optimize swap behavior, including adjusting kernel "swappiness" and setting device priorities for multi-swap configurations.
+    Explore ways to examine and tune swap behavior, including adjusting kernel "swappiness" and setting device priorities for multi-swap configurations.
 

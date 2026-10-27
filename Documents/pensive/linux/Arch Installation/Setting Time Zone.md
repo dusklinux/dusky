@@ -1,5 +1,5 @@
 
-Configuring the correct time zone is a crucial step for your new system. It ensures the clock displays the correct local time and prevents potential issues with network services and package management that rely on accurate timekeeping.
+Configuring the correct time zone is a crucial step for your new system. It ensures the clock displays the correct local time; timezone selection affects local display, while network and signature checks depend on the system clock being accurate.
 
 > [!NOTE]
 > These commands should be executed from within the `chroot` environment after you have installed the base system.
@@ -26,12 +26,12 @@ ln -sf /usr/share/zoneinfo/Asia/Kolkata /etc/localtime
 
 ### 2. Synchronize the Hardware Clock
 
-After setting the system time zone, you need to synchronize this time with the hardware clock (RTC). This command sets the hardware clock from the system clock and creates the `/etc/adjtime` file, ensuring the time is persistent across reboots.
+After ensuring the system clock is correct, you can write it to the hardware clock (RTC). This command sets the hardware clock from the system clock and updates `/etc/adjtime` where applicable.
 
 ```bash
 hwclock --systohc
 ```
 
 > [!IMPORTANT]
-> This command assumes your hardware clock is set to Coordinated Universal Time (UTC). This is the recommended standard for Linux systems to properly handle daylight saving time and avoid conflicts when dual-booting.
+> `hwclock` consults `/etc/adjtime` to determine the RTC timescale; without that file it defaults to UTC. A system sharing its RTC with an OS configured for local time needs a consistent convention across both systems. This command changes the machine’s RTC, not just the target filesystem.
 

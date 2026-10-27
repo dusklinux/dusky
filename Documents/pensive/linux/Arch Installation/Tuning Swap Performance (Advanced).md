@@ -1,46 +1,26 @@
-### Tuning Swap Performance (Advanced)
+# Swap behavior and priority
 
-You can adjust kernel parameters to control how and when the system uses swap.
+`vm.swappiness` influences the kernel's relative preference for reclaiming anonymous memory through swap versus reclaiming file-backed pages. It is not a percentage of RAM usage or a threshold at which swapping begins. The accepted range is 0–200; inspect the running system before considering a change:
 
-#### Swappiness
-
-The `vm.swappiness` parameter controls the kernel's preference for swapping memory pages versus dropping file-system cache.
-*   **Value:** `0` to `200` (default is `60`).
-*   **Low Value (e.g., 10):** The kernel will strongly prefer to drop file cache instead of swapping out application memory. Good for desktops and systems with fast I/O.
-*   **High Value (e.g., 200):** The kernel will be more aggressive in swapping application memory to disk.
-
-1.  **Check the current value:**
-    ```bash
-    sysctl vm.swappiness
-    ```
-
-2.  **Set the value temporarily (resets on reboot):**
-    ```bash
-    sudo sysctl -w vm.swappiness=35
-    ```
-
-3.  **Set the value permanently:** Create a configuration file.
-    ```bash
-    sudo nano /etc/sysctl.d/99-swappiness.conf
-    ```
-    Add the following content to the file:
-    ```
-    vm.swappiness=35
-    ```
-
-#### Swap Priority
-
-If you use multiple swap devices (e.g., ZRAM and a disk partition), you can assign a priority to each. The system will always use the device with the higher priority first.
-*   **Value:** `-1` to `32767`. Higher numbers mean higher priority.
-
-To set priority, add the `pri=<value>` option in `/etc/fstab`.
-
-**Example for a ZRAM + Disk Swap setup:**
+```bash
+sysctl vm.swappiness
+swapon --show
 ```
-# /etc/fstab
-# Give ZRAM high priority for performance
-/dev/zram0                               none      swap      defaults,pri=100   0 0
-# Give disk swap low priority for fallback/hibernation
-UUID=a1b2c3d4-e5f6-7890-abcd-1234567890ef none      swap      defaults,pri=10    0 0
+
+There is no universally optimal value. Measure responsiveness, memory pressure and I/O under the workloads that matter before and after changing it. See the [kernel VM sysctl documentation](https://docs.kernel.org/admin-guide/sysctl/vm.html). For a temporary experiment, replace `VALUE` with an appropriate integer:
+
+```bash
+sudo sysctl -w vm.swappiness=VALUE
 ```
-This configuration ensures the system fills the fast ZRAM device before ever touching the slower disk swap, giving you the best of both worlds.
+
+To persist a chosen value, create a suitable file under `/etc/sysctl.d/`; check other files for overrides. [[Optimizing Kernel Parameters for ZRAM]] discusses scope and verification.
+
+## Swap priority
+
+With multiple active swap areas, higher priorities are preferred; equal priorities can be used together. A generator-managed zram device gets its priority from `swap-priority=` in the applicable zram-generator configuration, **not** a duplicate `/dev/zram0` fstab entry. For a persistent swap partition, an fstab entry can specify a priority, for example:
+
+```fstab
+UUID=YOUR-SWAP-UUID none swap defaults,pri=10 0 0
+```
+
+Replace the UUID with the actual swap UUID and check `swapon --show` after boot. Priority alone does not guarantee a performance gain or configure hibernation. See `man swapon`, `man 5 zram-generator.conf` and [[Managing Swap on a Running System]].

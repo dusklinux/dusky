@@ -1,53 +1,7 @@
-### 1. *Grub Packages*
+# GRUB on UEFI
 
-```bash
-pacman -S --needed grub efibootmgr grub-btrfs os-prober
-```
+This is an alternative to [[Boot Loader systemd boot]], not an additional required boot loader. Follow [[GRUB]] for the package, configuration, installation, and generated-menu steps. The examples there assume the target system is mounted and commands run inside its chroot.
 
-- [ ] Status
+Before installing, confirm the actual ESP mount point and CPU/firmware architecture. Keep any kernel parameters required by your storage or encryption setup; do not replace the entire command line with a generic tuning profile. Check the resulting EFI files, firmware entry, and generated menu before rebooting. The simple systemd-boot instructions use `/boot` for the ESP, but other layouts require different paths.
 
----
-
-### 2. *Configuring Grub Config*
-
->[!danger] Caution! **remove** 'pcie_aspm=force' if your laptop crashes or has issues with power saving. 
-
-make the changes with just this one command (recommanded)
-```bash
-sed -i -e 's/^GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT="loglevel=3 zswap.enabled=0 rootfstype=btrfs pcie_aspm=force fsck.mode=skip"/' -e 's/^#GRUB_DISABLE_OS_PROBER=false/GRUB_DISABLE_OS_PROBER=false/' -e 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=1/' /etc/default/grub
-```
-
-**OR** do it manually
-
-```bash
-nvim /etc/default/grub
-```
-
-```bash
-GRUB_CMDLINE_LINUX_DEFAULT="loglevel=3 zswap.enabled=0 rootfstype=btrfs pcie_aspm=force fsck.mode=skip"
-```
-
-> [!note] **Un-comment this **
-> GRUB_DISABLE_OS_PROBER=false
-
-- [ ] Status
-
----
-
-### 3. *Installing Grub to the BOOT/ESP Partition. *
-
-```bash
-grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB --recheck
-```
-
-- [ ] Status
-
----
-
-### 4. *Generating Grub File for Boot*
-
-```bash
-grub-mkconfig -o /boot/grub/grub.cfg
-```
-
-- [ ] Status
+The GRUB workflow has not been tested end to end on the final ISO. Consult the [ArchWiki GRUB guide](https://wiki.archlinux.org/title/GRUB) for your actual filesystem and boot layout.

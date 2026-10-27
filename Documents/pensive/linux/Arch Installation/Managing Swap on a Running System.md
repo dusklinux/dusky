@@ -46,18 +46,13 @@ You can manually enable or disable swap spaces for the current session without r
     sudo swapoff -a
     ```
 
-#### Permanently Disabling Swap
+#### Preventing activation at boot
 
-To prevent a swap partition from being activated at boot, you must perform two actions:
+Remove or comment out the relevant `/etc/fstab` entry, then reload systemd's configuration and inspect the active swap areas:
 
-1.  **Remove the entry from `/etc/fstab`:** Edit `/etc/fstab` and delete or comment out (by adding a `#` at the beginning) the line corresponding to your swap partition.
-2.  **Mask the systemd unit (optional but recommended):** This prevents `systemd` from auto-detecting and activating the swap partition in some cases.
-    *   First, find the corresponding `.swap` unit:
-        ```bash
-        systemctl --type swap
-        ```
-    *   Then, mask the unit found in the previous command:
-        ```bash
-        sudo systemctl mask dev-sda3.swap
-        ```
-        *(Replace `dev-sda3.swap` with the actual unit name.)*
+```bash
+sudo systemctl daemon-reload
+swapon --show
+```
+
+Removing an entry does not deactivate swap already in use; use `swapoff` on the specific area if desired and if enough memory or other swap is available. A zram-generator device is controlled by its generator configuration, not necessarily fstab. A partition may also be activated through another mechanism, including systemd's GPT auto-discovery; investigate the responsible unit and configuration if it reappears. Mask a specific unit only when that is the intended way to override its activation. Do not copy another machine's unit name.

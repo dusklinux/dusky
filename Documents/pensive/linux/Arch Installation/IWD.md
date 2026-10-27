@@ -1,7 +1,7 @@
 
 #  Connect to the Internet with `iwd`
 
-This guide outlines connecting to a wireless network using the `iwd` (iNet wireless daemon) utility. This is a crucial step to download packages for the Arch Linux installation.
+This guide outlines connecting to a wireless network using the `iwd` (iNet wireless daemon) utility. This is an online installation step; an offline repository does not require it.
 
 ### Step 1: Launch the `iwd` Interactive Prompt
 
@@ -73,7 +73,7 @@ station wlan0 connect "MyWiFiNetwork"
 Once connected, you can leave the `iwd` interactive prompt.
 
 ```bash
-[iwd]# exit
+exit
 ```
 
 ### Step 7: Verify Internet Connectivity
@@ -85,7 +85,7 @@ ping -c 2 google.com
 ```
 
 > [!SUCCESS]
-> If you see replies from the server, your internet connection is working correctly.
+> Replies demonstrate that this host is reachable over ICMP and its name resolved; they do not verify every repository or service.
 >
 > [!WARNING]
 > If you get an error like `ping: google.com: Name or service not known`, there might be an issue with your connection or DNS settings. Double-check the previous steps.

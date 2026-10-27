@@ -21,7 +21,7 @@ umount -R /mnt
 > Be careful to use the command `umount` (without an "n"). A common typo is `unmount`, which will result in an error.
 
 > [!WARNING] Data Integrity
-> Failing to unmount the partitions before rebooting can lead to filesystem corruption. This step is critical for a clean shutdown of the installation process.
+> Unmounting explicitly confirms that the filesystems are no longer busy before reboot. If unmounting fails, inspect the error and resolve the processes or mounts keeping them busy.
 
 After successfully unmounting the partitions, you are now ready to restart your machine. You can do this with the `shutdown now` command.
 

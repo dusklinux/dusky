@@ -1,41 +1,15 @@
+# Zram swap
 
-ZRAM significantly improves system responsiveness by creating a compressed swap space directly in your RAM. This is considerably faster than using a traditional swap file or partition on a disk, making it an excellent optimization, especially for systems with ample RAM.
+Zram is a compressed block device backed by RAM. Used as swap, it can reduce disk I/O under memory pressure, but compression consumes CPU and memory; its effect depends on workload and hardware. Its configured device size is an **uncompressed capacity**, not RAM reserved in advance. Inspect actual usage with `zramctl` and `swapon --show`.
 
-This note provides a high-level overview of the setup process. For detailed instructions, refer to the linked notes for each step.
+The offline installer already configures zram using a drop-in. Inspect existing configuration before adding another one; see [[zram-generator config]]. On another system, install `zram-generator`, configure a swap device, and verify it after boot. Kernel VM tuning is optional and should be measured; see [[Optimizing Kernel Parameters for ZRAM]].
 
-> [!IMPORTANT]
-> ### Prerequisites
-> Before you begin, ensure the following prerequisites are met:
-> 1. The `zswap` kernel feature is enabled by default in Arch Linux and conflicts with ZRAM. Before setting up ZRAM, ensure `zswap` is disabled in your GRUB configuration by adding `zswap.enabled=0` to `GRUB_CMDLINE_LINUX_DEFAULT` in `/etc/default/grub`.
-> See step [[Grub file Configuration]] for details.
-> ---
-> 2.  **Create Mount Point**: If you intend to use a ZRAM device for temporary file storage (as shown in the `zram1` example), create the mount directory beforehand:
->     ```bash
->     mkdir /mnt/zram1
->     ```
+Zswap is a separate compressed cache in front of swap. If enabled with zram, pages can be compressed by zswap before reaching zram, reducing the benefit of the latter. Check the running kernel's state instead of assuming a default:
 
----
+```bash
+cat /sys/module/zswap/parameters/enabled
+```
 
-## Installation and Configuration Workflow
+If the path is absent, zswap may be unavailable in that kernel. To choose zram as the compressed-swap mechanism, `zswap.enabled=0` can be added to the **active boot loader's** kernel command line; verify after reboot. See [ArchWiki: zram](https://wiki.archlinux.org/title/ZRAM).
 
-Follow these steps chronologically to correctly configure, optimize, and verify your ZRAM setup.
-
-### 1. Configure the ZRAM Generator
-
-The first step is to create a configuration file at `/etc/systemd/zram-generator.conf`. This file instructs the `zram-generator` service on how to create and manage your ZRAM devices at boot time. Here, you will define crucial parameters like device size, compression algorithm, and mount points.
-
-*   **For detailed instructions, see:** [[zram-generator config]]
-
-### 2. Optimize Kernel Parameters
-
-To ensure the system leverages the fast ZRAM swap effectively, you must tune several kernel virtual memory (VM) parameters. These adjustments encourage the kernel to swap idle application data to ZRAM more aggressively, which enhances performance, particularly under memory pressure.
-
-*   **For detailed instructions, see:** [[Optimizing Kernel Parameters for ZRAM]]
-
-### 3. Verify the Setup (Post-Boot)
-
-After configuring ZRAM and booting into your system, the final step is to verify that it is active and performing as expected. The `zramctl` command-line utility provides a real-time overview of all active ZRAM devices, showing their size, current usage, and compression efficiency.
-
-*   **For verification commands and output examples, see:** [[zramctl]]
-
-> [!NOTE] Related but not recommanded [[OPTIONAL Configuring Ramdisk]]
+Zram swap is volatile and cannot serve as a hibernation target. Hibernation needs appropriately configured persistent swap and early resume; see [ArchWiki: hibernation](https://wiki.archlinux.org/title/Power_management/Suspend_and_hibernate#Hibernation). A separate zram filesystem such as `/mnt/zram1` is temporary storage, not swap, and its contents disappear when reset, unmounted, or powered off.

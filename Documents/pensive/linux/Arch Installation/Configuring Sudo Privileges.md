@@ -2,6 +2,8 @@
 
 To allow users in the `wheel` group to execute commands with root privileges, you must edit the `/etc/sudoers` file. This is a critical step for enabling system administration from a non-root user account.
 
+Install `sudo` in the target if it is not already installed (`pacman -S sudo` using the configured target repositories). Commands below run inside the target chroot.
+
 #### 1. Edit the `sudoers` File
 
 The safest way to modify the `sudoers` configuration is with the `visudo` command, which validates the file's syntax before saving. You can specify your preferred text editor using the `EDITOR` environment variable.
@@ -30,7 +32,7 @@ Inside the editor, find the line that grants sudo access to the `wheel` group. I
 > [!NOTE] Understanding the `sudoers` Rule
 > This line grants extensive privileges. Here's what it means:
 > - `%wheel`: The rule applies to all users in the `wheel` group.
-> - `ALL=`: The rule applies from any terminal (host).
+> - `ALL=`: The rule applies on any host.
 > - `(ALL:ALL)`: Users can run commands as any target user or group.
 > - `ALL`: The rule applies to all commands.
 

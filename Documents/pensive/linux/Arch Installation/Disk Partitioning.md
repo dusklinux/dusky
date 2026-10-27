@@ -24,15 +24,15 @@ cfdisk /dev/sdX
 ```
 
 Once `cfdisk` launches:
-1.  You will be prompted to select a label type. Choose **`gpt`**, which is required for modern UEFI systems.
+1.  If the disk has no recognized partition table, select **`gpt`** when prompted. If it already has a partition table, `cfdisk` opens it instead; inspect it and decide what to preserve. This example assumes a new or intentionally cleared GPT layout.
 2.  Create the following two partitions.
 
 #### Recommended Partition Scheme
 
 | Partition | Type | Size | Purpose |
 |---|---|---|---|
-| EFI System | `EFI System` | `1G` | Boot loader files (mandatory for UEFI) |
-| Root | `Linux filesystem` | Remainder of disk (`>20G`) | The base of your operating system |
+| EFI System | `EFI System` | `1G` example | EFI boot files; allow more space if storing multiple kernels and initramfs images |
+| Root | `Linux filesystem` | Remainder of disk, sized for your packages and data | The base of your operating system |
 
 > [!TIP] Using `cfdisk`
 > - Use the arrow keys to navigate.

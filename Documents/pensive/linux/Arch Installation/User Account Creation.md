@@ -1,34 +1,18 @@
+# Create a user account
 
-# 19. Create a User Account
-
-For security and system integrity, you should not use the `root` account for daily activities. This step creates a standard user account for regular use.
-
-### 1. Create the User and Assign Groups
-
-Use the `useradd` command to create the new user. The `-m` flag creates a home directory for the user, and the `-G` flag adds the user to a list of supplementary groups, granting them necessary permissions for common hardware and tasks.
+Run these commands inside the installed system's chroot. Replace `your_username` with the intended login name:
 
 ```bash
-useradd -m -G wheel,input,audio,video,storage,optical,network,lp,power,games,rfkill your_username
-```
-
-> [!TIP]
-> **Understanding the Groups**
-> - **`wheel`**: This is the most important group. It allows the user to run administrative commands using `sudo` (which will be configured later).
-> - **`audio`, `video`, `input`**: Provide access to sound, video, and input devices.
-> - **`storage`, `optical`**: Allow access to storage devices like USB drives and CD/DVDs.
-> - **`network`, `power`, `rfkill`**: Permit management of network connections, power state (reboot/shutdown), and wireless devices.
-
-### 2. Set the User Password
-
-Next, assign a password to the newly created account using the `passwd` command.
-
-> [!CAUTION]
-> **Specify the Username!**
-> If you run `passwd` without specifying `your_username`, you will change the password for the **root** user, not your new user.
-
-```bash
+useradd -m -G wheel your_username
 passwd your_username
 ```
 
-You will be prompted to enter and confirm the new password. Once set, your user account is created and ready for the next steps.
+`-m` creates a home directory; `-G wheel` adds the account to the supplementary `wheel` group. Membership alone does not grant sudo access: install and configure sudo as described in [[Configuring Sudo Privileges]]. `passwd` without a username changes the current account's password, which is root in this chroot.
 
+Verify the account and its groups:
+
+```bash
+id your_username
+```
+
+Add other groups only when the relevant software or device setup needs them. Many device permissions are assigned to the active session by logind and udev; the older blanket list of `audio`, `video`, `input`, and other groups is not universally required. Check available groups with `getent group`. See [ArchWiki: users and groups](https://wiki.archlinux.org/title/Users_and_groups).

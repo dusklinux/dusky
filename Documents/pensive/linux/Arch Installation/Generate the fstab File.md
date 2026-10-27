@@ -3,7 +3,7 @@ This step creates the file system table (`fstab`), which instructs the operating
 
 ### Generate fstab
 
-Use the `genfstab` script to scan your currently mounted partitions and generate the configuration. We use the `-U` flag to identify partitions by their UUIDs, which is more reliable than device names (e.g., `/dev/nvme0n1p1`) that can sometimes change.
+First verify the intended root, home and ESP mounts with `findmnt -R /mnt`. Then use the `genfstab` script to scan your currently mounted partitions and generate the configuration. We use the `-U` flag to identify partitions by their UUIDs, which is more reliable than device names (e.g., `/dev/nvme0n1p1`) that can sometimes change.
 
 ```bash
 genfstab -U /mnt >> /mnt/etc/fstab
@@ -13,6 +13,10 @@ genfstab -U /mnt >> /mnt/etc/fstab
 > - **`genfstab -U`**: Generates `fstab` entries using **U**UIDs for disk identification.
 > - **`/mnt`**: Scans the directory where your new system's partitions are mounted.
 > - **`>> /mnt/etc/fstab`**: Appends the generated output to the `fstab` file inside your new system.
+
+The installed `genfstab` also examines active swap areas, excluding zram. Without a prefix filter it can include a live environment's active disk swap, even if it is not intended for the installed system. Inspect `swapon --show` and remove any unwanted swap entries from the target file; add an intended target swap entry if necessary. Archinstall uses `-f` to filter by a path prefix, but a target swap **partition** normally appears as `/dev/...` and will not match `/mnt`; do not assume that filter includes it.
+
+The append operation is intended to be run once. Running it again appends duplicate entries; inspect and edit the target file rather than blindly repeating it. Check the command output and exit status.
 
 ### Verify the Generated File
 
@@ -29,5 +33,5 @@ cat /mnt/etc/fstab
 > - Check that the mount points and filesystem types are correct.
 > - You can compare the output with the example in [[fstab reference]].
 >
-> A more thorough verification will be performed in a later step, [[Optimizing fstab Entries]], after we `chroot` into the new environment.
+> Compare entries with the actual layout. An example fstab from another machine is not a template for device UUIDs or mounts.
 

@@ -1,50 +1,23 @@
+# Configure mkinitcpio
 
-This step configures the `mkinitcpio.conf` file, which is used to generate the initial RAM disk (initramfs). The initramfs is a small, temporary root filesystem that loads essential drivers into memory, enabling the kernel to access the main root filesystem, especially when using features like Btrfs or disk encryption.
+The initramfs is an early userspace image loaded before the real root filesystem is mounted. mkinitcpio builds it from the installed kernel, configuration and hooks. Kernel package installation normally generates images automatically; rebuild them after changing hooks or adding CPU microcode.
 
-### 1. Edit the Configuration File
-
-Open the `mkinitcpio` configuration file in a text editor:
+These commands run inside the installed system's chroot. Inspect `/etc/mkinitcpio.conf` and the kernel presets in `/etc/mkinitcpio.d/` before changing them:
 
 ```bash
-nvim /etc/mkinitcpio.conf
+cat /etc/mkinitcpio.conf
+ls /etc/mkinitcpio.d/
+mkinitcpio -H microcode
 ```
 
-### 2. Modify Configuration Arrays
+## Simple unencrypted Btrfs root
 
-You will need to add specific values to the `MODULES`, `BINARIES`, and `HOOKS` arrays within the file.
+For the simple layout in [[Btrfs Subvolume Creation]], the installed default hooks and kernel normally suffice. Do not add `/usr/bin/btrfs` to `BINARIES` merely because root is Btrfs. Do not replace an existing `MODULES` or `HOOKS` array blindly: its content may support other hardware or storage. If a needed driver is missing from the image, investigate and explicitly add the relevant module when appropriate.
 
-#### MODULES
+Install the target CPU's `intel-ucode` or `amd-ucode` package and ensure the `microcode` hook is in the active `HOOKS` array. The installed mkinitcpio hook embeds early microcode in a prepended, uncompressed image. When `autodetect` precedes `microcode`, it selects microcode for the CPU building the image; take this into account when preparing a system for different hardware. A separate microcode `initrd` entry is unnecessary when the hook embeds it.
 
-Add `btrfs` to the `MODULES` array. This ensures the Btrfs kernel module is included in the initramfs, which is essential for booting from a Btrfs filesystem.
+## Encrypted root
 
-```
-MODULES=(btrfs)
-```
+An encrypted installation requires a matching early-unlock hook **and** kernel command line. The `encrypt` hook belongs to the busybox/udev approach; `sd-encrypt` belongs to the systemd approach. Do not mix instructions for the two. Ordering and parameters depend on the chosen design, so use the current [ArchWiki dm-crypt system configuration](https://wiki.archlinux.org/title/Dm-crypt/System_configuration). The unencrypted boot entry in [[Boot Loader systemd boot]] does not unlock a LUKS volume.
 
-#### BINARIES
-
-Add the path to the Btrfs user-space utility to the `BINARIES` array. This allows the initramfs environment to execute Btrfs commands if necessary during early boot.
-
-```
-BINARIES=(/usr/bin/btrfs)
-```
-
-#### HOOKS
-
-The `HOOKS` array defines the sequence of actions taken during the boot process. If you are using a LUKS-encrypted root partition, you must add the `encrypt` hook.
-
-> [!WARNING] Hook Order is Critical
-> The order of hooks is sequential and extremely important. The `encrypt` hook **must** be placed before the `filesystems` hook. This ensures the system unlocks the encrypted volume *before* it attempts to mount the filesystem on it.
-
-A standard `HOOKS` line for a system with an encrypted Btrfs root partition is shown below:
-
-```
-HOOKS=(base udev autodetect microcode modconf keyboard keymap consolefont block encrypt filesystems fsck)
-```
-
-> [!TIP]
-> After saving your changes to `/etc/mkinitcpio.conf`, the next step is to [[Generating the Initramfs|generate the initramfs image]].
-
-
-## Reference file
-[[Initramfs file Reference]]
+After any relevant changes, run `mkinitcpio -P` and inspect its output and resulting files; see [[Generating the Initramfs]].

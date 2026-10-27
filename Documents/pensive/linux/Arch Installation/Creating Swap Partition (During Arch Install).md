@@ -1,6 +1,6 @@
-### Creating and Activating a Swap Partition (During Arch Install)
+### Creating a Swap Partition (During Arch Install)
 
-These steps should be performed from within the `chroot` environment during the Arch Linux installation process.
+These steps can be performed as root inside the target chroot after partitioning. This creates a swap signature and a target fstab entry; it does not activate swap in the live environment. If `genfstab` has already included the intended swap, do not add a duplicate entry.
 
 #### Step 1: Format the Swap Partition
 
@@ -12,7 +12,7 @@ First, you must format the designated partition (e.g., `/dev/sdXN`) as a swap ar
 lsblk
 ```
 ```bash
-sudo mkswap /dev/sdXN
+mkswap /dev/sdXN
 ```
 *Replace `/dev/sdXN` with your actual swap partition, for example, `/dev/sda3`.*
 

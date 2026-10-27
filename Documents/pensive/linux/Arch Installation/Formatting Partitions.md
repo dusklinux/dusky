@@ -10,7 +10,7 @@ With the disk partitioned, the next step is to create filesystems on the newly c
 
 The EFI System Partition (ESP) is used by the UEFI firmware to boot the operating system. It must be formatted with the **FAT32** filesystem.
 
-Execute the following command, replacing `/dev/esp_partition` with your actual ESP device name (e.g., `/dev/sda1`):
+Format a newly created ESP using the following command, replacing `/dev/esp_partition` with the actual partition. If reusing an existing ESP, **do not format it**: it may contain another operating system’s boot files. Check its type, contents and available space instead.
 
 ```sh
 mkfs.fat -F32 /dev/esp_partition
@@ -33,6 +33,6 @@ mkfs.btrfs -f /dev/root_partition
 ```
 
 > [!NOTE] The `-f` (Force) Flag
-> The `-f` flag forces the creation of a new Btrfs filesystem, even if one already exists on the partition. It's good practice to include this to ensure a clean format, especially when re-using a drive.
+> The `-f` flag forces the creation of a new Btrfs filesystem, even if one already exists on the partition. It overrides the existing-filesystem check. Use it only when intentionally replacing the filesystem; it is not required for a fresh partition.
 
 With the filesystems created, the next step is [[Btrfs Subvolume Creation]].

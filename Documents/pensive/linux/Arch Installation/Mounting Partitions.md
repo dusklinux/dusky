@@ -2,24 +2,17 @@ With the Btrfs subvolumes created and the top-level volume unmounted, the next s
 
 ### 1. Mount the Root Subvolume (`@`)
 
-First, mount the `@` subvolume to `/mnt`. This directory will become the root (`/`) of your new system. We use specific mount options optimized for performance and data integrity on an SSD with Btrfs.
+First, mount the `@` subvolume to `/mnt`. This directory will become the root (`/`) of your new system. This example uses compression and avoids access-time writes; the trade-offs depend on the workload.
 
 > [!WARNING]
 > Replace `/dev/root_partition` with your actual Btrfs partition (e.g., `/dev/nvme0n1p2` or `/dev/sda2`).
 
 ```bash
-mount -o rw,noatime,compress=zstd:3,ssd,discard=async,space_cache=v2,subvol=@ /dev/root_partition /mnt
+mount -o noatime,compress=zstd:3,subvol=@ /dev/root_partition /mnt
 ```
 
-> [!TIP]
-> **Mount Options Explained:**
-> - `rw`: Mount the filesystem as read-write.
-> - `noatime`: Disables writing file access times to reduce disk I/O.
-> - `compress=zstd:3`: Enables transparent compression with the zstd algorithm (level 3) to save space.
-> - `ssd`: Enables SSD-specific optimizations.
-> - `discard=async`: Enables asynchronous TRIM operations for better SSD performance and longevity.
-> - `space_cache=v2`: Uses the improved free space cache, which is the robust default on modern kernels.
-> - `subvol=@`: Specifies the exact subvolume to mount.
+> [!NOTE] Mount options
+> `noatime` avoids access-time updates; software that needs them may behave differently. `compress=zstd:3` enables transparent compression, which can reduce I/O but costs CPU and does not benefit every workload. `subvol=@` selects the root subvolume. Btrfs chooses SSD behavior and discard defaults according to the device and kernel; do not force SSD-specific options on unknown hardware. Most Btrfs mount options apply to the entire filesystem, and the first mounted subvolume determines them. See [Btrfs mount options](https://btrfs.readthedocs.io/en/latest/ch-mount-options.html).
 
 ### 2. Create Mount Points for Home and Boot
 
@@ -38,13 +31,13 @@ ls /mnt
 
 ### 3. Mount the Home Subvolume (`@home`)
 
-Next, mount the `@home` subvolume to the `/mnt/home` directory you just created. This uses the same performance-oriented mount options as the root subvolume.
+Next, mount the `@home` subvolume to the `/mnt/home` directory you just created. Use the same filesystem-wide options as the root mount.
 
 > [!NOTE]
 > Use the same Btrfs partition device as you did for the root subvolume.
 
 ```bash
-mount -o rw,noatime,compress=zstd:3,ssd,discard=async,space_cache=v2,subvol=@home /dev/root_partition /mnt/home
+mount -o noatime,compress=zstd:3,subvol=@home /dev/root_partition /mnt/home
 ```
 
 ### 4. Mount the EFI System Partition (ESP)
