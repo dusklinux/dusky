@@ -165,6 +165,7 @@ These build the fastest return to AE. Learn them by **task**, not by alphabet.
 | Edit masks, shapes, paint, markers or tracking regions | [[#3.9 Masks, shapes, painting and markers]] |
 | Work with cameras, footage or render commands | [[#3.10 3D cameras, lights, effects, footage and rendering]] |
 | Inspect alpha, channels, guides or grids | [[#3.11 Guides, grids, channels and inspection]] |
+| Search multiple terms or use toolbar alternatives | [[#3.14 Search and mouse alternatives]] |
 | Use specialist gestures or diagnose key conflicts | [[#3.12 Less frequent commands and contextual gestures]] |
 | Edit graphs precisely or distinguish snapshots from copied frames | [[#3.13 Precision editing and frame capture]] |
 
@@ -295,7 +296,7 @@ These build the fastest return to AE. Learn them by **task**, not by alphabet.
 | Jump to a particular time | `Alt+Shift+J` | Enter timecode/time |
 | Work area start / end at playhead | `B` / `N` | Independent of layer in/out |
 | Work area from selected layers / comp | `Ctrl+Alt+B` | Start/end bounds |
-| Start/stop playback | `Space` or `Num 0` | Preview panel controls caching/looping |
+| Start/stop playback | `Space`, `Shift+Space` or `Num 0` | Preview panel controls caching/looping |
 | Audio-only preview from playhead | `Num .` | Numpad decimal |
 | Audio-only preview work area | `Alt+Num .` | |
 | Preview alternate-frame count | `Alt+Num 0` | Preview prefs govern count |
@@ -432,6 +433,7 @@ Without `Shift`, the bracket commands act on **each layer's own** boundary. Use 
 | Effects: delete **all** on selected layer(s) | `Ctrl+Shift+E` | **Destructive** removal |
 | Copy with property links | `Ctrl+Alt+C` (where exposed) / `Edit → Copy with Property Links` | Creates expressions referencing source property; test across comps |
 | Copy Expression Only | `Edit → Copy Expression Only` | Assign custom key if desired; does not copy values |
+| Add an expression to a selected property | `Alt+Shift+=` / Animation → Add Expression | Adobe-documented binding; verify your installed preset. Use the expression switch for temporary bypass. |
 | Toggle expression editor for one property | `Alt+click` stopwatch | Can **remove** existing expression; prefer `=` switch to disable temporarily |
 
 > [!warning] Scale vs position dimensions
@@ -738,6 +740,22 @@ For clipboard capture, activate **Composition, Layer or Footage**, wait for rend
 
 Double-click **Zoom** for 100% on Windows. Hold `Shift` with the Hand tool to pan faster. Hold `Ctrl` while selecting a magnification from the viewer menu to apply it to all views in that Composition panel. Use **View → Assign Shortcut** to manage the three saved 3D view slots; check existing workspace bindings before reusing function keys. Magnifying a viewer changes inspection size; scaling a layer changes the image being composited. [Adobe: viewer controls](https://helpx.adobe.com/after-effects/desktop/view-and-preview/preview-video-and-audio/modifying-using-views.html).
 
+
+## 3.14 Search and mouse alternatives
+
+| Task | Windows gesture | Detail |
+|---|---|---|
+| Search for several properties at once | `Ctrl+F`, then `position, scale` | A comma is OR; search finds either term. Clear the filter afterward. |
+| Center anchor in visible content using the toolbar | `Ctrl+double-click` Pan Behind icon | Equivalent to `Ctrl+Alt+Home`; preserves visual placement. |
+| Reset anchor to its default location | Double-click Pan Behind icon | Reset differs from centering in visible content. |
+| Reset anchor and center the layer in the comp | `Alt+double-click` Pan Behind icon | This can visibly move the layer. |
+| Give a marker a duration | `Alt+drag` the marker to the right | Afterward, drag its out-point handle to change duration. |
+| Reset work area to full composition | Double-click the **center** of its bar | This is the Work Area bar, not the Time Navigator. |
+| Zoom time to individual frames | Double-click Time Navigator | Toggles back to composition duration on a second double-click. |
+| Toggle full-duration time view | `Shift+double-click` Time Navigator | Restores the previous navigator extent on another toggle. |
+
+Search syntax: [Adobe: interface search](https://helpx.adobe.com/after-effects/desktop/get-started/get-familiar-with-the-interface/general-user-interface-items.html). Anchor gestures: [Adobe: layer properties](https://helpx.adobe.com/after-effects/desktop/work-with-layers/layer-properties/layer-properties.html). Marker duration: [Adobe: markers](https://helpx.adobe.com/after-effects/desktop/work-with-layers/work-with-layer-and-composition-markers/layer-markers-composition-markers.html). Work-area/navigator gestures: [Adobe: previewing](https://helpx.adobe.com/after-effects/desktop/view-and-preview/preview-video-and-audio/previewing.html).
+
 ---
 
 # 04 — The Core Workflows
@@ -1015,6 +1033,43 @@ Set the work area around the entrance animation, right-click the work-area bar a
 ## 4.24 Crop the composition canvas to artwork
 
 Select the relevant **2D layers**, then **Composition → Crop Comp to Selected Layer(s) Bounds**, or use the selected layers' context menu. The canvas can shrink or expand to fit. This command is unavailable for 3D layers. Save a version first and inspect animated artwork, effects extending past layer edges and nested-comp alignment afterward. Canvas cropping changes composition dimensions; **Trim Comp to Work Area** changes duration; **Fit to Comp** changes a layer's transform. [Adobe: composition bounds](https://helpx.adobe.com/after-effects/desktop/work-with-compositions/composition-settings/composition-basics.html).
+
+
+## 4.25 Turn text into editable outlines
+
+Select the text layer, then **Layer → Create → Create Shapes From Text** for shape groups, or **Create Masks From Text** for masks on a new solid. Use shapes for vertex animation, morphs and shape operators; use masks for workflows needing mask paths, such as Generate → Stroke. Retain the original text layer: the generated outlines are not live font/text content, and changing the original wording does not update them. Inspect compound letters with holes and any existing animation after conversion. [Adobe: text outlines and masks](https://helpx.adobe.com/after-effects/desktop/drawing-painting-and-paths/work-with-masks/create-masks.html).
+
+## 4.26 Photoshop layers and editable text
+
+Import a layered PSD as a **composition** when you need separate layers. **Retain Layer Sizes**, where offered, gives layers bounds based on their own content instead of every layer using the document canvas; choose deliberately because bounds affect anchors and effects. Saving changes to existing source layers in Photoshop updates their footage in AE, but AE's layer transforms and the imported composition structure are separate. Recheck bounds and reimport when the PSD's structure changes substantially. Newly added Photoshop layers are not automatically added to an existing imported comp. [Adobe: PSD import and refresh](https://helpx.adobe.com/after-effects/desktop/import-files/import-still-images/preparing-importing-still-images.html).
+
+For an actual Photoshop text layer, select **Layer → Create → Convert to Editable Text**. It becomes native AE text and **stops using the Photoshop text layer as its source footage**. Keep a source version if ongoing Photoshop changes must remain linked. This differs from editable Illustrator-text conversion listed in the Beta watchlist. [Adobe: Photoshop text conversion](https://helpx.adobe.com/after-effects/desktop/add-text/create-and-edit-text-layers/creating-editing-text-layers.html).
+
+## 4.27 Preserve intentional nested-comp timing
+
+In the **source precomp**, open `Ctrl+K` → **Advanced**. **Preserve frame rate when nested or in render queue** keeps that comp's temporal sampling. Example: a 12-fps character animation can retain its stepped cadence inside a 24-fps master. **Preserve resolution when nested** retains that comp's own resolution setting instead of inheriting the containing comp's setting. Neither option creates missing frames or image detail. A lower-rate master still cannot display every distinct frame of a higher-rate source. [Adobe: nested-comp settings](https://helpx.adobe.com/after-effects/desktop/work-with-compositions/precomposing-and-nesting/precomposing-nesting-pre-rendering.html).
+
+**Canvas size from the dialog:** Leave All Attributes uses the selected layer's dimensions and is unavailable for multiple layers, text or shapes. Move All Attributes uses the original composition's frame size.
+
+**Precomp canvas versus source quality:** Move All Attributes creates a processing boundary whose canvas can clip content or limit later enlargement. The source footage inside is still present; precomposing does not rewrite it into a lower-resolution file. Inspect canvas dimensions, the inner and outer transforms, and Collapse Transformations before deciding how to fix softness.
+
+## 4.28 Align and distribute without eyeballing
+
+Open **Window → Align**. Choose **Align Layers To → Composition** for the frame, or **Selection** for the selected layers' bounds. Distribution needs at least three layers and spaces them between the extremes. For chart tick labels, place the first and last labels, select all the labels, then distribute horizontally or vertically. Equal center spacing does not imply equal visible gaps when layers differ in size. [Adobe: alignment](https://helpx.adobe.com/after-effects/desktop/work-with-layers/select-and-arrange-layers/selecting-arranging-layers.html).
+
+**Reorder by selection:** Ctrl-click layers in the desired order, Cut, then Paste to reorder them by selection order. Inspect the stack immediately, since changing it changes compositing and can affect rigs based on layer indices. Use Undo if the result is not intended.
+
+## 4.29 Move a line of text along a curve
+
+Draw a mask path on a text layer. Expand **Text → Path Options**, choose that mask as **Path**, then animate **First Margin** or the appropriate margin control for the text's alignment. **Reverse Path** changes direction; **Perpendicular To Path** controls character orientation; **Force Alignment** distributes characters between the two margins. This moves the text along the path; a Position animator instead offsets selected characters. [Adobe: text on paths](https://helpx.adobe.com/after-effects/desktop/animating-text/text-animation/animating-text.html).
+
+For tracking that expands around the center, begin with **center paragraph alignment**, then animate Tracking Amount and inspect selector behavior. The layer anchor controls the layer's transform pivot; centering that anchor alone does not set typographic alignment.
+
+## 4.30 Photoshop-style Layer Styles
+
+Select a pixel-bearing layer and choose **Layer → Layer Styles**, or its context menu. Available styles include **Drop Shadow, Inner Shadow, Outer Glow, Inner Glow, Bevel and Emboss, Satin, Color Overlay, Gradient Overlay, and Stroke**. Expand **Layer Styles** in Timeline to edit or animate supported controls.
+
+**Style Stroke** outlines the layer's visible content. **Generate → Stroke** follows mask paths, while a shape Stroke belongs to a shape group's geometry. They are useful for different kinds of outlines. Styles also have their own compositing behavior; test precomps and renderer changes rather than treating a style as an ordinary effect in Effect Controls. [Adobe: Layer Styles](https://helpx.adobe.com/after-effects/desktop/work-with-layers/work-with-layer-blending-modes/blending-modes-layer-styles.html).
 
 ---
 
@@ -1552,6 +1607,17 @@ In the Comp viewer, right-click an obscured object → **Select → layer name**
 
 If Copy seems to copy only an effect or keys, deselect internal components with `Shift+F2` while retaining the layer, then copy again. Inspect selection before deleting, duplicating or pasting. A layer selected with a selected property is a different editing context from a layer selected on its own.
 
+
+## 7.8 Preview a small area at useful detail
+
+Enable **Region of Interest** at the bottom of the viewer and draw a rectangle around the difficult edge or effect. Drag handles to resize; `Shift+drag` a corner preserves its proportions. `Alt+click` the ROI button starts a fresh selection. Toggle ROI off to inspect the full scene.
+
+ROI limits preview work; it does **not normally crop final output**. **Composition → Crop Comp to Region of Interest** changes the canvas. The Output Module's **Crop → Use Region of Interest** crops a rendered output. These are separate decisions. [Adobe: ROI and previewing](https://helpx.adobe.com/after-effects/desktop/view-and-preview/preview-video-and-audio/previewing.html).
+
+## 7.9 Check color with scopes
+
+Use **Window → Lumetri Scopes** alongside Lumetri Color or Curves. Waveform helps inspect brightness levels, RGB Parade compares channels, and Vectorscope shows hue/saturation distribution. Set the scope interpretation for the intended SDR/HDR workflow and check the actual output transform. Viewer exposure is an inspection control; a correction effect changes rendered pixels. [Adobe: HDR, bit depth and scopes](https://www.adobe.com/us/learn/after-effects/web/hdr-color-depth).
+
 ---
 # 08 — Practical Recipes (Copy the Method, Not Just the Shortcut)
 
@@ -1756,6 +1822,38 @@ This allows one animation to drive many variations. Essential Properties are **n
 4. For effects with layer-space vs composition-space mapping, test the same grid at different layer sizes, precomp boundaries and collapse-transform settings. This helps isolate why the edge/bounds of a clipped glow, blur or displacement look wrong.
 
 This 30-second diagnostic is often faster than guessing how an effect remaps the image.
+
+
+## 8.20 Soft merging blobs from simple shapes
+
+Put two same-colored circles on transparency, animate them approaching, and precompose them together. Apply **Gaussian Blur** or **Fast Box Blur**, then **Levels** targeting **Alpha**. Bring the input black/white levels closer to tighten the softened alpha into a merged silhouette. Add Fill afterward if you want one clean color. Adjust blur and thresholds together; an opaque background prevents the intended alpha-union effect. This is a stylized merging-shapes technique, not recovery of lost image detail.
+
+## 8.21 Morph an image using Reshape
+
+On the image being distorted, draw closed **source** and **destination** masks and optionally a larger **boundary** mask. Set mask modes to **None**. Apply **Reshape**, assign each mask explicitly, and animate **Percent** from 0 to 100. With the effect selected, **Alt-click** the mask to add correspondence points; map distinctive features to their counterparts to reduce twisting. Use the least costly Elasticity that gives a clean deformation.
+
+To morph image A into image B, make complementary deformations on separate layers and crossfade around the matching intermediate form. A single Reshape instance warps pixels; it does not generate the second image's texture. [Adobe: Reshape](https://helpx.adobe.com/after-effects/desktop/apply-effects-and-animation-presets/list-of-effects/distort-effects.html).
+
+## 8.22 Make a selective-focus or miniature look
+
+Create a grayscale map with a dark focus band and lighter surrounding regions. A feathered mask plus **Solid Composite** can build a full-frame map without transparent gaps; a gradient is another option. Assign it in **Camera Lens Blur → Blur Map** and select **Effects & Masks** for the map input when the map is generated by effects. Animate **Blur Focal Distance**, adjust Blur Radius, and inspect transitions across object edges. For a miniature look, start with a suitable elevated shot and a narrow focus band; extra saturation is a creative choice, not a requirement.
+
+## 8.23 Small effect-stack experiments
+
+| Goal | Starting stack | What to watch |
+|---|---|---|
+| Graphic contour background | Fractal Noise → Blur → Posterize → Find Edges → Tint/Fill | Animate Evolution, then tune Scale/Contrast to the composition; no fixed numbers work for every size. |
+| Wireframe-looking globe | Grid on a solid → CC Sphere | Rotate inside CC Sphere; it remains an effect-rendered sphere rather than an editable mesh. |
+| Light sweep across a logo | CC Light Sweep → optional Glow | Animate the sweep center and preserve the logo's alpha. |
+| Colored image trails | CC Wide Time → Tint → CC Composite | Inspect RGB Only/alpha and effect order; the composite brings back source detail. |
+| Drips or smoke forks | Wave Warp / Liquify / CC Smear, then localized warping | Choose the tool according to the deformation; animate the controls that actually create motion. |
+| Highlight bloom | Extract → Glow on a duplicate above the original | Preserve useful detail and inspect the blend over dark and bright regions. |
+
+Try these on short test comps. Combine effects by what their inputs and outputs mean; stacking more effects does not automatically improve a shot.
+
+## 8.24 Build a controlled RGB split
+
+For an opaque RGB source, duplicate it into three aligned layers. Apply **Shift Channels** so each keeps one of R, G or B and sets the other two to **Full Off**. Use **Add** on the upper two to recombine the channels, then offset them slightly with Transform/Offset for the desired fringe. Inspect edges: Offset wraps source pixels and can create an obvious seam. With transparent artwork, precompose the result and restore/control alpha deliberately so additive compositing does not unintentionally expand opacity.
 
 ---
 
@@ -1966,6 +2064,20 @@ src.sampleImage([pt[0], pt[1]], [2, 2], true, time);
 
 The point is converted into the sampled layer's coordinates; `[2,2]` is the sampling radius. The result is RGBA; append `[3]` only when you want alpha as a scalar. Sampling another layer's raw Position without converting coordinates fails when its transform/parent differs. Inspect effect order and avoid heavy sampling across hundreds of expressions. [Adobe: expression examples](https://helpx.adobe.com/after-effects/desktop/work-with-expressions/expression-examples/expression-examples.html).
 
+
+## 9.9 Copy animation, expressions and links intentionally
+
+| Command | What the destination receives |
+|---|---|
+| Copy / Paste selected keyframes | Independent keys; earliest copied key goes at CTI. |
+| **Copy Expression Only** | The expression on the corresponding property, without copying its keyframe animation. |
+| **Copy with Property Links** | Expressions referencing the named source composition/layer. |
+| **Copy with Relative Property Links** | Expressions referencing a layer in `thisComp`; useful for reusable rigs. |
+
+For example, `comp("MASTER").layer("CTRL").transform.scale` keeps targeting MASTER, whereas `thisComp.layer("CTRL").transform.scale` targets CTRL in whichever comp contains the expression. Relative links are useful when each duplicated comp should have its own controller. Check the generated reference after pasting. [Adobe: property links](https://helpx.adobe.com/after-effects/desktop/work-with-expressions/edit-expressions/edit-expressions.html).
+
+Use the **Enable Expression** switch to bypass an expression temporarily. To bake an expression, select its property → **Animation → Keyframe Assistant → Convert Expression to Keyframes**. The command disables the expression and creates sampled keys. Preserve an editable copy first: baking samples at frame times and creates many keys, which may behave differently from a continuously evaluated expression during retiming/subframe sampling. [Adobe: expression basics](https://helpx.adobe.com/after-effects/desktop/work-with-expressions/expression-basics/expression-basics.html).
+
 ---
 
 # 10 — Practice Curriculum (Rebuild Muscle Memory)
@@ -2102,6 +2214,19 @@ These links are **documentation sources**, not prerequisites for reading this gu
 45. **[Adobe: composition bounds](https://helpx.adobe.com/after-effects/desktop/work-with-compositions/composition-settings/composition-basics.html)**.
 46. **[Adobe: expression examples](https://helpx.adobe.com/after-effects/desktop/work-with-expressions/expression-examples/expression-examples.html)**.
 47. **[Adobe: expression controls](https://helpx.adobe.com/after-effects/desktop/work-with-expressions/expression-controls/expression-controls.html)**.
+
+48. **[Adobe: Text outlines and masks](https://helpx.adobe.com/after-effects/desktop/drawing-painting-and-paths/work-with-masks/create-masks.html)**.
+49. **[Adobe: Layer Styles and blending](https://helpx.adobe.com/after-effects/desktop/work-with-layers/work-with-layer-blending-modes/blending-modes-layer-styles.html)**.
+50. **[Adobe: Expression editing and property links](https://helpx.adobe.com/after-effects/desktop/work-with-expressions/edit-expressions/edit-expressions.html)**.
+51. **[Adobe: Expression basics and baking](https://helpx.adobe.com/after-effects/desktop/work-with-expressions/expression-basics/expression-basics.html)**.
+52. **[Adobe: Previewing and ROI](https://helpx.adobe.com/after-effects/desktop/view-and-preview/preview-video-and-audio/previewing.html)**.
+53. **[Adobe: Interface search syntax](https://helpx.adobe.com/after-effects/desktop/get-started/get-familiar-with-the-interface/general-user-interface-items.html)**.
+54. **[Adobe: Markers and duration handles](https://helpx.adobe.com/after-effects/desktop/work-with-layers/work-with-layer-and-composition-markers/layer-markers-composition-markers.html)**.
+55. **[Adobe: Reshape and distortion](https://helpx.adobe.com/after-effects/desktop/apply-effects-and-animation-presets/list-of-effects/distort-effects.html)**.
+56. **[Adobe: HDR and scopes](https://www.adobe.com/us/learn/after-effects/web/hdr-color-depth)**.
+
+57. **[Adobe: PSD import and refresh](https://helpx.adobe.com/after-effects/desktop/import-files/import-still-images/preparing-importing-still-images.html)**.
+58. **[Adobe: archived full reference](https://helpx.adobe.com/pdf/after_effects_reference.pdf)** — additional historical shortcut documentation; check older bindings in the installed editor.
 
 ## 11.3 Design your own shortcut overlay
 
