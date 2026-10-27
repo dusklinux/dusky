@@ -1,1287 +1,2119 @@
-Some Effects require a solid layer or an image to work, such as particle playground.
-
-you can create shape layers for text layers but only on a new seperate layer, right click the text layer and create> Create Shapes from Text
-
-you can also create masks from text layers by rmb on the text layer > create> Create Masks from Text.
-
-Master properties by putting supported properties in Essential Graphics panal.
-
-Right click on any layer and it'll give you an option for layer style, and this has most photoshop like features like bevel, inner shadow , outter shadow and more.
-
-You can always change the defualt non transpirancy color to any cusom color other than black, i'm taking about when you toggle on transpirancy under the preview panal comp, its usually set to black by defualt, you can change this by CRTL K /composition settings and at the bottom you'll find 'Background Color'> change it to whatever.
-
-to convert audio into keyframes and control any effect based on it - select the audio layer> Rmb> keyframe assistant > Convert Audio to Keyframes, you can delete left channel and right channel and just pickwhip/use the 'both channel' keyframes. btw it'll create it on a new layer select that new layer and UU to unravel on it. 
-
-hand draw/ scribble like write your name and make it animate in the exact way you wrote it by dragging the mouse(it's like animating hand writing but acutally, you can increase/decrease it's speeed after it's all done by UU on the layer to see the start and end keyframes and drag them out or in) - so let's begin on how to create it > create a solid layer> double click on the solid layer in the preview comp to open it in the layer preview panal > select the brush tool from the toolbar above or (CRTL B) > select the brush size and also make sure the 'Paint' Panal is visible if not make it visibile from window> paint> under paint change the 'Duration' to 'Write On', Mode to normal and channels to RGBA(rgb a for alpha)> draw on the layer preview panal with the playhead at the position where you want the animatinn to start from> after you've drawn > go to the effects controls of the solid layer and check 'Paint on Transparent' under the paint property. > go back to the comp preview panal and play the animation. it'll play it. you can press UU to reviel the  starting and ending point of the animatin. 
-btw you have to create a solid layer for other effects to work too like 'Audio Waveform' and some others. 
-
-Mattes
-	Alpha Matte
-	Luma Matte
-	Preserve underlying Transparency
-
-Alpha Matte- 
-Say you had 2 layers; One- the layer a colorful pattern on it. Two- a rotoed out human dancing. Now you wanted the human to be filled with the 1st layer(colorful patterns) ie you wanted the human's face and body/clotes and everything else to be filled with colorful pattern from the 1st layer. You will need to enable the Track matte Alpha on THE 1ST LAYER (yes the layer with colorful pattern, yup i checked this so yes it's correct) /or you could pickwhip from the 1st layer to the human roted layer(the 2nd layer) and it'll show you the colorful pattern only on the human cutout with alpha layer. and not on the transparent areas. 
-	You could also use it in a senario where you only want a moving layer visible if it is in a certain area on the screen ie say you want the a text layer to only show/ be revield if it is inside a rectangle.
-	You'd need to pickwhip from the text layer to the rectangle shape layer and don't forget to turn the visibility of the ractangle shape layer back on because the visibility automatcially turns off when used as track matte. and then you'll have the text layer only visible inside the shape. You could toggle the invert option to only be visible outside the rectangle.
-
-Alpha matte inverted -
-already mentioned above briefly but here you go again; Say you have a text that you want to have cut out another layer with footage. ie say you want the footage layer to have a cut out in it of the text (punch holes in the footage layer the shape of the text into it) go to the footage layer and pickwhip to the text layer or drop down and select the text layer and then toggle inverted on the side of the matte.
-
-Luma Matte- 
-So this works the same way alpha matte works only it effects the luminance channels of the targetted layer ie. It primarely uses the white values to show/reveal the source layer unles inverted using the toggle
-
-Preserve Underlying Transparency - (P.U.T - my own abbrivation for brevity)
-Imagine you have a composition with multiple layers, ideally organized as a precomp. This feature works in a hierarchical manner, meaning it only affects the layers that are positioned beneath the layer where it’s toggled ON. It does not influence any layers that are positioned above it in the layer stack.
-Essentially, it functions like an alpha matte. This means it will only display its content in areas where the layers beneath it are opaque. For example, if one of your underneath layer is a square-shaped layer with transparent areas around the square, those transparent regions will also render as transparent on the current layer where the P.U.T feature is enabled. In other words, the transparency of the underlying layers dictates which parts of the toggled layer are visible.  
-This works by toggling the Grid toggle to the left of matte options on the timeline. it's symbolized By 'T' in the heading bar on the timeline panal. 
-
-Types of Keyframes. 
-
-Linear - (default) icon is diomand shaped with left half filled.  this yeilds animation that is very regid and unnaural, without any momentum gain, also the biggest downside of using this is that in the graph editror, when you switch to the speed graph, and want to move around the squires (keyframes) the keyframes are 
-
-Bezier - icon is cicular with left half filled (select all keyframes and CRTL > Lmb on one of the selected keyframes to convert to bezier and baack from and to Linear) Bezier keyframes allow for curved interpolation between values, creating smoother and more natural-looking animations. you can also CRTL LMB on the keyframe points/connecting points in the graph editor on the speed graph to switch to bezier or back, They use control handles to adjust the curve of the animation; the reason to use this are many, you can do everything you can with linear but with caviat, in the graph editor the speed grapch's connecting points/keyframe point are connected instead of being disconneced as is the case in linear keyframes; this is also the case when you easy easy the linear keyframes, the speed graph's connecting points remain disconnected while with bezier keyframes- when you easy ease them, the points remain conected. 
-
-Eased - icon is a timeglass with left half filled. this is easy ease f9 shortcut. 
-
-Hold - icon is a squire with left half filled. or the icon can also be just pointng an arrow with a squire next to it, the arrow could be pointing left or right, this doesn't intropolate between keyframes but jumps to where the keyframe is at the time of the keyframe. rmb on the keyframe> toggle hold keyframe or use the shortcut CRTL alt lmb on any one of the selected keyframes. 
-
-the spacing between dots on the path of a position property- eg a circle traveling from one corner to the next corner on and on will show a guideline of the path/tregectry of the cicle shape or any layer being moved. this will obviously have to be keyframed to work. for simplicity let's assume the keyframes are linear keyframes (the default ones and not easy eased with custom curves) and are far apart at certain places and closer at other places on the the timeline, the cicle will travel at diffrent speeds depending on the spacing between the keyframes. the pace of the cicle as to how fast or slow the circle will move will be depicted by how many tiny dots there are on the path, if there are a lot of circles cramed in togeter on a line it means the circle will travel slower on that path, if the dots are spread apart far and wide, the pace of the circle travelling will be faster. (btw it's only visible when the playhead is paused) while creating easy ease with custom bezier curves, the dots will be cramed in on the line at a certain area and wide apart at another area, all depending on the manipulated cuves of the keyframes on the speed graph/value graph in the graph editor. 
-
-to change the path of an object in motion, select the layer and when the the playhead is paused, you'll see the dotted line and ALSO the (squire box)points/keyframes in the preview panal. select the pen tool or shortcut G and click on the box/point/keyframes in the preview panal to convert it to bezier path and then you'll have the handles to tug and pull on to change it's path. the thing to note is that if the dimentsions on the position property are spereated, you will not be able to change it's path using the bezier curve handles in the preview panal. because to move around freely in 2d space you need both x and y controls, but when they are seperated, they can only move in any one direction at a time so will not give you the bezier curves or motion path in the priview panal. 
-
-can turn off all effects on a layer INSTEAD OF DELETING THEM USING the CRTL shift E shortcut; toggle the fx switch in the timeline on the layer to which effect/s are applied. 
-
-Project Do NOT's
-AE is not a video editor(NLE), it is a compositing software that is capable of animation. Do not edit footage in AE.
-
-Edit footage in an NLE such as Premiere. Use AE for motion graphics and VFX's.
-
-Mp4 sources cause issues in After Effects. Do not use mp4 in AE projects, Convert to Prores 422 or 444 first using Adobe Media Encoder. MP4 is a lossy format & will just make your system have to work harder. It will slow things down because your computer has to decompress the footage to make it usable. Mp4 can also contain codecs that will give issues such as VFR (Variable Frame Rate) footage(Game footage and Go Pro, are most likely sources for this) These are known to cause severe issues with AE. Render all mp4's to Prores first using media encoder.
-
-NO MP3. Use .wav or .aiff audio files.
-
-Do not directly export to mp4 out of AE via Media Encoder. Use AE native render engine.
-
-** Note: A 2 step render is preferable. First export as Prores using AE native render queue, then convert that file to mp4 via Media Encoder.**
-
-Speeding Up Work Flow
-If possible work in 1/2 to 1/4 resolution. Change this back to full resolution before rendering.
-
-Set Preview in 1/2 to 1/4 resolution in Preview control panel.
-
-Make sure that there are no other apps running. Including unseen apps in the background that are eating resources. Note: Chrome is super resource intensive and should not be running while using After Effects.
-
-AGAIN Do not use compressed formats in AE; it only slows your system down.
-
-Disable CPU and GPU intensive effects (example blur and glow) in the effects control panel by clicking the "fx" box in the panel next to the effect name OR in the "fx" box located in time line, during your creation process. Important: Turn them back on before rendering.
-
-idk a use case for this leave it as default but good to know nonetheless; To Preserve Frame Rate & Resolution in After Effects- control + K and open composition settings and then under the second tab= advanced tab- check preserve frame rate and then also check preserve resolution, this is for when you nest a comp within another comp and want the new comp to maintain it's frame rate and res. PS the curcial things to note are. 1. the comp into which other comp/s is/are going to be nested should have a resolution and frame rate highher than that of the comp who's resolution and frame rate is preserved. what i mean is, let's say you are nesting a comp "A" (preserved) into another comp "B". Comp A's frame rate should be lower than that of Comp B's for it to work. If Comb B's frame rate is lower than Comp A's frame rate, it will obviously not work when you play the footage from comp B.
-
-You can seperate the demenstions on a postion layer by right clicking and seperating dementions, and you can also just unlink scale's dementions by toggling the link symbol next to it. scale has seperate dimentions greyed out so only toggeling the link symbol works. 
-
-There's two ways of reversing keyframes - first one is at the same place and the second is by copying/cutting it and pasting the reversed version of it at the same/another place
-	Automatically reverseing the keyframes at the same place is called Time-Reverse Keyframes which can be done by doing the following; To Time-reverse keyframes- select the keframes and then RMB on any one of the selected keyframes > Keyframe assistant > Time reverse Keyframes. you can also assign a keyboard shortcut to it. 
-	
-	Pasting the copied keyframes in reverse order is called Reverse paste keyframes which can be done by copying the selected keyframe by CRTL + V then to paste them in the reveresed order; Ctrl + Shift + V or edit> Paste Reversed Keyframes 
-	
-	
-everthing in Ae that is built in or has an option can have a keyboard shortcut asigned to it,	 when in keybarod shrotcuts section> edit> keyboard shortcuts to open the menu, the shortcut to opening it is . CRTL + alt + '  when the shortcuts pannel is opened >
-
-In the new update of Ae you can now copy expressions only on one layer and paste it on multiple layers at once, it'll automatcially determine which property it was copied from and where it needs to be pasted eg, if it was copied from the position property, it'll automatically paste it to the postion property of the the selected layers, you dont have to select the position property on each layer you want to paste it to, just select the whole layer and it'll do it all on it's own. 
-
-Same with keyframes, you can copy keyframes from one layer on multiple properties eg, copying rotation and scale keyframes and pasteing them on other multiple layers all at once thanks to the new ae update. note that the first keyframe will only be dropped where your playhead is at so make sure to keep the playhead at a desired place you want to start keyframing from. 
-
-Copy Expression Only- will only copy expressions can be acheived by rmb>Copy Expression Only or edit>Copy Expression Only. by default it doesn't have a keyboard shortcut but you could assign it to it obviously. 
-
-Copy with Property Links- the expression on the source layer will drive the animation for all layers to which the property links are pasted, it automatcially copies the full animation driven by both; keyframes and expressions applied to the source layer to which it's pasted will inherit all of it, it'll be driven by the source layer ( it's identiccal to paranteing a layer to another layer.). you can CRTL alt C or Edit> Copy with Property Links to copy with property link and paste it on multiple propertieys at once. this also takes into account the comp from which it was copied eg it uses the expression comp("Comp 1").layer("Shape Layer 1").transform.scale
-
-Copy with Relative Property Links - don't ever use this, this does the same thing as copy with property links but it only works inside the same comp because it uses the expreession; thisComp.layer("Shape Layer 1").transform.scale
-
-to find out the duration between two keyframes, alt click the first keyframe and then alt click the second keyframe, then in the info pannel,it'll tell you the duration between the keyframes.(don't have the playhead exactly on the keyframe otherwise it doesn't work might be a bug or something) 
-
-Info pannel is so useful for seeing the RGB values of the pixel where your mouse curser is on the screen and it'll also tell you the exact x and y values based on where your curser is in the comp panal. 
-
-sometimes there are multiple keyframes on a layer with different timings in between them, for instance there's 4 keyframes on the postion property of a shape layer but they are all placed in a way that the movement of the shape layer is faster at times and slower the other times, to make sure the speed at which the shape moves is consistant from the intiial positon to the end position, you'd need to select all keyframes and then > RMB > rove across time. this will even out the timingis across all keyframes and then you could easy ease the fist and last keyframes> then select all keyframes again > RMB > uncheck 'rove across time'. ( Rove Across Time in After Effects is a feature that allows you to smoothly transition from one keyframe to another over a period of time. Essentially, it enables you to create animations with a more natural and fluid movement, rather than having abrupt jumps between keyframes.)
-
-when you create a shape layer by RMB on the timeline > New > Shape Layer. it'll create a blank shape layer BUT the way to understand it is that the shape layer is actually a containor for shapes, so this creates the contanor without any shapes in it, if you select the empty shape layer and draw with the pen tool on it, it'll create a shape within it under 'Contents', you can have as many shapes in one container as possible., you can also just hit 'Q' and then draw a shape on it and it'll be listed under contents.  also fyi when you create a shape layer from scratch ie wihtout a container by either drawing with the pen tool or hitting q and drawing a shape, it automatically creates a containor and incubates the drawn shape under 'Contents', you can stack as many seperate shapes under a shape contaner as you want. also each shapes under one container essentially acts as a layer of it's own by giving you transform options and ALSO blending mode options.You also of course have a master trasnfrom property to move all shapes within a countanor at once. it's at the bottom. 
-
-To be able to change the shape of a shape layer, you need to convert it to bezier path to get the vertex points for you to move around and manipulate the shape of a shape. btw you might not be able to see the vertex points or they might all be selected at once, so first click away using the v tool (move tool) inside of the preview panal and then navigate to the path property by CRTL F on the layer in the timeline panal and click 'path' and you should be able to see the vertex points, select any one of them and move it around. 
-
-the pen tool in the toolbar has serveral options underneath it, most importatnly 'convert Vertex tool' and 'add vertex tool' , you also have 'delete vertex tool'
-
-when drawing a star or a pentagon in the comp preview panal, before relesing the LMB, hit up arrow or down arrow to increase or decrease the star's points, or increase or decresae a pentagon's sides.
-
-Paranting works differently when just paranting vs when holding down shift while paranting (pickwhiping). just paranting doesn't change the initial properites of the child layer, but holding shift while paranting inherits all the current properties of the parent layer. for instance let's say you're paranting A to B , when just paranting A will not move it's positon but when shift paranting , A will snap to where B is. 
-
-enable or disable expression for multiple layers all at once by selecting the layers then RMB>Switches> disable/enable expressions. it can also be done by right clicking on the comp Preview panal and will have the same sub menus pop up.
- 
-To get keyframes from an expression enabled property, RMB > Keyframe assistant > Convert expressions to keyframes. then I can remove the expressions and work with the keyframes.
-
-To make the playhead loop after playing ie make the playhead go back to the begginning of the timeline/inpoint and play again after reaching end of the timeline/outpoint. 
-
-to loop a footage> go to the project panal (source of the footage in ae) > rmb > INterpret footage > Main> Other options (at the bottom) > Loop > put in the number for how many times you'd like it to loop. 
-
-If you have an inpoint and outpoint set to a portion of the timeline, you can instantly make the inpoint and outpoint extend to the entirety of the timeline by double LMB clicking on the in/out point bar (anywhere on the bar)
-
-feathering a mask does it uniformly across the whole mask, if you want finer control ie control which part of the mask to feather out and how much to feather, use the Mask Feather Tool, it's right where the pen tool is in the tool bar, lmb and hold on the pen tool to list the feather tool and feather away by lmb on the mask insides and creating multiple vertex points to feature at your heart's content. this makes it possible to apply diffrent feathering strenghts on a single mask. this doesn't require for you to use the default feathering property under the mask in the timeline panal, but you could use that in conjuction with the feather tool, the way to use the feather tool is by creating multiple points on a mask and then change the postion of the points, keeping one point far away and points on either side of that farther point; closer to the mask will result in just the point that is far away driving the feather to just that point. 
-
-You can quickly select the sub menu of a drop down right-clicked menu and select the option with just the first letter of the option as long as it's the only option with that starting letter. for instance if you're on a position propertey and want to seperate dimentions, you can RMB> hit S instead of selecting seperate demintions with the mouse. 
-
-Layers in the timeline can have two names, one is which is it's actual name from the project panal aka it's source name, the other is when you rename it to something else in the timeline, the way to toggle between the two names is by clicking on the heading that catogorizes the particular tab of Name of the layer on the timeline, (it's right under the search box for searching certain properties) so the heading can be either of two things - 'Layer Name/Source Name'. 
-
-you know how you can toggle one of the 4 icons on the bottom left of the screen to show certain tabs or hide them on the timeline : like if you want to show the blending mode options or hide it to make more space for other elements on the timeline, well, you don't have to rely solely on the bottom 4 icons to toggle certain tabs, you can RMB on any of the tabs themselves right below the search bar in the timeline panal, such as on the 'Layer Name/Source Name' and then individually select which of the tabs you want visibile and which one you wnat turned off. so the way to do it is by RMB on any of the tabs under the searh box in the timeline panal and then > Columns. this gives you finer control over what you want and what you dont want.  
-
-You can move a descimal point on a property by CRTL up arrow or down arrow or just hold LMB and move the cursor/mouse up or down, say you're moving up a number and you want	 finer control over the numbers, hold down CRTL and up/down arrow but first select the number you want to have finer control over. 
-
-always, always! continuasly rastorize your pdfs/ vector/ illustrator/ photoshop layers to maintain there resolution and clarity even when it's scaled infinately
-
-to change the defualt blue interface color of ae do the following ; CRTL f12 then when the conosole opens up in the preview panal, lmb on the top hamberger menu(the three horizonteal lines stacked up) right next to 'Console' on top of the preview panal> 'Debug Database View'. then search for the following > 'Enable_Theme_Colorizing' > check it (if chekcing option isn't available just type manually type 'true') (true) > go to edit> prefereence> appearance> 'hightlight color' and change it. 
-
-alwasy switch back and fourth between the speed graph and the value graph to see which one better suits the senario/situation.
-
-freezeframe a layer to act as a picture, RMB on the layer and make sure the playhead is at a desired spot. then RMB> time> freezeframe. 
-
-outside of motion blur toggle or the force motion blur effect, there's another way to add motion blur and it works both on 2d and 3d layer movements, first of all toggling the motion blur symbol in the timeline pannel is requried for it to work > and it is the comp shutter angle, so CRTL K to open up compt settings> Advanced> shutter angle right under motion blur sub menu and crank it up to exagurate the motion blur. 
-
-if you have multiple changes made to a layer like you've had effects and masks and other things applied to it and messed around with it's transform properties, and now you want another layer to inheret all the effects, you can quite simply dublicate the layer with all the effects and then select the dublicated layer > while holding down ALT, drag and drop the new layer from the project panal onto the timeline panel all the while the dublicated layer being selected, or you can also drop it onto the comp preview panal while the dublicated layer is selected.
-
-depending on the image you are working with you'll need to set the bit color of the comp accordinly, if you are workign with a regular image from the internet, you don't need to do anything because the comp will defualt to 8 bit, you can see what bits per channel it is (bpc) its usually at the bottom of the comp panal with either 8 bpc/16/bpc/32bpc. higher bpc will result in slower timeline because it'll hog up resources to render.(if you film in prores log, it defaults to 10 bpc so which ae doesn't partuculalry support but you can use a higher bpc like 16 bpc and it'll use all the colors from it ) btw 32 bit float is used for hdr footage. 
-
-if you want to change the way the expression editor looks, you can change everything from Edit> preference> scripting and expression, in line error notification, to auto brackets to tab width to color to so many other things like preview panal expression error at the bottom, , almost every little detial pertaing to expressions is customizable. 
-
-VR footage:- if you take a 360 image using the google streetview app or anyother app that will let you take sphear photos, those photoes will be flat and distroted when importing into ae, so to correct for that, you'll need to do two things, first add CC Environment and then the comp will turn black and you wont be able to see shit, so you'll need to add a Camera to be able to see your layers and then you can animate the picutre and everything, it's truly a great feature to move around and zoom in and out, ideally creat a solid layer and add the effect to it and under the effect properties link to the 360 layer. Note that there is also an inbuilt script under windows>VR Comp Editor.jsx, this is at the very bottom cuz it starts with V so it's alphebiticlaly arranged. and then select 2d edit, 3d edit is almost never used. the script uses the effect "vr sphere to Plane" and not cc enviromnet. also the script automatically adds a camera. ps. i think cc enviromnet is for still images that are 360 degree images as opposed to 'vr sphere to plane' effect being for video footage shot in 360 degrees with something like those special cameras. there are effects made particualy for 360 degree footages/ VR(virtual reality) footages, use those effect because those effect compensate for edges when moving around using a camera, with regular effects, things look distorted in certain areas particularly at the edges. so use vr effects, there are a ton of built in vr effects just search for them in the effects and presets panel. 
-
-The backward slash symbol next to rasterize and shylayer in the timeline pannel is nothing but anti-alising it's labelled "quality and sampling" when you hover over it with the cursor, it either makes the edges strickly opaque , toggling it makes the edges half opaque/trasnparent. this is espicially useful for when multiple layers are on top of one other with their edges overlapping too and creating an unwanted artifact. 
-
-sometimes you need ever finer control over the placement of keyframes, and you're limited to placing them on frames and not inbetween frames, but with toggling one inbult option, it'll allow you to place keyframes inbetween keyframes for even more control over it. so to enable it, go to the graph editor, chose the second symbol at the bottom next to the eye symble, the second symbol is a panal with 3 option in it, depected as lines. and when you hover over it its labbeld. 'Choose graph type and options' and when you click it, go to the last option lablelled Allow keyframes between frames. and toggle it.	
-
-Color Grading: to be able to see a color graph of the image or footage you're working with, use Lumetri scope panal, enable it from the windows tool bar at the top, and then also use lumetri color effect to change the colors of the footage. at the bottom of the lumerti scope panal, there is a wrench icon to list more optons to view the color details of the layer.
-
-when drop picking a color with a the drop picker tool, if you hold down CRTL while picking the color it'll sample a larger area to give you an average of the colors, espically good for green screen color picker, you can visbily see the drop color picker increase in size when hodling down CRTL and lmb 
-
-If you want to make a shape/arrow always point in the direction of a path, use auto orint path by RMB on the layer> Transfomrm> Auto Oriont> and then check oriont along path. You need to copy the path from either a hand drawn path as a new shape layer and then toggle down to the path property of it and copy it, then proceed with pasting it on the position property of the arrow you want to orient along the path. shortcut key for auto oriont panal is Ctrl+Alt+O
-
-Json file, csv, txt, tsv or any other data file doesn't necessoraly need to have their properties linked to a source text, you can drag and drop the data property from any of the data files onto the comp preview panal and it'll appear there as text but note that it'll automaticlaly turn the text into a guide layer so it wont render unless you right click on it and uncheck guide layer. 
-
-You can change the value of any data file within a text editer and then save it (i'm taking about the source file that was imported into ae), it will automaticaly update the values in AE. 
- 
-CSV FILE, you can set this up in any text editor like the defualt windows notepad also works in excel. csv aka Comma seperated values works by creating a text file with csv extention and then writng the data as follwos eg
-	name,favcolor,total_limbs
-	dusk ,red,4
-and then importing the csv file into ae and then into the timeline> twearl down the properties then pickwiping the source text of the text layers in ae to the corrosponding values of the data file, now there's another thing, when you pickwhip from a source text file onto the the properties of a data file, the paranting breaks if you remove the data file layer from the timeline panal, so to circumvent that issue, you need to right click on each of the data propety and select 'copy expresson only' and paste that into the source text box of the text layer, this allows for the expresson to reference the text from the project panal's data file instead of the timeline's datafile so if you delete it from the timeline it'll still work because it's using the project panel's file as source file. btw it uses dataValue() expression to work.
-
-TSV FILES. Tab seperated values, same for this but it's seperated by tabs , this is generally how spread sheets are exported. they apparetaly default to exporting in the tsv format. but of course you can also set this up in any text editor like the defualt windows notepad eg of how it's formatted
-	name	colors 	numbers
-	dusk	red		3
-	kim		puple	2
-	bryan	blue	1
-	susan	green	4
-
-let's say i wanted to refer to it using the expression:- dataValue([]) method, i'd need to find the index value of the property i'm looking for, so the way you'd do that is by going vertically so the zero column is name the first column is colors and the second column is numbers, so if i wanted to get' blue from bryan, i'd have to input [1,2] , so colors would be 1 and then starting from red as 0 index purple as 1 index and blue as 2 index. so that's how i arrived at [1,2] so pickwhip to the datafile and then .dataValue([1,2]) first vertically then horizontally is how you get to the value [1,2]
-
-JSON files- javascript object notation.  
-this is similar to how objects are formatted in javascript but this requires every text in the file to be in double quotes.
-
-eg json formating
-"planet" ={
-	"earth":{
-		"land":{
-			"soil":{
-				"tree":"leaves"
-				}
-			}
-		}
-	};
-
-planet.earth.land.soil.tree.toUpperCase()
-
-object formatiing
-eg : const planet ={
-	earth:{
-		land:{
-			soil:{
-				tree:"leaves"
-				}
-			}
-		}
-	};
-
-planet.earth.land.soil.tree.toUpperCase()
-
-dataValue([]) = is an expression used to get a certain data using indexs. eg i wanted to get "leaves" from the code above, i'd need to do this, first go to the text property, then pickwhicp to the datafile > at the end of the path place the expression .dataValue() and within the paranthesis enter the index in an array, like this. [0,0,0,0,0] since the object above doesn't have multiple properties it's all 0 index if it had multiple properties, i would have had to use 1 and 2... and so on indexes. btw when you right click on a data file's propety and copy expressions to link it to a text layer, the dataValue([]) expression is how it does it. and you can see it and learn it that way too if you have any issues understaning how this works. 
-
-KEYBOARD SHORCUTS
-
-LL - automatically list wav form audio visualizer in the timeline pannel for layers with audio. 
-
-Caps Lock- temperaraly disables comp preview and makes the time line so much smoother and faster to work with, espically with a lot of complicated layers and precomps. so use this when things feel slugish. 
-
-Ctrl shift E - will remove all effects on a layer. 
-
-Alt Shift P/T/S/R - will drop a keyframe for postion/opacity/Scale/Rotation at the playhead for the selected layer. 
-
-CRTL Shift P/O/R = to manually enter a value for each of the transform properties. yes O for opacity
-	crtl shift S reserved for 'save project as'
-
-I and O - to navigate to the begenning of the layer/ layers selected, it's basically the inpoint and outpoint of layers. if multiple layers are selected and they are of varying lengths. when you hit I - it'll go to the earliest in point of the layers and when you hit O, it'll go the outpoint of the layer that ends at the very end and who's length is the longest and ends at last. 
-
-J/K allows you to move to the previous/next keyframe and also MARKERS on the entire timeine across all layers but the movement to the next/previous keyframe is congingent/predicated on the keyframes you want to jump to being visibile. so long as the keyframes are not visible ie they are not revaled/expanded; you're not going to be able to jump between the keyframes.
-
-B and N for setting inpoint and outpiont on the timeline, it'll be set on where the playhead is (workspace)
-
-		CRTL Shift X = to trim comp to work area.
-
-(DONT' USE THE FIRST ALTERNATIVE KEY COMBO IN THE FOLLOWING OR IT'LL GET CONFUSING)
-
-[crtl left/right arrow] OR *****[(FN)PAGE UP/PAGE DOWN]****** to move the playhead forward or backward by one frame, yes both combinations perform the same function.
-
-		([crtl left/right arrow]+ shift) OR *******(FN) PAGE UP/PAGE DOWN + SHIFT******* to jump forward or backward by 10 frames. (hold down fn key too for pg up and pg down depending on the keyboard and only if page up is a modifyer key that requiers the holding down of shift)
-
-crtl alt left/right arrow or *******(FN)HOME/END(LEFT AND RIGHT ARROW WITH FN KEY)****** - to move the playhead to the starting of the ENTIRE TIMELINE or the end of the ENTIRE Timeline
-
-		(fn)+Shift+Home/End(left and right arrow with fn key) to move the playhead to the starting point of the WORK AREA or the out point of the WORK AREA.
-		
-CRTL Alt Shift Left/Right - allows you to move to the in/point of ALL LAYERS ie even if no layer is selected, and you have layers scattered across the timeline at diffrent time and say the playhead is at the begenning of the timeline, it'll allow you to move to the pressing the key combo and the right arrow will move the playhead to the closest in/out point of a layer and then the next in/out point. this will happen regardless of weather the layer's in point is outside the work area on the timeline.
-
-Alt Left/Right arrow = allows you to move the selected keyframes right or left by one frame.
-
-		Alt Shift Left/Right arrow = allows you to move the selected keyframes right or left by 10 frames.
-
-Alt (fn) page up/page down(up/down arrow) = moves the selected layer forward or backward by a frame. 
-		Alt (fn) page up/page down(up/down arrow) + SHIFT = moves the selected layer forward or backward by 10 frames.
-
-		Alt (fn) home/end( left/right arrow)  = pushes the selected layer to the starting postion/end position of the timeline.
-
-ALT[ or ALT] to trim off the starting of a layer and the end of a layer.
-
-		[ and ] to bring the trimmed layer to either bring the layer start to where the play head is at [ ,or to bring the end of the layer to where the play head is at ] 
-
-CRTL up arrow or down arrow to select the next layer in the timeline 
-
-		CRTL Shift up or down - selects multiple layers up or down. 
-
-CRTL ALT Up/Down - bring the layer forward or backward aka to move the selected layer a layer below or a layer above. 
-	
-		CRTL ALT Shift UP/Down arrow will make move the selected layer/s to the top/bottom of all layers.
-	
-CRTL A - select all layers.
-
-		CRTL Shift A = deselect layer or layers. 
-
-numbpad 1,2,3,4,5,6,7,8,9 to selct layer cooresponding to thier index.
-	
-		numpad numbers Shift to select multiple layers like shift 1, shift 6 to selct the 1st and 6th layer
-
-CRTL \ to Hide ae's top bar (essentially make it go full screen.)
-	
-		CRTL 1 to hide the toolbar
-	
-CRTL L/CRTL Shift L = allows you to lock and unlock selected layers. (unlocking combo unlocks all locked layers, you cant select locked layers.)
-
-Up/Down/Left/Right = will move the layer in any direction by less of a pixel but this is also depended on the zoom level of the comp preview panal.
-
-		Shift Up/Down/Left/Right = moves the layer in any direction by an apparently visble amount of pixels, this is varialbe based on how zoomed in or zoomed out a layer is superfically in the preview panal, not the property but just the zoom level in the preview panal. 
-
-CRTL ALT T to enable Time remapping. (mostly only works on precomps and comps and not on layers)
-
-CRTL T = will alow you to draw the bounding box for text and then write the text on the screen,  if you press CRTL T agian it'll switch to vertical typing and agian will switch back to horizontoal typing.
-
-		CRTL ALT Shift T will just drop a text layer for you to type in wihtout a bounding box
-
-CRTL ALT o (ou not zero) = Auto oriont/ oriont along path. 
-
-Shift + ? = auto make the comp preview window fill the panal screen. 
-
-CRTL Y = solid, 
-
-CRTL ALT Y = adjustmant layer. 
-
-CRTL ALT Shift Y = null
-
-G - Pen/Mask tool 
-
-CRTL B - erase tool, you can only erase a layer in the layer panal on both a video and stills.
-	crtl b also toggles between eraser tool, clone stamp tool and the brush tool. i have the erasor tool as the main thing so i remeber it don't change that. 
-
-Q - draw shapes, keep pressing Q to toggle between diffrent shapes, you can tell which shape is selected by looking at it in the toolbar.
-
-W - To select the rotatate tool from the toolbar, you can straigt away rotate a layer from the preview panel with this tool. 
-
-CRTL ALT Shift G/H to fit the layer to compt width or height, 
-
-		CRTL ALT F to stretch and fit the layer to the comp resolution even if it has to distort and original x,y ratio of the layer ie if the layer is squire shaped but the comp is rectangle shaped, it'll stretch the layer to fit the comp.
-
-CRTL K to open comp settings. 
-
-CRTL Shift K - to turn SELECTED text into caps/small letters.
-				and also
-CRTL Shift K - to bring up keyframe velocity menu for the SELCETED keyframes. 
-
-The ENTER next to the num keyboard acts diffrently than the ENTER on the regular keyboard. the Numpad ENTER acts as an okay or finishing of a text layer, while the regular enter key drops down a 	line. It probably has more applications. 
-
-to rename a layer- hit regular ENTER. 
-
-` (tilda) key to bring the hovered panel into full screen. 
-
-; (semicolen) to toggle zoom on the timeline panel to see each frame.
-	-/= (minus and plus keys on the keys uptop) to zoom in and zoom out. 
-
-(comma and period) ,. to zoom in and zoom out in the preview panal. 
-
-' (apostrophi) to show screen's safe zone. 
-
-		CRTL '(apostrophie) to show a detailed grid.
-
-		ALT ' (apostrophie) to show a grid with bigger squires on the screen for guides.
-
-Crtl Alt '(apostrophie) to open keyboard shortcuts settings.
-
-CRTL  R to show rulers
-
-CRTL shift D to split a layer. 
-
-CRTL D to dublicate a layer.
-
-Shift plus Num(4,5,6,7) to add markers on the comp, or you could also drag in the marker icon from the further right of the comp on the timeline pannal to the place you want the marker to be placed. there's a marker icon on the farther right of the timeline panal for you to drag and drop on to the timeline. 
-
-		* (astrick) to add a marker on the timeline, either on a layer or on the comp, if you have a layer/layers selected, it'll drop a marker on the layer but if you don't have any layer selected, it'll drop it on the comp where the play head is at. 
-
-	to make a marker disect or divide in two parts to place an inpoint and an out point for the marker, as previrously said, astrick * to place the marker on a layer and then ALT + LMB and drag it to right to drag a marker out. 
-
-CRTL ALT Home - to center the achor point on layers, can select multiple layers and then do the key compbo to have each layer center the achor point , propotionally to each layer and to there center. 
-
-		CRTL Home - center a layer's anchor point to  the center of the comp. can also be done to bring multiple layers to the dead center of the comp.
-
-Y = allows you to move the anchor point using mouse in comp preview panal
-
-		CRTL double LMB on the achor point icon in the toolbar at the top to center it into the selected layer.
-	
-		ALT double LMB on the achor point icon in the toolbar at the top to center it into the center of the comp.
-
-CRTL ALT C = copy with property links and then just paste the keyframes. (property links is when you want for the layer you copied from to contol the property of another layer to which you pasted the property link); although it works exactly as pickwhiping, it's better cuz it defines the comp and not just thisComp expression to refer to the source layer like pickwhiping does. so copy with property links works across diffrent comps and is great way to mitigate any future errors from having multiple comps that are cross referensing.
-
-Crtl C - to copy layer or keyframes
-	crtl shift v - to reverse paste keyframes. 
-
-ALT LMB on the stroke or fill box at the top with the shape layer selected. to toggle between diffrent options like storke/none/gradient/liniar gradient. 
-
-When using the gradient fill option, a line will appear on the shape on wihch the gradient is applied, the one end is for one end of the color and the  other end of the line is for the other color gradient. 
-
-Double LMB click on the shape tool in the toolbar to make a shape layer the size of the comp. the shape that is toggled in the toolbar is what will be drawn. star/rectangle/circle..etc
-
-C = toggle between three seperate/ different camera options(only applicable while a layer is 3d, doesn't require a camera to function but layer needs to be 3d)
-
-when creating a 3d solid layer and you want to add extrution and depth to it, switch to one of the two 3d engines - advanced 3d or cinema 4d and the option for exturion will become visibile on the layer property, btw if you want for the edge color to change (the extruded width) use a stroke and change it's color. 
-
-ALT Shift = (yes equal to is part of the shotcut key) = will remove expression(you have to select the particular property for which you want it disabled.). if you hit the key combo on a layer without expression, it'll create expression on it. try it out. so it's a toggle switch between removing expression or creating one. (btw it wont disable the expression it'll in fact REMOVE it! so use with caution)
-
-		ALT LMB on the watch icon on a property  - to go into the expression text field on a property (if an expression already exists, twerl down teh property instead of clicking the watch icoon because that will remove the expression) 
-
-		E+E to bring up all expressioned properites on selected layers. 
-
-U+U to bring up all keyframed properties on selected layers. 
-
-S+S to solo selected properties on layers. 
-
-CRTL ALT Shift LMB = to hide a selected propoerty, eg if you have multiple things listed, like position, scale , trasnpirance, i can hit the mentioned keys to hide the selected property
-
-CRTL ` (tilda key) to unravel all properties on a layer and hitting the combo again will colapse it all. 
-
-E to bring up all the effects on selected layers. 
-
-M to show mask on the selected layer. 
-
-F on a masked layer = will bring up the feather property. 
-
-CRTL Shift H = will turn off the visibility of the layer's bouding box, which means if you have layers that have bounding boxes such as a shape layer with the box around it, or a null with that red squire, if you want to hide all that distraction you can turn it off using the shortcut/ it's the same as toggling off/on (the icon rectangle with top left corner cut) underneeth the preview panal, it's right next to the toggle transiprancy under preview panal.  
-
-P, R, T, S, A to bring up position, rotation , opacity , scale, Anchor Point . Can Hold down shift while pressing the aformentioned keys to bring up multiple properties at once.  
-
-CRTL Shift C to precomp selected layers.  
-
-Shift +/- = allow you to cycle through each blending mode quickly. Shift Plus+ / Minus - you can cycle thorugh the blending modes,  select any layer and without droping down the blending mode you can straigt away start cycling through the blending mode using the shortcut. 
-
-CRTL F = to quickly search for a selected layer propertiy in the time line search pannel. or just CRTL f without any layer selected to search within all layer's properties. PS. you can search for multiple properties all at once by seperating them with a comma, for instance you can search for the opsition propoerty on the selected layer or all layers and then if you also want the scale property you'd need to write them up in the following format - position, scale 
-
-F9 to add easing to selected keyframes.
-
-ALT LMB and drag = to space out keyframes evenly on a layer select the keyframes > ALT LMB and drag them out. this also works with multiple layers stacked on top of one another and manually staggernig/using a plugin to stagger the keyframes by 1 or two keyframes > then to space out the keyframes by a desired number of frames, you need to select all starting or ending or even both keyframes at once> then holding down ALT while draging any one of the selected keyframes to the right or left on the timeline and it'll automatically space them out propotionally.
-
-CRTL ALT Shift N = to open a new comp preview viewer side by side, you can lock one of them to always show a certain comp. 
-
-GREEN SCREEN
-There's serveral way of getting rid of a green screen but there is an effeciant way. use the obselete effect - color key, because it is really quick to render, and it will get rid of most of the green then, use simple chocker, then use the real effect-keylight, and then use advanced spill supresser
-
-Advanced spill supresser has two drop down menu options under method - standard, and ultra, when selecting ultra, it'll allow you to sample the green color from the footage. 
-
-color range - very rudamentary and not recommanded for keying but could be used for other instances other than greenscreening. 
-
-key cleaner = cleans out the edges of green screened subject and also bring back some details into the eges. 
-
-Composition Border- this can be applied in limited ways, one way to do it is by creating a blank shape contanor by RMB on the timeline and > new > create new shape layer and then applying Composition Border preset to it. 
-
-key light (1, 2) - the master greenscreen effect- you should ideally use two or more key light effects stacked up on one another to first remove the majority of the green screen then expand the edges of the subject using one of the existing sub settings under keylight that works similar to the simple chocker effect and then when you see just a thin outline of the green screen around the subject, stack another keylight on the layer and this time you only have to worry about a limited area of green screen and it's better this way, btw sample a large portion of the green screen by holding down CRTL when drop picking the green color. and also toggle through diffrent viewing ooptions to see how the keylight has worked, more often than not, you'll be able to see so many leftover areas that need to be rectified in other view modes on the keylight effect. 
-
-Here's a practicle application of the keylight for my particual videos. apply keylight> pick green screen color by CRTL clicking the area for larger sampling of the green screen. then swtich to the view mode of screen matte. 
-now go to the other screen matte property and clip all the black away by cranking it up to 90's 
-then crank up screen shirnk/grow to around 50-70 and then check if the main subject is being clipped out. then switch the view mode to intermidiate results. to not have it use advanced spill supression built into keylight,(yes, the view modes aren't just there to show you how the keying is working, it actually changes the way things are keyed so it's important to switch to intermidiate results.)
-then place a new fresh keylight effect and this time you'll only have to worry about the narrow edge of green screen surrrounding the subject, this is the profecossional way of doing it. 
-then select the green edge outside of the subject by CRTL seleting the green area. then proceed forward with the follwoing. 
-
-you should mainly use the following viewing modes under keylight. 
-source - when first picking the green screen color. 
-screen matte - to see it using the balck and white lens of what is keyed out and what's not.
-status - this is an exaguurated version of all that is keyed out and all that's not, this is perfect for fine tuning. 
-final result- and this at the end to see how it looks. 
-
-to color match the contrast and brightness, sometimes just lower the opacity of the subject intead of messing with brightness and contrast. 
-
-to key out more of the left over green screen (view as screen matte/status to see better) go under the screen matte property (yes there's another property called screen matte and it's called this regardless of what viewing mode you are seeing the footage as) then play arond with the clip back sub menu under it. don't crank it up too high, around 20-30. 
-finally add a tad bit of screen pre blur to make it look natureal. 
-
-EFFECTS
-
-Normal object tracking - first select the layer for which you want to have something within it tracked, then go to the tracker panel,(enable it from the windows tool bar at the top if it's not already enabled) then ideally create a null layer and then under trackers - 'Edit Target' select the null layer as the target, and then select Track motion and then check off position/rotaton/scale or all and then select the part of the footage you want to track by placing the binding box around the area of intrest. the small box is for the actual thing to be tracked and the outer bounding box is for allowing ae to search for the tracking object, note that the bigger the box, the more time it'll take ae to process the footage and track it.  and then either play it one frame forward or play the whole thing, ther's an opton for both in the trackers panal. and then when its' done apply it. 
-
-Face Tracking - first, double click on the layer and open the layer panal, then draw an ovel shaped mask on the face, this only works when you have a mask drawn on the face and then after the mask is slected go over to the tracking panal and you should see 'Method' under tracker panal and drop it down and select face tracking (detaild features ) and then just hit play in the tracking window and ae will work it's magic and after it's done processing, it'll drop all the keyframes under the layer properties,  under face track points. then pickwhip seomthing to one of the many sub properties such as nose/ eye/ mouth and it'll follow it. 
-
-to be able to track liquified effect onto a part of a face - it can be tricky to get it to follow one part like squishing a nose or making the nose longer like pinoccio, so this is how you do it, either make an adjustment layer and drop the liquify effect onto it, or just drop the liquify effect on the layer you want to manipulate, then drop down into the effects properties and find 'Distortion mesh offset' (it'll have two numbers - x,y) then pick whip/ parent it to the part of the face that's been tracked already, like nose/eye/or what ever. and THEN do the liquifying manipulation, if you warp the footage around using the liquify tool before parenting, it'll move around and not be alighned perfectely after parenting because it jumps around based on the anchor point. so first parent and then warp the footage.  CRTL + draging the mouse up/down or left/right to make the liquify circle to effect the footage smaller or bigger.
-
-Stabalize Motion under tracking allows you to make the tracked point be at the center point of the comp viewer. it essentially allows you to track a point in the scene and have that be stabalized eg you could track a moving face and the tracked face will be at the center of the screen. or say you had a shot of a person dancing and you wanted for the dancer's head to be perfectly in one spot even though the person was moving around, you could track his face/head and have the entire video move around except for the head. it's pretty neat.  
-
-solid composite- it fills up the transparent parts of a layer with a user set color in the effects panel, but only to the point of the bounding box of the layer, and not beyond it. 
-
-Grow Bounds - allows you to artificially grow the bounding box of a COMPOSITION layer, it doesn't actually expand it but makes effects applied to it act as thoough it's a larger size than what the bounding box of the COMP layer suggests. I've tested this on an imported transparent layer with solid compositie applied to it AFTER grow bounds effect, you can increase or decreasee the value under grow bounds to see the effect, this can particularly be used for glow effects to make the glow not have a hard stop/edge where the true bounding box ends, the grow bounds will allow the glow effect to be shown further than the bounding box. 
-
-Stroke- Stroke effect actually has a very useful other application other than highlighting text, which is- it automatically draws an outline on any mask, so for example say you wanted to draw an outline on a person (yes even a moving person) and make it glow- first roto out the person, then go to the top panal layer>autotrace and then check workarea and alpha channel and then hit okay (if it's a moving person use 'work area' instead of 'current frame'), delete everyother mask other than the major one it creates, or you could also keep all the masks, now there are two ways of going forward to achieve the same result, one is to drop the 'stroke' effect on the same layer and SELECT the major mask for the property of effect stroke,mask that outlines the person, and animate it's end point/brush size/ what color. voila! and drop the glow effect on it or turbulannt displace effect on it. second way to do it is to first create a new empty shape layer by rmb>new> shape layer, and then with the play head at the begenning copy the mask/s from the roto'd layer and paste them onto the shape layer while the playhead is at the begeniing of the timeline. then add stroke on it it and check all masks,check sequencually.then increase or decrease the size, the color is also under the stroke effect. 
-
-Stroke /Write on - lol this is the old way of highlighting texts. just draw a shape layer with the pen tool as a stroke and then toggle one of the blending modes and animate it using trim paths. 
- 
-Audio waveform/ Audio spectrum - you can choose a soundtrack and link to it using the 'audio layer' property under the effect then go ham with the customization, you can even change the starting and ending poistion of the waveform in the preview panal by dragging the starting point and also the ending point to your heart's content. if you want to have a particualar shape around which you want the waveform to show itself, you'll need to create a mask and then set it to none, then under the 'Path' property drop down selct the mask you just created. you can also stack these up on top of one another and copy with property links on the first effect and paste it on the other,for the properties you want to be diffrent and not take the property values from the first effect disable expressions for it by LMB on the equeal logo to disable expressions for it. 
-
-Fyi- for most effects which have an option to apply on a certain path; create a mask and then set it to none > slect the mask for the 'Path' property under the effect. 
-
-Foam- allows you to create bubbles, similar to blowing foam bubbles from that toy i used to play with as a kid lol
-
-cc Bubbles - creates round cgi bubbles whose colors depend on the layer to which it's applied, if the layer is a rainbow, the colors of the buble will be all over the place/colorful. if applied to a solid with just one color the bubble will inheret just that color. 
-
-Liquify - to warp an image/video and keyframe them, great for creating fire/ portals/ making somone look funny, have a long nose. and so many more applications for this effects. 
-
-Puppet Pen tool - is great for animating and bending a shape or any layer by dropping pins on the layer in the comp preview panal and keyframing them. it's in the tool bar above. you can do so many things with this such has animating hair, flag waving, and so many subtle movemtns that would be a pain in the fucking ass to animate using the path property. 
-
-Roto Brush 3.0 - is great for selectivly extacting a part of a video, before you do anything first make sure the preview resolution is set to full and then proceed. so the roto tool, this is in the tool bar next to the erase/ and puppet penn tool,  >  double click the comp preview panal and it'll open the layer comp panal right in the comp preview panal. and then select the roto brust tool, then drag over the part of the footage you want to roto, with your mouse, then adjust the edges using ALT and LMB then play forward and backward and keep an eye out for any divergent from the path intended to be roto-d by pausing and adjusting the edges on the fly, the green part at the bottom will indicate how much is done processing, you can also constrain the inpoint and the outpoint at the bottom of the compt privew windwow by selecting the range (note that this only appears after the roto brush has ben drawn on a frame and then it'll show you the progress at the bottom of the comp as to how much has been rotoed out, use this to only roto out the part of the footage you need and not the whole thing because that's wasteful and increadbly ineffectient), when you're happy with the result, click on 'Freeze' at the bottom of the comp preivew window then, then thats it. go back to the main comp and you'll be able to see the alpha channel and the rest as black/trasnparent.
-
-Find Edges - allows you to create outlines of any layer/footage based on it's brightness/color values. You can dublicate layers and then apply the effect to one layer then use one of the blending modes to overlay on the origional layer to create outlines on top of it, you can add the glow effect to it so it makes the outlines glow or subtle turbulent displace or both, or change the color of the outline by adding the tint effect.  You can do it in two ways, one is to use the blending mode and set it to multiply or use the effect cc composite which is exactly the same as blending mode but the good thing is ti'll only effect one layer and and not every layer underneeth it.  a great effect to create using find edges is on top of fractol noise
-
-CC MR. Mercury - allows you to create and simulate water flowing, this is very 3d like and has so many applications including but not lmited to blood flowing, spraing water, or anything with liquid phisics. 
-
-CC Sphere - allow you to create a sphere out of a flat image say you have a flat image of the world as a map, addign the cc sphere will turn it into a globe and allow you to spinn it as if it were a 3d object. pretty cool imo (rotation property under the effect not the transform rotation)
-
-CC Composite - NOTE!! it doesn't always appear to work and that's because it needs to have the 'rgb only' property unchecked (it's checked by defualt) so this effect is the blending mode effect, it allows you to only affect one layer as oppsed to all layers below. this works similar to dublicating a layer on top and toggling one of the blending modes, the best thing about this is that you can stack multiple cc cmposite effect on a layer and each one of those effects will act as a diffrent layer, so you can have unlimited amount of effects all on one layer that gives you an identical effect to having unlimited number of layers.
-
-Create Nulls from Paths- allows you to do three things. makes the vertexes on a path follow nulls by creating new null layers at each vertex point, note that you have to have the path property selected before clicking Points follow nulls. and the second thing it does is the opposite of the first one, this one makes the nulls follow the vertex points on the  path. and then the last one is trace path; it does exactly what it says, it tracs the path of the shape and then crates a null that has the path animated, you can essentially link another layer's postion property to the newly created null position property (it has an expression on it but parent to it still, it'll work) and it'll animate, you can also oriont along path. (let me be clear on what the last option actually does; say you have a squire and you want another layer eg an arrow to animate on the outline of the squire, then select the path property of the squire and trace using the create nulls from paths and then when a new null is created with it's position property animated already albeit using an expression, just parent to it , you can also change how fast or slow it's animating by using the keyframed prperty under 'progress' on the null layer, just hit UU twice and it'll show you the keyframed property and then change how fast or slow you want to make it or easy ease it or what ever)
-
-3d effect on any static/2d image/ next level parrallex effect- 2 ways to do it= first one is by importing the image into phtooshop and then > Filters > Neural Filters > Depth Blur > Turn off focus Subject and eye ball the depth> at the bottom select - Save on a new layer> invert the deapth map cuz black is going to be interpreted as the opposite of what it should in AE.  then save as psd and import into AE> then there should be two layers> one the deapth map and the other the original image> then apply displancement map on to the orignial image and then select the depth map layer and then also drop down and select masks and effects under displacement map effect, then on the depth map layer> apply fast box blur and increse it a little and then play with displancemtn map effect on the origninal image.  Second way to do it is to use ae's plugin= deapth scanner, use it and every thing else is the same- displacement map fast box blur and so on. 
-
-note that the photoshop method only works on still images, but the ae deapth scanner works on videos as well as images and it's fast af, generates a deapth map in realtime. 
-  
-This is so fucking cool! it's a transition based on the deapth of the picture, It looks insanely cool in tandom with other effects. but just this effect alone is also incredbly cool- so here is how you do it. get a deapth map of an image you want to transition from. so if you want to transition from layer 1 - layer 2, get a deapth map for 1, then to the layer 2 add the effect "gradient wipe" and add select the deapth map layer for the property "gradient layer" under the gradient wipe effect. also check masks and effects for good measrure. then play with the transition property under the gradient wipe effect. in total you shoudl have 3 layers for this to work layer 1, deapth map for layer 1, and layer 2 (to which you're transitiong to with the gradient wipe effect applied to it and with the deapth map selected), Make sure the layer to which you are transitioning is on the top, in this case that would be layer 2. by defualt it looks at the luminance of the current layer, it doesn't understand depth perse but it understands luminance so when you create a deapth map, it's nothing but black and white values. so its nothing but lumincance.
-
-Making flowing water/wavy hair. or anything wavy/ like flag/or fire or  fabirc or anything with wave warp= below is how it's used in detail. 
-Wave warp = allows you to make flag like animations and a bunch of other things. like a river flowing or water flowing, the way to do that is by having a white solid and then drawing mask on the whole layer by selecting the rectangle shape in the tool bar and then selecting the mask option next to the shape option in the toolbar, and then double clicking the rectangle shape to perfectly place a mask on the entire layer. then double click one of the sides of the newsly created mask and it'll let you change it's dimentions/size. then make the height narrower/shorter and it'll look like a river flowing by increaing the wave width. There's an option in the effect properties called pinning, and it'll essentially allow you to make the water not flow as much from one of the sides, like it'll gradually start flowing in a certin direction and it's powerful and all from just one effect.  
-Make this thinner for animating hair. it's so pefect. to make the hair thinner on one end you can hold ALT on one of the vertex's of the mask and then pull out the bezier handles to give it a gradual curve.
-I can stack the wave warp on top of one another and offset the animation a little to give it a natural look and not make it seem like CGI. You don't have to have it be the whole size of the comp, just have to find the looping point of the hairs and then create a comp of it and then loopOut the layer to make it render faster and work efficiently. 
-This can also be used as a great matte layer for bringing something into view or maybe even trasition to reveal the bootom layer by having the top layer disapear from the wave or smoke.
-You can also dublicate the first layer with all the effects and everything and then add bezier warp to it to give you finer controls over the full size and shape of the layer, and then you can cut through the first wave and have it diverge in two seperate directions if it's smoke by using one of the blending modes to cut through the layer by using Silhouette Alpha.
-
-Bezier Warp- it'll give you the bezier handles and controls to change the shape of a layer you can bend,elongate, squeeze, stretch using this effect. ,you can put this on an ajustment layer above effects and it'll only effect the custom drawn size of the adjustment layer. this is so useful, you can rewatch the video by jake in motion - titled easy 2d smoke & hair in after effects. 
-
-Mesh Warp - creates a grid that doesn't render. but that gird can be used to warp the footage on which it's overlayed, note that you can only select the intersection of the grid to move aruond and warp the footage, you can increase how many intersections there are by increaaseing the rows and columns numbers whithin the mesh warp effect. 
-
-corner pin - this is everthing that cc power pin does but less, so always use cc power pin instead and i'll explain what cc power pin does below. 
-
-cc power pin - this allows you to manipulate the prespecive of a layer, by giving you 4 points for each cornor of the layer and it also gives you guide lines to see how far you can streatch it, you can lmb on the edge of any of the guiding lines and pull and push to change the prestpective that way, now comes the part about vecor layers, for vecor layers, things work diffrently because vecotor layers (text layers/illustratior layers/shape layes) use comp space instead of layer space so when you apply cc power pin to it, the 4 pins are attached to each cornor of the entire comp as opposed to the bounding box of just the layer. (eg if a text layer is smaller in size than the entier comp size, which in 99% of cases it'll be) the cornor pin will be applied to the edges of the comp rendering the effect essentally unusable, so to circomvent that issue you can fix it in two ways. 
-1st way is by prcomping the text layer and making the size of the precomp in which the vector layer is, exactly the size of the vector layer. and then going back to the main comp and applying the cc power pin onto the precomp. the 2nd way is by using 2 cc powrer pins, first apply 1 cc powerpin and disable the effect then move the 4 pins to where you want them to be (to the 4 cornors of the vector layer), then enable the effect and check 'Unstretch', doing this shoudl fill up the entire preview windows with the vector layer, then Dublicate the first cc powerpin, (don't create a new cc power pin cuz you need the dublicated one with it's points already shifted.) then uncheck 'Unstretch' on the second effect. and you can move thigns around, use the transform effect to move the whole vector layer around in the comp rather than using the postion of the layer in the timeline because timeline trasnform breaks the effect. 
-
-Photo Filter - is great for applying from a set of presets under the effet's property has warm tones cool tones and so many more. alos has natureal/real world tones. 
-  
-Advanced Lightining- allows you to add a lightning bolt, or electricity jumping current. Okay this is so cool - Let's say you have a logo or an eliment you want the lighting bolt to interact with, you can either have it affect the alpha channels of the layer. the effect is applied to it by adding cc compositie after the advanced lighting and then unchecking the last option RGB only/ or just check composite on original on the advanced lighting layer lol, neededn't add cc composite, or if it's applied on a solid you can add mask eg a circle and the lighting will move around it and internect with it like its there. it's actuallly so cool to see. jake in mortion ae effectsf for more. 
-
-Coloroma - to give a footage a tripy look , or just one color look like turning it to a certain color, play around with it for so many more applications
-
-Turbulent displace- makes it dreamy or can lower the numbers to just effect it in small quanityes to make as though just the edges are animating, boiled edges. 
-
-roughen edges- roughens the edges, has serveral other options like spiky and rusty. can also draw an outline on the subject to which the effect is applied, the outline can be of a user defined color from the properties of the effect.
-
-Minimax- will turn the layer blurry based on it's color. you have to use it to understand it. it'll make it blobby not blurry. 
-
-
-Camera lens blur- is increadbly good at making the blur as natural as it gets by turning the bright spots into a pre selected shape from a list of 8-9 shapes like hexagon, triangle, circle and many more.(these shapes are natually present on out of focus lights making this effect realistic) The best thing is that it lets you use a depth map that's been exported using the depth map feature in photoshop or just using the deapth map plugin in after effects, it's slow to rennder but it's well worth the exoprt time. 
-
-fast box blur- makes the edges glow/HALO, adds blur and makes edges softer of a shaper layer, renders fast but is not realistic. it has iteraltion as an option (which means how many times you want the blur applied to it ie if you have the blur amount to 10 and iterations to 2 the blur will work as though it was blured out twice which means it'll act as though 20 on the amount of blur)
-
-Gaussian Blur - is about the same as fast box blur with one less option ie iteration, they both have the exact same effect on how it looks and render at the same pace, since they are both gpu accelarated.
-
-audio spectrum/ audio waveform- to create a waveform visulizer to the beat of the sound. 
-
-drop shadow- allows you to create a drop shadow, there is an even better way of doing this, by dublicating the layer/comp then adding the fill effect to it and sending the dublicated layer backward, then adding fast box blur to it annd then messing around with the scale of it, can also add turbulent displace, or find edges.
-
-radial shadow - is so much better than drop shadow in some ways, you can move the light source on the preview comp and it'll cast shaodaws accordingly. 
-
-cc spotlight- casts not just a spot light but if you have a layer with alpha channels/transpirancy, you can select that layer under properties 'get layer' and it'll cast a shadow/spotlight in the shape of that layer with transpirancy.
-
-cc light rays - works great, it's like lights from the sun in a forest coming through gaps in the trees. but the pre built third party free effect god rays by crate is so much better. 
-
-cc light burst 2.5 - is so much better, very similar to light rays but better in some ways. also slow to render you can see the render time of each effect by looking at the bottom at 'frame render time' i think this effect might work similar if not identical to god rays, except this renders so much slower. 
-
-cc page turn - obvi turns page  BUT ALSO allows you to choose a seperate layer for what you want the back side of the page to look like under properties 'Back Page'
-
-cc smear - is so much better than the liquify tool for dripping liquid effect. select the from point and the to point by dragging the points in the preview panal and then animate the reach. You just have to add multiples up this effect if you want more than one drippin of liquid effect. liquify might be better lol
-
-cc scatterize - turns the layer to which it's applied into dust. It mostly effects bright areas or atleast brighter areas are what are visible.
-
-Light Sweep, is actually great at bringing to life some elements on the screen, its very easy to animate using keyframes, it gives the impression of a light source, and reflection and much more, and the best of all is that it automattacklly only effects the alpha channels of a layer so it helps sell the effect even more. also the traditional way of doing it was creating a solid white llayer adding a mask to it to just the are you wanted to be affecdted and then also matting it to the layer you wanted it to effect and then playing with the feather of the mask and path and then adding one of the blending modes and messing with the opacity of it.
-
-
-optics compensation- gives a fish eye effect or can do the opposite of fish eye too, both directions. 
-
-cc lens - similar to optics compensation but with few more features. good for transitions. 
-
-cc bend it - allows you to bend an object in either direction. left/right. sometimes when you bend an object and the bounding box is right up close to the edge of the object you're bending, in that case use the effect 'Grow Bounds'- this effect grows the bounding box artifically without affecting how the shape looks or stretching the shape, the thing to note is that grow bounds should be applied before the cc bend it effect. 
-
-chromatic abberation- makes it shift it's color channels RGB. 
-
-S_WarpChroma - this is a paid effect but god damn is it worth it, pirate it and see if you can find it. this is fucking amaizing, this is chromatic apperation but the defualt when applied looks increadble!!!! 
-
-shift channels- shifts rgb channels of a layer. this is mostly used for spliting rgb of a layer, here's an optimal way of doing it. first pre comp the layers or don't if it's just one layer then apply the effect to it, then choose 'Full off' for all three underr take from red , green and blue, leave alpha as it is, dont' change that. then dublicate it twice, so now you shoudl have three layers with the effect applied to it, for each of them select 'take x color from r/r/b' each with just one color with other two set to 'Full off' then when you have done it for all three layers with rgb colors for all thre layers. for the first two layers on the top select the blending mode to 'Add' and then INSTEAD OF moving the layers around using the positition property under transform for each layer, use the effect offset to not have weird blank pixeals on the edges, after you're satisfyied with how the chromtatic abboration looks, use the effect 'Optics Compensation' to give it an authentic chromatic abberation look. you can customize the angle and hwo much from center is being spread apart.    
-
-Mirror- will mirror the current layer to which its applied, it's usually out of the preview window, so drag it in from which ever edge it's at, usually on the right edge of the preview windows, and you'll only see a round anchor like icon to drag it using. when it's dragged in sufficiately inside of the preview panal, you'll be able to see the entire reflection/mirrored image of the layer. btw mirror ALSO mirrors the layer with it's effects applied to it, so that's pretty cool. 
-
-Black and White - gives you more control over each RGB values, you can increase/decrease the contrast of each color channels and also tint the whole image to a certain user defined color. 
-
-Brightness and contrast - this allows you to do two things, blow out the highlights or tone them down using the brightness slider and the contrast slider makes the bright parts of the layer even brighter and the darker parts even darker giveing you a more contrasty layer. 
-
-Tint - It's important to understand how this effect works, it first desaturates the entire layer and then turns all the shadowey parts of the layer black and the highlights to white, then you can map the white to a certain color of your choise using the color picker. same with the blacks. You can also roto out a certain portion of the layer and then apply it to just that and change its color to something else. and maybey feather it out and also add glow to it if you want. 
-
-Fill - buckle up cuz this is a lot more usseful than you thought, first off let's get the defualt function of the effect of the way, when you apply it on a layer, it'll fill the entire layer with the color that's selected in propetiy of the effect, now here is the interesting part. you can selectivyly apply the fill to a certain portion of the layer by using masks, draw a mask on the layer to which the fill affect is applied and then set the mask to none in the timeline pannel, then go to fill's propeties and selct mask 1 or all masks. and it'll only fill up the the masked porttion of the layer while also keeping the other parts of the layer uneffected and still visible. , you can also feather out the fill mask for gradual fall off. 
-
-Tritone, Hue/saturation , Leave color, Luma key , CC Toner, lumetri color, are some of the effects to manipulate color and brighness. 
-
-Tritone - allows you to indipendennaly change the highlights/ midtones/ shadows of a layer.
-
-CC Toner - This lets you do 4 seperate things that can be achieved using 3 sepearte effects all from just this one effect so this serves as a swiss army knife allowing you to choose between 3 settings which essentally act identically as the Fill effect, the Tint effect, the Tritone effect only it is bundeled with one extra feature that is exclusive to this effect. the thing to note is that the three settings are slightly renamed so it's important to understand which one is which and, when you first apply the effect it defaults to 'tritone' under 'tones' property, which is named appropriately so no confustion here, now the other two options under 'tones' are named diffrently. the 'Duotone' under 'tones' acts exactly as the tint effect while the 'solid' option acts as the fill effect. the other option named 'Pentone' is the extra option, it gives you even finer control over several aspects of the layer based on highlights, brights, midtones, darktones, shadows. . With CC Toner, there is a property to allow you to blend it with the original, which other efffects that are standalone in there application don't have. so this is where this comes in handy, but this is limiting in one way, which is that it doesn't have the masking feature that only lets you fill in certain portion of the screen using the fill effect. so there's a time and place for this effect. 
-
-Hue/saturation - allows you to change a certian color range in a footage/layer. great for changin eye color and many more things eg change eye color/ select the eye color by holding down CRTL and then selecting a larger area of color annd then even manually enlarging the color range in the efffects panal. then if it's effecting things in the footage outside of just the eyes, you can dublicate the layer and remove the effect on one the dublicated layer and drop it below the layer with the effect, then roughtly mask out just the face and it'll work as intended.
-
-Grid - to make squire grids and cricle grids. the important thing about this is how the grid is spaced out and how squired off or rectangally it is and you can do this in the following ways. Corner Point - this will let you freeball the height/width of the grid squires based on the xy values of the conor property beolow.
-Width & Height Sliders - this will let you do the same but will mention width and height. on the slider and will be sperated on diffrent submentu propertyies. 
-Width Slider - this will uniformly scale up/down the grid and give you perfect squires everytime. 
- for circle grids use the gausian blur/fast box blur and then individual curvers with alpha selected and the three pointers on the graph brought to the middle method. to achieve cicles. and various other interesting shapes. alternatively you could also use simple chocker instead of individual curves but simple chocker effect only works on layers with transparency 
-
-CCparticle systems 2 is 2d and cc particle world works in 3d space.Things that can be done with cc particle 2- taperd stroke, ribben simulation, the sun shining, rocket being propelled,fire, smoke water hoes,rain and so many more. this is truly a powerful effect.
-
-radio waves - allows you to create an endless loop of circles by default,it essentially creates circules in side circles and them scaling up/ zoomiing in from the center. which gives the illusion of you traveeling inwards, or the hypnotizing effect, you can obviously change it from circles to any shape, to even stars, squires, or what ever else you might want you can make the corners roundeier too. it's easy on the resoursercs and renders quickly. you can also make it rotate on its own and it'll rotate each shape indipendennaly and offset it from the other so they are slighly offset from being allighned perfectly and it gives you amaizing results. the way to rotate is under the 'Wave motion' propeerty and twearl it down until you see 'Spin' and change it's value. you can also fade them out towards the end by changing the 'Lifespan' value, you can also have it fade in from the center or even fade out, this can be achieved by changing the values under 'Stroke' - fade in/ fade out. , it's exptreamly costomizable, anything you want can be changed to it, from stroke width to the shape of the circle or any shape animating to fade out, to duration, to spacing in between them to so much else. Okay this is increadble!!! you can create custom path and it'll create the hypnotizing animation/echo effect on it, the way to do it is by changing the 'Wavetype' from the defualt Polygon to 'Mask', then draw a custom mask path on the same layer with the pen tool and then Twerl down the 'Mask' Property and select 'Mask 1' from the default which is 'None'.
-
-Leave color- it allows you to choose a color you want to stay in the footage and removes everyother color in the footage annd makes the rest black and white. this is a great tool for creaing a footage with just one color in it and the rest black and white. 
-
-cc rainfall- simulates rain
-
-cc snowfall- simulates snowfall. 
-
-mocha ae - great for tracking and quite easy to learn, watch jack in motion's tutorial on it. 
-
-warp stabilizer- stabalizes a shaky footage. and works great to add motion stablizing in post to a shaky footage.
-
-cc vignette- need i say more? lol  
-
-Checkerboard- to make a chess board. 
-
-Venetian Blinds - this essentially makes parallel alternating lines with in alpha channel/transparnecy set to 0 in alternating way. it's great for so many things. , you can add fast box blur to it and make it look like crt by stacking two of these up and rotating one by 90 degrees to make it effect both horizontolly and vertically 
-
-VR digital Glitch = allows you to add this glitch like comptuer corruptped effect on a footage. great for transition and other things. 
-
-Add Grain - adds grain. , there are many presets that are so much better than the defualt one, some of the presets make it look like it was shot on a professional camera under dark lightning. after you've chosen the preset, there is another property - 'Application' if you want it looking realistic, you're going to to twrel down the options and then drop down the blending mode and choose 'Film' film will only show the grain in darker areas and not in lighter areas. Film is the most realistic way of adding grain to a footage. this is extreamly costomizable by twriling down the options under application even further and tuning if you want grain added to any one of the rgb channels in shadow areas or lighter areeas. some presets that are great are these 
-• Kodak Vision 200T (5274)
-• Kodak Vision 800T (5289)
-
-noise. - ads noise. 
-
-Linear Wipe- dont' sleep on this, it's increadbly vercitile annd powerful effect, you can use it to create gradiennts. helps elimantte hard edges, and ofcourse it can also be used for transitions but dont' use it for that that often. can also be used to compare the color or an eliment of two diffrent layers by having one layer be half visible and the other layer be half visible to, you can shift the line where the layer stops being visible around and back and fourth to better see the differnece between the two layers. 
-
-posterize time - effect and also an expresion posterizeTime(); makes the frame rate user defined on the applied layer/s . 
-
-Posterize - this is a diffrent effect alltogether, it's to create a segmented layer/pixilated but it's not the same pixilated as moasic effect, it's kinda artisitic style segmentation, it reduces how many colors a layer can have rangingg from 0-255. and it cann only be applied in one direction not both horizontially and viertically like pixals but more like just vertical with roationg property to change its direction. 
-
-Mosaic - it allows you to lower the resolution and make the layer to which it's applied, look blocky and pixilated, it has great artisitc applications, can also be used for bleeping out mouth swearing movemtns, or creating old crt text with pixilated edges. 
-
-radial wipe or trimp paths for pie chart animation or semi circle.
-
-Warp is great for making curves, swiggly lines. and much more.  ,it's great for creating some very fun texts, too, just apply on an adjustment layer or even on the text layer itself and play around with warp settings. 
-
-Turbulant Noise - it's the exact same as factal noise and renders quickly, the only thing about this is that it doesn't have the option to cycle the same noise on the screen every few seconds aka it doesn't have the 'cycles' option/ property under the effect. 
-
-Turbulant Noise- to add dust and scratches by lowering the brightness and increasing contrast. , this has so many other applications espicially for artifacts.
-
-fractal noise - can do so many things with this, can create dust and scratches by stacking up the effect, or just one effect by messing with the contrast and brightness of the effect. the key to creating grain is by REDUCING THE 'SCALE' property under transform of the fractal noice property by reveleaing the nested options under the effect's propety. and playing around with contrast and brightness, (lower brightness and increase contrast) add fast box blur if you want it blurry. You should also stack two grains by dublicating the already created layer with grain and then adding invert effect to it and using one of the blending modes. this works wonders on making it look mysteriious. add posterizeTime(6); on the sub property that will animate, eg if you are gonna be using evolution property by usign the time*1000; then use the posteriize time on it instead of using the effect after the factal noise effect. be effeicient. You can also use the random seed under fractol noise to animate the grains by using posterizeTime(6); followed by random(10000); btw there's an evolution and cycle option that allows you to cycle the way the noise appears on the screen every few seconds (user defined in 'cycle')  
-
-Invert- inverts the layer's colors. use the 'Channel' proeprty under the effect, and change it to r/g/b/alpha or anything else at your heart's content. 
-
-Spherize- allows you to create a ball like extrution effect on any layer. 
-
-Ripple - creates water drop like ripples on the layer. need to crank up the radius for it to show. 
-
-cc ripple pulse- a diffrent version of the ripple effect
-
-cc drizzle - kinda like rain drops impac on water, similar to ripple
-
-shadow/highlight - great for automatically bringing down the highlight and cranking up the shadows to produce a balanced footage. looks great. 
-
-cc ball action - turns the whole layer into small balls to which its applied. great for pixelated type effect. you can also scatter those balls and create a tranistion from it, it's great, you can also apply it to a small eliment that is on a layer of it's own and have that disintegrate and obilitrate into balls. the great thing about this effect is that it creates 3d balls that also respoinds to actual cameras inside of ae. it's so great. 
-
-cc star burst- so fucking great, makes for great 3d type stars that are rushing towards you/ make you so as though you're traveelling fast through space with debirs around you. apply it to a solid layer. you can tint it/glow/deepglow/4 color gradient/ cc lens/ optics compensation/ chormatic abberation. 
-
-Bulge - same as spherize but with a lot more controls and costomizations.
-
-force motion blur on objects that normal motion blur doesn't work on like videos.
-
-echo - to create a trail of the shape/object. 
-
-cc wide time - is similar to echo but has a few fore applications, ways to use it is by applying it on a layer, then using cc compositite effect after cc wide time with rgb property toggeled. (to bring the original unaffected layer over the layer to which cc wide time was applied) you can also add tint before cc composite to change the color of the trail, and even add glow to it, or turbulannt displace. btw this effect can also be used to show case the path animation, by using the 'forward steps' property under cc wide time.
-
-glow - to give it a halo type of an effect, you don't need nothing else, just stack them up and having diffrent threshoold and radious values to bring the object of focus to life. 
-
-Curves/ levels- allows you to play around with the contrast, colors, alpha channels, individual RGB colors. and so much more. very powerful for color corrections. 
-
-cc radial scale wipe - is best used for transtion, it essentially makes a circle bigger with transparncy in the place where the circle is and reviealign the layer underneeth. 
-
-Wave Warp, is a cool effect for simulating hair movvemnt or water flowing or fire burning. you can use it in tandom with mirror to have both sides of the (eg triagle) flow at the same time and be symmetrical. looks good when symentrical. 
-
-CC Glass-  cool for creating petruding shapes, bevel like effect/embossing/debossing. you can do it both ways:- take the layer you're applying the effect to as it's own source layer to effect it or You can also set the source image in the effect's panal to another layer through the droop down menu to have it work that way as well. you can change the property option to alpha if the image is trasnparent on parts that doesn't need contacting the shape 
-
-CC Plastic - works similar to the CC Glass but is a little different in the way it looks 
-
-CC Blobbylize - this makes it look like a blob or liquid metel if the colors are metalic, or you could also make it look liquidy depending on the colors,  this is pretty cool, so you can set the source layer's alpha channel as it's displacement layer, and then mess around with other properites on the effect. You can add the offset/motion tile effect BEFORE the blobbylize effect to make it seem a lot more reflecty and dynamic, it looks like there's a light being shown on the blob and that it's reflecting, obviouslyi animate the offset. it looks very 3d but it's an illusion that looks convincing.
-
-Offset - this just repeats the image if you move it away from the screen, 
-
-Timewarp -  this is similar to optical flow/ frame blending when the footage is shot in low fps such as 30/60 and you want to slow it down by 5 times for slow motion, or maybe you just want a 24 fps footage look like 60 fps footage, this works wonders on the footage. it create extra frames in between existing frames.
-
-	there is another way to achieve a similar result and tha tis by toggeling the frame blending option in the timeline. it's the option to the left of the adjustment toggle option, it's icon is that of the film used in older camera (nitro cellulos sheet, it used to be black/brown in color), when you hover over it in the timeline panal it's labbled 'Frame Blending - Interpolates frame content by weighted blending' clicking it inserts extra frames into the footage to make it apppear as though it was shot at higher fps so clicking selecing the checkbox for the layer onece will swich to frame blending, LMB it again will switch to pixal motion, pixel motion is easier on the resources as it doesn't need to generate the full frame but just for the areas where there's a pixel change, you can tell how much extra time it ads to rendering by looking at the frame render time at the bottom of the timeline panal, tooggle it on if it's disabled 
-
-Displacement map - You have to first understand what this does, it's very simple when you realize what it does. the displacement map moves pixels around on a layer based on several user specifed properites. so what do i Mean by that? let's break it down so a retard like you can understand what i mean, With another effect like Offset- when you shift the x/y values of the effect it moves all the pixels on the layer uniformely and symetrically and therefore retaining it's visual depiction. Displacement map does exactly the same thing but it doesn't do it uniformely it does it based on a certain user selected property, so there are several options under displacement map effect, the first and foremost and the most importart property is the displacement map layer, this means which other layer's color/alpha/luminance properties you'd like to take from. alternatively you could have the current layer as it's own displacemenet map, in most cases (as many as 99.99 cases you'll only need to use the luminance property and not rgb or alpha).  for a grayscale/ black and white displacemtn map; the thing to note is that white areas of the map will displace the pixels more and black areaas won't effect the target layer at all. black and white displaace the targeted layer in opposite directions while gray doesn't move at all. 
-
-Motion tile - this is much more powerful because it can mirror the edges, making it seem a lot more realistic in it's attempt to expand the image. 
-
-CC RepeTile - this dublicates the layer and puts the dublicated layer right next to the original layer, it can dublicate it until it fits the entire comp and beyond and in both directions- vertical and horizontal, let me further explain how this works, say you have a small circle the size of 1 or more pixal in a comp of 1080p, instead of creating 1080x1920 seperate layers for each of the circles, all i'll need to do is use this effect on it and it'll automatcially do the work for me, it'll place the dublicated pixel right next to the original one and until the whole comp is filled with it. I can do the same with small squires to create a grid type effect or even checkerboard type effect. 
-shape layers that are hand drawn have a repeater property in the same many as where the trim paths is. LMB on the 'Add' option right next to the 'Contents' under the shape layer > repeater > this does somethign similar to cc repetile.
-
-Luma Key- allows you to remove the lights or darks from a layer. 
-
-Extract - allows you to remove any of the chnannels from a layer, like rgb alpha luma dark. - increadbly powerful. eg you can remove the darker areas and only keep highlighted areas then ADD THE GLOW effect just to the highlighted area, then have the dublicated layer underneeth it without the extract and glow effect. 
-
-If you want to quickly and perfectly remove Just the blacks from a layer use the effect 'Unmult' aka Alpha From Lightness (Unmult), it combines several effects to remove blacks perfectly and it's prebuilt into ae. 
-
-Set Matte - allows you to set another matte to the affected layer, this way you can have the timeline matte option use one matte layer and set matte use another matte or use the same layer for both, one effecting the alpha channel the  other effecting the luma channel. 
-
-Morphing instrauctions.
-first get the two footages (the one that's going to turn to another)  might need to roto it if it' a film and not a png,then do this for both layers individually. Layers > Auto Trace. choose Alpha generally but you could also use luma if that's what you want, it'll automaticlaly create masks. Sometimes it creates more than 1 mask, so see which mask has the vast mejority of paths and delete the other masks that only have like a dot or something of a path. Copy masks from both layers and paste them to the other layer. so now each layer should have both masks, it's own mask path and the mask path of the other layer as well. ps, Yes, both layers will need to have 2 masks each, So in total 4 masks. Add the "Reshape" effect to both layers and then select source mask(from)  and then destinaiton mask (to), for one layer it will be in one order and the other layer it'll be in reverse order (i mean the source mask and desitnaiton mask, because one will turn into another layer and the other layer will turn from another layer) then hold down ALT until you see the + symbol in the comp preview window, and then add multiple paths. this will ensure fluid and intuitive transition. do it for both layers, and then set up opacity for both layers one going from 100- 0 and other from 0-100, overlap the keyframes so that they are top of one another and transition perfectly without seeming jittery 
-then set the 'Percent' under reshape effect from 0-100 and set key frames. 
-OR
-suprisingly you can also use the liquify tool to morph into diffrent objects. like set keyframes on the liquify tool and then morph into the 2nd layer by distorting and then playing around with the opacity, and then doing it the other way around as well, distort the first second image to first image's size and apporixmate shape. but the first method of using the reshape effect is easier because it does the distroting part all on it's own excpet for choosing with ALT and dragging the starting and ending point manually. So i just tried it, it's actually yeilding better resulsts and it's suprisingly quick and easy. 
-
-
-lock, auto orient real worlkd camera, 
-
-
-
-
-CAMERA
-what the actual fuck!!! how did i not know this??? having multiple cameras on a timline actually serves an increadble purpose!!!, you can quickly cut to a diffrent angle on a 3d object or even a 2d layer depending on what the active camers on the playhead. let's say you have a dice facing the side with 3 on it and it's slowlly moving upward, then half way through it you can ALT ] to cut the camera layer at the playhead and then create a new camera pointing the other side with it's position keyframed and animating already when it switches. this makes for such a cool look it's crazy!!! https://youtu.be/zgMHWFolli8?list=PLzf-EjFJ11qQ2LXKV_PGR8NXhSkghHxf4 this is the link if you want to watch it. 
-
-deapth of field (DoF)/ focus distance/ aparture/ blur level are all disabled on every engine other than the Classic 3D engine, this might change with future updates but as of now the following engines don't support a lot of things including effects on layers and also dof. 
-Advanced 3D
-Cinema 4D
-
-CRTL ALT shift \ = to look at selected layer when they are out of frame, this can be used when there are multiple layers and each layer needs for the camera to look at them at a certain time so you can click each layer and hit the shorcut keys and drop a keyframe, then move forward in time and do the shorcut again while selecing a differnt layer and drop another set of keyframes, so on and so fourth. 
-
-CRTL ALT shift C = will open the setting window to create a new camera  layer. 
-
-A = will show the property 'point of interest' it's the keyboard shortcut for it. 
-
-for the purpose of your own sanity and convinience, always use a two node camera unles you're retarded. (there might be an occational instance where the application of one node camera is what is needed but id think there is.)
-
-Using nulls changes how cameres work in AE. 
-Here are the following ways in which a camera can be used in Ae. 
-1. Camera Alone
-2. Creating a Camera Layer and then creating a Null layer and parenting the camera to the Null layer. 
-3. Create orbit Null. (note that a camera layer has to already be created and selected.)
-
-One node Camera- so this works much like how a real world camera works and it's very limiting, so if you spin around the subject will quickly move out of the view finder, it's like when a camera being mounted on a tripod and panning around, you can look around the world but the main subject will not stay in the view findder. 
-
-Two Node Camera- will create one additional point/node. which is point of interest. So now the camera will always point towards where the point of interst is, it'll lock it's view finder to the point of interest which means when you spin around, the whole camera will spin in order to keep the subject in view. It'll auto orieont towards the subject regardless of where you move it in 3d space. but the limitation of it is that you can't make it spin around an object(orbit around it), i mean you could theroretically do it but it would be so fucking painstaking that you'd want to KYS, so this is where a null comes into play. the reason to alwasy use a two node camera is because of when you use a null to parent it it'll automatically snap to the point of interest not to mention the fact that it has a point of intrest. so all in all, it's more flexible with what it allows you to do and it's easy af to use, almost identical to one node with 1 extra option ie point of interest. 
-
-
-There's two ways of creating a null with the camrera parented to it and both serve the exact same purpose, 1st way is by giong to the toolbar> Layer> Camera> Create Orbit Null, this will automatically create a null, turn it into a 3d layer and parent the selected camera to it, place the null exactly at the 'point of intrest' of the two node camera (or if you have a one node camera, it'll place the null right infront of it, you can still change it's position easily by moving around the positon of the camera, if you move aruond the null, because the null is parented to the camera layer the camera will move along with it, so just move the camera and you'll be able to change the distance between the null and the camera but just use a two node camera if you don't hate your self.) and also rename the null to 'camera x orbit null'  the 2nd way is by creating a Null layer, toggling the 3d switch and paranting the camera to it,but this method wont automatically place the null at the point of intrest,(it's not even all that necessry,in some cases)so both these ways do exactly the same thing. now the purpose behind this whole thing is as following, it unlocks certain camera momvements that are so much intuitive to work with, eg.
-this makes the camera spin around the null(which could be place right in the center of the 3d object eg cube), it pins the anchor point onto the subject(eg dice) and the camera will spin around that dice and the camera's position will physicaly move (let's say you have a dice as the subject, the camera will spin around it like the earth revolves around the sun, this way it'll reveal other sides of the dice and the numbers on the dice) the most important part about this is that you can manually click and drag on the null within the preview panal or alternatively you can preciecly change the position of the null whitin the property menu under the parented-to null layer at any time.  lol it's called orbit movement i just learned that. 
-
-when using the 'C' key to animate the camera, both the Point of interest and position for the camera is changed so keyframe both of them when starting out.  
-
-Toggling 'C' three times will cycle between zomming in on the z axis/ x,y axis / rotating or spinning around the object of focus. 
-
-the following camera settings can be changed at anytime during the timeline, it's not fixed to just one value, it's keyframable. 
- 
-Focus Distance is the distance at which the focus is at, you can automatically link the focus distance to the subject in several ways. 
-Top Tool Bar > Layer > Camera > .... sub-menus. 
-1. Link Focus Distance to Point of Interest - so with a two node camera, the you get a point of interest that is placed right infront of the camera by default, but you can change it, so if there's multiple layers varying in their zPosition you can shift the point of interest by either manually dragging it in the preview panal or through prorperties and then the layer to which PoI is the nearst will be in focus, you can play around with the apertture to make the blur outside of the zone of the DoF (deapth of field) stronger or just straight up incresse the blur strength through the blur property. 
-
-2. Link Focus Distance to Layer - so this works similar to auto focus but with the subject locked. you can select a layer to which you want the camerea to always focus on. this requires for you you to select two layers one is the the particular camera layer to which you want the desired/targeted layer to always be in focus and the 2nd one being the targeted layer you want in focus. then proceed with toolbar>layer>camera> link focus distance to layer. 
-
-3. Set Focus Distance to Layer - will allow you to set the current focus distance to the selected layer. requries both the camera and the targeted layer to be selcted at once like for the previous option. But with this particualr option, if you move the camera around, it wont stay focused to the layer, it'll move out of focus, this is partiucally for helping with keyframing the exact focus distace to a layer. (pro tip: add a keyboard 
- for this task)
-
-reason for null layer for camera - 1st reason is when you have alredy added keyframes on the propetieis of a camera layer and you don't want to mess around with it to break the perfectly created path/zoom in/zoom out. you can create a null and parent the camera layer to it and still have the keyframed propertyes work on the parented camera layer,and now you can further customize the oritontation/position/or what ever with on the null layer without a chance of ruining the path or what ever of the paranted camera layer. you shoudl theroteically also be able to do this infinately, like after adding keyframes on the null layer, you possiblly could then parent it to another new null layer and further customize the camera placemnet. idk why you'd need it though. it shoudl definately be possible.
-
-F-stop is the same as aperture. the smaller fstop leads to shallow deapth of field while a larger f-stop leads to broarder DoF
-f-stop doubles every twice the number , the starting f-stop is all you need to remember which is F 1.4 so f1.4 lets in a lot of light, while twice that of it - f2.8 lets in just half as much light and f5.6 lets in half as much light as f2.8 so on and so fourth. 
-
-Aperture is the size of the hole to let the light into the lens. it's the smae as fstop
-
-Deapth of Field aka DoF is the range of subject in focus. anything outside of focus is outside of DoF
-
-Zoom - zoom into the subject. 
-
-Focal Length - is the distance the lens is from the sensor, a focul length of 10mm would make the lens an ultra wide lens, while a focal length of 100mm would make it a zoom lens. 
-
-Film size represietns the size of the sensor. 
-
-Angle of view - a wider angle of view will result in an ultra wide frame, while a narrower angle of view will lead to a zoomed in frame that is focused on just the are af intrest as oppopsed to all encompossing. 
-
-3D camera focal lengths:- also known as zoom levels. 10 mm is zommed way wayy out as opposed to 200mm being wayy wayy zoomed in. 
-
-Focal length is a way to measure how zoomed in or zoomed out a camera lens is. The higher the number, the more zoomed in the lens is.
-
-So here's what each of those focal lengths mean:
-18mm - This is a very wide angle lens. It captures a really wide field of view, making things look smaller but fitting a lot into the frame.
-20mm - Also a wide angle lens, just slightly more zoomed in than 18mm.
-24mm - A moderate wide angle lens. Still gets a nice wide view.
-28mm - This starts to get closer to a "normal" field of view, similar to human vision.
-35mm - Considered a standard or normal lens for things like portraits and general use.
-50mm - A classic focal length that is very natural looking, great for portraits.
-80mm - Now we're getting into telephoto territory. This lets you zoom in more on your subject from farther away.
-135mm - A more powerful telephoto lens that really magnifies the subject.
-200mm - This focal length allows you to get tight shots of subjects from a long distance away.
-
-you can animate the camera in three ways, one is by just directly manipulationg the camra properties and keyrameing them, the sencond is parenting a null layer to the camera and moving that around and keframing it, and the third one is using the 'C' keyboard shortcut and keframing it, i think the thrid and the first options are the same with the noteworthy point of the thrid one being considerably user freindly to use.
-
-
-GREAT TIPS	
-
-when i talk about blur deapth maps this is what i mean, so let me first explain 2 types of blur maps. one is the one where you generate using phtoshop filter or the after effects one from the addon and the 2nd one i'm talkinng about just a manualy created gradient black and white solid. with black in the middle and gradiating out to black. both these types of blur maps are essentially the same because they create a layer with black annd white colors and on a realisitic deapth blur map, the black and white values are transparent depending on the deapth of the scene as opposed to the gradient one which is not based on the true deapth of the scene. and this deapth map is used for several effects, some of which are displacement map, camera lens blur., whith displacement map you might need to use fast box blur.  by defualt white value is blurred and black value is not blured but you could very easily invert it under the camera lens property, or just invert the deapth map blur using the invert effect. 
-
-Mapal - How To Animate Like Dodford (After Effects Tutorial) just watch this a few billion times, this is all you need to know to animate increadble looking videos, this is actually fucking amaizing.
-Some tips from the video above- For talking about an idea and introducing the audience to it start by showing it on an old crt tv, mask out the screen and then have the screen alone on a dublicated layer and set it's blending mode to one of the avaialble ones and then reduce opacity and play around with the proper settings. 
-this next tip is to blow out the highlights and overlawy them on the existing layer - to the tv image without the screen- dublicate it and on the dublicated layer, use the extract effect to take out the blacks and you can individually move the top selectable vertex points to feather the removal of blacks, and then use the curves effect to play arond with the highlights and then add the glow effect to it to make the highlights glow, note that if you use deepglow, it has a built in chromatic abberation option in the effects panal check that. and then add a posterizetime 12 fps and wiggle 15,.5 to the exposure of the deepglow, then overlay it on the normal tv footage below the tv glass screen overlay. can also add tint to change it's color
-zoom a little into the tv as the footage is playing on it.  so after the first scene has played on the tv, you can cut to the same scene on a full screen without the tv this time, obviously you're going to apply a few effects to it to make it look increadble.  and then to swtich to a diffrent scene of the same topic, you can match cut it by zooming, eg - scene 2 to scene 3, keyframe the starting scale at regular scale/100% then move formaward beyond the point where layer ends and on to the scene 3's point where the zooming sshould stop, and drop a keyframe on the scale with it being 120% scaled up, Now go back to the first key frame on secene 2's scale property, but now select scene 3's scale property (yes, before the scene 3 layer even starts) and drop a keyframe of 100% scale on the scene 3's scale property, now make sure the key frames on both the layers are overlapping and alighned to be at the same time, now do the same with the end keyframes, go on to the scale property of the scence 3' and drop a keyframe with 120% zoomed in and alighn it with the end keyframe of the scene 2's scale keyframe, have them over lap, so in summary, both starting keyframes and end keyframes over lap with one another among scene 2 and 3, this is inspite of the fact that the scene 2's end keyframes are beyond the end point of the layer and scene 3's starting keyframes are before the inpoint of the layer. and they go from 100 to 120 percentage scaled up and easy ease it to give it a smooth match cut and also turn on motion blur. 
-adding flicker- the following expression to the opacity of the adjustment layer on the whole comp- posterizeTime(12); and then wiggle (10,50), this will make the opacity expression only render every 12 frames, and will send will give the whole footage a misterious look.  
-adding camera shake,First zoom in a little like 103% to mitigate any black edge pixels. this is to be done on a new adjustment layer's postion property. - add posterizeTime(12); and then wiggle (222,2) this will  give it a slight movement that will only render every 12 frames aka half of 24 fps
-add a hue and saturation effect individually to each layer and to match the contrast and make them black and white or slightly colored depeindng on your peference. 
-then add a vigeneette to the whole scene but make it subtle. 
-then on the whole footage add another adjustment layer and add two effects to it, first one being chromatic abberation - play around with frame layout options, and the second one being optics compensation - reverse the lens distortion to it
-Now, for creating  depth map layer for camera lens blur, you need to create a new black solid and then create an ovel shaped mask on it and then the outside of the mask will become trasparent, so to make the out side of the mask white- drop a Solid composite effect to it and set the color to white. the solid composite will fill the trasnparent chanel with the color solid compositie is set to black. then add a new adjustment layer and slap camera lens blur effect on to it and selelct the newly cready deapth map solid as the blur map for the effect in the adjustment layer and also select masks and effects, you can then move around the mask path to blur out the parts you want blured and then also, crank up the blur to a preffered point. this also looks great on text/article. it looks espically good with chromatic abberation and optics compensiation reversed. 
-
-Okay now this is the secret sauce for how to make certain videos look prossional and cool. this following technique makes it mysterious and great looking, so do the following. let me first explain what the effect is and then break down how to do it, so it's essentialy parts of the footage slightly bluring out randomely and then moving on to a diffrent part of the screen and bluring that out (continniously moviing across the screen and bluring out anything that come's in it's way), so it's basically a turbulant displaced black/white circles (deapth map blur layer) with it's path animated and evolution animated too, and its moving around the screen and acting as a depth map blur for camera lens blur on another adjustment layer. READ THIS > so this is how you do it, create a cricle then add a turbulent displace and crank that up like your life depended on it, then add evolution time to it but not too much maybe time*10; , then ADD FAST BOX BLUR, to smooth out the edges of the animating blobby circle, then add solid composite effect to it to make the transparent parts of the solid white, then create a new adjustment layer and add the camera lens blur effect to it then select the newly creadted deapth blur map to it's blur map layer property and selct masks and effects.
-so this is a better way to do the above part, this whole blurring out of certain parts of a video should be done by using either turbulant noise or fractor noise, this comes with black and white spots on the scren by default crank up the contrast or even lower it then animate the noise, then use this as the deapth map instead of the methond above.  
-Add grain to the whole footage on a solid layer and set it as overlay. blending mmode or something. then add another solid and add fractol noise. increase the contrast a whole bunch and lower the brightness to essentialy create dust and scrateches and increase the complexity and decrease the size of it adn then evolution it with expression,posterize time 6 fps , and  random(20000)> then blending mode to add. then dublicate this solid and invert it to also add black scrathes, this method will give you both white and black scratches, add the sutiable blending mode 
-then drop a pixilated/crt overlay on everthing, and set the blending mode.
-
-
-You can give any layer the following effects by right clicking on a layer and selcing 'Layer Styles'- with 'Stroke' being the most useful of them all with a lot of use cases particually on layers with transparent portions. You can also apply one of these to a null and copy with property link and mass apply it on to as many lasyers as you want. 
-Drop shadow
-Inner Shadow
-Outer Glow
-Inner Glow
-Bevel and Emboss
-Satin
-Color Overlay
-Gradi ent Overlay
-Stroke
-
-FX console on top of searing for effects and stuff within ae can also be used to copy the current frame on which the play head is to clipboard and then paste it into photshop or where ever., or can even directly export as png. 
-
-Pay close attention!! if you dont want an applied effect to be shown on a certain area of the footage to which it's applied you can mask it out BUT the following option is not availabe in the effects panal under the effect and can only be found in the timeline panal under the effect > search for Compositing Options in the timeline panal, this WILL NOT show up in the effects panal for some weired reason, maybe in future updates it will but as of 2024 july it doesn't. then add the plus icon and add the mask, if you want the mask inverted, go to the actual mask and add or subsrtract it depending on what you want. and you'll have the desired effect. and yes mask needs to be enabled, if the mask is set to none it  wont work. 
-
-to create a miniture effect where things seem tiny even it's just a regular footage, so first apply the camera lens blur on the footage and then create a new solid layer to create a deapth map for camera lens blur's Blur map source layer. so on the new solid set the fill to liniar gradient, and then have one side be black and the other be white, white will be out of focus and black in focus, so in order to create a minituer effect you want for things out of focus to be high and the area of focus to be very narrow, so adjust the black and white gradient accoridgly and then when done, go over to the orginal layer's effects panal and link the blur map to the solid gradient layer using camera lens blur's drop down deapth map property, also if you're using the linear gradient effect instead of the native liniear fill option on the solid layer, in the camera lens blur effect on the footage layer's camera lens option's deapth map propetery's option- select effects and masks for it to work. , after all is done and linked, you can mess with blur focus distance to dynamically chosose what stays in focus and what's blurry. and also mess around with the blur radious to increase/decrease the intenceity of the blur. to sell the effect even more, add a viberance effect to it and crank it up to make it appear as thought it was a miniutre set created in a studuio or soemthing this is to make it look unnatureal and give it the semblense of realism of miniture footage., now if the footage you're working with is a little compmlicated where a single linear gradient can't be applied, just create multiple solids and add the linear gradient to them according to how far and close they are individually, eg, if there's roads, buildings, you can just do them individually for left buildigns first, then on the right buildings, and then on the road and then pre comp them and use them as the blur map for the camrera lens blur.
-
-add the wiggle expression to glow, to make it look interesting. 
-
-Creatig a pre comp, two options - Leave all attributes in the current comp or Move all attributes into the new comp, Okay this is not always consitant so double check this everytime but it's increadbly improtant for when the footage you're working with is a large resolution footage, or the footage has been scaled up to be out of the borders of the current comp, 
-Leave all attributes in the current comp does serveral things, 
-	1. if you have any effects or masks applied to the layer, they will be left in the current comp on the newly created comp layer but this only happnes when only one layer is being precomped, other wise the option to leave all attributes in the current comp is grayed out. 
-	2. when there's only one layer being pre comped, if the resolution of the layer is beyond the res of the current comp, the pre comp will create a comp corrospoinding to the original res of the layer being precomped and it wont down scale it. 
-	3. If you are only precompling one layer and if the layer is scaled up  in the current comp, it'll retain the edges that are out side of the current frame in the current comp, and it wont trimp out the edges. so essentially the whole layer in it's orignal state will be precomped, retaining all it's properties, resolution, aspecte ratio. 
-	4. PS. this option is greyed out for Shape layer.
-	
-
-Move all attributes into the new comp does the following things. 
-	1. All effects and masks will be moved into the new comp, and will be on the same layer being precommped, P.S if you're pre comping multiple layers, you will only have the option to move all attributes into the new comp for obvious reasons, which are , if there are multiple layers and they have effects and masks applied to them, when pre compling it'll only create one comp for all the layers within it so it can't place all the masks and effects of all those layers to just the precomp and that's why it moves all effects along with the layers in to the new comp on the actual layers. 
-	2. If the layer that's going to be pre compled has it's resolution beyond the resolution of the current comp, the new pre comp will downscale the resolution to the current comp and will downscale the layer. 
-	3. if the layer has been scaled up to a point of it's edges being pushed out of frame in the current comp, the pre comp will trimp the outer edges out and will also inheret the resolution size of the current comp and will disregard the native resolution of the layer being precomped. 
-	4. If multiple layers are being precomped, and will have there native resolutions flattned across the board to match the res of the current comp. So it'll make each of the individual layers lose quality.
-
-
-This is a great fucking tip to Make blobs, or to even make something shaprer that is blurry, place an adjustment layer over the objects/layers you want to effect and then add two effects on it, one is gausian blur, and unckeck repeat edge pixels, and also add Levels(individual curves) effect in just that order. and then crank up the gausian to arond 30 or above, and then drop down the 'Channel'menu under the Levels effect and select 'Alpha' then you'll find two level adujsters below, one is above that looks like a full graph and the other is a narrower graph, Use the one above that looks like a grapth (the bigger one) this will have three points on the graph one on the left, one on the right and one in the middle, ususally you don't have to touch the middle one but just the two on each sides, bring both the left and the right side points to the middle untill you see the desired result in the comp preview window.  alternatively you could also use simple chocker instead of individual curves but simple chocker effect only works on layers with transparency 
-
-many effects are repetitive in the way they work, what i mean is that if an effect does the same thing after every few frames, find the pefect looping point and loop it out instead of having the cpu/gpu crunch through the entire timeline of the comp. To find the perfect looping point, you need to see if the first and the currently assumed frame overlap perfectly, you can check this by hitting the camera symbol under the comp preview panal and it'll take a screenshot of the frame you're on, then move on the the frame you think matchs the first frame to every pixel, ALT click the eye symbol right next to the camera symbol on the bottom of the preview panal. or just click it without ALT to see if you see a discrepency, move a few frames back and fourth until  you find the sweet spot, if you find a frame that pefectaly matches it, then go back one frame and set that as the end point of the layer because if the first and the last frame are identical you'll end up with two same frames and that will look kinda off when playiing normally so the last frame will act as a repetead frame, to mitigate that, you need to go back a frame to make it loop seemelesly. and then time remmape and then loop it out. 
-
-You can stack the same effects on top of one another to give it an interesting look. this is useful for many times. so make a habbit of experimenting with it.
-
-you can create masks on an entire layer by selecting the shape sympol on the toolbar, then making sure to select the checkerboard with a hole in it,  it's next to the star symbol( shape tool) in the tool bar on the top. and then you can double click the rectangle symbol and then double click the edge of the mask to change it's dimentions. 
-
-Instead of using the circle shape to draw circles, use the rectangle shape, use the roundness property to turn it into a circle,  that way you can increase the width and heighth of the ball and have more options. 
-
-you could either use motion blur on moving objects/ shapes, or use the echo effect to give it another look similar to motion blur
-
-Convert shape path into motion path - Let's say you draw a path/shape with the pen tool in the compt prevew panal, and then you want another object/shape in the timeline to follow that pen drawn path> drop down to the path property of the drawn path, (might need to convert to bezier path in some instances by right clicking on the path>Convert to bezier path) then either just select the path property and CRTL C (copy) or drop a keyframe on the path property of the hand drawn layer/or a shape. then copy that keyframe and paste it on the the POSITION property of the object/shape's. sometimes the path is misalighen when the object moves, so make sure the anchor point of both layers is centerd before doing all this and also the playhead is at the beggining. 
-
-this is worth understaing how to achieve, to generate fill an area in a moving video to hide a certain object/watermark/person. so the way to achieve by two ways. which at there core are the same, just diffrent ways of going about doing it, so here is what you need to do, either create a mask on a video layer and manually animate(keyframe) it's path if the object is moving. READ!!! alternatively you could do the following to automate the path tracking, place the playhead at the starting position, or the first frame you want to animate from (drop a marker to not mess up the starting point if it's in the midddle of the footage and not the begginging). trackign it and pickwipping/parrenting the path property of the mask to the tracked keyframes property DOES NOT work because path property doesn't take in x,y values, so here is what you need to do; draw a seperate shape on a new layer, make sure the shape is the size of the object you want to mask and then go to the target footage layer and track matte it to the newly drawn shape layer to punch a hole through it and reveal the background/transparncy (essentially masking the object of intrest to be eliminated). then with the target layer selected, double click on the preview panal to open it's layer panal to track it's positon and scale. create a new null layer. and select 'Edit target' under trackig to select the null layer and after tracking it all, apply it, then pickwhip the shape layer's (the one being used as a matte) postion and scale to the null layer, or just pickwhip the scale or just the postion. depending on the type of movement in the footage. then go to the tool bar at the top > window > Content-Aware Fill and you should see the transparent area on the screen which will be generative filled automatically, make sure to hide layers that might be underneeth the target layer that could be filling in the punch hole and preventing showing trasnparancy. then WITHOUT any layer selected hit generate fill layer. btw increase the alpha expanding on Content-Aware Fill by a tad bit and then preeed with generating. 
-
-if you want to reverse the order of layers in the timeline panal, select the layers in sequance you want them to be eg, hold down CRTL and then copy the 5th layer then the 4th, then the 3rd, then the 2... and then cut them> them CRTL V paste them. you can also select the last layer and then shift click the first layer> cut and paste them > the last layer will now be the first layer. 
- 
-To reopen a closed shape path/ mask path, select the first vertex point and the last vertext point > right click >mask and shape path> uncheck 'Closed'. 
-
-to get back handles on  vertex points on a shape path or mask path > right click on any vertex point> mask and shape path> uncheck 'RotoBezier'. 
-
-to see how an effect is impacting and manipulating the footage:- create a solid layer then add the grid effect to it then add the desired effect to see how that grid is effected, eg chromatic abboration. to see which parts of the grid are effected. 	
-
-to select the children layers, right click a parent layer> select children. 
-
-to reset multiple properties at once, select the all the properties on how many ever layers you want, while they are selectd, double click the move tool in the tool bar to reset scale and positon, and double click the rotation tool to reset rotation. position reset doesnt work on hand drawn shape but scale reset and rotation works on shape layers too.  
-
-
-ALWAYS color lablel layers when you have too many or even a few layers make a habbit out of it. 
-
-for glowing edges > Find edges > levels > glow/deepglow X 2 > 4 color gradient set to soft light under the effecs' properties. and then precomp it and overlay it on the orginal footage.
-
-to reverse keyframes, select keyframes, RMB on any selected keyframe > Keyframe assistannt> Time-Reverse Keyframes. 
-
-can quickly increase or decrease the exposure of the entire comp in the comp preview window's bottom options. the symbol looks liek a flower or a camera's lens's closing cover, it has number to it's right. this is just for vieweing/previeing puposes, it doesn't render when exporting the project. 
-
-you can toggle between diffrent viewing modes such as 
-RGB
-Red
-Green
-Blue
-Alpha
-RGB Straight
-all from undeer the preview compt preview panal, the default symbol for it is red green and blue balls placed along side one another forming a triangle. the symble changes depending on which option is selected. you can quickly ALT click it to toggle between rgb and alpha channels. 
-
-You can quickly show if a layer has any masks or not by toggling the 'Toggle mask and Shape Path Visibility' (symbol is a rectangle with one top left corner cut out), it's located in the comp preivew panal at the bottom among other tiny many options. Another botton next to it is the 'toggle transparancy grid' which will alow you to show the transpirancy if any of the entire timeline layers. 
-
-This is such a great fucking feature!!!= REgion of interest botton in the comp preview panal, at the bottom, which will allow you to draw a region of intrest rectagnle, it will only render the area you select to quickly see what an area looks like as ooposed to rending the whole thing in lower resolution, i 've tested it and it indeed only render the part of the screen you draw the regioun of interst on, it's great on the cpu when the effects are too resourse intensive , you can also trim comp to region of intrest and make a comp smaller without puttin in the exact numbers for resoluion, you can also lower the comp preview resolution at the bottom of the panal tempereraly to make the timeline grind through the timeline faster to test how something looks on one part of the screen. 
-
-Preview panal- enable it from windows if not visible= best for working smoothly in ae when working with resource intensive footage and layers. enable skip frames and lower resolution, don't chagne the frame rate, that doesn't work as well. (there's a bug where it might not show all options so toggle it off and of from the windows menu)
-
-each layer'e visibility Eye symbol changes in a minor way when any blending mode is turned on like- dissolve/darken/multiply/screen.....
-
-always tooggle motion blur Symbol in the timeline pannel for clean moving animations. 
-
-The concept of spaces in AE:- spaces is where the layer starts and ends from, it's the total area of the targeted layer. 
-Layer space- if you apply an effect to a layer that is not a vector layer/ or a layer that is not being continualy rastorized, the 0,0 positioning of the layer would be the top left of the LAYER and not the comp. eg you have a 1920x1080 comp but you have a footage/layer that is only 720p and it's not being scaled up, but is in proportion to the size against the backdrop of of a 1080 comp, an applied effect such as gradiant ramp, would calculate the starting 0,0 positioning of the effect to the top left corner of the layer as opposed to the top left corner of the comp. 
-Comp Space - this is taking into account the area of the entier comp, in some instances when you apply an effect to a layer, an effect such as gradian ramp, say you apply it to a vector layer, it'll calculate according to the comp space, ie it's starting position will be that of the top left corner of the entier comp which is that it's possition will be 0,0 at top left corner of the comp. 
-You can change how spaces work on layers while effects aare applied to it by using the 'toComp()' expression. 
-
-You can convert a layer into a guide layer by RMB > Guide layer , it wont show when rendering the footage but it'll show while editing it in AE. 
-
-You can turn any layer into an adjustment layer by toggling the (Circle with half circuled filled), (it's in between the 3d symbol and Motion blur symbol on the timeline)
-
-every shape layer has a star symbol before it's name in the timeline panal. 
-
-when using a layer as a matte for another layer especially texture layers as matte or even using one of the blending modes on a texuture/anyother thing for other layer/s. on the layer that is being blended or track matteed, apply the curves effect and crank up the contrast for the desired look and feel. 
-
-monochrome/monochromatic means black and white.
-
-adding diffrent visual effects to strokes is so easy and it's all built in already, no extra effect is needed, when you draw a stroke using the pen tool, just twerl down to 'Wave' and change things around there, also mess around with tapper, change the butt cap/ round cap. so many things to customize under it, you can also add diffrent color gradient to it by doing the following, add trim paths copy the stroke make the stroke bigger and now use the matte layer on the apha channel, then add a diffrent color to it then add fast box blur followed by glow. to give it that extra look.
-
-Okay this is a great tip= to stagger layers by prefered number of frames, which means you want to start each layer by being delayed by a certain amount of time/frames. you'd need to select all layers and then go to the start of the timeline while all the layers are selected then move the playhead forward by the desired amount of time/ frames you want for each layer to be delayed by, then while all layers are still selected, hold down right-ALT + ] to tempereraly trim off the layers to the right of the playhead. then right click on any of the selected layers (every layer selected), then select 'keyframe assistant'> 'sequence layers' and then select Okay, (DON'T check overlap) 
-
-Lets say i wanted to create a graph and wanted to put down markers for each year/or any data on the timeline at the bottom or on the left side (horizontolly or vertically) what i mean is, let's take the example of an L shaped graph, on the left side is money spent and on the bottom is timeline of years. so for each year, i would want them spaced out perfectely like 2010, 2012, 2014.... so instead of eyeballing it and manually spacing it out, there's an increadbly easy way to do it by putting down the first year and the last year's marker on the line then dublicate the first marker the desired number of times depending on how many years you want to show, then while all the dublicated markers are still overlapping, select all the markers, including the last marker, first marker and all the overlapping markers, then go over to the align pannel and then space them out horizontolly or vertically depending on which side of the bar it is on. Btw Align works wonders. 
-
-to make a great background do this. Fractal Noise(contrast 500, scale 250(type it in when you click away it automacialy turns to 482 sometimes.) evolution to time*50) > Fast Box Blur > Posterize > Find Edges > Extract > simple chocker > fill/4 color graident. 
-
-good extra objects creater - use the grid effect on a solid > use cc sphere on it. 
-
-use echo to dublicate items/texts or any vector - make sure that the precomped layer is tightly fit aruond the vector layer/text and then add echo to it or motion tile. 
-
-use the efffect 'Median' to turn the layer/footage into a cartoonish layer/ it's a great effect for a specific style. 
-
-brush strokes also gives the layer a s specific style. it's kinda turns the layer/footage into brush drawn. 
-
-Dont forget to toggle continusasly rastorize (the sun like/star like) symbol next to shy layer symbol on the layers's timeline pannel. 
-
-to reverse the order of the layers iin the timeline, selcet the layer you want as the layer onthe top/first layer. and then sequenceeally select the rest of the layes in order of prefference than cut (CRTL X) then paste them again (CRTL V)
-
-(this tip is only true in some specific case but still good to remember. )to chnage the shape of any shape layer that was drawn in ae or illustrator, or photoshop (vector shapes), you'll see the points on each corner of the shape but you wont be able to move that point indipendent of the whole shape, so to be able to manipulate each point individually, drop down to the 'Path' property of the vector/shape layer, then right click and selct 'covert to bezier path' then switch to the pen tool by pressing G, then while the layer is selected, you can click on a point and move it independentlly, sometimes you need to go back and forth between the men tool and the Move tool (V) to select just one point, so when switching to the move tool, LMB anywhere on the comp preview screen outside of the layer. and then select the point again, then switch to the pen tool (G) then proceed with changing the shape of the layer.  
-
-add glow to just the highlights/ shadows, use the extract effect then removew what you want to remove > add deepglow/glow w/ wo/ chromatc apbboration checked on deepglow. then have this layer duplicated undeteeth it and remove the extract and glow effects from it. you can also add the wiggle expression the glow expression, also turbulant displace, and so many other things, even cc composition to pile up on the effect and give it a diffrent look. so many creative thigns can be done using just this and it always looks great. 
-
-Turn turn one shape into another on the same layer and seemlessely and also ditervmine what position it's going to be at when it transforms into the 2nd shape. so here's how to go about doing it. Let's say you have a squire that you want to transfrom into a circle. First with The 'Q' key hit, cycle through the shapes until you have a squire, then hold down shift > Lmb on the preview comp and drag drop until you haeve a perfect squire. Now this is key, you want the shape you've drawn to be a bezier shape, there's two ways you can do that, one is to check the 'Bezier Path' checkbox at the top in the toolbar BEFORE you draw the squire, this way it'll be a bezier shape right from the get go. the second method is turning an already drawn shape into a bezier layer. this is done by selecting the squire layer in the timeline panal, then hitting CRTL F and searchign for 'Path', it'll list the rectangle path or what ever xx path, RMB on the path property and then select 'convert to bezier path' this will convert it to bezier path. It'll change the xx path property to just 'Path' property, unswirl/unravel the property until you see the path property that is keyframable. Now before you drop a keyframe, make sure the squire is at the desired postion and desired size. then. drop a keyframe. 
-Now draw another shape eg circle and make sure it's a bezier shape, then go to it's path and before dropping a keyframe make sure it's at the desizred size/position, then drop a keyframe on it. now copy the keyframe from the circle's path and paste it on the path property of the squire at the time you want for the transfrormation to have completed. after it's pasted. it'll automatically/ magically intropolate the tranformation between the two path keyframes on the squire property. you can procedd with deleting the cicle layer. Just an FYI if you want to change the entier shape to a diffrent shape withotu it transforming or anything, you just want it to instantely change it's shape, say you want a squire to be a circle but not really animate or transfrom into one, you could do the following, go down to the path property of the circle layer and selct it but dont' drop a keyframe, and then go to the squire property's path and select it then paste on it CRTL V, it'll change it's shape instantly to a cicle. IMPORTANT thing to note is that sometimes the intropolation between the two shapes is weired and unintunitive and looks off, to fix that, select one vertex point on the first shape > rmb > 	mask and shape path > set first vertex. for the second shape, do the same but make sure to set the first vertext point closet to the first vertext opint on the first shape. 
-
-Ae is not a design software it's a motion graphics software, so use illustrator to draw shapes and desighns and then select all in illustrator then move over to ae and have the pen tool selected 'G' and CRTL V to paste from illustratior. 
-
-when animating trim paths there is an icon to quickly switch between clock wise animation or anti clockwise animation. it's called reverse path direction when you hover over it, it's two lines running parallel to each other in horizonntal positon, it's right next to the xx path property. eg polyster path property. 	
-
-you can add an adjustment layer and add a transform proerpty to it to move every shape underneeth it, or you could add the wiggle expression to the positon property of the tranform property of on the adjustment layer. then precomp the layers along with the adjustment layer you want affected. .
-
-If you want to make a line of text travel along a path like a circle, like you want the text to travel on the inside of the circle along the circle line, select the text layer and create a mask on it, the mask will act as a path for the text to travel along. after it's done create an animator for it using the inbuilt drop down menu under the text layer and select the position animaotr and one the properties for the position animator animate either the x or the y property and it'll travel. 
-
-If you want the spacing of a text line to happen from the middle instead from the left so the text spaces out from the middle ( center the anchor point before toggling the animate the tracking property) 
-
-
-
-
-
-
-
-PHOTOSHOP TIPS FOR AE
-You can use psd files from photoshop into after effects, import them as composition, when you have multiple layers, you can change the text/ or positon of one or more layers in photoshop and it'll automatcially update it's new location/ or newly updated text even with a new font if you changed it, all on the fly, in real time in ae. 
-
-if you want to change the text in ae after having imported the psd file from photoshop, you can change its text by RMB on the text layer > create > convert to editable text. and you'll be able to change the text right from whitin ae. 
-
-
-PREMIRE PRO TIPS
-this is the only premire pro tip in the whole thing but there's an increadble way to make jump cuts looks seemless when talking using the morph cut effect in Pro. note that the duration of the transition should be 4 frames, i've tested it and it works great for jump cuts of a person talking. 
-
-WHILE exporting you'll have 3 options= 
-if you have a 30 fps video and exoprting at 60 fps this is how it'll effect it. 
-frame sampling- will dublicate the frames in between frames - no diffrence in appearance at all. 
-frame blending- will add a kinda of like a cross fade effect inbetween frames. looks ghosty. 
-optical flow - will generate new frames in between and looks increadble!! 
-
-
-
-AE Effects to know about:- (read them and guess what each of them does and confirm your answer from the notes above.)
-Effects of Ae. 
-
-3D CHANNEL
-3D Channel Extract
-Depth Matte
-
-AUDIO
-Backwards - reverses the audio
-Bass & Treble 
-Delay - makes audio delay, like echo audio!  
-High-Low Pass
-Modulator
-Parametric EQ
-Reverb
-
-BLUR & SHARPEN
-Camera Lens Blur - most sophisticated blur effect with ability to use depth maps
-CC Radial Blur - great for focusing only on one area of the screen. it can make everything else zoomed in while keeping the subject in focus and default zoomed. has so many applications. zoom ability is not default under properties of the effect so you have to select it. 
-CC Radial Fast Blur
-Channel Blur
-Directional Blur
-Fast Box Blur
-Gaussian Blur
-Radial Blur - old version of CC radial blur/ don't use this. 
-Sharpen
-Smart Blur - this doesn't apply the blur uniform across the whole image but instead blurs the image based on its contrast ie it only blurs out similar looking tones while maintaining edges, it maintains the overall sharpness of thh image while smoothining out areas with less contrast.
-Unsharp Mask
-
-BORIS FX MOCHA
-Mocha AE
-Mocha Pro
-
-CHANNEL
-Blend - this blends two layrers.(you gotta select the other layer in the properties of the effect)
-CC Composite - this is an effect for the blending modes from the timeline but in an effect and is much more useful than the blening mode available in the timeline on each layer. 
-Channel Combiner  
-Invert
-Minimax
-Set Channels - can take diffrent channels from other source layers. ie R/g/g and overlay it on the layer to which the effect is dropped.
-Set Matte - works similar to the matte option on the layer in the timeline panal. but is much better with more benifits.
-Shift Channels - shifts channels r/g/b aka can also be used to crete chromatic abboratin by dublicating the target layer 3 times and dropping the effect on all of them, then turning off everychannel but one for each of them. RGB. then slightly shifting it's postion r to the left, g as is, and b to the right. 
-Solid Composite - fills up the transparent areas of the layer with user defined color, defualt is white.
-
-COLOR CORRECTION
-Auto Color
-Auto Contrast
-Auto Levels
-Black White
-Brightness & Contrast
-CC Color Neutralizer
-CC Color Offset
-CC Toner
-Change Color
-Change to Color
-Channel Mixer
-Color Balance
-Color Balance (HLS)
-Color Link
-Color Stabilizer
-Colorama
-Curves
-Equalize
-Exposure
-Gamma/Pedestal/Gain
-Hue/Saturation
-Leave Color
-Levels
-Levels (Individual Controls)
-Lumetri Color
-Photo Filter
-Shadow/Highlight
-Tint
-Tritone
-Vibrance
-
-DISTORT
-Bezier Warp - allows you to manipulate/warp/distort the shape/size of the layer using Bezier handles. you can pull and tug the handles to warp/ distort the image to your liking
-Bulge - magnifies the area of the layer inside the radius of the unrendered circle/bounding box on the layer. makes a fish eye magnifying effect on the layer. pretty cool.
-CC Bend It - points based deformation, it bends based on point a and point b . this is simeler and will get the job done most times. this has several styles of bending but they are diffrent than the onces available for cc bender.
-CC Bender - box based deformation. it bends based on the bounding box, this has more features. and is unnatural looking unless tweaked, it offers diffrent styles of bending. 
-CC Blobbylize - this makes the layer look liquidy, it could be used for so many artistic signitures. 
-CC Flo Motion - this effect is farirly uselss, it has two points that can be placed anywhere on the preview layer and then it'll distort those points, it'll just create a black hole like warp around each of the points, you can keyframe the points to animate them. 
-CC Griddler
-CC Lens - i Love this, It can create an optics compensation like effect where, while also doing much more.
-CC Page Turn 
-CC Power Pin - very useful to distort the layer based on 4 points, one on each corner of the frame. can be used even on circles. 
-CC Ripple Pulse - this is a strange effect because it only works when keyframed, it doesn't do shit by defualt when droped on a layer. the properties have to be keyframed. pluse level property and then amplitude. 
-cc Slant - slants the layer. 
-CC Smear - uses two masks to smear from one point to another
-cc split - create a split between two points, like the opening of the mouth. 
-CC split 2 - does exactly as split one with one extra feature, ie lets you control the shape of the curve of both the upper lip and the bottom lip independently. 
-CC Tiler - this is an insanly good and useful effect, let's you create copies of the layer and adds them to each side of the layer in the preview comp, when you zoom out, they are all stacked next to one another in the formation of tiles. It's great for depicting an infinate universe theory/ many more applications. 
-Corner Pin - old and obselete just use cc power pin
-Detail-preserving Upscale - does a better job of keeping in details in a layer when scaling up. say you had a 1080p comp and a footage of 480p, do not scale up the footage but instead drop this effect on the layer and under properties select either set to comp withdh/height or use the scale slider on the properites of the effect. slightly reseroce intensive but worth it. 
-Displacement Map -allows you to distort a layer by shifting its pixels based on the color or luminance values of another layer, called the displacement map. The effect displaces pixels horizontally and/or vertically, creating warping or ripple-like distortions influenced by the variations in the map layer. 
-Liquify - warps, meshes the footage. 
-Magnify - magnifies a user defined area of teh layer. 
-Mesh Warp - much like Bezier Warp but very detialed, it creates a grid that whose intersections you can move around to manipulate and distort the layer.  mesh warp and bezier warp have seperate applications because bezier warp works only around the edges and allows you disotrt a whole lot with just one tug and pull while mesh warp is more detaild and narrowly foccused on each part of the layer. 
-Mirror-
-Offset - works great to have a layer repeat itself and cycle in and out of the preview window. 
-Optics Compensation - zooms in and out of the layer in an interesting way, it's kinda liek fish eye lens. 
-Polar Coordinates - 
-Reshape - this is a great effect to morph one object into another, detailed explinaion above. 
-Ripple - creates this rippel like effect, does it uniformly on the entire layer if you crank up the value to 100. might be useful for artistic purposes. it's kinda like water ripples on in the pool while raining. 
-Smear - fairly stright forward smearing effect between two points. 
-Spherize - magnifies a user defined portion of the screen it's NOT cc Sphere, that does something else ie it turns the layer into a globe like 3d but it's actually 2d. 
-Transform - better way to use transform options and this works even the native transform of a layer doesn't work for some specific resaons. 
-Turbulent Displace - creates a wobbly/ liquidy effect. 
-Twirl -
-Warp - does a lot of interesting warps, arc, bulge, flag wave, fisheye, and more. 
-Warp Stabilizer - stabalizes the footage. 
-Wave Warp - ripple/flag like wavvy effect. 
-
-EXPRESSION CONTROL
-3D Point Control
-Angle Control
-Checkbox Control
-Color Control
-Dropdown Menu Control
-Layer Control
-Point Control
-Slider Control
-
-GENERATE
-4-Color Gradient
-Advanced Lightning
-Audio Spectrum
-Audio Waveform
-Beam
-CC Glue Gun
-CC Light Burst 2.5
-CC Light Rays
-CC Light Sweep
-CC Threads
-Cell Pattern
-Checkerboard
-Circle
-Ellipse
-Eyedropper Fill
-Fill
-Fractal - increadbly interesting, creates lsd fractols, kaleidoscope, and much more. 
-Gradient Ramp
-Grid
-Lens Flare
-Paint Bucket
-Radio Waves
-Scribble
-Stroke
-Vegas
-Write-on
-
-IRREALIX
-looPFlow
-
-KEYING
-Advanced Spill Suppressor
-CC Simple Wire Removal
-Color Difference Key
-Color Range
-Difference Matte
-Extract
-Inner/Outer Key
-Key Cleaner
-Keylight (1.2)
-Linear Color Key
-
-MATTE
-Matte Choker
-Refine Hard Matte
-Refine Soft Matte
-Simple Choker
-
-NOISE & GRAIN
-Add Grain
-Dust & Scratches
-Fractal Noise - Slower but with repeating and cycling the effect for a seemless loop. 
-Match Grain
-Median
-Median (Legacy)
-Noise
-Noise Alpha
-Noise HLS
-Noise HLS Auto
-Remove Grain
-Turbulent Noise - faster but without repeating and cycling the effect for a seemless loop. 
-
-OBSOLETE
-Basic 3D
-Basic Text
-Color Key
-Gaussian Blur (Legacy)
-Lightning
-Luma Key
-mocha shape
-Path Text
-Reduce Interlace Flicker
-Spill Suppressor
-
-PRESPECTIVE
-3D Camera Tracker
-3D Glasses
-Bevel Alpha
-Bevel Edges
-cc Cylinder
-CC Environment
-CC Sphere
-cc Spotlight
-Drop Shadow
-Radial Shadow
-
-PLUGIN EVERYTHING
-Deep Glow 2
-
-ProductionCrate
-Crate's Godrays
-
-SIMULATION
-Card Dance
-Caustics
-CC Ball Action - THIS IS SO FUCKING GOOD! ESPECIALLY SCATTER PROPERTY.
-CC Bubbles
-CC Drizzle
-cc Hair
-CC Mr. Mercury
-CC Particle Systems II
-CC Particle World
-CC Pixel Polly
-CC Rainfall
-CC Scatterize
-CC Snowfall
-CC Star Burst
-Foam
-Particle Playground
-Shatter
-Wave World
-
-STYLIZE
-Brush Strokes
-Cartoon
-CC Block Load
-CC Burn Film
-CC Glass
-CC HexTile - creates a kaleidoscope like effect.
-CC Kaleida
-CC Mr. Smoothie
-cc Plastic
-CC RepeTile
-CC Threshold
-CC Threshold RGB
-CC Vignette
-Color Emboss
-Emboss
-Find Edges
-Glow
-Mosaic
-Motion Tile
-Posterize
-Roughen Edges
-Scatter
-Strobe Light
-Texturize
-Threshold
-
-TEXT
-Numbers
-Timecode
-
-TIME
-CC Force Motion Blur
-CCWide Time
-Echo
-Pixel Motion Blur
-Posterize Time
-Time Difference
-Time Displacement
-Timewarp
-
-TRANSITION
-Block Dissolve
-Card Wipe
-CC Glass Wipe
-CC Grid Wipe
-CC Image Wipe
-CC Jaws
-CC Light Wipe
-CC Line Sweep
-CC Radial ScaleWipe
-CC Scale Wipe
-CC Twister
-CC WarpoMatic
-Gradient Wipe
-Iris Wipe
-Linear Wipe
-Radial Wipe
-Venetian Blinds
-
-UTILITY
-Apply Color LUT
-CC Overbrights
-Cineon Converter
-Color Profile Converter
-Grow Bounds
-HDR Compander
-HDR Highlight Compression
-
-VIMAGER
-ScaleUp
-
-
-
-
-
-ae plugins to downlaod
-
-Coco
-imgPaster (ae script)
-Motion 4
-Overlord
-fx console
-loopflow
-deep glow
-deapth scanner
-true comp duplicator (ae script)
+---
+title: "Adobe After Effects 26.5 — Complete Working Guide"
+aliases:
+  - AE Master Guide
+  - After Effects Shortcuts
+  - After Effects Effects Handbook
+tags:
+  - after-effects
+  - motion-design
+  - compositing
+  - vfx
+  - keyboard-shortcuts
+  - reference
+application: Adobe After Effects
+version: "26.5 (September 2026 stable release)"
+verified_as_of: 2026-10-27
+platform: "Windows; default English keyboard layout"
+status: reference
+---
+
+# After Effects 26.5 — The Complete Working Guide
+
+> [!abstract] What this note is
+> A **learn-by-doing manual**, **Windows keyboard-shortcut reference**, **effects field guide**, and **troubleshooting playbook** for returning users and beginners. It covers the **September 2026 After Effects 26.5 stable release**, not features that exist only in Beta.
+>
+> **Windows only.** Shortcut labels refer to the default English keyboard preset. Learn the first table, then use the categorized sections as a searchable desk reference.
+>
+> **Coverage:** core learning workflows, the documented default shortcut families, an effects directory, recent stable changes, and a separate Beta watchlist. The installed shortcut editor resolves custom presets and documentation conflicts; this note does not reproduce every parameter of every plugin.
+>
+> **Start here:** [[#01 — Learn the Logic First]] → [[#02 — The 35 Shortcuts Worth Memorizing First]] → [[#03 — Complete Shortcut Reference]] → [[#04 — The Core Workflows]] → [[#05 — Effects Encyclopedia]]. This file works offline; external documentation links are included only for future verification.
+
+## Contents
+
+1. [[#01 — Learn the Logic First|How AE thinks; how shortcuts work]]
+2. [[#02 — The 35 Shortcuts Worth Memorizing First|The first shortcuts to internalize]]
+3. [[#03 — Complete Shortcut Reference|Full categorized shortcut reference]]
+4. [[#04 — The Core Workflows|Step-by-step compositing and animation]]
+5. [[#05 — Effects Encyclopedia|What the effects actually do]]
+6. [[#06 — Everything New and Important Through 26.5|Recent releases and modern features]]
+7. [[#07 — Troubleshooting and Performance|Work faster; solve common failures]]
+8. [[#08 — Practical Recipes (Copy the Method, Not Just the Shortcut)|Repeatable real-world techniques]]
+9. [[#09 — Expressions and Data-Driven Animation|Expression cheat sheet; JSON/CSV]]
+10. [[#10 — Practice Curriculum (Rebuild Muscle Memory)|Rebuild muscle memory]]
+11. [[#11 — Glossary and Reference Sources|Definitions; verified documentation]]
+
+---
+
+# 01 — Learn the Logic First
+
+## The mental model
+
+Think of After Effects as a **timeline of layers inside compositions**. A composition (comp) is a scene, a layer is an element within that scene, a property describes an element, and a keyframe describes how a property changes **over time**. An **effect** processes the image or audio. A **mask** limits a layer's pixels. A **track matte** uses another layer to decide what remains visible. A **precomposition** is a composition nested into another composition.
+
+```text
+PROJECT (.aep)
+  ├─ Imported sources: clips / audio / stills / PSD / AI / SVG / 3D models / data
+  └─ COMPOSITION (resolution, FPS, duration, color management)
+       ├─ Layer 1 ─ Transform ─ Position / Scale / Rotation / Opacity / Anchor
+       │             ├─ Masks / Effects / Styles / Expressions / Keyframes
+       │             └─ Parent / Track matte / 3D settings
+       ├─ Layer 2 ─ ...
+       └─ Precomp ─ its own layers, timeline, and properties
+```
+
+### Seven distinctions that prevent most beginner mistakes
+
+| Concept A | Concept B | What changes in practice |
+|---|---|---|
+| **Anchor point** | **Position** | Anchor is the pivot **inside layer coordinates**; Position locates that pivot in parent/comp space. Move anchor without moving the visible image using **Y** (Pan Behind) or **Ctrl+Alt+Home** (center anchor in visible content). |
+| **Move a layer** | **Trim a layer** | `[` / `]` shifts a layer in time without cutting content; `Alt+[` / `Alt+]` cuts the visible in/out at the playhead. |
+| **Layer switches** | **Effects** | The **fx** layer switch disables layer effects **without deleting them**; `Ctrl+Shift+E` **deletes all effects** from selected layers. These are not interchangeable. |
+| **Mask** | **Shape** | A path drawn on a selected image/solid commonly creates a mask; drawn with no layer selected it creates a shape layer. Use toolbar **Tool Creates Mask / Tool Creates Shape** settings to choose intentionally. |
+| **Opacity** | **Alpha** | Opacity is one property; alpha also comes from masks, effects, mattes, footage transparency and compositing. |
+| **Continuous Rasterization** | **Collapse Transformations** | They share a star/sun-like switch, but vector layers use it to keep vector edges sharp; precomps use it to collapse the nested transform/render order. It is **not** safe to enable blindly. |
+| **8/16/32 bpc** | **10-bit source** | AE's project calculation precision is not the same as source encoding bit depth. A 10-bit file can be processed in a 16-bpc or 32-bpc AE project. |
+
+### What a shortcut actually means
+
+- **Focus matters.** Press `P` with Timeline focus to show Position; type `p` inside a text box and it types a letter. A shortcut can have a different meaning inside a different panel.
+- **Selection matters.** `Ctrl+D` duplicates a selected layer, effect, or item depending on where selection lives.
+- **`Ctrl`**, **`Alt`**, **`Shift`**, and **`Win`** are not interchangeable. This guide uses **Windows only**. `Win` refers to the Windows key; operating-system shortcuts may intercept application commands.
+- **Main keyboard ≠ numeric keypad.** `0` on the **numpad** previews; `0` on the main keyboard can be a composition marker. A laptop may require `Fn` to access Home/End/PgUp/PgDn, or may lack a numpad entirely.
+- **Tap twice quickly:** `UU`, `EE`, `LL`, `MM`, `RR`, `AA`, `PP`, `SS`, `TT`, and `FF` are **sequences**, not simultaneous key combinations.
+- **Unless identified otherwise, shortcuts below are default Windows shortcuts** based on Adobe's public shortcut reference, updated May 2026, with newer documented shortcuts added separately. A changed/custom keyboard preset can override them.
+
+> [!tip] The shortcut editor is your definitive installed-version check
+> **Edit → Keyboard Shortcuts** = `Ctrl+Alt+'`. Search a *command name*, see whether it already has a binding, check the **Application** versus **panel-specific** context, and save your custom preset. Some property-reveal sequences cannot be reassigned. Do **not** assume every possible menu command already has a default shortcut. Put custom bindings in your own section at the end of this note.
+
+## Start every new project with these decisions
+
+1. **Composition:** select delivery width/height, frames per second, duration, and pixel aspect ratio (`Ctrl+N`, then `Ctrl+K` to revisit).
+2. **Color:** check Project Settings and use an intentional SDR/linear/HDR/ACES workflow. Increasing project bpc does not manufacture lost detail.
+3. **Footage:** verify interpreted frame rate, alpha interpretation, color metadata, and audio sync; transcode troublesome variable-frame-rate footage to a constant-frame-rate mezzanine if needed.
+4. **Structure:** label/color important layers, precomp by purpose, name controls, and save incrementally (`Ctrl+Alt+Shift+S`).
+5. **Preview:** half/quarter resolution, skip frames and shorter work area can accelerate *preview*; check Render Settings for final resolution and quality; use explicit Full/Best settings when that is the delivery requirement.
+6. **Render:** pick the **deliverable**, not a dogma: directly export H.264 for ordinary reviews/delivery, or a high-quality mezzanine/master (ProRes, DNxHR, EXR) for additional processing, alpha, archival or client specifications.
+
+---
+
+# 02 — The 35 Shortcuts Worth Memorizing First
+
+These build the fastest return to AE. Learn them by **task**, not by alphabet.
+
+| Task | Windows shortcut | Memory hook |
+|---|---|---|
+| Selection tool | `V` | **V** = selection arrow |
+| Hand / move around viewer | `H` / hold `Space` | **H**and |
+| Pan Behind / anchor tool | `Y` | Edit the pivot, not the object |
+| Pen / mask-feather tools | `G` | Draw/edit paths |
+| Cycle shape tools | `Q` | Rectangle, ellipse, polygon, star |
+| Text tool | `Ctrl+T` | **T**ype (when not editing a property) |
+| Position | `P` | **P**osition |
+| Scale | `S` | **S**cale |
+| Rotation/orientation | `R` | **R**otate |
+| Opacity | `T` | **T**ransparency |
+| Anchor point | `A` | **A**nchor |
+| Add another visible property | `Shift+P/S/R/T/A` | Keep existing properties open |
+| Show animated properties | `U` | **U** = used keyframes |
+| Show modified properties | `U`, `U` | **UU** = changed from defaults, incl. expressions/effects |
+| Show expressions | `E`, `E` | **EE** = expressions |
+| Show effect group | `E` | **E**ffects |
+| Show audio waveform | `L`, `L` | **LL** = waveform |
+| Toggle animation on property | Click stopwatch | Do it deliberately |
+| Add/remove keyframe now | `Alt+Shift+P/S/R/T/A` | Toggle a key at the current time |
+| Easy Ease | `F9` | Smooth velocity in/out |
+| Show Graph Editor | `Shift+F3` | Edit velocity curves |
+| One frame forward/backward | `Page Down` / `Page Up` | Frame stepping |
+| Next/previous visible key/marker | `K` / `J` | K = next, J = previous |
+| Layer in/out | `I` / `O` | **I**n / **O**ut |
+| Work area start/end | `B` / `N` | Boundary markers |
+| Move layer in/out to playhead | `[` / `]` | Slide intact bar to time |
+| Trim layer start/end at playhead | `Alt+[` / `Alt+]` | Cut bar at time |
+| Split layer | `Ctrl+Shift+D` | Duplicate-and-split edit |
+| Duplicate selection | `Ctrl+D` | **D**uplicate |
+| Precompose | `Ctrl+Shift+C` | Put selected layers in nested comp |
+| Add solid / adjustment / null | `Ctrl+Y` / `Ctrl+Alt+Y` / `Ctrl+Alt+Shift+Y` | Three controller-layer shortcuts |
+| Quick Apply (26.2+) | `Ctrl+Enter` | Search effects, presets **and** commands |
+| Keyboard Shortcut Editor | `Ctrl+Alt+'` | Check/change bindings |
+| Toggle Timeline switches / modes | `F4` | Reveal matte and blending controls |
+| Save | `Ctrl+S` | Save frequently |
+
+> [!example] 60-second warm-up
+> Create a new comp → `Ctrl+Y` add solid → `P` → click Position stopwatch → move forward 15 frames with `Shift+Page Down`, then five `Page Down` → move the object → select both keyframes → `F9` → `Shift+F3` adjust speed graph → `UU` inspect changed values → `Space` preview → `Ctrl+S`. Do this without opening menus.
+
+---
+
+# 03 — Complete Shortcut Reference
+
+> [!info] Reading the tables
+> **All entries in this section are Windows defaults unless noted.** Use the headings in Obsidian’s Outline panel to jump between tasks. The tables intentionally include some *mouse gestures* and *contextual* actions: their exact action is often faster than a key combination. **`Num`** means the numeric keypad. Keyboard punctuation follows the default English layout; laptop function-key settings and remapped presets can change which physical keys you need.
+
+
+### Find the right shortcut table quickly
+
+| I need to… | Go to |
+|---|---|
+| Open, save, import, create or export | [[#3.1 File, project, composition and application]] |
+| Fix panels or change focus | [[#3.2 Windows, workspace, panels and viewer]] |
+| Choose a drawing, anchor, paint or camera tool | [[#3.3 Tools and drawing]] |
+| Navigate time, preview or zoom | [[#3.4 Navigation: frames, keyframes, work area and preview]] |
+| Select, reorder, stagger, trim or split layers | [[#3.5 Timeline: select, stack, move, trim, split and time]] |
+| Reveal properties or transform artwork | [[#3.6 Properties and layer transforms]] |
+| Adjust keyframes or easing | [[#3.7 Keyframes and Graph Editor (full set)]] |
+| Edit typography | [[#3.8 Text keyboard commands (when actively editing text)]] |
+| Edit masks, shapes, paint, markers or tracking regions | [[#3.9 Masks, shapes, painting and markers]] |
+| Work with cameras, footage or render commands | [[#3.10 3D cameras, lights, effects, footage and rendering]] |
+| Inspect alpha, channels, guides or grids | [[#3.11 Guides, grids, channels and inspection]] |
+| Use specialist gestures or diagnose key conflicts | [[#3.12 Less frequent commands and contextual gestures]] |
+| Edit graphs precisely or distinguish snapshots from copied frames | [[#3.13 Precision editing and frame capture]] |
+
+## 3.1 File, project, composition and application
+
+| Action | Windows | Clarification |
+|---|---|---|
+| New project | `Ctrl+Alt+N` | New, empty `.aep` |
+| Open project | `Ctrl+O` | Open `.aep` / project |
+| Open most recent project | `Ctrl+Alt+Shift+P` | Recents |
+| Save project | `Ctrl+S` | Save often |
+| Save As | `Ctrl+Shift+S` | Separate copy/name |
+| Increment and Save | `Ctrl+Alt+Shift+S` | Versioned iterative save |
+| New composition | `Ctrl+N` | A new scene and timeline |
+| Composition Settings | `Ctrl+K` | Selected/active comp |
+| New composition from selection | `Alt+\` | Selected footage/items |
+| Project Settings | `Ctrl+Alt+Shift+K` | Color, renderer-related project controls |
+| New folder in Project panel | `Ctrl+Alt+Shift+N` | Folder in project hierarchy |
+| Import file/sequence | `Ctrl+I` | Choose asset |
+| Import multiple files/sequences | `Ctrl+Alt+I` | Multi-file importer |
+| Edit original source | `Ctrl+E` | Open associated app |
+| New solid | `Ctrl+Y` | Color solid/blank canvas |
+| Edit selected solid/light/camera/null/adjustment settings | `Ctrl+Shift+Y` | Type-specific settings |
+| New adjustment layer | `Ctrl+Alt+Y` | Effects affect composited pixels below |
+| New null object | `Ctrl+Alt+Shift+Y` | Parenting and controllers |
+| New text layer | `Ctrl+Alt+Shift+T` | May be context-dependent while editing text |
+| Precompose selection | `Ctrl+Shift+C` | Nest in child comp |
+| Trim comp to work area | `Ctrl+Shift+X` | Changes composition duration |
+| Work area from selected layer span, or full comp if none | `Ctrl+Alt+B` | Quick range reset |
+| Add comp to Render Queue | `Ctrl+Shift+/` (main keyboard) | `/` is slash, not numpad divide |
+| Add comp to Adobe Media Encoder | `Ctrl+Alt+M` | Encoding queue |
+| Render current frame via Render Queue | `Ctrl+Alt+S` | Still frame |
+| Keyboard Shortcut Editor | `Ctrl+Alt+'` | Remap a command |
+| Preferences | `Ctrl+Alt+;` | Semicolon, **not** apostrophe |
+| Purge all memory | `Ctrl+Alt+/` (Num) | Discards caches; may require recaching |
+| Quit AE | `Ctrl+Q` | Save work first |
+| Undo / Redo | `Ctrl+Z` / `Ctrl+Shift+Z` | Standard edit history |
+| Select all / Deselect all | `Ctrl+A` / `F2` or `Ctrl+Shift+A` | Current active context |
+| Rename selected item | `Enter` (main keyboard) | Selected layer, effect, comp, project folder, mask |
+| Open selected item | `Enter` (Num) | Unlike main Enter |
+| Duplicate selected item | `Ctrl+D` | Works on layer, mask, effect, property group, project items |
+| Cut / Copy / Paste | `Ctrl+X` / `Ctrl+C` / `Ctrl+V` | Context-sensitive |
+| Paste layers at current time | `Ctrl+Alt+V` | Timeline-specific paste |
+| Open Composition Mini-Flowchart | `Tab` | Active composition and its hierarchy; Project Flowchart uses `Ctrl+F11`. |
+| Project panel search | `Ctrl+F` with Project focus | With Timeline focus searches Timeline instead |
+| Display source frame filename in Info panel | `Ctrl+Alt+E` | At current time |
+| Stop running script | `Esc` | Interrupt execution where supported |
+
+## 3.2 Windows, workspace, panels and viewer
+
+| Action | Windows | Notes |
+|---|---|---|
+| Project panel | `Ctrl+0` | |
+| Render Queue panel | `Ctrl+Alt+0` | |
+| Tools panel | `Ctrl+1` | |
+| Info panel | `Ctrl+2` | Pixel samples, cursor coords and durations |
+| Preview panel | `Ctrl+3` | Work area, frame skipping, audio |
+| Audio panel | `Ctrl+4` | |
+| Effects & Presets | `Ctrl+5` | |
+| Character | `Ctrl+6` | |
+| Paragraph | `Ctrl+7` | |
+| Paint | `Ctrl+8` | |
+| Brushes | `Ctrl+9` | |
+| Effect Controls for selected layer | `F3` or `Ctrl+Shift+T` | Direct control panel |
+| Project Flowchart | `Ctrl+F11` | Distinct from mini-flowchart |
+| Assigned workspaces | `Shift+F10/F11/F12` | If workspace presets configured |
+| Close active panel/viewer content | `Ctrl+W` | Panel may close content before frame |
+| Close all viewers of active type / active panel | `Ctrl+Shift+W` | Can close multiple timelines |
+| Split a viewer (opposite lock state) | `Ctrl+Alt+Shift+N` | Lock one viewer for side-by-side comparisons |
+| Maximize panel under mouse | `` ` `` | Grave/backtick above Tab; tap again to restore |
+| Resize application window to fit screen | `Ctrl+\` | Not true OS-exclusive fullscreen |
+| Move window to main monitor / fit | `Ctrl+Alt+\` | |
+| Switch focus between Comp and Timeline | `\` | No Ctrl |
+| Previous/next open item in viewer | `Shift+,` / `Shift+.` | |
+| Previous/next panel in same frame | `Alt+Shift+,` / `Alt+Shift+.` | |
+| Show Switches/Modes columns | `F4` | Needed for matte and blending controls |
+| Show/hide Parent column | `Shift+F4` | Parent & Link |
+| Timeline search | `Ctrl+F` with Timeline focus | Type part of a property/effect/layer name |
+| Expand/collapse selected layer completely | **Ctrl + backtick** (`Ctrl` + `` ` ``) | Backtick character |
+| Expand nested property group recursively | `Ctrl+click` disclosure triangle | Contextual |
+| Hide a visible property or group | `Alt+Shift+click` property/group name | **Not** Ctrl+Alt+Shift+click |
+| Scroll top selected layer to top of timeline | `X` | Does not change stacking order |
+| Toggle color display management in active view | `Shift+/` (Num) | Display only, not file conversion |
+
+> [!tip] The quickest interface reset
+> Hover a panel and press the **backtick** key to fill the screen temporarily. Press again to return. If blending modes/mattes are missing, press `F4`. If nothing is animating visually, verify **Caps Lock is off**. For a completely mangled panel layout, choose **Window → Workspace → Reset [workspace] to Saved Layout**.
+
+## 3.3 Tools and drawing
+
+| Tool/action | Windows | Notes |
+|---|---|---|
+| Selection | `V` | Default move/selection |
+| Hand | `H` | Pan viewer |
+| Hand momentarily | Hold `Space` / middle mouse | During most drawing/editing |
+| Zoom In | `Z` | Alt while active temporarily zooms out |
+| Rotation | `W` | Rotate in viewer |
+| Pan Behind (Anchor Point) | `Y` | Shift pivot while preserving visual placement |
+| Rectangle/Rounded Rectangle/Ellipse/Polygon/Star | `Q` repeated | Cycle modes |
+| Pen/Mask Feather | `G` repeated | Preferences can change cycling behavior |
+| Horizontal/Vertical Type | `Ctrl+T` repeated | Activates text tool; text-area vs point-text depends on dragging/clicking |
+| Brush/Clone Stamp/Eraser | `Ctrl+B` repeated | All paint *in Layer viewer* |
+| Puppet tools | `Ctrl+P` repeated | Pin, starch, overlap etc. as available |
+| Camera tools | `C` repeated | Camera context determines available tools |
+| Roto Brush/Refine Edge (legacy context) | `Alt+W` | Object Matte tool family added in 2026; see below |
+| Object Matte tool (26.2+) | Toolbar; verify `Ctrl+W` locally | Dedicated help lists this binding, but it conflicts with Close; see §3.12. |
+| Temporarily use Selection from Pen | Hold `Ctrl` | With Pen selected |
+| Temporarily edit path from Selection | Hold `Ctrl+Alt` over path | Can select/add/convert vertices |
+| Temporarily duplicate shape | Hold `Alt` with selection tool | Shape context |
+| Temporarily direct-select shape | Hold `Ctrl` with selection tool | Shape context |
+| Use a single-letter tool temporarily | Hold its tool key, then release | Returns to the previous tool; tap to select it persistently. |
+| Cycle tool variations | `Alt+click` tool icon | Some groups only |
+
+**Drawing modifiers (held *while drawing*, before mouse-up):** `Shift` = square/circle or constrain rotation; `Space` = reposition new shape; `Up/Down` = more/fewer polygon sides or star points; `Left/Right` = change corner or outer roundness; `Page Up/Down` = star inner roundness; `Ctrl` = star outer radius. Double-clicking certain shape tools makes a comp-sized shape/mask in the relevant context. Hover the Tool Creates Shape/Mask settings and check selected layers to avoid drawing the wrong thing.
+
+## 3.4 Navigation: frames, keyframes, work area and preview
+
+| Need to... | Windows | Notes |
+|---|---|---|
+| Go **forward** one frame | `Page Down` or `Ctrl+Right` | Not Alt+Right (moves keyframes) |
+| Go **backward** one frame | `Page Up` or `Ctrl+Left` | |
+| Go ±10 frames | `Shift+Page Down/Up` or `Ctrl+Shift+Right/Left` | |
+| Beginning/end of composition | `Home` / `End` | Or `Ctrl+Alt+Left/Right` |
+| Beginning/end of **work area** | `Shift+Home` / `Shift+End` | |
+| Next/previous visible timeline item | `K` / `J` | Visible keys/markers and work-area boundaries; Layer-view roto spans add relevant boundaries/base frames. |
+| Layer in/out | `I` / `O` | With multiple layers: earliest In / latest Out. |
+| Next/previous layer in/out (any layer) | `Ctrl+Alt+Shift+Right/Left` | |
+| Scroll Timeline to current time | `D` | Center current-time region |
+| Jump to a particular time | `Alt+Shift+J` | Enter timecode/time |
+| Work area start / end at playhead | `B` / `N` | Independent of layer in/out |
+| Work area from selected layers / comp | `Ctrl+Alt+B` | Start/end bounds |
+| Start/stop playback | `Space` or `Num 0` | Preview panel controls caching/looping |
+| Audio-only preview from playhead | `Num .` | Numpad decimal |
+| Audio-only preview work area | `Alt+Num .` | |
+| Preview alternate-frame count | `Alt+Num 0` | Preview prefs govern count |
+| Navigate keys/markers of selected layers/properties | `Shift+J` / `Shift+K` | Previous / next within the selection. |
+| Snap playhead during a drag | `Shift+drag` CTI | Snaps to eligible keys/markers. |
+| Copy current frame to clipboard (26.3+) | `Ctrl+Alt+Shift+F5` | Activate a viewer first; see §3.13 for color/alpha behavior. |
+| Manual audio scrubbing | `Ctrl+drag` current-time indicator | Audio scrub |
+| Snapshot to slot 5–8 | `Shift+F5` … `Shift+F8` | Four snapshot slots |
+| Display snapshot slot 5–8 | `F5` … `F8` | Compare frames |
+| Purge snapshot slot 5–8 | `Ctrl+Shift+F5` … `Ctrl+Shift+F8` | |
+| Zoom Timeline IN/OUT | `=` / `-` (main keyboard) | Time magnification |
+| Timeline magnification toggle | `;` | One-frame units ↔ composition extent |
+| Show entire Timeline duration | `Shift+;` | Toggle previous view |
+| Viewer zoom IN/OUT | `.` / `,` (main keyboard) | **Not** period = audio preview |
+| Viewer at 100% | `/` (main keyboard) | Pixel-level review |
+| Fit viewer to panel | `Shift+/` (main keyboard) | `?` on US layout |
+| Fit viewer, cap at 100% | `Alt+/` (main keyboard) | Useful for quality review |
+| Center comp in viewer | Double-click Hand tool | |
+| Stop viewer render while changing timeline | `Caps Lock` | Must turn OFF to judge visuals |
+| Comp full/half/custom preview resolution | `Ctrl+J` / `Ctrl+Shift+J` / `Ctrl+Alt+J` | Resolution dropdown |
+| Fast Previews: Off | `Ctrl+Alt+1` | |
+| Fast Previews: Adaptive Resolution | `Ctrl+Alt+2` | |
+| Fast Previews: Draft | `Ctrl+Alt+3` | |
+| Fast Previews: Fast Draft | `Ctrl+Alt+4` | |
+| Fast Previews: Wireframe | `Ctrl+Alt+5` | |
+| Mercury Transmit preview | `Num /` | External monitor output |
+
+## 3.5 Timeline: select, stack, move, trim, split and time
+
+| Action | Windows | Watch out for |
+|---|---|---|
+| Select next / previous layer in stack | `Ctrl+Down` / `Ctrl+Up` | Panel must be Timeline |
+| Extend layer selection downward/upward | `Ctrl+Shift+Down` / `Ctrl+Shift+Up` | |
+| Select layer number 1–999 | Type its number on **numpad** | Fast entry for 2–3 digits |
+| Add/remove numbered layer to selection | `Shift`+numpad number | |
+| Deselect layers | `F2` / `Ctrl+Shift+A` | |
+| Move selected layer backward/forward ONE layer in stack | `Ctrl+Alt+Down/Up` | Affects compositing order, **not** time |
+| Move layer(s) to bottom/top of stack | `Ctrl+Alt+Shift+Down/Up` | |
+| Duplicate layers | `Ctrl+D` | Does not advance time |
+| Move entire layer bar so **IN** starts at playhead | `[` | Preserves layer span |
+| Move entire layer bar so **OUT** ends at playhead | `]` | Preserves layer span |
+| **Trim** start to playhead | `Alt+[` | Does not move rest of layer |
+| **Trim** end to playhead | `Alt+]` | Does not move rest of layer |
+| Shift whole layer ±1 frame | `Alt+Page Up/Down` | Distinct from keyframe nudge |
+| Shift whole layer ±10 frames | `Alt+Shift+Page Up/Down` | |
+| Move layer IN to start of comp | `Alt+Home` | Align full layer start |
+| Move layer OUT to comp end | `Alt+End` | Align full layer end |
+| Split at playhead | `Ctrl+Shift+D` | Splits selected layers; with none selected, splits all eligible layers. |
+| Reverse layer(s) in time | `Ctrl+Alt+R` | Time → Time-Reverse Layer |
+| Enable Time Remapping | `Ctrl+Alt+T` | Source-time keyframes; works with time-based layers, incl. footage/precomp |
+| Precompose | `Ctrl+Shift+C` | Choosing *Move all attributes* vs *Leave all attributes* matters |
+| Lock selected layers | `Ctrl+L` | Prevent accidental edits |
+| Unlock all layers | `Ctrl+Shift+L` | Unlocks **all**, not a subset |
+| Toggle selected layer's video switch | `Ctrl+Alt+Shift+V` | Eye, not effects switch |
+| Disable other solo switches | `Alt+click` Solo | Efficient isolation |
+| Toggle Switches/Modes | `F4` | Reveals TrkMat and blending mode |
+| Cycle blending modes | `Shift+-` / `Shift+=` | Selected layers |
+| Find in Timeline | `Ctrl+F` | Property/layer search |
+| Show/hide Parent & Link column | `Shift+F4` | |
+| Quality: Best / Draft / Wireframe | `Ctrl+U` / `Ctrl+Shift+U` / `Ctrl+Alt+Shift+U` | Affects layer sampling/quality |
+| Sampling: Bilinear / Bicubic | `Alt+B` / `Alt+Shift+B` | Visual resampling method |
+| Quick Offset (25.4+) | **Ctrl+Alt+drag** selected layer bars or selected keyframes | Distributes them across time in **selection order**; first selection stays in place |
+| Sequence Layers | `Animation → Keyframe Assistant → Sequence Layers` | Arrange sequentially; optionally overlap |
+| Time-Reverse Keyframes | `Animation → Keyframe Assistant → Time-Reverse Keyframes` | Reverses selected **keyframes**, not source layer |
+| Reverse Paste Keyframes | `Ctrl+Shift+V` | Paste previously copied keyframes in reverse order |
+
+> [!example] Remember these four pairs
+> `Page Up/Down` moves the **playhead**; `Alt+Page Up/Down` moves the **whole layer**. `Alt+Left/Right` moves **keyframes**. `[` / `]` repositions a **layer boundary**; `Alt+[` / `Alt+]` actually **trims** it. `Ctrl+Alt+R` reverses **source playback**; *Time-Reverse Keyframes* reverses only the **timing of selected animation keys**.
+
+### Keep the relative timing of several layers — 26.0+
+
+| Goal at the playhead | Windows | Result |
+|---|---|---|
+| Align the beginning of a staggered selection | `Shift+[` | The earliest In point meets the playhead; all selected layers move together. |
+| Align the end of a staggered selection | `Shift+]` | The latest Out point meets the playhead; relative layer timing remains intact. |
+| Adjust the selection's starting boundaries together | `Alt+Shift+[` | Trim/extend relative In points using the earliest In point as the reference. |
+| Adjust the selection's ending boundaries together | `Alt+Shift+]` | Trim/extend relative Out points using the latest Out point as the reference. |
+
+Without `Shift`, the bracket commands act on **each layer's own** boundary. Use two staggered solids to learn the difference before editing a complex selection. Extending footage still depends on available source frames. [Adobe: layer timing and group edits](https://helpx.adobe.com/after-effects/desktop/work-with-layers/select-and-arrange-layers/selecting-arranging-layers.html).
+
+## 3.6 Properties and layer transforms
+
+| Show only... | Windows | What it shows |
+|---|---|---|
+| Anchor Point / point of interest | `A` | Pivot |
+| Position | `P` | Position in comp/parent space |
+| Scale | `S` | x/y(/z) percentages |
+| Rotation / Orientation | `R` | Z, plus 3D values if enabled |
+| Opacity / light Intensity | `T` | Transparency |
+| Audio Levels | `L` | dB gain |
+| Audio waveform | `LL` | Drawn waveform |
+| Time Remap | `RR` | Requires remapping enabled |
+| Effect group | `E` | All applied effects |
+| Expression-bearing properties | `EE` | Property with expression, enabled or modified |
+| Keyframed properties | `U` | Properties with keyframes |
+| Modified properties | `UU` | Changed-from-default settings, including effects |
+| Masks | `MM` | All mask groups |
+| Mask path | `M` | Paths only |
+| Mask feather | `F` | Feather only |
+| Mask opacity | `TT` | Opacity for masks |
+| Material options (3D) | `AA` | Surface/material settings |
+| Paint/Puppet/Roto strokes | `PP` | Deformation/paint details |
+| Missing effects | `FF` | Locate unavailable effects |
+| Selected properties/groups only | `SS` | Isolate selected parameters in timeline |
+| Multiple sets of reveal shortcuts | `Shift+P` etc. | Add/remove without collapsing the rest |
+
+| Modify/action | Windows | Detail |
+|---|---|---|
+| Add/remove keyframe on a revealable property at current time | `Alt+Shift+P/S/R/T/A` etc. | Does not require opening stopwatch; must have valid layer and property |
+| Edit Position using numeric dialog | `Ctrl+Shift+P` | With selected layer, not text editing |
+| Edit Rotation numeric dialog | `Ctrl+Shift+R` | |
+| Edit Opacity numeric dialog | `Ctrl+Shift+O` | **O**, not T |
+| Auto-Orient dialog | `Ctrl+Alt+O` | Orient along path / toward camera |
+| Move layers 1 viewer pixel | `Arrow keys` | Zoom-dependent composition-space increment |
+| Move layers 10 viewer pixels | `Shift+Arrow keys` | Magnification matters |
+| Move value at normal increments | Drag hot-text value | Numeric scrub |
+| Move value 10× faster | `Shift+drag` hot-text | |
+| Move value 10× slower | `Ctrl+drag` hot-text | Fine adjustment |
+| Center **layer** anchor position in comp view | `Ctrl+Home` | Changes Position; doesn't center anchor inside content |
+| Center **anchor point** in visible layer content | `Ctrl+Alt+Home` | Changes anchor and compensates position |
+| Reset Rotation to 0° | Double-click Rotation tool | |
+| Reset Scale to 100% | Double-click Selection tool | |
+| Rotate Z 1° / 10° | `Num +/-` / `Shift+Num +/-` | Selected layers |
+| Scale +/−1% | `Ctrl+Num +/-` or `Alt+Num +/-` | |
+| Scale +/−10% | `Ctrl+Shift+Num +/-` or `Alt+Shift+Num +/-` | |
+| Opacity +/−1% | `Ctrl+Alt+Num +/-` | |
+| Opacity +/−10% | `Ctrl+Alt+Shift+Num +/-` | |
+| Constrain interactive rotation 15° | Hold `Shift` while using Rotation tool | |
+| Preserve aspect ratio when changing layer bounding-box size | Hold `Shift` while dragging handle | Behavior also depends on current transform modes |
+| Fit layer by distortion to comp width **and** height | `Ctrl+Alt+F` | Can stretch image |
+| Fit layer to **comp width** preserving ratio | `Ctrl+Alt+Shift+H` | H = horizontal |
+| Fit layer to **comp height** preserving ratio | `Ctrl+Alt+Shift+G` | G = vertical mapped shortcut |
+| Effects: disable selected layer's effects | Click timeline **fx** switch | Nondestructive disable |
+| Effects: delete **all** on selected layer(s) | `Ctrl+Shift+E` | **Destructive** removal |
+| Copy with property links | `Ctrl+Alt+C` (where exposed) / `Edit → Copy with Property Links` | Creates expressions referencing source property; test across comps |
+| Copy Expression Only | `Edit → Copy Expression Only` | Assign custom key if desired; does not copy values |
+| Toggle expression editor for one property | `Alt+click` stopwatch | Can **remove** existing expression; prefer `=` switch to disable temporarily |
+
+> [!warning] Scale vs position dimensions
+> **Separate Dimensions** is available for eligible Position properties (X/Y/Z Position); it removes the *single* motion-path representation for that property. Scale has a **constrain-proportions link** but not the same Separate Dimensions command. Keep Position combined when you want to edit a spatial Bézier trajectory in the Comp viewer.
+
+## 3.7 Keyframes and Graph Editor (full set)
+
+| Task | Windows | Meaning |
+|---|---|---|
+| Show Graph Editor | `Shift+F3` | Toggle timeline/graph |
+| Add/remove keyframe at CTI | `Alt+Shift+P/S/R/T/A` etc. | Current property value |
+| Go previous / next visible key | `J` / `K` | Also jumps timeline markers/bounds |
+| Easy Ease | `F9` | Eases into *and* out of keyframe |
+| Easy Ease In | `Shift+F9` | Slow into selected keyframe |
+| Easy Ease Out | `Ctrl+Shift+F9` | Slow away from selected keyframe |
+| Keyframe Velocity dialog | `Ctrl+Shift+K` | Precise speeds/influence |
+| Keyframe Interpolation dialog | `Ctrl+Alt+K` | Temporal/spatial controls |
+| Hold ↔ Auto Bézier method | `Ctrl+Alt+H` | Context-dependent selection |
+| Linear ↔ Auto Bézier | `Ctrl+click` keyframe (layer bars) | |
+| Linear ↔ Hold | `Ctrl+Alt+click` keyframe (layer bars) | Different modifier from above |
+| Nudge selected keyframes ±1 frame | `Alt+Left/Right` | Keyframes selected, not layer |
+| Nudge selected keyframes ±10 frames | `Alt+Shift+Left/Right` | |
+| Select all keys on one property | Click property name | Timeline |
+| Select all visible keyframes/properties | `Ctrl+Alt+A` | Only visible elements |
+| Deselect keys/properties/groups | `Shift+F2` / `Ctrl+Alt+Shift+A` | |
+| Reverse pasted keyframes | `Ctrl+Shift+V` | First copy with `Ctrl+C` |
+| Proportionally rescale a group of keyframes | `Alt+drag` first/last selected keyframe | Stretches timing around opposite boundary |
+| Reverse keyframe sequence in its current span | Keyframe Assistant → **Time-Reverse Keyframes** | Preserve original placement range |
+| Rove a spatial keyframe across time | Right-click keyframe → **Rove Across Time** | For middle spatial keys; optimizes speed along motion path |
+| Change selected interpolation to Hold | Right-click keyframe → **Toggle Hold Keyframe** | Useful for stepped animation |
+| Allow subframe keys (graph mode) | Graph Editor options → **Allow Keyframes Between Frames** | Usually leave off for frame-accurate video timing |
+
+**Interpolation theory — know three separate ideas:**
+
+1. **Temporal interpolation** = how a numerical value progresses between two keyframes (Linear, Bézier, Continuous Bézier, Auto Bézier, Hold). **Easy Ease** adjusts temporal speed around a keyframe; it is not a separate kind of spatial path.
+2. **Spatial interpolation** = the motion **trajectory** of position: straight versus curved (Bézier). A straight path can accelerate; a curved path can move at nearly constant speed.
+3. **Graph choices** = **Value Graph** shows values changing, **Speed Graph** shows change per second. Choose the graph that exposes what you want to control. Ease handles can be linked or independent according to interpolation choices.
+
+**Position path dots** are temporal samples along the motion path: tightly spaced dots indicate slow travel, wider-spaced dots indicate fast travel. They are **not** the keyframes themselves. Drag a motion-path vertex with selection/Pen tools to change trajectory; adjust timing in the Graph Editor.
+
+**Roving explained:** when a motion has several spatial Position keyframes, enable **Rove Across Time** for intermediate spatial keys to distribute their timings for more consistent motion, while endpoints stay anchored. It is not a universal “evenly space all types of keys” button.
+
+## 3.8 Text keyboard commands (when actively editing text)
+
+| Result | Windows | Notes |
+|---|---|---|
+| Horizontal/vertical Type tool | `Ctrl+T` (cycle) | |
+| New text layer | `Ctrl+Alt+Shift+T` | |
+| Left / center / right align | `Ctrl+Shift+L/C/R` | Paragraph alignment |
+| All Caps / Small Caps | `Ctrl+Shift+K` / `Ctrl+Alt+Shift+K` | Text selected |
+| Superscript / Subscript | `Ctrl+Shift+=` / `Ctrl+Alt+Shift+=` | |
+| Reset horizontal / vertical text scale to 100% | `Ctrl+Shift+X` / `Ctrl+Alt+Shift+X` | |
+| Automatic leading | `Ctrl+Alt+Shift+A` | |
+| Reset tracking to zero | `Ctrl+Shift+Q` | |
+| Justify, last line left / right / force | `Ctrl+Shift+J` / `Ctrl+Alt+Shift+J` / `Ctrl+Shift+F` | |
+| Decrease/increase font size by 2 | `Ctrl+Shift+,` / `Ctrl+Shift+.` | Text selected |
+| Decrease/increase font size by 10 | `Ctrl+Alt+Shift+,` / `Ctrl+Alt+Shift+.` | |
+| Increase/decrease leading by 2 | `Alt+Down/Up` | Between baselines |
+| Leading by 10 | `Ctrl+Alt+Down/Up` | |
+| Baseline shift by 2 / 10 | `Alt+Shift+Down/Up` / `Ctrl+Alt+Shift+Down/Up` | Vertical text offset |
+| Kerning/tracking by 20 / 100 units | `Alt+Left/Right` / `Ctrl+Alt+Left/Right` | 1/1000 em units |
+| Toggle paragraph composer | `Ctrl+Alt+Shift+T` | Context matters; same keys may mean new text layer elsewhere |
+| Move by character / word | `Left/Right` / `Ctrl+Left/Right` | Text caret in a text box |
+| Move by line / paragraph | `Up/Down` / `Ctrl+Up/Down` | |
+| Extend selection by char / word | `Shift+Left/Right` / `Ctrl+Shift+Left/Right` | |
+| Extend text selection by line | `Shift+Up/Down` | |
+| Select to line start/end | `Shift+Home/End` | |
+| Select to text frame beginning/end | `Ctrl+Shift+Home/End` | |
+| Extend selection to click point | `Shift+click` | |
+| Select word/line/paragraph/all | Double/triple/quadruple/quintuple click Type tool | Contextual |
+| Finish entering text | `Num Enter` | Main `Enter` generally inserts line break |
+
+**Text animator tip:** source text editing changes the string, while **Text → Animate → Position / Opacity / Tracking / Fill Color** creates animators. Use **Range Selector** or **Expression Selector** for letter/word/line animation. A text **mask path** can also serve as a **Path Options** route for letters; it is not the same as the text's transform Position.
+
+## 3.9 Masks, shapes, painting and markers
+
+| Task | Windows | Notes |
+|---|---|---|
+| New mask | `Ctrl+Shift+N` | On a valid selected layer |
+| Select next/previous mask | **Alt + backtick** / **Alt+Shift+backtick** | Grave key above Tab |
+| Select all vertices of mask | `Alt+click` mask | |
+| Free Transform mask points | Double-click mask with Selection tool, or select mask then `Ctrl+T` | Exit `Esc` |
+| Scale from center in Free Transform | `Ctrl+drag` | |
+| Nudge vertices 1/10 pixel-at-view | `Arrow` / `Shift+Arrow` | Magnification-based |
+| Toggle smooth ↔ corner mask point | `Ctrl+Alt+click` vertex | |
+| Create/redraw Bézier handle | `Ctrl+Alt+drag` vertex | |
+| Invert mask | `Ctrl+Shift+I` | |
+| Mask Feather dialog | `Ctrl+Shift+F` | |
+| Mask Shape dialog | `Ctrl+Shift+M` | |
+| Change closed-mask mode during drawing/editing | `A` Add; `S` Subtract; `D` Darken; `F` Difference; `I` Intersect; `L` Lighten; `N` None | Hold the mouse button during mask drawing/modification; see below. |
+
+### Shape grouping and paths
+
+| Task | Windows | Notes |
+|---|---|---|
+| Group shapes / Ungroup shapes | `Ctrl+G` / `Ctrl+Shift+G` | Selected shape groups |
+| Free-transform shape Path | Select Path then `Ctrl+T` | |
+
+### Painting and Clone Stamp
+
+| Task | Windows | Notes |
+|---|---|---|
+| Paint foreground/background swap | `X` | When paint tool active |
+| Paint black/white default colors | `D` | In paint context; Timeline `D` scrolls to CTI |
+| Paint foreground sample | `Alt+click` | In Layer viewer |
+| Average 4×4 color sample | `Ctrl+Alt+click` | Paint tool active |
+| Resize brush / change hardness | `Ctrl+drag` / begin `Ctrl+drag`, release Ctrl as dragging | |
+| Join stroke to prior paint stroke | Hold `Shift` at start of stroke | |
+| Clone Stamp source point | `Alt+click` | Set sample before painting |
+| Paint opacity 10–90% | `Num 1–9` | Paint context, not layer select |
+| Paint opacity 100% | `Num .` | |
+| Paint flow 10–90% | `Shift+Num 1–9` | |
+| Paint flow 100% | `Shift+Num .` | |
+| Move playhead by paint-stroke duration | `Ctrl+Page Up/Down` or `1/2` (main keyboard) | Paint context |
+
+### Layer and composition markers
+
+| Task | Windows | Notes |
+|---|---|---|
+| Marker at CTI | `Num *` | Layer marker if layer selected; else composition marker |
+| Marker with dialog | `Alt+Num *` | |
+| Set numbered comp marker 0–9 | `Shift+0–9` (main keyboard) | |
+| Jump to numbered comp marker | `0–9` (main keyboard) | Conflicts with number entry if text focused |
+| Duration between two keys/markers in Info panel | `Alt+click` first and second | |
+| Remove marker | `Ctrl+click` marker | |
+
+### Point-tracker regions
+
+| Task | Windows | Notes |
+|---|---|---|
+| Change mask/track feature region ±1/10 | `Arrow` / `Shift+Arrow` | Tracking context |
+| Move feature/search region but not attach point ±1/10 | `Alt+Arrow` / `Alt+Shift+Arrow` | Tracking context |
+
+**Mask-mode keys require a mouse gesture.** With a shape tool, press the mode key **before releasing the mouse** while drawing. With Pen, hold the mouse on the closing vertex, press the mode key, then release. When modifying a closed mask, hold the mouse button during the edit and press the key. Open paths have no mask mode. Pressing `S` afterward in Timeline instead reveals Scale. [Adobe: mask modes](https://helpx.adobe.com/after-effects/desktop/work-with-transparency-and-compositing/work-with-alpha-channels-and-masks/alpha-channels-masks-mattes.html).
+
+**Shape creation refresher:** Creating **Layer → New → Shape Layer** creates an empty container. Expand **Contents**; each group can have its own shape Path, Fill, Stroke and Group Transform, plus the layer's overall Transform. Apply **Trim Paths**, **Repeater**, **Offset Paths**, **Pucker & Bloat**, **Wiggle Paths**, **Wiggle Transform**, **Zig Zag**, **Twist** as *shape operators*, not Effect Controls plugins. Convert parametric **Rectangle/Ellipse/Polystar Path → Bézier Path** only when you actually need editable vertices or morphing. Parametric paths preserve convenient live size/roundness controls.
+
+## 3.10 3D cameras, lights, effects, footage and rendering
+
+| Action | Windows | Note |
+|---|---|---|
+| New camera | `Ctrl+Alt+Shift+C` | Camera layer |
+| New light | `Ctrl+Alt+Shift+L` | Light layer |
+| Camera orbit/pan/dolly mode | `1` / `2` / `3` (main keyboard) | 3D-view camera controls |
+| Universal / Position / Scale / Rotation gizmo | `V` / `4` / `5` / `6` (main keyboard) | 3D viewer context |
+| Camera tool family | `C` repeated | |
+| 3D view 1 / 2 / 3 | `F10` / `F11` / `F12` | Defaults Front / Custom View 1 / Active Camera on Windows |
+| Return previous 3D view | `Esc` | In view context |
+| Camera look at selected 3D layers | `Ctrl+Alt+Shift+\` | |
+| With camera tool selected: look at selected | `F` | |
+| With camera tool selected: look at all | `Ctrl+Shift+F` | |
+| Turn Cast Shadows on/off on selected 3D layers | `Alt+Shift+C` | |
+| Import file | `Ctrl+I` | |
+| Import multiple | `Ctrl+Alt+I` | |
+| Add selected project item(s) to active comp | `Ctrl+/` (main keyboard) | |
+| Replace footage for selected layer(s) with selected project item | `Ctrl+Alt+/` (main keyboard) | |
+| Swap one layer's footage but preserve setup | `Alt+drag` Project item onto layer | Extremely useful |
+| Interpret Footage | `Ctrl+Alt+G` | Source FPS, alpha, color, fields |
+| Remember footage interpretation | `Ctrl+Alt+C` | |
+| Replace project footage item | `Ctrl+H` | |
+| Reload project footage item | `Ctrl+Alt+L` | |
+| Set footage proxy | `Ctrl+Alt+P` | Manage sources efficiently |
+| Delete footage with no warning | `Ctrl+Backspace` | Dangerous; Project panel context |
+| Apply effect by name quickly | `Ctrl+Enter` | **Quick Apply 26.2+** |
+| Double-click effect in Effects & Presets | Double-click | Applies to selected layers |
+| Apply last used effect | `Ctrl+Alt+Shift+E` | |
+| Apply last used animation preset | `Ctrl+Alt+Shift+F` | |
+| Remove all effects from selected layers | `Ctrl+Shift+E` | Deletes them |
+| Add current comp to Render Queue | `Ctrl+Shift+/` | |
+| Add current comp to AME | `Ctrl+Alt+M` | |
+| Save frame | `Ctrl+Alt+S` | Add frame to Render Queue |
+| Duplicate Render Queue output item | `Ctrl+Shift+D` in **Render Queue** | In Timeline it instead splits layer |
+
+## 3.11 Guides, grids, channels and inspection
+
+| Action | Windows | Notes |
+|---|---|---|
+| Show safe margins | `'` | Title/action safe zones |
+| Show grid | `Ctrl+'` | Full grid |
+| Show proportional grid | `Alt+'` | Large proportion reference |
+| Show rulers | `Ctrl+R` | Drag rulers to create guides |
+| Show guides | `Ctrl+;` | Semicolon |
+| Snap to grid | `Ctrl+Shift+'` | Toggle |
+| Snap to guides | `Ctrl+Shift+;` | Toggle |
+| Lock/unlock guides | `Ctrl+Alt+Shift+;` | Keep guides safe |
+| Hide/show mask paths, layer controls, bounding boxes | `Ctrl+Shift+H` | Doesn't alter render |
+| Active Comp viewer options | `Ctrl+Alt+U` | Includes overlays |
+| Show grayscale Red/Green/Blue/Alpha | `Alt+1/2/3/4` | Check matte contamination |
+| Show tinted R/G/B channel | `Alt+Shift+1/2/3` | |
+| Show Straight RGB | `Alt+Shift+4` | Useful for premultiplication checks |
+| Alpha boundary in Layer panel | `Alt+5` | |
+| Alpha overlay in Layer panel | `Alt+6` | |
+| Refine Edge X-ray | `Alt+X` | Edge/matte review |
+
+> [!important] How to discover a shortcut that isn't here
+> AE has version-, OS-, extension-, and panel-specific commands. Open `Ctrl+Alt+'`, search the **exact menu command**, check the scope, and assign one if none exists. That's the authoritative way to handle **Time-Reverse Keyframes**, **Sequence Layers**, **Freeze Frame**, **Crop Comp to Selected Layer(s) Bounds**, **native null-controller commands**, and third-party commands. **Do not** assume a guessed key combo is a default.
+
+
+## 3.12 Less frequent commands and contextual gestures
+
+These complete the specialist areas of the reference. Learn them when the task arises rather than memorizing the whole table at once.
+
+| Task and required context | Windows shortcut or gesture | What to expect |
+|---|---|---|
+| Extend an item selection in Project, Effect Controls or Render Queue | `Shift+Up/Down` | Adds adjacent items to the selection; Timeline layer selection uses `Ctrl+Shift+Up/Down`. |
+| Change project calculation precision quickly | `Alt+click` the Project panel bit-depth indicator | Cycles project bpc; clicking without Alt opens Project Settings. |
+| Reset preferences during application launch | Hold `Ctrl+Alt+Shift` while launching | Follow the reset prompt; use when diagnosing a preference problem, after preserving custom settings. |
+| Activate a different view in a multi-view Comp panel | Middle-click that view | Changes active view without changing selected layers. |
+| Return to the previously active related composition | `Shift+Esc` | Travels within the current nested-composition hierarchy. |
+| Use the third configurable preview binding | `Shift+Num 0` | Has its own Preview-panel settings, alongside Space and Num 0. |
+| Restore older RAM/standard preview configurations | `Alt+click` Reset in Preview | Changes preview bindings/settings; ordinary playback remains configurable. |
+| Scrub video interactively | Drag CTI; `Alt+drag` according to Live Update setting | Preview updating depends on Live Update. Audio scrubbing uses `Ctrl+drag`. |
+| Open footage itself for inspection | Double-click its Project-panel item | Opens the Footage viewer, separate from its layer instance. |
+| Open a Timeline layer's source | `Alt+double-click` that layer | Footage sources open in Footage; a precomp layer opens in Layer rather than its source composition. |
+| Stretch a layer to a new In/Out reference | `Ctrl+Shift+,` / `Ctrl+Alt+,` | Time-stretch boundary commands; source playback speed changes. Inspect the Time Stretch result. |
+| Expand selected effects in Effect Controls | `Ctrl` + backtick | Same expansion principle as Timeline; click the intended panel first. |
+| Erase only the latest paint stroke temporarily | Hold `Ctrl+Shift` with a paint tool | Temporary Eraser / Last Stroke Only behavior. |
+| Reposition Clone Stamp overlay/sample relationship | `Alt+Shift+drag` using Clone Stamp | Edits Offset when aligned, Source Position when unaligned. |
+| Recall one of five Clone Stamp presets | Main-keyboard `3`–`7` | Paint/Clone context; these digits have different meanings in camera or marker contexts. |
+| Make a copy of a Clone Stamp preset | `Alt+click` its preset button in Paint | Duplicates settings for another paint setup. |
+| Advance/rewind by the paint stroke duration | `Ctrl+Page Down/Up`, or main-keyboard `2/1` | Moves **time** by the configured Duration; it does not change Duration itself. |
+| Text caret to start/end of current line | `Home` / `End` | Text editing only; Timeline uses these for time navigation. |
+| Select all characters in one text layer | Double-click the text layer | Enters text editing with its text selected. |
+| Vertical text: select adjacent characters | `Shift+Up/Down` | Vertical typography follows its writing direction. |
+| Vertical text: select words | `Ctrl+Shift+Up/Down` | Word-sized text selection. |
+| Vertical text: select adjacent lines | `Shift+Left/Right` | Extends selection across vertical text columns. |
+| Vertical text: caret by character / line / word / paragraph | `Up/Down` / `Left/Right` / `Ctrl+Up/Down` / `Ctrl+Left/Right` | Direction differs from horizontal text. |
+| Vertical text alignment: top / center / bottom | `Ctrl+Shift+L/C/R` | Same alignment chords as horizontal text, interpreted vertically. |
+| Round a rectangle while drawing | `Up/Down` | Adjusts roundness; on polygon/star tools these keys adjust sides/points. |
+| Set rectangle corners to sharp / maximum roundness while drawing | `Left/Right` | For polygons/stars, adjusts outer roundness instead. |
+| Repeat a Render Queue item with the original output filename | `Ctrl+Shift+D` in Render Queue | Check destination before rendering; this duplicate keeps the same filename. |
+
+### New guide gestures in 26.5
+
+| During a guide drag | Windows modifier | Meaning |
+|---|---|---|
+| Change the measurement unit | Hold `Alt` | Switch between pixels and percent. |
+| Change the anchor/reference behavior | Hold `Ctrl` | Toggle pinning; the guide stays visually in place as its reference changes. |
+
+Right-click a guide → **Edit Guide** for exact position, unit, reference edge and color. A 100-pixel margin measured from the **right** stays 100 pixels from that edge when the comp widens. A **50%** guide remains proportional. Neither setting automatically moves your artwork. Use `Ctrl+Alt+Shift+;` to lock guides against dragging. [Adobe: guide controls](https://helpx.adobe.com/after-effects/desktop/view-and-preview/preview-video-and-audio/guide-creation-and-management.html).
+
+### Proportional Scrubbing: numerical staggering
+
+Select layers in the intended order, reveal the property, select the values to affect, then hold **`Ctrl+Alt` while dragging the property's hot text**. The first selected layer receives no change, the last receives the full change, and intermediate layers receive fractions. For three layers and a 120-pixel scrub, the added offsets are **0, 60, 120**. Existing differences are retained; this distributes a **change**, not necessarily equal final positions. For Scale, the last selected layer's Constrain Proportions setting governs the operation. **Quick Offset** distributes items in **time**; **Proportional Scrubbing** distributes property **values**. [Adobe: Proportional Scrubbing](https://helpx.adobe.com/after-effects/desktop/animate-in-after-effects/animation-keyframes/proportional-scrubbing-in-timeline.html).
+
+### Conflicts worth recognizing immediately
+
+| Same keys | Meaning depends on context |
+|---|---|
+| `Ctrl+T` | Type tool; selected mask/shape Path can instead enter free transform. |
+| `Ctrl+Shift+C` | Precompose layers; center-align selected text while editing. |
+| `Ctrl+Shift+K` | Keyframe Velocity; All Caps during text editing. |
+| `Ctrl+Shift+F` | Mask Feather; paragraph justification; camera framing with camera tool. |
+| `Ctrl+Alt+C` | Copy with Property Links in an eligible edit context; Remember Interpretation on Project footage. |
+| `Alt+Left/Right` | Nudge selected keyframes; adjust kerning when editing text; move tracker regions in tracking context. |
+| `X` / `D` | Timeline selection scrolling / CTI scrolling; paint color swap / paint defaults. |
+| Main `0` / `Num 0` | Numbered comp marker navigation / preview; numpad digits also select layers in the appropriate context. |
+| `Ctrl+Alt+Shift+N` | Project folder or split viewer, according to focus. |
+
+**Object Matte binding caveat:** Adobe's dedicated Object Matte page lists `Ctrl+W`, while its general shortcut reference also assigns `Ctrl+W` to closing a viewer. The documentation does not establish a dependable focus rule that resolves every case. Choose the Object Matte toolbar icon, or check/remap the command in the installed Keyboard Shortcuts editor. Treat the binding as documented but verify it locally. Do not assume the Layer panel makes Close impossible.
+
+Source for default-key facts: [Adobe's keyboard reference](https://helpx.adobe.com/after-effects/desktop/get-started/keyboard-shortcuts/keyboard-shortcuts-reference.html). This guide includes its command families, common gestures, and separately documented 2026 additions. Plugin commands and custom presets require their own bindings.
+
+
+
+## 3.13 Precision editing and frame capture
+
+### Keyframes: protect the animation you already made
+
+**Clicking an active stopwatch removes every keyframe on that property**, keeping its current value. Clicking again starts new animation; use Undo to recover the old keys. To remove one key, select its diamond and press `Delete`, or use the property's keyframe navigator. `Alt+Shift+property-key` also removes an existing key at CTI; it is a toggle. In Graph Editor, **`Ctrl+click` a key with Selection deletes it**, whereas Ctrl-click in layer-bar view changes interpolation.
+
+An enabled stopwatch automatically records value edits at CTI. The separate **Enable Auto-keyframe** mode can turn on new stopwatches as you edit and is off by default. Keep it off until that behavior is intentional. [Adobe: keyframes and navigation](https://helpx.adobe.com/after-effects/desktop/animate-in-after-effects/animation-keyframes/setting-selecting-deleting-keyframes.html).
+
+### Graph Editor gestures
+
+Enable **Show Transform Box** for a selected set of keys before using box gestures.
+
+| In Graph Editor | Windows gesture | Use |
+|---|---|---|
+| Select every key on a property's graph | `Alt+click` a segment | Selects the property’s keys. |
+| Constrain box movement | `Shift+drag` inside box | Time-only or value-only movement. |
+| Scale around the box anchor | `Ctrl+drag` a box handle | Expands/contracts around its pivot. |
+| Adjust only one corner | `Alt+drag` a corner handle | Changes that corner. |
+| Taper values across the selection | `Ctrl+Alt+drag` a handle | Changes an animation's amplitude progressively. |
+| Raise/lower one side | `Ctrl+Alt+Shift+drag` a handle | Tilts the selected value pattern. |
+
+A value-graph box can change **time and value**; a speed-graph box moves keys in **time**. In layer-bar view, begin dragging a key, then hold `Shift` to snap it to CTI. Pasted keys place the earliest copied key at CTI. [Adobe: keyframe editing](https://helpx.adobe.com/after-effects/desktop/animate-in-after-effects/animation-keyframes/editing-moving-copying-keyframes.html).
+
+### Move footage inside its existing time slot
+
+After trimming moving footage, drag its pale **slip-edit bar**, or use **Y** to drag it in Timeline. The layer's visible In/Out points stay fixed while different source frames play. Selected keyframes can move with a slip; unselected keys remain. Use `Shift+F2` first when you intend to deselect keys while retaining the layer. By comparison, dragging the ordinary duration bar moves the layer and its keys. [Adobe: slip editing](https://helpx.adobe.com/after-effects/desktop/work-with-layers/select-and-arrange-layers/selecting-arranging-layers.html).
+
+### Snapshot, clipboard copy and rendered still are different
+
+| Need | Use | Result |
+|---|---|---|
+| Compare two looks inside AE | `Shift+F5…F8`, then `F5…F8` | Viewer snapshots for comparison. |
+| Paste a visual reference into another app | `Ctrl+Alt+Shift+F5` | Current rendered viewer frame on the Windows clipboard. |
+| Save a still using output settings | `Ctrl+Alt+S` | Queues the current frame for rendering. |
+
+For clipboard capture, activate **Composition, Layer or Footage**, wait for rendering, then copy. **Transparency Grid on** preserves transparency in destinations supporting it; **off** composites over the comp background. The copied image reflects display color management/OCIO viewing transforms. Windows receives PNG plus a compatibility bitmap; the destination decides which it uses. Use a configured still render when you need controlled production color and channels. [Adobe: clipboard frame capture](https://helpx.adobe.com/after-effects/desktop/view-and-preview/copy-frames/copy-frame-to-clipboard.html).
+
+### Viewer gestures that save repeated clicks
+
+Double-click **Zoom** for 100% on Windows. Hold `Shift` with the Hand tool to pan faster. Hold `Ctrl` while selecting a magnification from the viewer menu to apply it to all views in that Composition panel. Use **View → Assign Shortcut** to manage the three saved 3D view slots; check existing workspace bindings before reusing function keys. Magnifying a viewer changes inspection size; scaling a layer changes the image being composited. [Adobe: viewer controls](https://helpx.adobe.com/after-effects/desktop/view-and-preview/preview-video-and-audio/modifying-using-views.html).
+
+---
+
+# 04 — The Core Workflows
+
+## 4.1 Layers, precompositions, render order and parenting
+
+**Layers render from the bottom up**, subject to special blending/compositing, 3D and renderer rules. The top layer generally obscures lower layers wherever it is opaque. **Effects run in the order listed in Effect Controls**: `Find Edges → Tint → Glow` is often materially different from `Glow → Find Edges → Tint`. Transforms, masks, styles, 3D settings and collapsed precomps can change the outcome; don't treat a layer as a miniature Photoshop file with a fixed universal rendering order.
+
+**Good organization:** `BG`, `FOOTAGE`, `SUBJECT_MATTE`, `TEXT_MAIN`, `CONTROLS`, `FX_GLOBAL`, `OUTPUT`; use color labels and clear precomp names. Switch from **Layer Name** to **Source Name** in Timeline's column header when you need to identify reused footage. Right-click the Timeline column headers → **Columns** to choose specific visible columns rather than only toggling whole groups. Shy layers can disappear from timeline display without disappearing from render.
+
+**Precompose:** select layers → `Ctrl+Shift+C` → name the nested composition. **Move all attributes** usually keeps effects and keys with the layer inside the new comp; **Leave all attributes** (when available for the selection) leaves outer-level effects/transforms in place. Inspect post-precomp size, frame rate, duration, color and motion blur. If a glow clips at precomp bounds, expand source canvas, precompose carefully, or use **Grow Bounds before the clipping effect** as appropriate.
+
+**Parenting:** Pick-whip the child's **Parent & Link** to the parent/null. Normal parenting maintains the child's apparent current world transform. **Shift-parenting** can snap the child toward the parent's transform, so use only if desired; inspect 3D transforms. Parenting adds transforms; **Copy with Property Links** instead adds an **expression** to a specific property, which is not a substitute for full parenting in all situations.
+
+**Null controller recipe:** `Ctrl+Alt+Shift+Y` → rename `CTRL — Motion` → parent several layers to it → animate the null with `P`, `S`, or `R`. For complex group movement, a null is usually easier to edit than repeatedly animating each layer; it does not render by itself.
+
+### Preserve Underlying Transparency
+
+The **Preserve Underlying Transparency** switch makes a layer's pixels respect the **composite alpha from layers beneath**, useful for restricting highlights, glows or textures to already visible artwork. It differs from a selected **Track Matte source**: it uses the underlying composited result, rather than picking one specific matte. It obeys lower-layer stack relationships. Test interactions with blending modes, nesting and 3D.
+
+## 4.2 Track mattes: alpha, luma and inversion (modern AE)
+
+```text
+MATTE SOURCE:    PERSON CUTOUT       ← alpha silhouette of the person
+FILL LAYER:      COLORFUL TEXTURE     ← this layer receives Track Matte = PERSON
+VISIBLE RESULT:  TEXTURE ONLY WHERE THE PERSON'S ALPHA EXISTS
+```
+
+1. Put the **content you want revealed** on its own layer (e.g. texture).
+2. Have a **matte-source layer** (e.g. roto'd person, shape, text, gradient).
+3. In the **content layer's Track Matte controls** (show Modes with `F4`), use the matte **pick-whip** or layer menu to select the source.
+4. Choose **Alpha Matte** (use source transparency) or **Luma Matte** (use source brightness).
+5. Toggle **Invert** to reveal the complement of the matte.
+6. In modern AE, **the matte source can be anywhere in the stack**, one matte can drive multiple content layers, and the matte source's **eye/visibility can be independently controlled**. There is no general rule that you must put the matte directly above the fill or turn its eyeball on again.
+
+**Alpha**: white, black, red and blue opaque pixels all contribute alpha if opaque. **Luma**: bright pixels reveal more; dark pixels hide more; the degree of matte can vary continuously. **Invert Alpha** makes transparent holes where the matte was opaque. **Invert Luma** reverses bright/dark reveal. For a rectangle reveal, select `Text` as content and `Rectangle Shape` as source—not the other way around.
+
+**Common problem:** Matte disappears or content is missing → confirm selected **matte source**, alpha/luma mode, inversion, content's alpha, effects on matte, collapsed nested comps and source visibility. A matte source's effect/render output may differ from the source you think you're sampling.
+
+**Set Matte effect:** another way to extract a layer's alpha/luma into the current effect pipeline. Use if you need effect-order control or a matte not convenient through timeline track matte. It isn't unconditionally “better”; the native Track Matte is often simpler and easier to maintain.
+
+## 4.3 Masks, roto, feather and animated outlines
+
+A mask changes visibility or effect area on the layer; common modes are **Add, Subtract, Intersect, Difference, None**. To draw one, select an image/footage/solid, choose Pen `G` or shape `Q`, and verify **Create Mask** mode. `M` = Mask Path, `MM` = all masks, `F` = Mask Feather, `TT` = mask opacity. Masks can be keyframed.
+
+**Per-vertex feather:** Select **Mask Feather tool** from the Pen group, add/move feather points and adjust each separately. Unlike global Mask Feather, this creates a spatially varying soft edge. Keep mask vertices and feather points logically distinct.
+
+**Mask path editing:** Click the **Mask Path** property to expose handles; convert a corner to Bézier by manipulating tangent handles (`Ctrl+Alt+drag` on a point); right-click path/vertex for **Set First Vertex**, open/close path and RotoBézier options. Path morphing works best when path direction, first vertex and vertex counts/order correspond.
+
+**Auto-trace outline method:** Duplicate an isolated/roto'd subject → **Layer → Auto-trace** → choose **Alpha**, current frame or work area depending on moving subject → apply **Generate → Stroke** to traced masks → animate Stroke End and apply Glow. On complex footage Auto-trace may create **many** animated masks, making this expensive; test a simplified matte first. A separate shape-stroke outline or **Find Edges** may be easier.
+
+**Shape-stroke handwriting alternative:** Draw a shape **path** using Pen; turn Fill off, give it a Stroke; **Contents → Add → Trim Paths**; animate **End** from 0 to 100; optionally add glow or roughened/tapered edges. For predictable line reveals, this is often cleaner than a paint stroke.
+
+## 4.4 Rotoscoping: Object Matte, Roto Brush and mask tracking
+
+### Pick the right tool
+
+| Need | Use | Why |
+|---|---|---|
+| Select/track a clear person or object across frames | **Object Matte (26.2+)** | AI-powered single-click/marquee subject isolation |
+| Manually establish inside/outside of an irregular foreground | **Quick Selection / Roto Brush** | Brush-based correction, iterative propagation |
+| Fine hair, fur and wispy edges | **Refine Edge** | Hair/fine-edge processing |
+| Follow the geometry of a hand-drawn mask | **Mask Tracker** | Track mask vertices over time; substantially improved in 26.3 |
+| Planar surfaces/occlusion | **Mocha AE** | Planar tracking/masks and surface replacement |
+| Whole-screen camera motion | **3D Camera Tracker** | 3D solve of a moving camera |
+
+### Object Matte in 26.5
+
+1. Double-click footage in Timeline → **Layer panel**.
+2. Activate the **Object Matte tool family** from Tools. Select it from the toolbar; Adobe also lists `Ctrl+W`, but that conflicts with Close and should be checked in your installed shortcut editor. Use one-click subject pick or rectangle/lasso.
+3. Refine with **Quick Selection**, **Selection Brush** (add/subtract), and **Refine Edge** for hair. Review in a clear foreground/background comparison.
+4. Propagate forward/backward only across the span you need; inspect frames with occlusions or subject turns.
+5. Refine bad frames, then **Freeze** when confident. In **26.5, propagated frames can be cached to disk between sessions**, helping long clips and avoiding needless recomputation; cache isn't a substitute for checking bad segments.
+6. Return to Comp → add corrections, masks, effects and mattes to isolated subject.
+
+**Traditional Roto Brush:** Paint foreground (green selection), subtract undesired areas with the appropriate subtract modifier, work in the **Layer panel**, review propagation boundaries, set a sensible base frame, then Freeze. Full-resolution viewing is often beneficial when judging fine mattes, but does not imply you must render the entire project at Full preview resolution all the time. Refine matte edges using feather, shift-edge/reduce chatter and motion blur as needed.
+
+### Point tracker and face tracker
+
+**Point track:** Select footage → **Window → Tracker** → **Track Motion** → place the **inner feature** box over a distinctive, consistent detail, with the **outer search area** large enough for expected movement → choose Position or Position+Rotation+Scale → select **Edit Target**, ideally a null → analyze forward/backward → inspect drift → **Apply**. Parent artwork to that null. Tracking the actual subject is not the same as tracking background camera movement.
+
+**Face Track:** Draw an elliptical **mask around the face** on footage → Tracker → Face Tracking (Detailed Features) → analyze → examine output points (eyes, nose, mouth etc.) → link a selected point/effect control with a pick-whip. It can fail on occlusion, profile views, motion blur or low resolution; manual adjustments are normal.
+
+**Liquify following a face:** Track a stable feature and apply tracking motion to a null/point. Link **Liquify → Distortion Mesh Offset** (where exposed) to tracked motion, or precompose/stabilize first. Link tracking **before** positioning detailed deformation so your warp doesn't jump when the coordinate offset changes. Align reference coordinates, not just raw x/y numbers.
+
+**Stabilize Motion:** A point-track can move the entire footage to keep a chosen feature still; background appears to move instead. **Warp Stabilizer** estimates broader camera motion and may warp/crop edges. These are different tools.
+
+## 4.5 Keying green/blue screen properly
+
+```text
+SOURCE → [Garbage matte if needed] → Keylight → Key Cleaner (as needed)
+      → Advanced Spill Suppressor → [Edge color match / grain / light wrap]
+      → Composite on new background
+```
+
+1. Use the best available source: even lighting, shutter speed that doesn't create extreme motion blur, enough distance from screen, and low compression.
+2. Garbage-matte large unneeded screen areas if useful; do **not** depend on obsolete **Color Key** as a required first step.
+3. Apply **Keylight (1.2)**. Sample a representative green/blue patch; zoom and view **Screen Matte**.
+4. In Screen Matte, adjust **Clip Black** so background is black and **Clip White** so subject core is white. Preserve gray translucent pixels at semi-transparent edges (hair, smoke). A fixed “Clip Black = 90” is **not** a general recipe—it often destroys detail.
+5. Inspect **Status** and **Intermediate Result**. These modes are not interchangeable with **Final Result**: Intermediate is useful when using the separate **Key Cleaner + Advanced Spill Suppressor** chain, avoiding unhelpful built-in Keylight color handling for that workflow.
+6. Use **Screen Shrink/Grow** sparingly. Large values can amputate hair and fine edges or create halos.
+7. Use Key Cleaner / Refine Soft or Hard Matte when appropriate, then **Advanced Spill Suppressor** to remove unwanted green edge light. Adjust Standard/Ultra based on footage.
+8. Judge composite at 100% on a contrasting background, inspect hair and motion edges over time, color-match subject to scene, and restore appropriate grain/shadows.
+
+**Two-Keylight technique** can be helpful when one keyed result isolates the subject core and another isolates fine details, but **stacking multiple Keylight effects blindly on the same footage** is not a universal professional method. Use separate key/matte passes or precomps so one edge treatment does not corrupt the other. Don't solve a brightness mismatch by reducing the entire subject opacity indiscriminately—it makes the person transparent.
+
+## 4.6 Shapes, paths, motion paths and morphing
+
+**Add a shape:** With nothing selected, use `Q` tool and draw, or `Layer → New → Shape Layer` then draw into **Contents**. Multiple groups can share a layer. Each has its own transform, stroke and fill; the layer has global transforms. Use **Contents → Add** for Trim Paths, Repeater, Offset Paths, Merge Paths, Wiggle Paths, Zig Zag, Pucker & Bloat, Twist, etc.
+
+**Morph square to circle:** (1) Make Rectangle and Ellipse **Bézier paths** (right-click their parametric path → Convert to Bézier Path), (2) ensure their first vertices and direction correspond, (3) put a Path keyframe for the square at t0, (4) copy the circle's **Path** value or keyframe to the square's Path at t1, (5) adjust vertices/tangents for smooth correspondence. AE interpolates the geometric points; “morphing” doesn't automatically find the semantic best match between arbitrary silhouettes.
+
+**Move arrow along path:** Draw a mask or path → copy **Path** keyframe/value → select arrow's **Position** at appropriate time → paste to generate motion path. **Layer → Transform → Auto-Orient → Orient Along Path** (`Ctrl+Alt+O`) points the arrow tangent to its Position trajectory. For an animated editable path, **Layer → Create → Null Tracing Along Path** can drive a null with animated **Progress**; parent arrow to null or link positions and adjust orientation.
+
+**Native path controllers:** select the actual Path property and use **Layer → Create** or **Animation → Keyframe Assistant**. **Null Controllers for Path Points** makes nulls drive vertices; **Nulls Following Path Points** makes nulls follow vertices; **Null Tracing Along Path** creates a traveling null with progress controls. The older **Create Nulls From Paths** script panel uses the names **Points Follow Nulls**, **Nulls Follow Points** and **Trace Path** for the corresponding workflows. See §4.18 for positional controllers.
+
+**Gradient shape/arrow:** Add shape fill → gradient fill or gradient stroke → adjust gradient endpoint handles in the viewer. `Alt+click` toolbar **Fill/Stroke** cycles supported modes in appropriate contexts. For shape layers, **stroke width, taper, wave, dashes and gradient** live under shape Contents; do not confuse with **Generate → Stroke** effect.
+
+**Repeater:** Draw one graphic → **Contents → Add → Repeater** → adjust Copies/Offset and Repeater Transform (Position, Rotation, Scale, Opacity). The Transform in the Repeater works per copy, while a group's Transform works on the whole group.
+
+## 4.7 Paint, write-on and animated handwriting
+
+**Paint-based “write-on”:** (1) Create a transparent-friendly **solid** or footage layer, (2) **double-click the layer** to open the **Layer panel** (paint cannot be drawn directly as identical strokes in the Comp panel), (3) select `Ctrl+B` until **Brush**, (4) Window → Paint/Brushes: set **Duration = Write On**, an appropriate RGBA mode, (5) place CTI at desired start and write with the brush at your chosen rate, (6) in layer's **Paint** effect, enable **Paint on Transparent** if you want only brush strokes, (7) inspect duration/keyframes using `U`/`UU`. Each brush stroke has temporal properties you can alter.
+
+**When to use what:** Paint is suited to an **actual stroke recorded live**; **Trim Paths** is better for perfectly reproducible stroke reveals; **Generate → Write-on** or **Stroke** effect can produce historical/legacy-style animation; masks can reveal text or footage with cleaner edges. Don't require a solid for *all* effects—effects operate on many kinds of valid layers, but generators may need a sufficiently sized source or solid to render across the comp.
+
+## 4.8 3D, camera, lighting, DOF and parallax
+
+**3D basics:** Enable the 3D switch on supported layers → move on X/Y/Z; use view gizmos (V, 4, 5, 6), multi-view, cameras and lights. **Classic 3D** handles 3D layer positions but not native extrusion of arbitrary flat shape geometry. **Advanced 3D** is the modern choice for many 3D models, parametric meshes, geometry, Substance materials, shadows and in-engine depth of field. **Cinema 4D Renderer** has its own capabilities and limitations; don't assume every 2D effect behaves normally on an actual 3D model in every renderer.
+
+**Camera focal length:** Shorter focal length (e.g. 18–24 mm) = wider field of view; longer (e.g. 85–200 mm) = tighter field of view **given the same sensor/backplate assumptions**. To change perspective, move camera position, not just Zoom. Depth of Field depends on focus distance, aperture and scene geometry.
+
+**3D parallax (simple):** Separate subject, foreground and background in Photoshop or with roto; fill holes; place layers at varying Z; adjust Scale to maintain desired framing; animate camera slowly; inspect gaps/edges. Better than trying to fake dramatic camera motion from an unprepared flat photo.
+
+**Depth map (advanced):** A grayscale **depth estimate** encodes relative distance, but **white=near** versus **white=far** depends on the generating tool and downstream effect settings. No universal “always invert this map” rule. Use the map as a **Displacement Map**, **Camera Lens Blur blur map**, **Gradient Wipe transition layer**, or 3D displacement texture. Pre-blur/dilate the map to avoid sharp stair-step borders. For depth-based camera movement on a single image, displacement alone cannot reveal unseen occluded background, so keep motion subtle or paint/fill missing areas.
+
+**Advanced 3D 26.3+ depth of field:** Supports geometry and materials rendered by the Advanced 3D engine. This is distinct from the 2D **Camera Lens Blur effect** that uses a grayscale blur-map layer. The built-in 3D depth pass can also support other compositing workflows.
+
+## 4.9 Time: remapping, posterize, freeze, loop and echo
+
+- **Freeze Frame:** CTI on desired frame → **Layer → Time → Freeze Frame**. A still image of that chosen point persists through the layer span; set duration with trim/extend.
+- **Time-Reverse Layer:** select layer → `Ctrl+Alt+R` (or Layer → Time → Time-Reverse Layer). This reverses actual footage/precomp playback, not necessarily every outside-world dependency.
+- **Time Remapping:** select source layer → `Ctrl+Alt+T`, then edit source-time keyframes to slow, speed up, reverse or freeze. Extend layer duration carefully and verify end-of-source behavior. **Footage is supported**; not just precomps.
+- **Loop source footage:** in **Project panel**, right-click → **Interpret Footage → Main** → set **Loop** under Other Options where supported; loop count must cover desired output. For arbitrary animation in properties, add `loopOut("cycle")` to an eligible property expression. `loopOut` affects **keyframed property values**, not the entire footage stream unless on an appropriate time-remap property.
+- **Posterize Time:** Effect → Time → **Posterize Time** displays fewer distinct temporal updates per second; it does **not** change the composition's true delivery frame rate. For expressions, `posterizeTime(12);` reduces how often the *expression* value changes, not every unrelated layer.
+- **Echo:** repeats earlier or later frames with adjustable blending/decay to create trails. Check source duration, work area, echo times and alpha accumulation.
+- **Pixel Motion Blur:** synthesizes blur from estimated optical motion; can be expensive/artifact-prone. Native **Motion Blur switch** + comp shutter is preferable for ordinary transform animation.
+
+## 4.10 Motion blur that actually works
+
+Enable **motion blur switch on moving layer** and the **global Motion Blur composition switch**. Open `Ctrl+K` → **Advanced** → Motion Blur, adjust **Shutter Angle** for smear amount and **Shutter Phase** for timing. Larger angles often produce more blur, at the cost of time/clarity; this is not a universal “crank it all the way” setting. Physical footage motion blur cannot always be faithfully recreated with this switch; consider **Pixel Motion Blur** or optical-flow-aware options where appropriate.
+
+## 4.11 Audio, waveforms and sound-driven graphics
+
+**Show waveform:** Select audio layer → `LL` to reveal visible waveform. `L` shows audio levels in dB. For audio-reactive values, right-click layer → **Keyframe Assistant → Convert Audio to Keyframes**. AE creates an **Audio Amplitude** null-like control layer with Left Channel, Right Channel and Both Channels slider keyframes. `UU` helps reveal results. Link a visual Scale/Glow/Opacity property with the expression pick-whip and map values appropriately (`linear`, `ease`, clamping) rather than pasting raw audio values directly.
+
+**Audio Spectrum / Audio Waveform effects:** Apply to a visible comp-sized solid or another appropriate layer; choose the source in **Audio Layer**; adjust Start/End points or set a mask path as source. Set the driving mask **Mode=None** if you want the path to guide the visualizer without restricting the layer. One effect visualizes frequency distribution; the other draws a waveform-like trace. Multiple effects on the same layer can have independently styled frequency bands.
+
+**Audio format:** MP3 audio is supported in many workflows, but lossy compression and variable/timestamp handling can complicate demanding projects. For consistent results use 48 kHz **WAV/AIFF PCM** when practical; there is no universal ban on MP3. 2026 adds native **Compressor**, **Gate** and **Distortion** effects, useful for lightweight sound cleanup/design, though a dedicated DAW or NLE still offers better mixing facilities.
+
+## 4.12 Green-screen highlights, outlines, glows and overlays
+
+- **Glowing contour:** duplicate footage → Find Edges → invert/tint/levels as appropriate → Glow → blending mode Screen/Add on original. High contrast and limited threshold help prevent glow on every detail. **CC Composite** can composite current processed layer against its original input inside the same effect stack, reducing duplicated layers in some situations, but it isn't identical to a free-standing layer stack in all cases.
+- **Highlight isolation:** duplicate layer → Extract/Levels/Curves to isolate highlights → Glow → blend Screen/Add; optionally add chromatic aberration and grain. Subtle is usually more convincing.
+- **Expand effect bounds:** place **Grow Bounds** before blur/glow-like effects on layers where results clip at source bounds. If grow bounds doesn't help, enlarge/precompose the canvas instead.
+- **Luma/matte reveal:** use textured Fractal Noise or animated gradient as a **Luma Track Matte**; or a clean depth map with **Gradient Wipe** on entering layer. A depth map isn't something AE inherently understands geometrically in Gradient Wipe—it reads grayscale brightness.
+
+## 4.13 360°/VR workflows
+
+Import equirectangular 360° footage/image in a suitable comp. Use **VR Sphere to Plane** to create an ordinary rectilinear view from 360 content, or **VR Plane to Sphere** to return edits into an equirectangular panorama. The **VR Comp Editor** workflow automates many setups. **CC Environment** wraps images into an environment for certain compositing/lighting workflows; it is **not restricted to stills** while VR Sphere to Plane is “for videos.” For 360 seams use **VR-aware** Blur, Glow, Sharpen, Chromatic Aberration, Denoise, Fractal Noise, Rotate Sphere, etc. Normal planar distortions may break seam continuity.
+
+## 4.14 Rendering, formats, color and final delivery
+
+| Deliverable | Good starting approach | Caution |
+|---|---|---|
+| Online review / ordinary web video | **H.264 (.mp4)** from AE Render Queue or Media Encoder | AE has supported **direct H.264 render-queue export** for years—no mandatory 2-pass ProRes route |
+| Editing master / intermediates | **ProRes 422 HQ**, **DNxHR HQX** or production mezzanine according to pipeline | Big files but efficient for editing/recompression |
+| Transparency / alpha master | **ProRes 4444** (with proper alpha settings), **PNG sequence**, **EXR** | Check RGB+Alpha, straight/premultiplied, codec/container support |
+| High dynamic range / high-end comp | **EXR 16-bit half/32-bit float**, OCIO/ACES workflow | Explicit color-space, transfer, display transforms and metadata |
+| Stills with alpha | **PNG**, TIFF, EXR as needed | Check bit depth and alpha interpretation |
+| Frame-accurate VFX pipeline | Image sequence + separate WAV / consistent metadata | Better restart/recovery at cost of storage |
+
+**Footage codecs:** MP4 is a **container**; not itself a codec. H.264/H.265 long-GOP media is often heavier to seek/decode than ProRes/DNxHR; consider transcoding only when playback, codec support, variable-frame-rate audio sync, heavy scrubbing or stability justify it. AE can use MP4, and AE can render H.264. Choose a suitable **intermediate** when needed; don't transcode every file blindly and waste disk/generation quality.
+
+**Color workflow essentials:** `8 bpc` = limited integer calculation precision; `16 bpc` = higher precision; `32 bpc` = floating-point processing, suitable for HDR/overbright linear workflows when supported. Input *encoding* and AE *processing* precision are distinct. Respect embedded profiles, linearized compositing if the project requires it, and avoid applying incompatible LUTs twice. AE 26.5 adds **ACES 2.0 configurations through OpenColorIO 2.5.1**.
+
+**Project hygiene:** collect files for handoff; ensure linked footage, fonts, plugins, expressions and color configs are available; use incremental versioning; check renders visually at 100% and listen to audio in the final file. For critical shots, export a short representative work-area test first.
+
+
+## 4.15 Remove an unwanted object with Content-Aware Fill
+
+1. Duplicate or preserve your original shot. Draw a mask around the unwanted object and set it to **Subtract**, making a transparent hole.
+2. Track/animate that mask so the hole follows the object. Include enough room for its edges or shadow when appropriate.
+3. Open **Window → Content-Aware Fill**. Choose the work area/range and a suitable method: **Object** for moving objects, **Surface** for relatively flat surfaces, or **Edge Blend** for simpler low-detail filling.
+4. Generate a Fill Layer. Review the moving result for repeated textures and temporal smearing.
+5. For difficult frames, create and paint a reference frame, then regenerate. A clean reference and a smaller analyzed range can improve results.
+
+The generated fill is a separate layer. Keep source, mask and reference assets organized; inspect the fill at normal speed as well as frame by frame. [Adobe: Content-Aware Fill workflow](https://helpx.adobe.com/after-effects/desktop/remove-objects-from-your-videos/content-aware-fill.html).
+
+## 4.16 Package a reusable template
+
+Create a master composition and expose its intended controls in **Essential Graphics**: text, colors, sliders and suitable media replacements. Test each control and font before exporting a **Motion Graphics Template (`.mogrt`)** for Premiere. Expose only the controls an editor needs; check expression dependencies and plugin availability on the destination machine. A `.mogrt`, an `.ffx` preset and an `.aep` project serve different purposes. [Adobe: Motion Graphics templates](https://helpx.adobe.com/after-effects/desktop/motion-graphics/work-with-motion-graphics-templates/creating-motion-graphics-templates.html).
+
+## 4.17 Understand effect order by building one test
+
+On a small solid, draw an Add mask and apply a large Glow. On an ordinary raster layer, the masked result feeds the effects, so glow can extend beyond the mask. To crop the **finished** glow, precompose that processed layer and mask the resulting precomp, or use a track matte on the finished result. An effect mask instead restricts a particular effect's contribution.
+
+The useful starting order for an ordinary raster layer is **source → masks → effects → transforms**, followed by compositing operations. Shape/vector layers, continuously rasterized layers, layer styles and collapsed precomps introduce exceptions. Precomposing creates a new processing boundary; it does not make rendering free. [Adobe: nesting and render order](https://helpx.adobe.com/after-effects/desktop/work-with-compositions/precomposing-and-nesting/precomposing-nesting-pre-rendering.html).
+
+
+
+## 4.18 Native null controllers for points and paths
+
+For a gradient endpoint, effect point, Anchor Point or layer Position, select the **property**, then **Layer → Create → Null Controllers for Positional Points**. Selecting only a layer targets Position. Animate the generated null rather than repeatedly finding a tiny effect handle. Use the JavaScript expression engine and distinct layer names. A Layer Control identifies the controller; separating Position dimensions afterward requires relinking.
+
+For a selected Path, the native commands are:
+
+| Command | Direction of control |
+|---|---|
+| **Null Controllers for Path Points** | Nulls move the vertices. |
+| **Nulls Following Path Points** | Vertices move the nulls. |
+| **Null Tracing Along Path** | One null travels along the curve. |
+
+These are available through **Layer → Create** and **Animation → Keyframe Assistant**. Shape-group skew/nonuniform scale can offset linked points. The old script panel remains useful for older tutorials. [Adobe: native null controllers](https://helpx.adobe.com/after-effects/desktop/drawing-painting-and-paths/null-controllers/create-nulls-for-positional-properties-and-paths.html).
+
+## 4.19 Text animators: animate a selection of characters
+
+1. Create text and expand **Text → Animate → Opacity**. Set the animator's Opacity to 0.
+2. Expand its **Range Selector**. Animate **Start** from 0% to 100% to move characters out of the invisible selected range.
+3. Under Advanced, choose **Based On** Characters, Words or Lines. Adjust selector Shape, Smoothness and easing to control the transition between selected and unselected characters.
+4. Add Position to the same animator for coordinated movement, or make a second animator for an independently selected action.
+
+An animator supplies property changes; a selector decides **where and how strongly** they apply. Layer Transform moves the entire text layer. Source Text keyframes change the string. Selectors and layer transforms solve different tasks. [Adobe: text animation](https://helpx.adobe.com/after-effects/desktop/animating-text/text-animation/animating-text.html).
+
+### Animate variable-font axes
+
+Choose a font with actual variable axes. Under **Text → Animate → Variable Font Axes**, select an available axis such as Weight or Width, then keyframe that animator's axis value. Use its Range Selector for per-character timing. The Properties panel also exposes axis controls and font filtering.
+
+Keep values inside the installed font's supported range; a static family with several weights is not necessarily variable. Inspect **Text → More Options → Variable Font Spacing** when glyph-width changes alter spacing. Test multiline reflow and verify the same font file on the render machine. [Adobe: variable-font controls](https://helpx.adobe.com/after-effects/desktop/variable-font-axes/work-with-variable-font-axes/working-with-variable-font-axes.html).
+
+
+### Typography clipboard choices
+
+| Intention | Command while editing text |
+|---|---|
+| Bring words and their original styling | **Paste** |
+| Bring words but retain destination styling | **Edit → Paste Text and Match Formatting** |
+| Transfer styling without replacing the words | **Edit → Paste Text Formatting Only** |
+
+For formatting only, copy highlighted source characters, then select destination characters or the whole destination text layer. To resize a paragraph text box, drag its handles with Type active; `Shift` preserves its proportions and `Ctrl` scales around its center. Changing the box changes text layout; changing layer Scale changes the rendered glyph size. [Adobe: text editing and pasting](https://helpx.adobe.com/after-effects/desktop/add-text/create-and-edit-text-layers/creating-editing-text-layers.html).
+
+## 4.20 SVG and Illustrator: choose editable geometry or source footage
+
+Use **File → Import → File** to import SVG as footage or a composition according to the dialog. For clipboard transfer from Illustrator, enable **Edit → Preferences → Clipboard Handling → Include SVG Code**, copy artwork, then `Ctrl+V` in AE. With a comp selected, it becomes native shape content in that comp; without one, AE can create a comp for it.
+
+Convert SVG text to outlines before clipboard transfer when needed; SVG text is not supported by this paste workflow. Inspect gradients, strokes, transparency, group hierarchy and path operators. Editable Illustrator-text conversion is separately labeled Beta; shape conversion does not imply stable editable text. [Adobe: SVG import and paste](https://helpx.adobe.com/after-effects/desktop/import-files/import-svg-files/import-svg-files.html).
+
+## 4.21 Puppet: deform artwork instead of moving a rigid card
+
+Use transparent artwork with a clean silhouette. Select a Puppet tool (`Ctrl+P` cycles), add pins at stable joints, and move CTI before changing a pin's position. Start with few pins; excess pins can produce folds and hard transitions. Inspect the mesh and its Expansion/Density when edges tear or separate parts join unexpectedly.
+
+Position pins move points; Advanced/Bend controls add local rotation/scale behavior. Starch controls stiffness, and Overlap influences which region appears in front. Reveal the result with `PP`. With an appropriate Puppet pin selected, **`Ctrl+drag` records a Puppet Sketch performance**; `Shift+click` adds pins to the selection, and `Ctrl+A` selects pins of that kind. Review and simplify recorded motion before delivery. [Adobe: Puppet animation](https://helpx.adobe.com/after-effects/desktop/animate-in-after-effects/animate-with-puppet-tools/animating-puppet-tools.html).
+
+## 4.22 Solve a moving camera before placing 3D graphics
+
+Apply **3D Camera Tracker** to a suitable shot and let analysis finish. Choose reliable points on the surface, establish a ground plane/origin when needed, and create a camera plus a null, solid or text from the tracked selection. Attach your artwork to the resulting scene reference. Check several points and the whole shot for sliding.
+
+A camera solve estimates camera movement from scene features. A point track follows an image feature; a planar track follows a surface. Moving subjects, cuts, insufficient parallax, changing focal length, motion blur and reflections can confuse a camera solve. Treat separate shots separately. [Adobe: 3D Camera Tracker](https://helpx.adobe.com/after-effects/desktop/work-with-3d-composition/3d-camera-tracker-effect/tracking-3d-camera-movement.html).
+
+## 4.23 Preserve intro/outro timing in reusable graphics
+
+Set the work area around the entrance animation, right-click the work-area bar and choose **Create Protected Region from Work Area**. Repeat for the exit. Alternatively, use **Composition → Responsive Design – Time** or a duration marker with **Protected Region** enabled. Nest the comp and test a duration change: protected regions keep their animation timing while unprotected time stretches. This is useful for a title with a fixed entrance/exit and variable reading time. [Adobe: Responsive Design – Time](https://helpx.adobe.com/after-effects/desktop/motion-graphics/add-responsive-design/responsive-design.html).
+
+
+## 4.24 Crop the composition canvas to artwork
+
+Select the relevant **2D layers**, then **Composition → Crop Comp to Selected Layer(s) Bounds**, or use the selected layers' context menu. The canvas can shrink or expand to fit. This command is unavailable for 3D layers. Save a version first and inspect animated artwork, effects extending past layer edges and nested-comp alignment afterward. Canvas cropping changes composition dimensions; **Trim Comp to Work Area** changes duration; **Fit to Comp** changes a layer's transform. [Adobe: composition bounds](https://helpx.adobe.com/after-effects/desktop/work-with-compositions/composition-settings/composition-basics.html).
+
+---
+
+# 05 — Effects Encyclopedia
+
+> [!note] What counts as an effect?
+> In **Effects & Presets**, *effects* live in categories such as Distort, Keying, Stylize, Simulation, etc. **Track Mattes**, **Roto Brush/Object Matte tool selection**, **shape modifiers**, **Layer Styles**, **Create Nulls From Paths**, **Precompose**, **scripts**, and **third-party add-ons** may appear near effects or create effects, but they are conceptually distinct. Use `Ctrl+Enter` (**Quick Apply**) and search `e:name` to find a native effect quickly. Names marked **NEW** were introduced in recent 2026 releases. The list below covers native/bundled effect families; installed third-party inventories vary.
+
+## 5.1 Choose the right effect by problem
+
+| I want to... | Start with | Frequently paired with |
+|---|---|---|
+| Make something glow | **Glow** | Levels / Find Edges / CC Light Sweep |
+| Replace green screen | **Keylight (1.2)** | Key Cleaner / Advanced Spill Suppressor |
+| Draw an outline on a moving subject | **Stroke** on traced masks | Roto/Object Matte / Glow |
+| Make a stroke draw itself | **Trim Paths** (*shape operator*, not effect) | Taper / glow |
+| Warp a still with a depth map | **Displacement Map** | Blur on map / source cleanup |
+| Blur according to grayscale matte | **Camera Lens Blur** + Blur Map | Levels / feathered gradient |
+| Move pixels as liquid | **Turbulent Displace** / **Liquify** | Noise / glow / masks |
+| Simulate animated flowing noise | **Curl Noise (NEW 26.3)** | Gradient colorization / displacement |
+| Create organic clouds/smoke textures | **Fractal Noise / Turbulent Noise** | Levels / Tint / Glow / Displacement |
+| Create particles | **CC Particle World / Systems II** | Physics, masks, glow |
+| Create bubbles/liquid blobs | **CC Bubbles / Foam / CC Mr. Mercury** | Blur / CC Glass |
+| Fake rotating globe | **CC Sphere** | Map texture / lighting options |
+| Turn footage into CRT/VHS-style | **Posterize Time, Noise, Turbulent Displace** | Channel offset, chromatic color fringe |
+| Add lens distortion/fisheye | **Optics Compensation** | Scale to hide black corners |
+| Stabilize footage | **Warp Stabilizer** | Crop/scale/track |
+| Follow planar surface | **Mocha AE** | Corner Pin / CC Power Pin |
+| Add line/gradient beam | **Beam** / **Advanced Lightning** | Glow |
+| Build tiled repetition | **Motion Tile / CC RepeTile / CC Tiler** | Offset / animated scale |
+| Convert light on black into transparency | **Unmult (NEW 26.0)** | Glow / compositing |
+| Compress/gate/distort audio | **Compressor / Gate / Distortion (NEW 26.0)** | Parametric EQ, audio-level controls |
+
+## 5.2 Effects introduced in 2026 — learn these first
+
+### NEW — Curl Noise (26.3; Noise & Grain / procedural texture)
+
+Creates **flow-like swirling patterns** suitable for smoke, ink, fluid textures and organic animation. Compared with ordinary static noise, it is designed for coherent flowing movement. Explore the evolution/animation controls and spatial scale first; use **Colorama, Tint or Tritone** for color and **Displacement Map** if you want the patterns to distort other footage. Unlike **Fractal Noise**, this is not just random turbulence with evolution cranked up. Find it by Quick Apply `e:curl noise`.
+
+### NEW — Unmult (26.0)
+
+A keying/compositing effect for extracting **white-on-black or black-on-white** elements into usable alpha while preserving useful foreground colors/details. Ideal for lens flares, smoke, particles or light elements shot/rasterized over an uncolored background. Configure black vs white removal and judge any color-fringing at semi-transparent edges. This is often cleaner than treating Screen blend mode as a real alpha conversion.
+
+### NEW — Compressor (26.0, Audio)
+
+Reduces dynamic range above a threshold. Key controls: **Threshold** (level at which compression begins), **Ratio** (strength), **Attack** (response to transient), **Release** (recovery), **Knee** (transition), **Makeup Gain** (restore loudness), **Output Limit**. Dialogue starting point: a moderate ratio (~3:1), then adjust by listening, not by copying presets.
+
+### NEW — Gate (26.0, Audio)
+
+Reduces/silences quiet sections under the configured threshold. Controls **Threshold, Attack, Hold, Release**. Useful to reduce pauses with room noise; too aggressive a threshold chops beginnings/endings of words. Doesn't actually remove noise *underneath active speech*.
+
+### NEW — Distortion (26.0, Audio)
+
+Audio overdrive/saturation and sound design (Soft Clip, Hard Clip, Tube, Fuzz and related modes). Controls Drive/Gain, dry-wet Mix and output level, plus bit reduction/downsampling for lo-fi sounds. Watch clipping and hearing comfort.
+
+### NEW — Effect colors (26.5; not an effect)
+
+Color labels can be assigned to **individual effect instances** in the modernized **Effect Controls** panel; group logically by purpose (`cleanup`, `keying`, `look`, `finishing`) when a layer contains many effects. Labels do not modify pixels and aren't a replacement for clear effect names/order.
+
+### NEW — 3D displacement / depth of field (26.2–26.3; not simple 2D effects)
+
+**Material displacement on parametric meshes** changes true 3D surface geometry according to height data (26.2). **In-engine Depth of Field** in Advanced 3D (26.3) blurs rendered scene geometry based on camera focus. They are different from **Displacement Map** and **Camera Lens Blur** 2D effects.
+
+## 5.3 Blur & Sharpen
+
+| Effect | What it does / choose it for |
+|---|---|
+| **Camera Lens Blur** | Lens-like bokeh; can use **Blur Map** for local/depth-varying blur, including highlights and focus control. Heavier than simple blur. |
+| **Gaussian Blur** | Smooth, conventional uniform blur. Fast and reliable; repeat edge pixels if borders appear. |
+| **Fast Box Blur** | Efficient box approximation; useful in matte softening, textures and previews. |
+| **Directional Blur** | Linear blur along an angle; simulated speed smear/trails. |
+| **CC Radial Blur** | Radial directional or zoom-streak blur based on a center; useful for impact effects. |
+| **CC Radial Fast Blur** | Faster radial-style effect; fewer/other controls than standard. |
+| **Radial Blur** | Older rotational/zoom radial blur option; still useful in some looks, not automatically obsolete. |
+| **CC Vector Blur** | Uses vectors/texture for stylized flow-like warping/blurring. |
+| **Compound Blur** | Uses a secondary layer's brightness to change blur amount across the image. |
+| **Channel Blur** | Independently blurs R/G/B/A channels; potential color fringes and alpha softening. |
+| **Bilateral Blur** | Smooths regions while retaining prominent edges. |
+| **Smart Blur** | Smooths relatively uniform regions but attempts to protect edges. |
+| **Sharpen** | Basic edge enhancement; halos appear if overdone. |
+| **Unsharp Mask** | Controlled edge contrast sharpening, Amount/Radius/Threshold. |
+| **Camera-Shake Deblur** | Attempts to mitigate motion-induced camera blur; may create artifacts. |
+| **CC Cross Blur** | Cross-shaped/anamorphic-style blur direction. |
+
+**Rule of thumb:** soften a matte with a simple blur; create cinematographic blur with Camera Lens Blur; do **not** confuse “blur the layer” with “blur the alpha matte,” because they change different data.
+
+## 5.4 Channel and matte-related effects
+
+| Effect | Use case |
+|---|---|
+| **CC Composite** | Composites the processed result against the layer's underlying original input inside one effect pipeline; try RGB-only/alpha and blend settings when nothing seems to happen. |
+| **Blend** | Blends the current layer with another input layer. |
+| **Set Matte** | Pull alpha or luminance from a specified source and inject it into effect pipeline. |
+| **Shift Channels** | Route/copy individual channels; build simple RGB split/aberration effects. |
+| **Set Channels** | Assemble output channels from multiple source channels/layers. |
+| **Channel Combiner** | Converts/composes color channels, including channel-to-lightness conversions. |
+| **Invert** | Invert color values or selected channels, including alpha where chosen. |
+| **Minimax** | Grow/shrink bright or dark regions, useful for matte expansion/erosion. |
+| **Remove Color Matting** | Correct halo caused by premultiplication against an unwanted matte color. |
+| **Arithmetic / Compound Arithmetic** | Mathematical channel operations on image values. |
+| **Calculations** | Combine input layer channels and mathematical/compositing operations. |
+| **Solid Composite** | Composites layer over specified solid color within the layer bounds; useful for creating black/white map backgrounds. |
+| **Matte Choker / Simple Choker** | Shrink/expand matte edges and clean alpha. |
+| **Refine Hard Matte / Refine Soft Matte** | Edge refinement for hard/soft/semipermeable edges. |
+| **Mocha Shape** | Workflow-specific Mocha-created masks/mattes if available. |
+
+## 5.5 Keying
+
+| Effect | Best use |
+|---|---|
+| **Keylight (1.2)** | General green/blue screen chroma key with detailed Screen Matte controls. |
+| **Key Cleaner** | Recover/clean key edges, especially fine outlines. |
+| **Advanced Spill Suppressor** | Remove undesirable green/blue color contamination on subject edges. |
+| **Unmult** | **NEW**: separate luminous elements from black/white solid backgrounds; not a chroma key. |
+| **Linear Color Key** | Remove specified RGB color/range; controlled simple key. |
+| **Color Difference Key** | Difference-based blue/green keying. |
+| **Color Range** | Target color range; sometimes useful for selections but can be noisy. |
+| **Difference Matte** | Remove area resembling clean background reference. |
+| **Extract** | Use luminance thresholds to isolate bright/dark regions. |
+| **Inner/Outer Key** | Separate inner/outer edges for difficult mattes. |
+| **CC Simple Wire Removal** | Remove linear cables/wires across footage. |
+| **Color Key** | **Obsolete**. Retained for compatibility; not mandatory in modern key workflow. |
+
+## 5.6 Color correction and color management effects
+
+| Effect | When it helps |
+|---|---|
+| **Lumetri Color** | Comprehensive familiar color grading (basic, curves, color wheels, HSL secondary, vignette where available). |
+| **Curves** | Precise tonal/channel mapping, matte contrast, look creation. |
+| **Levels / Levels (Individual Controls)** | Set input/output black and white points, gamma/channel adjustments. |
+| **Exposure** | Adjust photographic exposure and tonal offset; useful in higher-bit-depth workflows. |
+| **Hue/Saturation** | Target hue, saturation and lightness globally or ranges. |
+| **Tint / Tritone / CC Toner** | Duotone or three-tone palette, stylized color mapping. |
+| **Black & White** | Tonal monochrome conversion with channel weights. |
+| **Brightness & Contrast** | Basic global correction; limited compared with Curves. |
+| **Vibrance** | Prioritize less-saturated color areas over skin tones in many cases. |
+| **Selective Color** | Fine color-group adjustment. |
+| **Color Balance / Color Balance (HLS)** | Adjust channel balance or HLS values. |
+| **Channel Mixer** | Change RGB output from channel mixtures, make custom grayscale. |
+| **Change Color / Change to Color** | Isolate a hue and shift its color; second is a selected-color replacement workflow. |
+| **Leave Color** | Retain one selected hue while desaturating others. |
+| **Colorama** | Map luminance/phase to customizable color palette. |
+| **Color Link** | Match/link colors in layer-based workflows. |
+| **Color Stabilizer** | Correct fluctuating color using sample areas. |
+| **Auto Color / Auto Contrast / Auto Levels** | Automatic tonal/color balance; test temporal flicker on video. |
+| **Equalize** | Redistribution of intensity histogram; stylized image contrast. |
+| **Photo Filter** | Warm/cool photographic filter color. |
+| **Shadow/Highlight** | Recover local dark/light detail; can flatten images. |
+| **Gamma/Pedestal/Gain** | Channel/tonal control using photographic video parameters. |
+| **CC Color Neutralizer / CC Color Offset / CC Kernel** | Bundled specialty color/convolution controls. |
+| **Video Limiter / Broadcast Colors** | Keep signals within broadcast/video-limiting constraints; choose for deliverable standard. |
+| **PS Arbitrary Map** | Photoshop arbitrary-map transfer function. |
+| **Apply Color LUT** | Apply LUT transform; **must** use appropriate input color space to avoid bad look/double transform. |
+| **Color Profile Converter** | Convert between color-profile spaces; distinct from simply applying a look LUT. |
+| **Cineon Converter / HDR Compander / HDR Highlight Compression** | Specialized film/log/HDR handling. |
+
+**Don't mix up:** *Viewer exposure*, *a LUT that changes your rendered pixels*, and *Project Color Management* are three different levels. Changing viewer exposure is for inspection and doesn't bake the change into file by itself.
+
+## 5.7 Distort and transform (complete practical directory)
+
+| Effect | What to expect |
+|---|---|
+| **Bezier Warp** | Warp whole image using edge/corner Bézier mesh handles; useful for cloth/smoke edges. |
+| **Mesh Warp** | Fine multi-cell deformation; more localized control. |
+| **Liquify** | Brush deformation/mesh for facial distortions, fire, organic visuals. |
+| **Displacement Map** | Another layer's brightness/color shifts pixels horizontally/vertically; depth-map illusion, water, ripples. |
+| **Transform** | Effect-order-aware extra transform; better than moving an entire layer when you need transform **between** effects. |
+| **Turbulent Displace** | Organic bubbling/wavy displacement; great for smoke, fire, animated drawn art. |
+| **Wave Warp** | Directional sine-wave fabric/hair/flag/river motion; Pinning controls where waves are suppressed. |
+| **Warp** | Preset-type arcs, bulges, flags, fisheye and other deformable shapes. |
+| **CC Bend It** | Bend along points, fast for organic/tube bends. |
+| **CC Bender** | Bend based on bounding region with different behavior/controls. |
+| **CC Blobbylize** | Glossy melted/liquid-like blobby shapes; useful for fluid motion design. |
+| **CC Flo Motion** | Localized distortions around two control points. |
+| **CC Griddler** | Grid-based segmentation/deformation. |
+| **CC Lens** | Bulging/refracting lens distortion. |
+| **CC Page Turn** | Flip/curl page. |
+| **CC Power Pin** | Pin four corners of footage to a changing quadrilateral; screen replacement. |
+| **Corner Pin** | Four-corner pinning; simpler option, still valid, not universally obsolete. |
+| **CC Ripple Pulse** | Dynamic ripples that usually need animated Pulse/Amplitude values. |
+| **CC Slant** | Skew/slant geometry. |
+| **CC Smear / Smear** | Stretch content along control points. |
+| **CC Split / CC Split 2** | Stretch/open slit or mouth-like deformation, second has additional handles. |
+| **CC Tiler** | Copies a layer in tiles for infinite-space visual patterns. |
+| **Mirror** | Reflect content across adjustable line. |
+| **Offset** | Wrap image as it moves; seamless scrolling backgrounds. |
+| **Optics Compensation** | Fisheye / undistort lens geometry; **Reverse Lens Distortion** changes direction. |
+| **Polar Coordinates** | Rectangle↔polar map (tunnels/planet rings/clock-like effects). |
+| **Reshape** | Morph one drawn silhouette toward another using masks. |
+| **Ripple** | Water-surface-style waves. |
+| **Rolling Shutter Repair** | Correct skew/wobble artifacts from rolling-shutter cameras. |
+| **Spherize / Bulge / Magnify** | Distort or magnify a specified area; different controls and aesthetics. |
+| **Twirl** | Twist pixels around center. |
+| **Warp Stabilizer** | Automatic image stabilization; separate from intentionally creative warp. |
+| **Detail-preserving Upscale** | More edge-aware scaling than simple magnification; evaluate fine details/halos. |
+
+## 5.8 Generate — creating pixels, backgrounds, sound visuals
+
+| Effect | Purpose |
+|---|---|
+| **4-Color Gradient** | Four-point color interpolation, useful backgrounds. |
+| **Gradient Ramp** | Linear/radial gradient from start to end control points. |
+| **Grid** | Draw a grid, useful graphical background or to diagnose warp. |
+| **Checkerboard / Circle / Ellipse** | Procedural primitives, quick masks/background designs. |
+| **Audio Spectrum / Audio Waveform** | Draw frequency spectrum or waveform along line/mask path. |
+| **Advanced Lightning / Beam** | Electricity or colored straight beam between points. |
+| **CC Light Burst 2.5 / CC Light Rays / CC Light Sweep** | Radiating streaks, shafts, animated highlight across a surface. |
+| **CC Threads / CC Glue Gun** | Specialized generated strands/blobs. |
+| **Cell Pattern / Fractal** | Procedural structures, tessellated/fractal patterns. |
+| **Eyedropper Fill / Fill / Paint Bucket** | Fill color/regions or sampled colors. |
+| **Lens Flare** | Simulated flare based on a point in the frame. |
+| **Radio Waves** | Expanding rings/ripples; great for motion graphics. |
+| **Scribble** | Animated scribble lines in masked regions. |
+| **Stroke** | Render one or more mask paths with animated Start/End; glows/outlined drawings. |
+| **Vegas** | Animated outlines/highlights using mask/contour paths. |
+| **Write-on** | Frame-accumulating paint-like writing. |
+
+**Effects typically create a result inside their source layer's effective dimensions.** A comp-sized solid is a convenient full-frame carrier for generators and effects that work on all pixels, but not required for every effect. An adjustment layer is a *processor of composited underlying layers*, not the same as a standalone visible solid.
+
+## 5.9 Noise & Grain, including flow textures
+
+| Effect | Use |
+|---|---|
+| **Curl Noise (NEW 26.3)** | Swirling directional procedural motion. |
+| **Fractal Noise** | Rich coherent noise. Animate **Evolution/Offset Turbulence**, transform for scale, use Evolution Options for cycle where supported. |
+| **Turbulent Noise** | Related procedural pattern with different rendering/performance/features; not “always faster” in every project. |
+| **Noise** | Pixel-level random texture/dither/grain. |
+| **Add Grain / Match Grain / Remove Grain** | Film/grain matching and cleanup workflows. |
+| **Dust & Scratches** | Remove small specks or produce painterly smoothing at high values. |
+| **Median / Median (Legacy)** | Simplify detail by neighborhood median; stylized cartoon look; legacy compatibility separate. |
+| **Noise Alpha** | Randomize transparency. |
+| **Noise HLS / Noise HLS Auto** | Hue/lightness/saturation based noise. |
+
+## 5.10 Simulation and particles
+
+| Effect | Typical appearance |
+|---|---|
+| **CC Particle World** | 3D-like particle generator with birth rate, producer, physics, particle type. |
+| **CC Particle Systems II** | Simpler particle bursts/trails. |
+| **Particle Playground** | Rich older multi-input particle system, more configuration. |
+| **CC Ball Action** | Turns input into grids of balls—great for scattering/reforming graphics. |
+| **CC Pixel Polly** | Shatters source pixels/regions as simulated chunks. |
+| **Shatter** | Break objects apart with forces/debris/camera. |
+| **CC Mr. Mercury** | Viscous liquid-like emitted blobs/droplets. |
+| **Foam** | Bubble simulation from flow/birth parameters. |
+| **CC Bubbles** | Floating/refractive bubbles sampling underlying image appearance. |
+| **CC Rainfall / CC Snowfall** | Weather particles. |
+| **CC Drizzle** | Droplet surface ripples. |
+| **CC Hair** | Bundled hair/strand simulation effect. |
+| **CC Scatterize** | Scatter/fragment look. |
+| **CC Star Burst** | Starfield/travel visual. |
+| **Card Dance** | Animate source as discrete cards driven by control map. |
+| **Caustics** | Light refraction patterns through water/glass simulation. |
+| **Wave World** | Generated simulated rippling water surfaces, usable as effect map. |
+
+## 5.11 Stylize / time / transitions
+
+| Effect | Use |
+|---|---|
+| **Glow** | Bloom around bright areas; threshold/radius/intensity control. |
+| **Find Edges** | Outline high-contrast boundaries, optionally invert/colorize. |
+| **Brush Strokes / Cartoon** | Paint-like or cartoon simplification. |
+| **CC Glass / CC Plastic** | Surface relief/glassy or plastic highlights. |
+| **CC Kaleida / CC HexTile** | Kaleidoscopic tessellation. |
+| **CC RepeTile / Motion Tile** | Extend a layer beyond original bounds by repetition/mirroring. |
+| **CC Vignette** | Dark/light edge vignette. |
+| **CC Threshold / CC Threshold RGB / Threshold** | Convert to limited tonal/channel regions. |
+| **Roughen Edges** | Organic irregular alpha edge, strong for paper/smoke/mattes. |
+| **Mosaic** | Pixel-block mosaic. |
+| **Posterize** | Reduce color levels; not frame rate. |
+| **Strobe Light** | Timed flashes/strobes. |
+| **Color Emboss / Emboss / Texturize** | Relief and texture simulations. |
+| **Scatter / CC Block Load / CC Burn Film / CC Mr. Smoothie** | Specialty scatter/loading/burn/flow style. |
+| **CC Force Motion Blur** | Extra blur samples for moving operations; cost may be high. |
+| **Pixel Motion Blur** | Optical flow-like blur between frames. |
+| **Echo / CC Wide Time** | Temporal accumulation of multiple frames. |
+| **Posterize Time** | Lower sampling rate for stop-motion look. |
+| **Time Difference** | Highlights changes between frames. |
+| **Time Displacement** | Grayscale layer controls relative source time per pixel. |
+| **Timewarp** | Retimes source with frame interpolation. |
+
+**Transitions available as effects:** **Block Dissolve, Card Wipe, CC Glass Wipe, CC Grid Wipe, CC Image Wipe, CC Jaws, CC Light Wipe, CC Line Sweep, CC Radial ScaleWipe, CC Scale Wipe, CC Twister, CC WarpoMatic, Gradient Wipe, Iris Wipe, Linear Wipe, Radial Wipe, Venetian Blinds**. Most use an animated **Transition Completion** or related control. For custom reveals, a shape track matte can be lighter and more controllable than a canned transition.
+
+## 5.12 Perspective, immersive video, 3D channel and utility
+
+| Family | Effects to recognize |
+|---|---|
+| **Perspective** | **3D Camera Tracker** (reconstruct camera motion); **3D Glasses** (stereo layout); **Bevel Alpha/Bevel Edges** (faux raised edges); **CC Cylinder** (wrap layer around cylindrical surface); **CC Environment** (environment projection); **CC Sphere** (flat image → rotatable shaded sphere); **CC Spotlight** (faux lighting); **Drop Shadow / Radial Shadow**. |
+| **3D Channel** | **3D Channel Extract**, **Cryptomatte**, **Depth Matte**, **Depth of Field**, **Extractor**, **Fog 3D**, **ID Matte**, **IDentifier**. Many need actual upstream 3D-channel passes; simply applying to ordinary 2D footage may not produce useful results. |
+| **Immersive Video** | **VR Blur, VR Chromatic Aberrations, VR Color Gradients, VR Converter, VR De-Noise, VR Digital Glitch, VR Fractal Noise, VR Glow, VR Plane to Sphere, VR Rotate Sphere, VR Sharpen, VR Sphere to Plane**. VR-aware options account for spherical projection and seams. |
+| **Utility** | **Apply Color LUT, CC Overbrights, Cineon Converter, Color Profile Converter, Grow Bounds, HDR Compander, HDR Highlight Compression**. |
+| **CINEMA 4D integration** | **CINEWARE** displays imported Cinema 4D scenes and exposes relevant render/camera/pass controls. It is separate from the composition’s Cinema 4D renderer. See §5.17. |
+| **Text effects** | **Numbers** and **Timecode** are older *effects*; ordinary editable text and text animators are separate. |
+| **Expression Controls** | **Slider Control, Angle Control, Checkbox Control, Color Control, Point Control, 3D Point Control, Layer Control, Dropdown Menu Control**: control values for expressions, not “visual effects” on their own. |
+
+## 5.13 Audio effects — 2026 complete working shortlist
+
+**Backwards** (reverses audio only), **Bass & Treble**, **Compressor (NEW)**, **Delay**, **Distortion (NEW)**, **Flange & Chorus**, **Gate (NEW)**, **High-Low Pass**, **Modulator**, **Parametric EQ**, **Reverb**, **Stereo Mixer**, **Tone**. A **Compressor** can improve dialogue consistency; **Gate** can eliminate near-silent breaks; **Parametric EQ** removes unwanted frequency emphasis; **Reverb/Delay** create spatial/time effects. These are neither replacements for a proper audio mix nor automatically included in the Effects list on older installs.
+
+## 5.14 Obsolete effects / third-party names — don't confuse with defaults
+
+**Obsolete category (legacy project compatibility):** **Basic 3D, Basic Text, Color Key, Gaussian Blur (Legacy), Lightning, Luma Key, Path Text, Reduce Interlace Flicker, Spill Suppressor**. A legacy effect may still be present when a saved project requires it; for new work normally prefer a newer equivalent. **Mocha AE** is a bundled planar tracker; **Mocha Pro** is separately licensed and more capable. **Deep Glow**, **Deep Glow 2**, **Overlord**, **Motion 4**, **FX Console**, **Depth Scanner**, **loopFlow**, **True Comp Duplicator**, **imgPaster**, **ScaleUp**, **Crate's Godrays**, etc. are **third-party extensions/plugins/scripts**—they are **not all included in vanilla AE**. Check exact version, vendor and licensing before depending on them in a shared project.
+
+---
+
+
+
+## 5.15 Learn the new effects with small experiments
+
+### Curl Noise: separate structure, motion and output
+
+On a comp-sized solid, use `Ctrl+Enter` → `e:curl noise`. Begin with **Internal** input. **Speed/Direction** drift the source field; **Evolution** changes the swirl state; **Turbulence Speed** changes its temporal activity. **Scale/Offset/Rotation** place the pattern. **Swirl** changes curling strength, **Smoothness** softens detail, and **Density** redistributes structure. In Flow Options, **Sample Count/Radius** affect strand continuity and reach. Inspect **Input Noise**, **Curl Generation**, then **Final Render** to understand the stages. Colorize afterward with Tint/Tritone/Colorama.
+
+For a loop, set Input Noise Speed and Turbulence Speed to zero before cycling Evolution; test the seam. Layer-driven input uses source luminance and disables internal drift controls. [Adobe: Curl Noise](https://helpx.adobe.com/after-effects/desktop/apply-effects-and-animation-presets/list-of-effects/noise-grain-effects.html).
+
+### Unmult: create alpha from a black or white backing
+
+Use `e:unmult`, choose **Background Color → Black/White**, and adjust its **Black Level/White Level** while inspecting alpha with `Alt+4`. Use **Softness** for the transparency transition and **Remove Color Matting** to reduce backing-color contamination. **Clip HDR Results** limits out-of-range values. Check the result over both bright and dark backgrounds. A genuinely black part of the subject may disappear with black removal; use a protected matte when needed. [Adobe: Unmult](https://helpx.adobe.com/after-effects/desktop/animate-in-after-effects/work-with-keying-effects/keying-effects.html).
+
+### Audio: judge the level-matched result
+
+For **Compressor**, lower Threshold until loud phrases become steadier, then compare with bypass at similar loudness. Auto Release overrides manual Release. For **Gate**, set Threshold above the unwanted room level and preserve word endings using Hold/Release. For **Distortion**, compare Type choices with low Drive, blend using Mix, and compensate with Volume. Resolution and Downsample produce digital lo-fi damage. [Adobe: audio controls](https://helpx.adobe.com/after-effects/desktop/apply-effects-and-animation-presets/list-of-effects/audio-effects.html).
+
+## 5.16 Control any effect without rebuilding your layer stack
+
+**One effect on part of a layer:** draw a mask, set its mode to **None** if you do not want it to cut layer alpha, expand the effect in Timeline, then **Compositing Options → + → Mask Reference**. Select the mask and feather it. Effect Opacity blends that effect's contribution. This is useful for a localized Curves correction or blur. Multiple effects can use different masks. Check the effect's support and render order, especially on unusual layer types. [Adobe: effects and compositing options](https://helpx.adobe.com/after-effects/desktop/apply-effects-and-animation-presets/effects-and-animation-presets/effects-animation-presets-overview.html).
+
+**Reuse a look:** select the intended effects/properties, then **Animation → Save Animation Preset** to save an `.ffx`. A preset stores the chosen setup; it does not bundle source footage, fonts or plugins. Before applying it, put CTI at the intended start and inspect existing keyframes. A preset can overwrite or add properties and animation.
+
+**Set Matte source mismatch:** a matte sampled inside an effect may use different coordinates or source-stage pixels from a normal track matte. Match source dimensions, precompose the matte's transforms/effects when necessary, and inspect its actual alpha/luma. Prefer a native Track Matte for straightforward moving silhouettes.
+
+
+
+## 5.17 Integration effects and effect compatibility
+
+**CINEWARE** is the bridge for Cinema 4D scene layers. Import a `.c4d` scene and inspect its CINEWARE settings for renderer, camera and multipass handling. Editing the scene and rendering a 2D AE layer through CINEWARE differs from selecting **Cinema 4D** in Composition Settings. Required Maxon components and their versions matter. [Adobe: Cinema 4D and CINEWARE](https://helpx.adobe.com/after-effects/desktop/work-with-other-applications/work-with-cinema-4d-and-cineware/c4d.html).
+
+**Boris FX Mocha / Mocha AE** is bundled planar tracking integration. Launch its interface from the effect, track a suitable plane, then bring tracking/matte data back for the intended workflow. The effect can be installed yet its external interface or data export may still need attention. Mocha Pro is a separate product.
+
+**Tool-generated effect groups** include Paint, Puppet, and roto/matte processing. Their controls appear after using the relevant tool; they do not all behave like dragging a conventional effect onto a solid.
+
+### Read support indicators before blaming your GPU
+
+An effect can support **Multi-Frame Rendering**, **GPU processing**, and **8/16/32-bpc** independently. CPU effects can coexist with GPU effects. An 8-bpc-only operation may constrain precision in a higher-depth project; 32-bpc project settings alone do not make every operation HDR-safe. Alpha handling, renderer support and source-layer sampling also vary. Check the effect's own documentation and installed indicators. [Adobe: effect support directory](https://helpx.adobe.com/after-effects/desktop/apply-effects-and-animation-presets/effects-and-animation-presets/effect-list.html).
+
+# 06 — Everything New and Important Through 26.5
+
+> [!important] Release scope
+> **26.5 (September 2026)** is the target stable version for this reference, as of **October 27, 2026**. Feature availability can vary with the precise point release, hardware, renderer, UI workspace, and plugin versions. Features advertised only for **After Effects (Beta)** are not assumed to exist in the stable build. Check **Help → About After Effects** for the version you actually installed.
+
+**The new stable Effect-menu additions covered here are Unmult, Compressor, Gate and Distortion (26.0), plus Curl Noise (26.3).** The headline 26.5 additions concern guides, matte caching, effect organization and color management. Contour Paint and De-esser belong to the separate Beta watchlist below.
+
+## 6.1 The version-by-version field guide
+
+| Release | What changed | Why it matters / practical starting point |
+|---|---|---|
+| **26.5 — September 2026** | Better **guides** with percentage-based placement, pinning, and individual colors. | Set guides by percentage for portrait, square and landscape variations; anchor margins to the appropriate edge; **Lock Guides** separately prevents accidental dragging. |
+| **26.5** | **Object Matte** results can use disk caching, improving reuse and reopening performance. | Cache and keep work localized, and still review matte edges after major changes. |
+| **26.5** | **Effect Controls** improvements including **color labels for effects**. | Group heavy effects, color-code keyers/color/glow, and locate effect stacks faster. These are labels on controls, not a new visual effect. |
+| **26.5** | Color-management updates, including **ACES 2.0** support and updated **OpenColorIO 2.5.1**. | Make project/output color settings explicit before compositing; an ACES workflow is not automatically correct for every delivery. |
+| **26.3 — June 2026** | **Curl Noise** effect for swirling, organic 2D textures. | Try fluid ink, smoke and turbulence-style patterns rather than relying only on Fractal Noise. |
+| **26.3** | **Depth of Field** inside the **Advanced 3D renderer**. | Adjust focus in a real 3D scene, not merely a flat blur over a 2D image. |
+| **26.3** | Paste **Illustrator and SVG content** as editable shape content into AE. | Move vector paths into an animation-ready shape workflow when appropriate; inspect imported appearance and hierarchy. |
+| **26.3** | Improved **Mask Tracker** with faster tracking and more accessible Timeline controls. | Track a mask rather than hand-keyframing every frame for simple moving objects. |
+| **26.3** | **Copy Frame to Clipboard**. | Grab an exact rendered frame for review, painting or reference without a full sequence export. |
+| **26.3** | Better discovery of **variable fonts by axis**. | Find fonts whose weight/width or other supported axes are animatable. |
+| **26.2 — April 2026** | **Object Matte** for selecting/tracking foreground subjects. | Start with quick subject selection, refine on problem frames, then freeze/cache as appropriate. |
+| **26.2** | **Quick Apply** search launcher for effects, presets and more. | Press **Ctrl+Enter**; type a name rather than scrolling hundreds of effects. |
+| **26.2** | **3D Mesh Displacement** for modern 3D workflows. | Use geometry-based deformation; distinct from 2D Displacement Map on ordinary pixels. |
+| **26.2** | **Proportional Scrubbing** distributes value changes across selected layers. | Hold `Ctrl+Alt` while dragging selected property hot text; selection order determines the distribution. |
+| **26.0 — January 2026** | **Parametric 3D meshes**, expanded 3D/material capabilities and **Substance** integration. | Build basic 3D objects within AE; not a replacement for a full dedicated 3D package. |
+| **26.0** | **Variable font axes** in text workflows. | Animate typography at the font-axis level if the installed font supports those axes. |
+| **26.0** | **Unmult** effect. | Remove black backing from compatible light/particle/glow passes, then composite correctly with alpha. |
+| **26.0** | New audio **Compressor, Gate, Distortion** effects. | Basic dynamics, noise gating and signal distortion without round-tripping for every small edit. |
+| **25.4 — earlier foundation** | **Quick Offset** gesture for selected layers/keyframes. | Select in intended order → hold **Ctrl+Alt** → drag to distribute in time. |
+
+### The most useful modern features to learn first
+
+**Quick Apply: `Ctrl+Enter`** opens the search dialog. Type a command, effect or preset; narrow with `e:` (effects), `m:` (menu commands) or `p:` (presets). Once a result is selected **Enter** applies/runs it; **Ctrl+Enter** creates a new solid/layer with that effect where supported, and **Ctrl+Alt+Enter** creates an adjustment layer containing the effect. The same chord has a different function **while the Quick Apply dialog is already open**.
+
+**Quick Offset: `Ctrl+Alt+drag` selected Timeline items.** It works on selected *layer bars* or sets of *keyframes*. It is not the same as pressing `Alt+Left/Right` (frame-by-frame keyframe nudging). Quick Offset spaces a selected sequence based on **selection order**, preserving per-layer animations when offsetting the layers.
+
+**Object Matte vs Roto Brush vs mask tracking.** Object Matte is a semantic/object-selection workflow; Roto Brush grows a foreground selection across frames from guided strokes; Mask Tracker follows a defined mask. None is perfect. A clean roto often combines a rough machine-assisted selection with local corrections, holdout masks, Refine Edge, and careful checks around occlusion/motion blur.
+
+**Advanced 3D vs Cinema 4D renderer vs Classic 3D.** Render engine choice controls supported geometry, materials, lighting, depth and extrusion options. Switching render engines can alter how the composition renders; review the output, not just the settings. AE's Advanced 3D and parametric-mesh capabilities make many basic 3D projects possible without another app, but specialized simulations and modeling may still belong in dedicated 3D software.
+
+**Effect Controls color labels and guide pins.** Color-code related effect instances. Pinning a guide changes its reference edge when frame dimensions change; **locking** guides prevents accidental movement. They serve different purposes.
+
+## 6.2 What “new” does *not* mean
+
+- An **effect** has an adjustable effect instance in Effect Controls (for example **Curl Noise**, **Unmult**, **Glow**).
+- A **tool** is selected from the Tools panel (for example Object Matte, Roto Brush, Puppet Pin).
+- An **engine** changes how a 3D composition is rendered (for example Advanced 3D).
+- A **workspace/panel feature** improves operation but is not an effect (Quick Apply, Quick Offset, Effect Controls labels).
+- A **script** automates the application (the older Create Nulls From Paths panel is one example; modern equivalents are also native menu commands); a **preset** is a preconfigured group of properties/effects; a **third-party plugin** is installed separately.
+- A **Beta feature** is not reliable evidence that it ships in the stable 26.5 you have installed. Beta and stable releases can differ.
+
+
+## 6.3 Features still labeled Beta at the research cutoff
+
+Adobe's Beta page, updated **October 7, 2026**, lists the following separately from the stable feature set. These are useful to recognize in tutorials; they are **not instructions to expect these commands in stable 26.5**.
+
+| Beta feature | What it concerns |
+|---|---|
+| **Contour Paint** | Stylization using image contours. |
+| **De-esser** | Targeted attenuation of vocal sibilance. |
+| **AI Assistant** | Natural-language assistance inside AE. |
+| **Layers as material sources** | Animated layers/precomps as 3D material inputs. |
+| **Substance materials on 3D text/shapes** | Expanded material assignment. |
+| **Editable Illustrator text conversion** | Importing text as editable AE text. |
+| **Quick Set Anchor** | Faster anchor placement. |
+| **Alt-drag layer duplication in the viewer** | Broader layer-duplication gesture. |
+| **PNG compression setting** | Export speed/file-size control. |
+| **Account / Stock panels; enhanced Auto-Save** | Account, asset and recovery workflows. |
+
+Stable shape-selection **Alt** gestures already exist; the broader viewer layer-duplication feature above is a separate Beta item. [Adobe: Beta feature list](https://helpx.adobe.com/after-effects/desktop/what-s-new/after-effects-beta.html).
+
+
+
+## 6.4 Changes returning users may have missed before 26.0
+
+**25.2** added the enhanced point/null workflows, HDR monitoring and faster preview playback. **25.3** introduced smoother viewer zooming and Reveal Project in the file system. **25.4** added Quick Offset, text-formatting paste and CICP metadata support. **25.6** added the shared multi-layer 3D gizmo and default-camera controls. These capabilities remain relevant in 26.5, even though tutorials may describe them as new to an earlier release. [Adobe: feature chronology](https://github.com/AdobeDocs/after-effects-feature-history).
+
+---
+
+# 07 — Troubleshooting and Performance
+
+## 7.1 Work faster without damaging final quality
+
+**Aim for interactive previews, not for permanently lowering project quality.** Review these in order:
+
+1. **Limit work area** to the frames you need (`B`, `N`), and preview a few seconds of the shot rather than an entire multiminute composition.
+2. Reduce **Composition preview resolution** to Half or Quarter when editing; switch back to Full for pixel-edge checks and final QC. Preview resolution **does not automatically dictate final render resolution**.
+3. Close unused viewer tabs, heavy applications and extra compositions. Keep reasonable storage space on the fast drive containing the disk cache.
+4. In **Preferences → Memory & Performance** check RAM allocation and **Multi-Frame Rendering** settings. The best parallelism depends on RAM, effect/plugin compatibility and media decoding; “maximum cores” is not always optimum.
+5. Temporarily disable the **heaviest effect** (blur, glow, particles, lens blur, denoising, motion blur), then reenable it for output. Disable an *individual* effect via its `fx` toggle, or a *whole layer's effects* using its Timeline Effects switch. `Ctrl+Shift+E` **deletes** effects—do not use it to switch them off.
+6. **Precompose strategically**. Precomp when you need a repeated effect stack, isolated matte/transform space, or shared animation. Too many deeply nested precomps can make troubleshooting harder.
+7. For repeating, unchanging expensive animations, consider **pre-rendering** a short alpha-preserving clip, replacing a computation-heavy comp temporarily while retaining a source version for edits.
+8. Check source **codec** and timing. Long-GOP MP4/H.264/HEVC and **variable frame-rate** screen recordings can be harder to seek and composite than intra-frame ProRes, DNxHR or image sequences. Transcode **when needed**; MP4 and MP3 are not inherently forbidden.
+9. **Disk Cache** and **Memory** are different. Purge memory/disk cache only to resolve a stale/corrupt/cache-related problem or reclaim space—frequent purging destroys useful preview work.
+10. Before output: reenable effects, inspect alpha, color space, frame rate, motion blur, work area, and output module. Watch a **rendered** sample, not only the interactive Composition viewer.
+
+**Composition Profiler:** When a composition remains slow after basic preview tuning, use the built-in **Composition Profiler** to identify which layers and effects are costly. Diagnose rather than assume Blur/Glow or a particular codec is always the worst offender. Separate preview improvements (lower resolution, shorter work area, proxy) from final-render optimizations (faster source decoding, pre-rendering, reduced effect stacks).
+
+### Project safety and organization
+
+Use **Auto-Save**, keep incremental `.aep` project copies for major creative directions, rename layers, label sections, and avoid placing project media in disposable downloads/cloud placeholders. **File → Dependencies → Collect Files** helps hand off projects, but review the collected assets, fonts, installed plugins and external scripts; merely collecting footage does not bundle all third-party licensing or fonts. Adobe Media Encoder and Premiere interchange may treat data sources differently from AE: test the intended output path early.
+
+## 7.2 If it breaks, diagnose it like this
+
+| Symptom | Most likely checks | Practical fix |
+|---|---|---|
+| **Nothing appears in the viewer** | Layer eye, Solo, enabled comp, work area, layer in/out, opacity, blend modes, track matte, guide layer, 3D view, collapsed transformations, alpha, effects | Start by switching to Active Camera/Front as appropriate and temporarily bypass suspect mattes/effects. |
+| **Layer is black where it should be transparent** | Transparency Grid is a *preview aid*; comp background color isn't alpha, solid-color source may be opaque | Toggle Transparency Grid and inspect **Alpha channel**, not simply black RGB. Choose output format with alpha if needed. |
+| **Background is black after export** | Codec/container doesn't preserve alpha; transparency interpreted as black in player | Use ProRes 4444 or appropriate PNG/EXR sequence with **RGB+Alpha** and correct alpha interpretation. Standard H.264 MP4 doesn't export an alpha channel. |
+| **Matte isn't working** | Track Matte source assignment, Alpha vs Luma, invert, source visibility, matte layer alpha/brightness | Select the **matted layer**, choose its **matte source** with pick whip/dropdown. Matte source may be elsewhere in layer stack. |
+| **Some effects appear missing** | Effects & Presets search, installed plugin, effect hidden in Obsolete group, renderer or bit-depth limitations | Confirm exact effect name/category; inspect supported 8/16/32-bpc and GPU icons, then verify plugins. |
+| **Can't see keyframes** | Property is collapsed, layer not selected, Timeline search filter, expression-only animation | `U` shows keyed properties; `UU` modified properties; `EE` expressions. Clear Timeline search. |
+| **`J/K` seems to skip keyframes** | Relevant properties are not exposed | Reveal keyframes with `U` and clear search/filter. |
+| **Shortcut doesn't work** | Wrong panel focus; text cursor active; laptop Fn mapping; OS intercept; custom shortcut | Click correct panel; press `Esc` to leave text edit; check **Edit → Keyboard Shortcuts**. |
+| **`G/Q` draws a mask instead of a shape** | Existing footage/solid layer selected vs no layer selected; Tool Creates Shape/Mask setting | Deselect layers for a new shape layer; deliberately choose Shape or Mask mode. |
+| **Cannot edit parametric rectangle vertices** | Procedural Rectangle Path rather than Bézier path | Convert shape path to **Bézier Path**, then select Path and vertex. Preserve parametric form if you still need width/corner sliders. |
+| **Path pasted into Position doesn't follow correctly** | Wrong path/property selection; position separation; space transforms; dimensions | Copy actual Path property, paste on Position with playhead at desired time, inspect spatial path. |
+| **Auto-Orient flips or points the wrong way** | Original artwork direction, tangent, parent transform, spatial path | Use Auto-Orient Along Path and rotate source art/precomp for desired leading direction. |
+| **3D object is flat / no depth** | 3D switch vs geometry extrusion, render engine, mesh type, camera/light | A 3D switch creates a plane; actual geometric depth requires supported geometry/renderer and property controls. |
+| **Light has no effect** | Layer material settings, 3D renderer, light type, lighting switch or blend style | Verify compatible renderer and Accepts Lights/material properties. |
+| **Motion blur doesn't show** | Layer motion-blur switch, comp master motion-blur switch, shutter angle, type of animation | Enable both switches and verify shutter angle/samples; FX blur may behave differently. |
+| **Roto Brush crawls or drifts** | Propagation, segmentation boundary, view resolution, clip cuts, occlusion, strokes too broad | Work close to source/full resolution, make small corrections, propagate in short spans, refine and freeze. |
+| **Object Matte has errors at edges** | Fine hair, transparent/glass objects, motion blur, similar background colors | Add precise manual correction, holdout masks and edge refinement; check many frames not only one frame. |
+| **Green-screen subject looks transparent** | Too aggressive Clip Black/White, Shrink/Grow, despill, suppression | Inspect Keylight **Screen Matte**; aim for clean black background, white subject and sensible grey edges. |
+| **Roto/keyer edges have a halo** | Premultiplied RGB contamination, poor despill, matte chatter, uncorrected edge colors | Check straight/premultiplied interpretation, use edge color decontamination/despill, slight blur/choke only if needed. |
+| **Animation seems to speed up unpredictably** | Unequal keyframe timing, nonlinear Graph Editor easing, path distances, frame rate | Examine **motion-path dots**, timing, speed graph and roving keys. Equal time between keys ≠ constant spatial speed. |
+| **Keyframes won't move off frames** | Timeline snapping / graph options | **Graph Editor → Choose Graph Type and Options → Allow Keyframes Between Frames** (when supported). Rendering still samples actual frame times. |
+| **Badly lagging preview** | Large footage, many layers, effects, GPU memory, disk cache, insufficient RAM, compressed media | Start with 1/4 preview and shorter work area; disable heaviest effects; test transcoded sources; inspect cache/disk. |
+| **Audio drifts out of sync** | Variable frame rate footage, interpretation mismatch, mixed sample rates, time stretching | Convert VFR footage to constant frame rate; confirm comp rate, audio 48 kHz where appropriate; inspect source timing. |
+| **Type animation breaks across machines** | Missing font or font-axis support, font version mismatch, plugin effects | Package font/license details, verify exact font and open a test copy on target machine. |
+| **Render different from preview** | Work area vs entire comp; proxy; guide layers; 3D/camera, output color/bit depth; motion blur/sample settings | Render a short test with the intended output module and compare RGB/alpha/color. |
+| **Render fails / hangs** | Corrupt frame, GPU driver, unsupported plugin, insufficient disk space, bad source segment | Narrow to failing frame/time, disable suspected effect, render a short image sequence, review log, update plugin/driver responsibly. |
+
+## 7.3 Color management: the 90-second decision tree
+
+```text
+What is the source?
+  ├─ Ordinary display graphics / web clips
+  │    → Identify likely Rec.709/sRGB source and output; avoid unnecessary conversions.
+  ├─ Log camera footage
+  │    → Confirm camera profile; transform with correct camera input/OCIO/LUT,
+  │      grade in a chosen working space; transform to delivery space.
+  ├─ Scene-linear EXR / CGI passes
+  │    → Use suitable linear/HDR float workflow; preserve highlights and EXR channels.
+  └─ Mixed sources and VFX pipeline
+       → Define project working space, interpret each source,
+         check ACES/OCIO configuration, and validate render transform.
+```
+
+**8 bpc vs 16 bpc vs 32 bpc:** This is **working precision per channel**, not simply the camera recording bit depth; it doesn't make an 8-bit file secretly contain 10-bit detail. **16-bpc** can reduce banding in many workflows; **32-bpc float** allows extended linear/HDR arithmetic where supported. It costs more processing and memory. For color-critical work check actual source interpretation, effect bit-depth support, working-space conversions and delivery transform. **A 10-bit camera recording is not “unsupported” because there is no 10-bpc comp toggle.**
+
+**Viewer background vs alpha:** `Ctrl+K → Background Color` controls composition's preview background color; it does not make the transparency region opaque in an alpha-capable render. The checkerboard comes from the **Toggle Transparency Grid** control; its appearance is separate.
+
+## 7.4 Pre-render/export choices
+
+| Delivery | Usual starting point | Note |
+|---|---|---|
+| Web / review without transparency | **H.264 in MP4**, directly in native Render Queue or through Adobe Media Encoder | Native H.264 export is supported in modern AE; check bitrate/color/audio. |
+| Intermediate editing master | **ProRes 422** / DNxHR (supported environments) | Easier to seek than long-GOP footage; no alpha in standard ProRes 422. |
+| Motion graphics with transparency | **ProRes 4444 (RGB+Alpha)** or **PNG sequence** | Alpha must be enabled explicitly; check straight vs premultiplied. |
+| VFX compositing / HDR | **EXR image sequence** | Preserves float precision and relevant channels; plan disk usage. |
+| Backup for crash-prone/very expensive effect chains | **Image sequence** | Resumes/replaces individual bad frames more easily than a single long movie file. |
+
+**Two-step delivery is optional:** render a high-quality intermediate then encode H.264, especially for client revisions or multiple deliverables. For many projects it is perfectly reasonable to export H.264 directly from AE's Render Queue.
+
+
+## 7.5 Diagnose the exact slow operation
+
+Click the **snail icon** in Timeline, or right-click its column headings → **Render Time**. Expand a slow layer to inspect individual effects and masks; open a nested comp to investigate its contents. Compare the same frame at the same resolution with Adaptive Resolution off. Cached timings include cache retrieval and can appear much faster than an uncached render. An asterisk identifies cache use. A single frame does not represent every frame in a particle or roto shot. [Adobe: Composition Profiler](https://helpx.adobe.com/after-effects/desktop/work-with-compositions/composition-profiler/composition-profiler.html).
+
+### Four things commonly called “cache”
+
+| Mechanism | What it helps with | Practical consequence |
+|---|---|---|
+| RAM preview frames | Immediate playback of computed frames | Edits and memory pressure invalidate/evict results. |
+| Disk cache | Reusing computed frames from storage | A fast drive and available space help; repeated purging removes useful work. |
+| Lossless compressed disk frames | Storing more cached frames in the same space | This is cache storage compression, not an export quality setting. |
+| Object Matte propagation cache | Reusing analyzed matte results | 26.5 persists these results to disk across sessions; cache is not project backup. |
+
+**Compressed frames:** **Edit → Preferences → Disk → Disk Cache → Enable Compressed Frames (Lossless)** controls the storage feature. Disable it as a targeted diagnostic if a cache-related problem warrants it; it is ordinarily enabled. [Adobe: lossless playback cache](https://helpx.adobe.com/after-effects/desktop/view-and-preview/preview-video-and-audio/lossless-compressed-playback.html).
+
+## 7.6 An installed effect can still appear missing
+
+Open **Effect → Manage Effects**. Check **Enabled**, version, path and **Last Crashed**. An effect disabled there disappears from effect menus/search and appears Missing in projects that use it. Reenable only after addressing the relevant plugin/version issue, then restart AE. The manager's disable action applies at startup; it differs from the `fx` bypass switch on one effect instance. After a crash, AE may offer to disable a suspect effect or start in Safe Mode. [Adobe: Effect Manager](https://helpx.adobe.com/after-effects/desktop/apply-effects-and-animation-presets/effects-and-animation-presets/effect-manager.html).
+
+## 7.7 Select and inspect complex projects efficiently
+
+In the Comp viewer, right-click an obscured object → **Select → layer name**. Use **Select Label Group** to gather related layers or **Select Children** on a parent to add its children. With **Hide Shy Layers** enabled, Timeline Select All excludes hidden shy layers; verify selection scope before bulk edits. These selection methods complement `Ctrl+Up/Down` and numbered-layer selection. [Adobe: layer selection](https://helpx.adobe.com/after-effects/desktop/work-with-layers/select-and-arrange-layers/selecting-arranging-layers.html).
+
+If Copy seems to copy only an effect or keys, deselect internal components with `Shift+F2` while retaining the layer, then copy again. Inspect selection before deleting, duplicating or pasting. A layer selected with a selected property is a different editing context from a layer selected on its own.
+
+---
+# 08 — Practical Recipes (Copy the Method, Not Just the Shortcut)
+
+> [!tip] The recipe format
+> **Goal → Setup → Steps → Quality check.** Try each recipe with throwaway shapes and 5-second compositions before using it on a client project. A reproducible effect stack teaches more than memorizing a menu name.
+
+## 8.1 Smooth logo or shape reveal with an Alpha Matte
+
+**Goal:** Show a moving text/logo only inside a specific shape.
+
+1. Make text/logo **T** and an opaque rectangle **R** as separate layers. Position **R** as the reveal region.
+2. On **T** (the layer to be *revealed*), locate **Track Matte** in the Timeline. If missing, use `F4`, then inspect the panel columns.
+3. Use the Track Matte pick whip on **T** to choose **R**. Set **Alpha** (use the rectangle's opacity/alpha) and leave **Invert** off.
+4. Animate **T** Position from outside to inside the rectangle and add easing (`F9`); optionally animate matte **R** independently.
+5. **Invert** to show text only *outside* the rectangle. **Luma** to use brightness rather than actual transparency.
+
+**Quality check:** The matte layer need not be adjacent to the target, and can be used more than once. A matte may be hidden as an independent normal render while continuing to define alpha; toggling its visibility should be done deliberately, not by relying on old pre-2023 behavior.
+
+## 8.2 Footage inside an animated silhouette
+
+**Goal:** A moving person appears to be made of rainbow video/abstract texture.
+
+1. Use **Roto Brush** or **Object Matte** to cut out the person in layer **P** (verify the person is opaque and the rest transparent).
+2. Put animated texture or video on layer **F**.
+3. Choose **P** as **F**'s Track Matte; choose **Alpha**. **F** is the layer being cropped, so **F** owns the Track Matte setting.
+4. Keep the motion of the texture independent of the matte; precompose either result if you need to animate or glow the finished composite as one item.
+
+**Variation:** Choose **Alpha Inverted** for a person-shaped hole through the footage. Choose **Luma** for a brightness-based silhouette, such as a smoke/gradient-driven reveal.
+
+## 8.3 Clean green-screen composite with Keylight
+
+**Goal:** Remove chroma screen without cutting away hair, translucent clothing or fine details.
+
+1. **Prepare:** check camera codec and source-color interpretation. If the screen is uneven, create a loose **garbage mask** to exclude irrelevant off-screen areas.
+2. Apply **Keylight (1.2)** to the foreground; choose **Screen Colour** using a representative green or blue region. The eyedropper's sampling behavior may vary by effect and tool; inspect matte rather than assuming a modifier gives an ideal average sample.
+3. Set **View → Screen Matte**. Aim for **solid white inside subject**, **black outside**, with intentional grey on hair/partially transparent edges. Adjust **Clip Black / Clip White** in small increments. Don't automatically push Clip Black into the 90s; excessive thresholds destroy useful edge detail.
+4. Fine-tune **Screen Pre-blur** or **Screen Shrink/Grow** sparingly; soft edges should arise from the real scene and shutter, not just an arbitrary blur.
+5. Use **Key Cleaner** / **Advanced Spill Suppressor** where needed. **Intermediate Result** is useful in a multi-effect keying pipeline (e.g., Keylight → Key Cleaner → Advanced Spill Suppressor); the Keylight **View** setting can affect intermediate output, so confirm your intended pipeline's setting rather than treating it as cosmetic only.
+6. Put a real background below, zoom to 100%, and check a **moving** preview. Apply color/grain/lighting integration after extracting the subject.
+
+**Avoid:** multiple heavy Keylight instances, legacy **Color Key** and severe choke by default. Add another keyer or use inside/outside matte logic only when the actual screen needs it. Many green-screen shots key cleanly with **one** well-tuned instance and good spill removal.
+
+## 8.4 Trace motion to an arrow, label or light
+
+**Goal:** Have a graphic travel along a custom curved path.
+
+1. Draw a path (mask path or shape path). Select the actual **Path** property and copy (`Ctrl+C`).
+2. Select target layer's **Position** property, put CTI where motion should start, and paste (`Ctrl+V`). AE generates Position keyframes along the path.
+3. Choose **Layer → Transform → Auto-Orient → Orient Along Path** (`Ctrl+Alt+O` opens Auto-Orient). Source art may need an initial rotation so the arrowhead points forward.
+4. Use Graph Editor `Shift+F3`, and adjust keyframe timing or easing (`F9`). Examine motion path dots: **widely spaced dots = greater instantaneous motion**, close dots = slower motion.
+
+**Alternative:** **Layer → Create → Null Tracing Along Path**. Animate the generated **Progress** control to move a null, then **parent** the arrow to the null. This is especially useful for ongoing edits to the path.
+
+## 8.5 Turn static handwriting into a write-on animation
+
+**Option A — most practical for logos/lettering:** Draw a shape stroke along the lettering, then on the stroke group **Add → Trim Paths**. Animate **End** from **0% to 100%**. To reveal a polished logo, use the animated stroke as a **track matte** over the final artwork; size the stroke to cover glyph width.
+
+**Option B — record strokes as you draw:** Create a solid, open it in the **Layer panel** (not just Composition viewer), choose **Brush Tool** (`Ctrl+B` cycles through paint tools), open **Paint** panel and set **Duration → Write On**. Paint directly over time. Turn on **Paint on Transparent** if you want just the painted strokes, and use `UU` on the painted layer to reveal modified paint-stroke properties. Brush drawing in the Composition panel is not the same as paint in the Layer panel.
+
+**Quality check:** Stroke order, duration and gaps are all visible at normal playback speed; re-time individual strokes if a word should look truly handwritten.
+
+## 8.6 Animate wavy hair, flags, smoke or water using Wave Warp
+
+1. Create a narrow solid/shape or masked strip representing the object; for **hair**, taper or distort it to an organic silhouette; for a **flag**, keep the anchored edge where the flagpole is.
+2. Add **Wave Warp**; lower **Wave Height** for subtle motion and adjust **Wave Width** for wavelength. Set **Direction** and **Wave Speed**.
+3. Use **Pinning** (for example pin at the flag's attached edge) to keep one edge steady. For hair, use a narrow masking profile and moderate movement.
+4. For layered smoke, duplicate the strip, use different speeds/widths and small time offsets; apply **Roughen Edges**, Blur, **Turbulent Displace** or **Bezier Warp** sparingly for a less mechanical outline.
+5. For a repeatable cycle, animate compatible effects with an intentional periodic speed/duration, precompose and loop the resulting pre-rendered segment if necessary. The source animation must **already be seam-free** before a loop expression or duplicated clip will hide a jump.
+
+**Alternative:** **Puppet Pin** for anchored hair/cloth, **CC Particle World** for a particulate smoke look, **Curl Noise** for fluid background motion. Effects have different physics; pick the method that best fits the visual task.
+
+## 8.7 Turn a static image into convincing faux-3D motion
+
+**Layer-separation approach (usually cleanest for parallax):** Duplicate the still in Photoshop or another layer editor; isolate foreground, midground and background; **inpaint the missing background** where the subject used to be. Import as a layered PSD/composition, set cards to 3D, separate their **Z** values and animate a camera a short distance. Slight depth variation creates perspective, but too much exposes stretched edges.
+
+**Depth-map distortion approach:** Generate a grayscale depth estimate where near/far values are consistent and documented. Add **Displacement Map** to the original image; point it to the depth layer; choose a channel and modest Max Horizontal/Vertical Displacement. Animate those values or the depth map. Apply a soft **Fast Box Blur/Gaussian Blur** to noisy depth boundaries when needed. This is **2D pixel displacement**, not true 3D geometry and cannot plausibly reveal unseen surfaces.
+
+**Actual 3D approach:** With appropriate hardware, supported 3D source and engine, use **Advanced 3D** and supported 3D mesh/displacement/DOF capabilities. A model with geometry can handle camera parallax more convincingly than a flat still.
+
+## 8.8 Depth-map wipe (reveal near/far features in order)
+
+1. Put the **incoming image/video** above the outgoing image.
+2. Make a grayscale depth map corresponding to the intended reveal; white vs black determines wipe timing, depending on effect configuration.
+3. Add **Gradient Wipe** to the incoming layer; set **Gradient Layer** to that depth-map layer and choose the desired source/effects option.
+4. Animate **Transition Completion**. Adjust **Transition Softness** to avoid brittle boundaries. Invert the map if the reveal starts in the wrong depth zone.
+5. If creating a seamless reveal, match the two images' color, alignment, motion and subject contours; a depth map is not a true 3D occlusion solver.
+
+**Tip:** A blurred depth map often makes a smoother reveal. For a graphic instead of a depth-aware wipe, use a simple animated Luma Matte—it is easier to art-direct.
+
+## 8.9 Audio-reactive pulse, shake or scale
+
+1. Import WAV/AIFF/audio footage. Choose **Animation → Keyframe Assistant → Convert Audio to Keyframes** on the audio layer.
+2. AE creates an **Audio Amplitude** null containing left, right and **Both Channels** slider keyframes. Select it and `UU` to reveal modified sliders.
+3. On a logo's **Scale** property, `Alt+click` stopwatch, then enter:
+
+```js
+amp = thisComp.layer("Audio Amplitude").effect("Both Channels")("Slider");
+pulse = linear(amp, 0, 25, 95, 125);
+[pulse, pulse];
+```
+
+4. Adjust the **input range `0–25`** to suit the actual slider values; they vary by recording and level. For punchier beats, consider smoothing or clamping (`clamp`) and layer separate frequency bands via proper audio processing.
+
+**To create an audio line around a circle:** Add **Audio Spectrum** on a solid, assign **Audio Layer**, draw an ellipse **mask** set to `None`, then select that mask in the effect's **Path** control. Shape-layer paths aren't automatically usable as mask-path choices; create/copy an actual mask path.
+
+## 8.10 Neon outline around a tracked subject
+
+1. Extract subject alpha via roto/matte; duplicate foreground into a clearly named **Outline Source** precomp.
+2. Generate perimeter path with **Layer → Auto-trace** (choose Alpha and intended work area) on material with a clean alpha. On a moving subject, check number of auto-traced masks: complex cases create many paths.
+3. Apply **Stroke** effect to a selected mask or animate a dedicated shape stroke from copied path data. Add **Glow** after Stroke; optionally **Roughen Edges / Turbulent Displace** before Glow.
+4. Review line path accuracy frame by frame. Auto-trace on moving noisy footage can generate unwieldy paths; a simplified manual contour or matte-edge extraction can look cleaner.
+
+**Alternative:** Duplicate matte layer → **Find Edges** / **Minimax** / **Simple Choker** to isolate an edge, colorize then glow. Render cost and edge flicker vary by approach.
+
+## 8.11 Tracking a graphic onto a wall or screen
+
+**Flat, perspective-moving planar surface:** Use **Mocha AE** planar tracking. Select the wall/screen region, track translation/scale/rotation/shear/perspective, export **Corner Pin** / supported transform data to the inserted graphic. Precompose the graphic at the intended screen dimensions, then add blur/grain/reflections and occlusion to integrate it.
+
+**Single moving point:** Use **Track Motion**, choose Position (and rotation/scale where useful), set **Edit Target** to a Null and **Apply**. Parent your graphic to the Null. This is not necessarily accurate for perspective tilts; switch to a planar/Corner Pin track.
+
+**Moving camera through a real 3D space:** Try **3D Camera Tracker**; pick a stable plane, create tracking solid/null and camera, orient design in space. It needs enough trackable parallax and can fail with pure zoom, motion blur or moving foreground.
+
+## 8.12 Stabilize a dancer's face while the world moves
+
+1. Choose a readable patch around the head and **Tracker → Stabilize Motion**. Position alone is enough for basic stabilizing; add Rotation/Scale for significant camera changes.
+2. Track forward and backward as needed; inspect the motion track and manually repair bad frames.
+3. **Apply** and verify which layer is actually transformed. Stabilization moves the **whole shot** to hold the target still and may expose border gaps.
+4. Enlarge the stabilized layer slightly, crop or fill edge regions. For subject-specific stabilization, mask/roto and independent background treatment may be needed.
+
+**Important:** Stabilize Motion is different from **Warp Stabilizer VFX**, which estimates a broader motion field and may warp the image. Use the least destructive method that solves your shot.
+
+## 8.13 Masks with per-vertex feathering
+
+1. Select a layer and draw/choose a mask (`G`). `M` reveals Mask Path; `MM` expands all mask properties; `F` shows Mask Feather.
+2. Choose **Mask Feather Tool** from the Pen Tool group. Add **feather points** at needed locations along the edge; pull them outward/inward to control local feather width.
+3. Use broad feather at soft hair and little/no feather near a crisp object edge. Combine with global **Mask Feather** carefully rather than assuming all edges need a uniform amount.
+4. Check scale and zoom: small mask deviations can look severe in final-size delivery.
+
+## 8.14 Shape gradients, outlines, star points and morphs
+
+- **New shape or new mask?** With **no layer selected**, `Q`/`G` typically creates shape content. With an existing compatible layer selected, shape/pen tools often create **masks**. Use the toolbar's Shape/Mask option intentionally.
+- **One shape layer can contain many paths/groups:** Expand **Contents**, add multiple groups/paths/fills/strokes and use each group's **Transform** to animate independently. Master **Transform** affects the entire shape layer.
+- **Parametric vs Bézier:** Rectangle/Ellipse/Polystar Path provides live size/roundness/points properties; **Convert to Bézier Path** for manual vertex manipulation. Converting sacrifices some procedural controls.
+- **Filling with gradient:** Choose Gradient Fill/Stroke, alter start/end points in Composition viewer and fine-tune stops in the gradient editor. Holding **Alt** while clicking the Fill/Stroke selector cycles permitted types in supported versions.
+- **Star during draw:** Hold mouse down, press **Up/Down** to change points; use **Shift** to constrain. Other drawing modifiers are in [[#03 — Complete Shortcut Reference]].
+- **Morph one shape to another:** Two Bézier paths should use compatible vertex counts and vertex order. Animate **Path**; AE interpolates corresponding points. For unrelated outlines, redraw/reorder paths or use a different transition.
+
+## 8.15 Freeze, loop and reverse correctly
+
+| Goal | Method | Warning |
+|---|---|---|
+| Freeze a video at one frame | Position CTI → **Layer → Time → Freeze Frame** | It affects source time at the chosen frame. |
+| Hold a frame then resume footage | **Layer → Time → Enable Time Remapping**; add/modify time-remap keys to create a hold interval | Watch for an unwanted duplicate last-frame/off-by-one key. |
+| Reverse footage | **Layer → Time → Time-Reverse Layer** (`Ctrl+Alt+R`) | Reverses the media, distinct from reversing keyframes. |
+| Reverse selected animation | **Time-Reverse Keyframes** (Keyframe Assistant) | Doesn't reverse source footage. |
+| Paste keyframes in reversed sequence | Copy selected keys → **Paste Reversed Keyframes** (`Ctrl+Shift+V`) | Check current-time insertion point. |
+| Loop imported clip at source level | Project panel → **Interpret Footage → Main → Loop** count | Source-level repeat; not an expression on the footage layer. |
+| Loop a keyed property | Set at least two keys → expression `loopOut("cycle")` | Applies to properties, not to arbitrarily trimmed video playback without time remap. |
+| Boomerang keyed property | `loopOut("pingpong")` | Reverses interpolated keyframe motion each cycle. |
+
+## 8.16 360° imagery and immersive footage
+
+**Sphere-to-plane viewing:** Put an **equirectangular** 360° still/movie in a comp and use **VR Sphere to Plane**, or the appropriate immersive-video converter. Choose field of view/yaw/pitch/roll as needed. **CC Environment** is a different approach to project the image into an environment with an appropriate AE camera; it isn't exclusively for stills. **VR Comp Editor** workflows/scripts can set up a convenient editing layout depending on installed version. For effects spanning the 360° seam, use **VR-aware effects** such as VR Glow/VR Blur rather than a 2D effect that creates a visible discontinuity.
+
+## 8.17 Build consistent animated callouts using Essential Properties
+
+1. Make a source comp **CALL_OUT_MASTER** containing text, shape box, accent color and entrance animation.
+2. Open **Essential Graphics** and expose supported controls (Source Text, color, slider, checkbox, etc.).
+3. Nest the master into individual comps, then change exposed **Essential Properties** **per instance** while keeping shared animation from the master.
+4. Parent the overall callout to a tracked Null if it must follow footage.
+
+This allows one animation to drive many variations. Essential Properties are **not** a magical substitute for expressions, parenting or individual instance-specific content; expose only the properties a downstream editor needs.
+
+---
+## 8.18 Professional AE camera basics: one-node, two-node and orbit rigs
+
+**Goal:** orbit a 3D subject, cut between camera angles and animate a controlled rack-focus shot without fighting the camera's point of interest.
+
+**One-node camera:** Controls Position and Rotation/Orientation directly like a camera mounted on a rig. It is great for intentional cinematography, handheld movement, saved camera animation and first-person perspectives. It does **not** have a separate Point of Interest handle. **Two-node camera:** Includes a **Point of Interest** that controls where the camera aims; useful for keeping a specific object framed. Neither option is inherently superior for every task.
+
+**Easy orbit rig:**
+
+1. Add 3D subject; create camera (**Ctrl+Alt+Shift+C**). Use a two-node camera if you want a visible Point of Interest.
+2. Choose **Layer → Camera → Create Orbit Null** (when available in your AE version), or create a Null **Ctrl+Alt+Shift+Y**, enable its **3D** switch, place it at the object center and **parent the camera to the Null**.
+3. Keep the camera some distance back on its local Z axis, then rotate the **Null** around Y to orbit the subject. Keyframe Null Y Rotation instead of needlessly keyframing both camera XYZ and Point of Interest.
+4. With camera active, **C** cycles Camera tools as available; **1, 2, 3** switch camera orbit/pan/dolly controls in supported 3D navigation contexts. **Ctrl+Alt+Shift+\** moves selected camera and Point of Interest to view selected 3D layers.
+5. A camera can also be **parented to multiple nested Nulls** to separate orbit, height and shake, but label them clearly and avoid needless transform complexity.
+
+**Change viewpoints mid-shot:** Create two (or more) Camera layers with intentionally different views. AE chooses the active camera according to layer visibility and timing/stack behavior; arrange camera layer in/out points so only the intended camera governs a given moment. **Alt+]** trims selected camera's out point to CTI. Put the new camera's start at the cut time. Camera cuts are immediate unless you animate or blend via an appropriate strategy.
+
+**Focus for depth of field:** On a camera with supported renderer/camera settings, enable DOF and adjust **Focus Distance** and **Aperture**. You can use **Layer → Camera → Link Focus Distance to Point of Interest**, **Link Focus Distance to Layer**, or **Set Focus Distance to Layer** for precise focus control. **Link** keeps expression-based tracking; **Set** calculates the current distance without persistent tracking. The modern Advanced 3D renderer supports in-engine depth of field in AE 26.3+; verify renderer-specific blur controls, quality and supported geometry.
+
+**Physical lens intuition:** Shorter focal length = wider framing **if camera position and film size are held constant**; longer focal length = tighter framing. Moving camera position changes perspective/parallax; merely zooming focal length does not. A camera's **f-stop** series is approximately f/1.4 → f/2 → f/2.8 → f/4 → f/5.6: **one** stop from f/1.4 to f/2 means **half the light**, **two** stops from f/1.4 to f/2.8 means **one-quarter the light** (for a real camera with other settings held fixed). In AE's simulated DOF, aperture/blur controls create the visual effect; don't assume exposure automatically changes exactly like a physical camera.
+
+**QC:** Check **Active Camera** view rather than judging final staging solely from a custom 3D view. In a shot with multiple camera layers, verify cuts at the frame before, at and after each transition. If a camera appears to look away unexpectedly, examine **Point of Interest**, orientation, parent transforms and the active camera layer.
+
+## 8.19 Troubleshoot an effect by showing its deformation on a grid
+
+1. Create a comp-sized solid and apply **Generate → Grid**. Set a visible grid spacing with contrasting colors.
+2. Put a suspect **Distort** effect (Wave Warp, Bezier Warp, Turbulent Displace, Displacement Map, Liquify, etc.) **below the Grid effect in that layer's Effect Controls stack** so it affects the grid pixels generated above it. AE effects process in stack order.
+3. Change one parameter at a time and observe which grid lines bend/shift. Switch to an ordinary image afterward, keeping effect values identical.
+4. For effects with layer-space vs composition-space mapping, test the same grid at different layer sizes, precomp boundaries and collapse-transform settings. This helps isolate why the edge/bounds of a clipped glow, blur or displacement look wrong.
+
+This 30-second diagnostic is often faster than guessing how an effect remaps the image.
+
+---
+
+# 09 — Expressions and Data-Driven Animation
+
+## 9.1 The minimum working model
+
+An **expression** is a JavaScript-like formula evaluated for **one property at a given time**. It can calculate, link or modify a value, using time, other properties, audio-derived keyframes or imported data. It does **not** permanently bake motion until you convert it to keyframes.
+
+1. Select property (Position, Scale, Opacity, effect Slider, Source Text...).
+2. **Alt+click** its **stopwatch** to enable an expression; this opens the expression editor. If an expression already exists, blindly Alt+clicking can remove/toggle it—expand the property first.
+3. Enter formula. Click away to commit; check warning/error messages at bottom of comp/expression field.
+4. Reveal expressions on selected layers with **`EE`**. To disable temporarily, use the expression enable/disable switch rather than deleting the code.
+5. To bake: choose **Animation → Keyframe Assistant → Convert Expression to Keyframes** on the expression-controlled property; inspect generated keyframes and frame rate.
+
+**Value dimensionality matters:** Opacity/Rotation expect one number. 2D Scale expects `[x,y]`; Position can expect `[x,y]` or `[x,y,z]`. An expression returning a single number on a 2D Position property is an error.
+
+## 9.2 Expression mini-reference (copyable)
+
+| Task | Expression | Explanation |
+|---|---|---|
+| Spin continuously | `time * 90` | 90 degrees per second; put on Rotation. |
+| Offset a property by 50 | `value + 50` | Add to the property's existing pre-expression value; scalar properties only. |
+| Make an object float | `wiggle(1, 35)` | Approx. one wiggle per second; magnitude around 35 property units. |
+| Loop between keyframes | `loopOut("cycle")` | Repeat animated property after last keyframe. |
+| Ping-pong animation | `loopOut("pingpong")` | Run forward, then back. |
+| Hold-style random jitter | `posterizeTime(8); wiggle(10, 20);` | Sample expression only 8 times per second. |
+| Replace values via a range | `linear(value, 0, 100, 20, 200)` | Maps the range and clamps to its endpoint values outside 0–100. |
+| Bound a parameter | `clamp(value, 0, 100)` | Restricts the value to the stated minimum and maximum. |
+| Ease parameter across range | `ease(time, 0, 2, 0, 100)` | Smoothly progress 0 to 100 over first two seconds. |
+| Freeze value at one second | `valueAtTime(1)` | Samples that property at one second. |
+| Get comp center | `[thisComp.width/2, thisComp.height/2]` | Useful on Position of unparented 2D layer. |
+| Get another layer's Position | `thisComp.layer("Controller").transform.position` | Directly uses Controller's Position property; check coordinate spaces. |
+
+**Bouncing without an expression:** Add three manually keyed Scale values (e.g., 100 → 120 → 100), apply `F9` and reshape graph. This is easier to maintain than a complex spring expression for a single bounce.
+
+### Example: follow another layer with a local offset
+
+On a **2D Position** property:
+
+```js
+leader = thisComp.layer("MAIN_LOGO");
+p = leader.transform.position;
+[p[0] + 80, p[1] - 20];
+```
+
+**Warning:** Simple Position links assume matching coordinate/parent spaces. If layers have different parents or one is 3D, use explicit coordinate conversion (`toComp`, `fromComp`, etc.) or parent to a shared Null. **Copy With Property Links** is convenient but creates actual dependency expressions that depend on their source layers remaining available. AE can update many name references during renaming; deleting sources or moving a rig between projects still needs care.
+
+### Example: auto-size a rectangular callout behind text
+
+On a rectangle **Size** property inside a shape layer, if both graphics live in the same simple untransformed context:
+
+```js
+textLayer = thisComp.layer("CAPTION");
+r = textLayer.sourceRectAtTime(time, false);
+padX = 50;
+padY = 24;
+[r.width + padX, r.height + padY];
+```
+
+For complex text alignment, track the text rectangle's **left/top** offset and adjust the shape group's **Position**; `sourceRectAtTime()` sizes from glyph bounds, not always the text-layer anchor. Put background and text in the same precomp or carefully convert coordinates when sharing across comps.
+
+### Example: automatic sequential delay across multiple layers
+
+On **Opacity** of numbered/ordered layers, with 4-frame steps in a 25-fps comp:
+
+```js
+delay = (index - 1) * framesToTime(4);
+t = time - delay;
+ease(t, 0, 0.35, 0, 100);
+```
+
+This is for a simple opacity entrance; the *layer index* changes when layers are reordered. Prefer a Slider or `marker`-driven design for robust commercial templates, or use **Quick Offset** if you just need keyframe-based staggering once.
+
+### Example: looping a keyed property
+
+On a property with keyframes defining a full animated cycle:
+
+```js
+loopOut("cycle");
+```
+
+To loop footage instead, enable **Time Remapping**, make the last usable frame and first frame match properly, and loop the **Time Remap** property. A common off-by-one issue occurs because the default last Time Remap key can correspond to the source duration **after** the last visible frame—remove/adjust it before looping. For continuous repeating textures, an **animated seamless source** is still the foundation.
+
+## 9.3 Expression controls as a clean interface
+
+A **Null** with **Effect → Expression Controls → Slider Control** acts as an animator-friendly master control. Give effects explicit names like `Reveal Duration`, `Orbit Speed`, `Background Strength`, `Highlight Color`. Then other layers can reference them with the expression pick whip. This is easier to debug than burying random constants across multiple effects.
+
+**Dropdown text in 2026:** an eligible dropdown property exposes `.text`, `.items` and `.textAtTime(t)`. Use these to display labels without maintaining a duplicate array. Numeric menu values begin at **1**; `.items` is a JavaScript array beginning at **0**. Drive portable rig logic with numeric values when localized labels could differ.
+
+**Cross-comp linkage:** `thisComp.layer("...")` addresses the current composition. `comp("NAME").layer("...")` explicitly addresses another composition. Explicit comp names make cross-comp references clear; when duplicating a rig, inspect whether expressions still target the original comp. For portable templates, minimize unnecessary cross-comp dependencies and use **Essential Properties** for per-instance controls where possible.
+
+## 9.4 CSV / TSV: a workable mini-dataset
+
+Create a text file `characters.csv`:
+
+```csv
+name,color,score
+Dusk,red,4
+Kim,purple,2
+Bryan,blue,1
+Susan,green,5
+```
+
+Or create `characters.tsv` with exactly the same grid but **TABs** instead of commas. Import via **File → Import → File**, not as a video. Supported data items can be exposed via AE's **Data** properties and linked with the expression pick whip.
+
+To read imported table data, use `dataValue(dataPath)`. The path contains zero-based indices into AE's imported data hierarchy. Start with the first data item:
+
+```js
+footage("characters.csv").dataValue([0, 0]);
+```
+
+For any other item, add the CSV/TSV to a test composition, expand **Data**, and **pick-whip the exact cell property**. Use its generated index path as the reference for your file. Check the returned value against the spreadsheet before building a rig around it; header handling and path interpretation should be verified from the imported tree. On Source Text, wrap a numeric result with `String(...)` if needed:
+
+```js
+String(footage("characters.csv").dataValue([0, 0]));
+```
+
+Data can update when the source data file changes on disk. Ensure relinking and packaging workflows collect external data files (or place the data source as a composition layer when compatible with your delivery pipeline).
+
+## 9.5 JSON: nested names, valid syntax, real-world use
+
+A valid standard JSON file `planet.json`:
+
+```json
+{
+  "planet": {
+    "earth": {
+      "land": {
+        "soil": {
+          "tree": "leaves"
+        }
+      }
+    }
+  }
+}
+```
+
+This is **data**, so you do not declare `const`, use `=`, or add a JavaScript semicolon outside the JSON object. JSON requires double quotes around keys and string values and prohibits trailing commas. Import the file in AE, then on a text layer **Source Text** use:
+
+```js
+data = footage("planet.json").sourceData;
+data.planet.earth.land.soil.tree.toUpperCase();
+```
+
+Result: `LEAVES`.
+
+**Distinction:** For ordinary **JSON**, use `.sourceData` to access nested properties (or `.sourceText` when you explicitly need raw text). The `.dataValue(dataPath)` function is used for AE's data streams such as imported **CSV/TSV** and **MGJSON**. Do **not** assume a deeply nested regular JSON object's keys can be fetched by blindly supplying `[0,0,0,...]` as if it were a table.
+
+**Data project tip:** If a filename changes, an expression referring to `footage("OldName.json")` may fail. Keep filenames predictable. In reusable MOGRT or Media Encoder workflows, Adobe advises including data sources as composition layers when necessary for reliable packaging and rendering rather than depending solely on Project-panel references.
+
+## 9.6 Errors and gotchas in expressions
+
+| Error / symptom | Think of this first |
+|---|---|
+| `undefined` or unknown property | Incorrect effect control name, missing referenced layer/file, case-sensitive JSON property, renamed group. |
+| Dimension mismatch | `[x,y]` used on one-value property, scalar used on 2D position, invalid 3D mismatch. |
+| Circular dependency | A layer's expression points to another property that eventually points back. |
+| Expression works in this comp only | `thisComp` refers to a different comp after a precomp/copy; explicit comp refs may be appropriate. |
+| Result jumps after parenting | Coordinates were evaluated in different layer/parent spaces; use coordinate-space functions or a shared parent. |
+| Value unexpectedly ignores original keyframes | Expression explicitly replaces value rather than using `value` or sampled keyframes. |
+| Unstable loop | First/last animated states differ, extra endpoint keyframe, missing keyframes, wrong work area. |
+| Terrible render performance | Deep dependency chains, many `sampleImage()` expressions, per-character expression stacks, heavy nested precomps. |
+| Imported data seems stale | Source not reloaded/relinked, file path changed, cache, changed name/schema, media interchange difference. |
+
+**Make expressions readable.** Use clear variable names, keep references at the top, avoid copying unnamed magic numbers everywhere, and save complicated rigs as a labeled precomp/preset. For reusability, prefer slider controls and exposed Essential Properties over fragile hard-coded names.
+
+
+## 9.7 Range mapping and newer key lookup
+
+AE's **`linear()` clamps at its input limits**: `linear(150, 0, 100, 20, 200)` returns 200. For deliberate extrapolation, use arithmetic such as `20 + (value/100)*180` on a scalar property. `ease()` also holds its endpoint values outside the range.
+
+Recent versions expose **`nextKey(t)`** and **`previousKey(t)`** on a property/marker stream. `nextKey` finds a later key and falls back to the last; `previousKey` finds one at or before the requested time and falls back to the first. Check `numKeys` before lookup on a potentially empty stream. They are expression methods, unrelated to pressing `J/K` in Timeline. [Adobe: interpolation and key lookup](https://helpx.adobe.com/after-effects/desktop/work-with-expressions/expression-language-reference/expression-language-reference.html).
+
+
+## 9.8 Small expression building blocks
+
+An expression **returns the value of its own property**. It does not assign values to other properties as an application script would. Use the expression language menu and pick whip to build references, then inspect what AE generated.
+
+| Building block | Meaning and safe use |
+|---|---|
+| `Math.round(x)` / `Math.floor(x)` / `Math.ceil(x)` | Nearest integer / toward negative infinity / toward positive infinity. Negative numbers make the distinction visible. |
+| `Math.abs(x)` | Magnitude: removes a negative sign. |
+| `Math.min(a,b)` / `Math.max(a,b)` | Smaller / larger value. |
+| `x % n` | JavaScript remainder; for positive values it can create a repeating ramp. Its result can be negative when x is negative. |
+| `framesToTime(12)` | Converts 12 frames to seconds using the relevant frame rate. |
+| `timeToFrames(time)` | Converts seconds to a frame count. |
+| `inPoint` / `outPoint` | The layer's timeline boundaries, in seconds. |
+| `numKeys` / `key(1)` | Number of keys / first key. AE key indices begin at 1; JavaScript array indices begin at 0. |
+| `random(10)` | Random scalar from 0 to 10; its lower bound is not 1. |
+| `seedRandom(index, true); random(-15,15);` | Stable, layer-dependent random scalar; useful on Rotation. Reordering layers changes index-based seeds. |
+| `length(p1,p2)` | Distance between two points in the **same coordinate space**. |
+| `hasParent` | Check before using `parent`; a layer need not have a parent. |
+| `loopIn("cycle")` | Repeats eligible keyed animation before its first key. |
+| `loopOut("offset")` | Repeats a cycle while adding the cycle's net value change. |
+| `loopOut("continue")` | Continues the ending rate of change. |
+
+### Sample a video color at a controller's location
+
+On a **Color** property, with 2D source `COLOR_SOURCE` and null `SAMPLE_POINT`:
+
+```js
+src = thisComp.layer("COLOR_SOURCE");
+ctl = thisComp.layer("SAMPLE_POINT");
+pt = src.fromComp(ctl.toComp(ctl.anchorPoint));
+src.sampleImage([pt[0], pt[1]], [2, 2], true, time);
+```
+
+The point is converted into the sampled layer's coordinates; `[2,2]` is the sampling radius. The result is RGBA; append `[3]` only when you want alpha as a scalar. Sampling another layer's raw Position without converting coordinates fails when its transform/parent differs. Inspect effect order and avoid heavy sampling across hundreds of expressions. [Adobe: expression examples](https://helpx.adobe.com/after-effects/desktop/work-with-expressions/expression-examples/expression-examples.html).
+
+---
+
+# 10 — Practice Curriculum (Rebuild Muscle Memory)
+
+> [!note] The efficient learning rule
+> Work in an empty practice project. **Do each task once while reading, then immediately once without looking.** The second repetition is what develops shortcut recall. Use only a short, 5–10-second comp so experiments are instant.
+
+| Session | Build this | Shortcuts/actions to make automatic |
+|---|---|---|
+| **1 — Navigate fast** | Ten colored squares with different in/out points; jump between them and reorganize the layers. | `Ctrl+N`, `Ctrl+Y`, `I/O`, `J/K`, `Page Up/Down`, `B/N`, `Alt+[/]`, `[/]`, `Ctrl+Alt+Up/Down`, `Ctrl+Shift+D`. |
+| **2 — Animate with intent** | Bouncing ball with slow-in and rapid exit; stagger five balls. | `P/S/R/T/A`, `Alt+Shift+P/S/R/T`, `U/UU`, `F9`, `Shift+F3`, `Alt+Left/Right`, `Ctrl+Alt+drag` Quick Offset. |
+| **3 — Masks and track mattes** | Animated title revealed through a window; person-shaped video fill. | `G`, `Q`, `M/MM/F`, `F4`, Alpha/Luma Track Matte, Invert, `Ctrl+Shift+C`. |
+| **4 — Shapes and type** | Animated badge with editable headline, filled rectangle and circular stroke. | `Ctrl+T`, `Q`, `G`, Shape Contents/Trim Paths, text animators, Essential Properties. |
+| **5 — Track and key** | Remove screen color and pin a label onto moving video. | Keylight/Screen Matte, track target Null, Roto Brush/Object Matte, parenting. |
+| **6 — Effects and 3D** | Make neon smoke over a 3D scene with camera movement and DOF. | `Ctrl+Enter` Quick Apply, Wave Warp/Curl Noise, Glow, 3D Layer/Cameras, render-engine selection. |
+| **7 — Expressions and delivery** | Music-reactive lower third using JSON name/color input; export review plus alpha master. | `EE`, expression pick whip, `Ctrl+Alt+C` property links, `sourceData`, `dataValue()`, `Ctrl+Shift+/`, output codecs/alpha. |
+
+### Weekly 5-minute warmup
+
+Set a timer outside the app, open a blank comp, create a Null and three shapes, animate their Position/Scale, add easy ease, show only animated properties, stagger keys, switch the Graph Editor, create a track matte, search/add an effect with Quick Apply, then export a brief review. Try to avoid clicking any menu that has a memorable keyboard shortcut. When a shortcut fails, **check the active panel** before assuming the key is wrong.
+
+### Recall checklist
+
+- [ ] I can explain when **Layer panel vs Composition panel** matters.
+- [ ] I know **what P, S, R, T, A, U, UU, EE, LL, M, MM, E, F, F4, B, N, I, O, J, K** reveal or move.
+- [ ] I know the difference between **playhead step, keyframe nudge, moving a whole layer, trimming and slipping footage**.
+- [ ] I can create **an alpha track matte** without rearranging the two layers next to one another.
+- [ ] I can explain **Linear vs Bézier vs Easy Ease vs Hold** and when speed graph matters.
+- [ ] I can tell **which actions are effects, tools, expressions, scripts, plugins or renderer features**.
+- [ ] I know the **3D/2D, color-management and alpha-channel limitations** of my export.
+- [ ] I can **turn off effects temporarily without deleting them**.
+- [ ] I can use **Ctrl+Enter** and **Ctrl+Alt+drag** and know why neither replaces `Ctrl+Shift+E` or `Alt+Left/Right`.
+- [ ] I can find the exact command in **Edit → Keyboard Shortcuts** even when I haven't memorized it.
+
+---
+
+# 11 — Glossary and Reference Sources
+
+## 11.1 Useful terms, explained without mystery
+
+| Term | Meaning |
+|---|---|
+| **CTI / playhead** | Current Time Indicator; the time whose frame is displayed/evaluated. |
+| **In / Out point** | Beginning and end of a layer's visible span. Do not confuse with the Work Area limits `B`/`N`. |
+| **Work Area** | Selected time range for preview/export, independent of composition duration until trimmed. |
+| **Precomp / nested comp** | Composition inside another composition, with its own pixels, properties and timeline. |
+| **Parent** | A layer whose transforms another layer inherits; shifts spatial relationship. |
+| **Anchor Point** | Local pivot point for scaling/rotation. |
+| **Alpha channel** | Transparency; 0 = fully transparent; 1.0 as normalized alpha (or 255 in 8-bit alpha) = fully opaque. |
+| **Luma** | Perceived image brightness; used for brightness-dependent mattes/effects. |
+| **Track Matte** | Another layer drives the alpha/brightness mask of a target layer. |
+| **Garbage matte** | Roughly exclude unwanted region before precise keying/rotoscoping. |
+| **Hold / linear / Bézier** | Keyframe interpolation choices: jump, constant interval interpolation, or curved interpolation. |
+| **Roving keyframe** | An intermediate spatial-motion key whose time can adjust to maintain a more consistent motion-speed relationship. |
+| **Temporal interpolation** | How a value moves between times/keys. |
+| **Spatial interpolation** | How a Position path curves between locations. |
+| **Graph Editor** | Speed or value graph for keyframes and interpolation. |
+| **Expression** | Scripted formula linked to a property, evaluated at render/preview time. |
+| **Essential Properties** | Exposed properties of a precomp that can be overridden per instance. |
+| **Collapse Transformations** | Change how transformations are propagated through nested comps; can alter appearance and layer ordering behavior. |
+| **Continuously Rasterize** | Re-render vector layers at the required effective resolution for sharp results when scaled; cannot restore detail to an arbitrary raster photo. |
+| **Draft quality** | Faster approximate viewer/sampling quality when supported; verify final output. |
+| **Frame sampling / frame blending** | Methods to choose/interpolate frames for different playback time; Pixel Motion can introduce warped artifacts. |
+| **Bit depth (bpc)** | Processing precision per color channel; not equivalent to source codec's bit depth. |
+| **Scene-linear** | Working space in which numeric light intensity is approximately linear; useful for physically sensible CGI compositing. |
+| **Color transform / LUT** | Map between encodings or looks; creative LUT ≠ necessarily a correct camera input transform. |
+| **ACES / OCIO** | Managed color pipeline standards/configuration used in VFX and color-critical work. |
+| **Alpha premultiplication** | Whether RGB values already have transparency mathematically baked into the colors. |
+| **ProRes / DNxHR** | Common higher-quality intraframe editing/intermediate codecs. |
+| **H.264 / H.265 (HEVC)** | Common compressed delivery codecs; strong distribution options, not ideal for every compositing source. |
+| **Render Queue** | AE's native output queue, including native H.264 output support in recent versions. |
+| **MOGRT** | Motion Graphics template for standardized motion elements in supporting apps. |
+| **ROI** | Region of Interest; viewing/rendering only a limited image region during preview when supported. |
+| **Motion path dots** | Visual samples of successive frame positions, indicating relative frame-to-frame travel spacing. |
+| **Guide layer** | Visible for internal composition work but generally excluded from its rendered parent-comp output (subject to context). |
+| **Mocha AE** | Bundled planar tracking integration, with features distinct from separately licensed Mocha Pro. |
+| **Quick Apply** | Search-and-apply UI for effects/presets/commands, launched via `Ctrl+Enter`. |
+| **Quick Offset** | `Ctrl+Alt+drag` selected layers/keys to distribute across time. |
+
+## 11.2 Offline-findable reference links
+
+These links are **documentation sources**, not prerequisites for reading this guide offline. The guide was researched against publicly available Adobe documentation through **2026-10-27**; you can use the in-app **Edit → Keyboard Shortcuts** editor as the final authority for your locally installed preset, platform and remappings.
+
+1. **[Adobe: After Effects Keyboard Shortcuts — complete command reference](https://helpx.adobe.com/after-effects/desktop/get-started/keyboard-shortcuts/keyboard-shortcuts-reference.html)** — Windows defaults and special tool/panel shortcuts.
+2. **[Adobe: What's New in After Effects](https://helpx.adobe.com/after-effects/desktop/what-s-new/whats-new.html)** — 26.5 and earlier release features.
+3. **[Adobe: Full Effects List](https://helpx.adobe.com/after-effects/desktop/apply-effects-and-animation-presets/effects-and-animation-presets/effect-list.html)** — effects grouped by category; note that recently introduced effects can appear on their own new-feature help pages before the general directory is revised.
+4. **[Adobe: Quick Apply](https://helpx.adobe.com/after-effects/desktop/animate-in-after-effects/animation-keyframes/quick-apply.html)** — Ctrl+Enter and result modifiers.
+5. **[Adobe: Select and Arrange Layers / Quick Offset](https://helpx.adobe.com/after-effects/desktop/work-with-layers/select-and-arrange-layers/selecting-arranging-layers.html)** — Ctrl+Alt+drag timeline gesture.
+6. **[Adobe: Track Mattes](https://helpx.adobe.com/after-effects/desktop/work-with-transparency-and-compositing/work-with-track-mattes-and-traveling-mattes/track-mattes-and-traveling-mattes.html)** — alpha, luma, inversion and modern layer assignment.
+7. **[Adobe: Object Matte](https://helpx.adobe.com/after-effects/desktop/roto-brush-and-refine-matte/roto-brush/object-matte.html)** — newer automatic selections and propagation.
+8. **[Adobe: Data-Driven Animation](https://helpx.adobe.com/after-effects/desktop/animate-in-after-effects/data-driven-animation/data-driven-animations.html)** — CSV, TSV, JSON, MGJSON, `sourceData`, `dataValue()`.
+9. **[Adobe: Expression Language Reference](https://helpx.adobe.com/after-effects/desktop/work-with-expressions/expression-language-reference/expression-language-reference.html)** — functions and correct property syntax.
+10. **[Adobe: OpenColorIO and ACES](https://helpx.adobe.com/after-effects/desktop/adjust-colors/opencolorio-and-aces-color-management/opencolorio-aces-color-management.html)** — color pipeline guidance.
+11. **[Adobe: Render H.264 from AE Render Queue](https://helpx.adobe.com/after-effects/desktop/render-and-export/export-h-264-from-the-after-effects/exporting-h264-from-the-after-effects-render-queue.html)** — native MP4 workflow.
+12. **[Adobe: Create and Manage Guides](https://helpx.adobe.com/after-effects/desktop/view-and-preview/preview-video-and-audio/guide-creation-and-management.html)** — 26.5 positioning/color/pin features.
+13. **[Adobe: Parametric 3D Meshes](https://helpx.adobe.com/after-effects/desktop/work-with-3d-composition/create-parametric-meshes/working-with-parametric-meshes.html)** — newer native 3D capabilities.
+14. **[Adobe: Audio Effects](https://helpx.adobe.com/after-effects/desktop/apply-effects-and-animation-presets/list-of-effects/audio-effects.html)** — detailed behavior of audio effects.
+15. **[Adobe: After Effects (Beta)](https://helpx.adobe.com/after-effects/desktop/what-s-new/after-effects-beta.html)** — intentionally separate from this 26.5 stable guide.
+
+
+16. **[Adobe: feature history](https://github.com/AdobeDocs/after-effects-feature-history)** — useful for separating original introduction dates from cumulative What's New entries.
+17. **[Adobe: 26.0 launch announcement](https://blog.adobe.com/en/publish/2026/01/20/new-ai-powered-video-editing-tools-premiere-major-motion-design-upgrades-after-effects)** — confirms the initial 2026 effect additions.
+18. **[Adobe: Release Notes](https://helpx.adobe.com/after-effects/desktop/what-s-new/release-notes-after-effects.html)** — stable release identification.
+19. **[Adobe: Noise and Grain / Curl Noise](https://helpx.adobe.com/after-effects/desktop/apply-effects-and-animation-presets/list-of-effects/noise-grain-effects.html)** — procedural texture controls.
+20. **[Adobe: Keying / Unmult](https://helpx.adobe.com/after-effects/desktop/animate-in-after-effects/work-with-keying-effects/keying-effects.html)** — black/white background removal and keying tools.
+21. **[Adobe: Proportional Scrubbing](https://helpx.adobe.com/after-effects/desktop/animate-in-after-effects/animation-keyframes/proportional-scrubbing-in-timeline.html)** — selection order and modifier gesture.
+22. **[Adobe: effects, presets and effect masks](https://helpx.adobe.com/after-effects/desktop/apply-effects-and-animation-presets/effects-and-animation-presets/effects-animation-presets-overview.html)** — application and compositing controls.
+23. **[Adobe: precomposing and nesting](https://helpx.adobe.com/after-effects/desktop/work-with-compositions/precomposing-and-nesting/precomposing-nesting-pre-rendering.html)** — processing boundaries and render-order implications.
+24. **[Adobe: Content-Aware Fill](https://helpx.adobe.com/after-effects/desktop/remove-objects-from-your-videos/content-aware-fill.html)** — fill layers and reference-frame workflow.
+25. **[Adobe: Motion Graphics templates](https://helpx.adobe.com/after-effects/desktop/motion-graphics/work-with-motion-graphics-templates/creating-motion-graphics-templates.html)** — packaging editable graphics.
+26. **[Adobe: known issues](https://helpx.adobe.com/after-effects/desktop/troubleshooting/fixed-and-known-issues/known-issues-after-effects.html)** — release-specific limitations; check before adopting a workaround.
+27. **[Adobe: fixed issues](https://helpx.adobe.com/after-effects/desktop/troubleshooting/fixed-and-known-issues/fixed-issues.html)** — distinguishes resolved bugs from current limitations.
+
+
+28. **[Adobe: masks and mask-mode gestures](https://helpx.adobe.com/after-effects/desktop/work-with-transparency-and-compositing/work-with-alpha-channels-and-masks/alpha-channels-masks-mattes.html)** — explains the held-mouse context for mode letters.
+
+29. **[Adobe: Keyframe creation, navigation and deletion](https://helpx.adobe.com/after-effects/desktop/animate-in-after-effects/animation-keyframes/setting-selecting-deleting-keyframes.html)**.
+30. **[Adobe: Advanced keyframe editing](https://helpx.adobe.com/after-effects/desktop/animate-in-after-effects/animation-keyframes/editing-moving-copying-keyframes.html)**.
+31. **[Adobe: Copy Frame to Clipboard](https://helpx.adobe.com/after-effects/desktop/view-and-preview/copy-frames/copy-frame-to-clipboard.html)**.
+32. **[Adobe: Native null controllers](https://helpx.adobe.com/after-effects/desktop/drawing-painting-and-paths/null-controllers/create-nulls-for-positional-properties-and-paths.html)**.
+33. **[Adobe: Variable-font axes](https://helpx.adobe.com/after-effects/desktop/variable-font-axes/work-with-variable-font-axes/working-with-variable-font-axes.html)**.
+34. **[Adobe: SVG import and clipboard transfer](https://helpx.adobe.com/after-effects/desktop/import-files/import-svg-files/import-svg-files.html)**.
+35. **[Adobe: Text animators](https://helpx.adobe.com/after-effects/desktop/animating-text/text-animation/animating-text.html)**.
+36. **[Adobe: Puppet tools](https://helpx.adobe.com/after-effects/desktop/animate-in-after-effects/animate-with-puppet-tools/animating-puppet-tools.html)**.
+37. **[Adobe: 3D Camera Tracker](https://helpx.adobe.com/after-effects/desktop/work-with-3d-composition/3d-camera-tracker-effect/tracking-3d-camera-movement.html)**.
+38. **[Adobe: Responsive Design – Time](https://helpx.adobe.com/after-effects/desktop/motion-graphics/add-responsive-design/responsive-design.html)**.
+39. **[Adobe: Viewer controls](https://helpx.adobe.com/after-effects/desktop/view-and-preview/preview-video-and-audio/modifying-using-views.html)**.
+40. **[Adobe: Composition Profiler](https://helpx.adobe.com/after-effects/desktop/work-with-compositions/composition-profiler/composition-profiler.html)**.
+41. **[Adobe: Lossless compressed disk frames](https://helpx.adobe.com/after-effects/desktop/view-and-preview/preview-video-and-audio/lossless-compressed-playback.html)**.
+42. **[Adobe: Effect Manager](https://helpx.adobe.com/after-effects/desktop/apply-effects-and-animation-presets/effects-and-animation-presets/effect-manager.html)**.
+43. **[Adobe: Cinema 4D and CINEWARE](https://helpx.adobe.com/after-effects/desktop/work-with-other-applications/work-with-cinema-4d-and-cineware/c4d.html)**.
+
+44. **[Adobe: text clipboard and bounding-box editing](https://helpx.adobe.com/after-effects/desktop/add-text/create-and-edit-text-layers/creating-editing-text-layers.html)**.
+45. **[Adobe: composition bounds](https://helpx.adobe.com/after-effects/desktop/work-with-compositions/composition-settings/composition-basics.html)**.
+46. **[Adobe: expression examples](https://helpx.adobe.com/after-effects/desktop/work-with-expressions/expression-examples/expression-examples.html)**.
+47. **[Adobe: expression controls](https://helpx.adobe.com/after-effects/desktop/work-with-expressions/expression-controls/expression-controls.html)**.
+
+## 11.3 Design your own shortcut overlay
+
+You can remap almost any exposed menu command via **Edit → Keyboard Shortcuts** (`Ctrl+Alt+'`). However, not literally *every* UI control, plugin function or script action has a built-in assignable command. Unused keys are context-sensitive; check collisions with typing, 3D cameras, other panels and the operating system.
+
+| Command worth assigning if not already mapped | Suggested thought process |
+|---|---|
+| **Time-Reverse Keyframes** | Useful if you routinely animate transitions; pick a chord that doesn't interfere with reversing source footage. |
+| **Copy Expression Only** | Useful when linking expression rigs to many layers; prioritize it if you work with template systems. |
+| **Rove Across Time** | Helpful for path animation with multiple intermediate positions. |
+| **Null Controllers for Path Points / Null Tracing Along Path** | Search the native menu command first; the older ScriptUI panel is a separate way to access related operations. |
+| **Frequently used custom presets/effects** | Prefer **Quick Apply** before consuming dozens of permanent custom key bindings. |
+
+> [!summary] The reference rule
+> **Understand the operation → use the shortcut → verify the result.** A shortcut is only fast when you know what layer/property is selected, which panel has focus, and whether you are editing values, time or pixels. If you remember just one fallback, remember **`Ctrl+Alt+'`** to open the keyboard-shortcut editor and search the exact command.
