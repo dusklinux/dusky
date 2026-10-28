@@ -86,6 +86,7 @@ libdbusmenu-glib
 brightnessctl
 hyprshutdown
 # Group 5: Audio & Bluetooth
+rtkit
 pipewire
 pipewire-alsa
 alsa-utils

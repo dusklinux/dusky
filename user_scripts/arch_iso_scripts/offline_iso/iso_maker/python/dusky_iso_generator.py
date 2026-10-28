@@ -231,7 +231,7 @@ ALL_GROUPS: dict[str, list[str]] = {
         "libdbusmenu-qt5", "libdbusmenu-glib", "brightnessctl",
     ],
     "audio": [
-        "pipewire", "pipewire-alsa", "alsa-utils", "wireplumber", "pipewire-pulse", "playerctl",
+        "pipewire", "rtkit", "pipewire-alsa", "alsa-utils", "wireplumber", "pipewire-pulse", "playerctl",
         "bluez", "bluez-utils", "bluez-hid2hci", "bluez-libs", "bluez-obex", "blueman", "bluetui",
         "pavucontrol", "gst-plugins-base", "gst-libav", "gst-plugins-bad", "gst-plugins-good",
         "gst-plugins-ugly", "gst-plugin-pipewire", "libcanberra", "songrec", "sox", "rnnoise",
@@ -315,47 +315,16 @@ def die(msg: str) -> NoReturn:
     raise FactoryError(msg)
 
 
-def _lock_holders(lock: Path) -> list[int]:
-    """PIDs with `lock` open. libalpm keeps db.lck open for the whole transaction, so
-    'file exists but no process holds it' is the one reliable staleness signal (covers
-    pacman, paru/yay, pamac, PackageKit — any libalpm frontend)."""
-    target = os.fspath(lock)
-    holders: list[int] = []
-    for pid in os.listdir("/proc"):
-        if not pid.isdigit():
-            continue
-        fd_dir = f"/proc/{pid}/fd"
-        try:
-            fds = os.listdir(fd_dir)
-        except OSError:
-            continue
-        for fd in fds:
-            try:
-                if os.readlink(f"{fd_dir}/{fd}") == target:
-                    holders.append(int(pid))
-                    break
-            except OSError:
-                continue
-    return holders
-
-
 def wait_for_host_pacman_lock(say: Callable[[str], object], timeout: float = 600.0) -> None:
+    """Wait without unlinking a lock that another frontend may have just acquired."""
     if not HOST_DB_LOCK.exists():
         return
-    say(f"{HOST_DB_LOCK} present; waiting for its holder...")
+    say(f"{HOST_DB_LOCK} present; waiting for the package transaction...")
     deadline = time.monotonic() + timeout
-    unheld = 0
     while HOST_DB_LOCK.exists():
-        if _lock_holders(HOST_DB_LOCK):
-            unheld = 0
-        else:
-            unheld += 1
-            if unheld >= 2:  # two observations 1 s apart: not the close()->unlink() window of a live pacman
-                say("stale pacman lock (no process holds it open); removing")
-                HOST_DB_LOCK.unlink(missing_ok=True)
-                break
         if time.monotonic() >= deadline:
-            die(f"{HOST_DB_LOCK} still held after {int(timeout)} s")
+            die(f"{HOST_DB_LOCK} still present after {int(timeout)} s; "
+                "inspect the active transaction or stale lock before retrying. The lock was not removed.")
         time.sleep(1.0)
 
 

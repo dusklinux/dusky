@@ -3,7 +3,7 @@
 # 051_pacman_repo_switch.py
 # Pacman Repository State Manager (Python 3.14 / Arch Linux)
 # Context: Toggles pacman between Offline (file://) and Online (HTTPS) modes.
-# Handles: Pacman 7.1 Landlock Sandbox, stale lock cleanup, atomic writes.
+# Handles: Pacman 7.1 Landlock Sandbox, transaction-aware waiting, atomic writes.
 # ==============================================================================
 
 import os
@@ -12,7 +12,7 @@ import argparse
 import subprocess
 import datetime
 from pathlib import Path
-from typing import Optional
+import time
 
 try:
     from rich.console import Console
@@ -24,16 +24,20 @@ except ImportError:
     sys.exit(1)
 
 
+OFFLINE_REPO_CANDIDATES = (
+    Path("/offline_repo"),
+    Path("/mnt/offline_repo"),
+    Path("/run/archiso/bootmnt/arch/repo"),
+    Path("/run/archiso/bootmnt/offline_repo"),
+    Path("/run/archiso/bootmnt/repo"),
+)
+
+
 def get_offline_repo_path() -> str:
-    candidates = [
-        Path("/offline_repo"),
-        Path("/mnt/offline_repo"),
-        Path("/run/archiso/bootmnt/arch/repo"),
-        Path("/run/archiso/bootmnt/offline_repo"),
-        Path("/run/archiso/bootmnt/repo"),
-    ]
-    for cand in candidates:
-        if cand.is_dir() and ((cand / "archrepo.db").is_file() or any(cand.glob("*.pkg.tar.*"))):
+    for cand in OFFLINE_REPO_CANDIDATES:
+        # Package archives alone are not a usable repository. Keep searching
+        # when a partial/unmounted candidate would hide a complete repository.
+        if (cand / "archrepo.db").is_file():
             return f"file://{cand.resolve()}"
     return "file:///offline_repo"
 
@@ -62,24 +66,21 @@ def backup_file(target: Path) -> None:
             console.print(f"[yellow][WARN] Could not create backup for {target}: {e}[/yellow]")
 
 
-def clear_stale_pacman_lock() -> None:
-    try:
-        subprocess.run(["pkill", "-9", "-x", "pacman"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-    except Exception:
-        pass
-
-    for lck in [Path("/var/lib/pacman/db.lck"), Path("/mnt/var/lib/pacman/db.lck")]:
-        try:
-            if lck.is_file():
-                lck.unlink(missing_ok=True)
-                console.print(f"[yellow][WARN] Purged pacman lock file ({lck})[/yellow]")
-        except Exception as e:
-            console.print(f"[yellow][WARN] Could not remove lock file: {e}[/yellow]")
+def wait_for_pacman_lock(timeout: float = 300) -> None:
+    """Do not change repositories while a package transaction owns either root."""
+    locks = (Path("/var/lib/pacman/db.lck"), Path("/mnt/var/lib/pacman/db.lck"))
+    deadline = time.monotonic() + timeout
+    while any(lock.exists() for lock in locks):
+        if time.monotonic() >= deadline:
+            raise TimeoutError("Pacman database is locked; resolve the active transaction "
+                               "or stale lock before switching repositories.")
+        time.sleep(0.2)
 
 
 def switch_to_online(pacman_conf: Path, mirrorlist: Path, *, sync: bool = True) -> None:
     console.print(Panel("[bold cyan]Switching to ONLINE Repositories (Arch Linux HTTPS)[/bold cyan]", box=box.ROUNDED))
     
+    wait_for_pacman_lock()
     backup_file(pacman_conf)
     backup_file(mirrorlist)
 
@@ -146,24 +147,28 @@ Server = https://berlin.mirror.pkgbuild.com/$repo/os/x86_64
         console.print("[cyan]Configuration restored; package database sync skipped.[/cyan]")
         return
 
-    clear_stale_pacman_lock()
-
     console.print("[cyan]Syncing online package databases (core, extra, multilib)...[/cyan]")
     res = subprocess.run(["pacman", "-Sy"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     if res.returncode == 0:
         console.print("[bold green][OK] Online package databases synced successfully.[/bold green]")
     else:
-        console.print(f"[yellow][WARN] 'pacman -Sy' returned exit code {res.returncode}:\n{res.stdout}[/yellow]")
+        raise subprocess.CalledProcessError(res.returncode, ["pacman", "-Sy"], output=res.stdout)
 
 
 def switch_to_offline(pacman_conf: Path, mirrorlist: Path) -> None:
     console.print(Panel("[bold cyan]Switching to OFFLINE Repositories (Local Media file://)[/bold cyan]", box=box.ROUNDED))
     
+    repo_url = get_offline_repo_path()
+    repo_name = "archrepo"
+    repo_fs_path = Path(repo_url.removeprefix("file://"))
+    db_file = repo_fs_path / f"{repo_name}.db"
+    if not db_file.is_file():
+        raise FileNotFoundError(f"Offline repository database is unavailable: {db_file}")
+
+    wait_for_pacman_lock()
     backup_file(pacman_conf)
     backup_file(mirrorlist)
 
-    repo_url = get_offline_repo_path()
-    repo_name = "archrepo"
     now_utc = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
     mirror_content = f"""################################################################################
@@ -212,25 +217,12 @@ Include = /etc/pacman.d/mirrorlist
 
     console.print("[bold green][OK] Offline repository configuration written.[/bold green]")
 
-    repo_fs_path = Path(repo_url.replace("file://", ""))
-    db_file = repo_fs_path / f"{repo_name}.db"
-
-    if not repo_fs_path.is_dir():
-        console.print(f"[yellow][WARN] Offline repository directory '{repo_fs_path}' not currently mounted.[/yellow]")
-        return
-
-    if not db_file.is_file():
-        console.print(f"[yellow][WARN] Offline repository database '{db_file}' not found.[/yellow]")
-        return
-
-    clear_stale_pacman_lock()
-
     console.print(f"[cyan]Syncing offline package database ({db_file.name})...[/cyan]")
     res = subprocess.run(["pacman", "-Sy"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     if res.returncode == 0:
         console.print("[bold green][OK] Offline package database synced successfully.[/bold green]")
     else:
-        console.print(f"[yellow][WARN] 'pacman -Sy' returned exit code {res.returncode}:\n{res.stdout}[/yellow]")
+        raise subprocess.CalledProcessError(res.returncode, ["pacman", "-Sy"], output=res.stdout)
 
 
 def main():

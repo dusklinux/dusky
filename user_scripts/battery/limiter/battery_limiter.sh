@@ -151,7 +151,7 @@ write_service() {
 # Managed by battery_limiter.sh
 [Unit]
 Description=Hardware Battery Charge Limit ($1%%)
-StartLimitIntervalSec=30
+StartLimitIntervalSec=120
 StartLimitBurst=5
 
 [Service]
@@ -163,6 +163,16 @@ TimeoutStartSec=30
 EOF
     cat <<'EOF'
 ExecStart=:/usr/bin/flock --no-fork /run/lock/battery-charge-limit.lock /usr/bin/bash -c '\
+    deadline=$((SECONDS + 15)); \
+    while :; do \
+        ready=0; \
+        for supply in /sys/class/power_supply/*; do \
+            if [[ -f "$supply/charge_control_end_threshold" || -f "$supply/stop_charge_thresh" ]]; then ready=1; break; fi; \
+        done; \
+        (( ready )) && break; \
+        if (( SECONDS >= deadline )); then printf "No supported charge threshold appeared within 15 seconds\\n" >&2; exit 1; fi; \
+        sleep 0.2; \
+    done; \
     found=0; failed=0; \
     for supply in /sys/class/power_supply/*; do \
         file="$supply/charge_control_end_threshold"; \

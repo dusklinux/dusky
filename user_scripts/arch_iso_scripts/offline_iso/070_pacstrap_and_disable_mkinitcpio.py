@@ -43,29 +43,16 @@ FINAL_PACKAGES = [
     "python", "python-textual", "python-rich"
 ]
 
-def wait_for_pacman_lock():
-    """
-    Guarantees no pacman lock files ever block or halt the installer.
-    Terminates any lingering background pacman/pacstrap instances and forcefully
-    unlinks db.lck in both host and target environments immediately.
-    """
-    try:
-        subprocess.run(["pkill", "-9", "-x", "pacman"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-        subprocess.run(["pkill", "-9", "-x", "pacstrap"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-    except Exception:
-        pass
-
-    lock_files = [
-        Path("/var/lib/pacman/db.lck"),
-        MOUNT_POINT / "var/lib/pacman/db.lck",
-    ]
-    for lock_file in lock_files:
-        try:
-            if lock_file.exists():
-                lock_file.unlink(missing_ok=True)
-                Log.warn(f"Purged pacman lock file: {lock_file}")
-        except Exception as e:
-            Log.warn(f"Could not remove lock file {lock_file}: {e}")
+def wait_for_pacman_lock(timeout: float = 300) -> None:
+    """Wait for transactions to finish; never kill pacman or unlink its lock."""
+    lock_files = (Path("/var/lib/pacman/db.lck"),
+                  MOUNT_POINT / "var/lib/pacman/db.lck")
+    deadline = time.monotonic() + timeout
+    while any(path.exists() for path in lock_files):
+        if time.monotonic() >= deadline:
+            raise TimeoutError("Pacman database is locked; resolve the active transaction "
+                               "or stale lock before retrying installation.")
+        time.sleep(0.2)
 
 class HardwareScanner:
     def __init__(self):
@@ -126,7 +113,7 @@ class HardwareScanner:
         if any(indicator in self.hw_text_cache.lower() for indicator in vm_indicators):
             self.vm_detected = True
 
-    def has_pci(self, target_vendor: str, target_class_prefix: str = None) -> bool:
+    def has_pci(self, target_vendor: str, target_class_prefix: str | None = None) -> bool:
         """Used strictly for GPUs to prevent false positives"""
         for vendor, class_code in self.pci_devices:
             if vendor == target_vendor:
@@ -145,7 +132,7 @@ def parse_args():
     return parser.parse_args()
 
 def package_exists(pkg: str) -> bool:
-    wait_for_pacman_lock()
+    # Repository queries do not take the package transaction lock.
     result = subprocess.run(["pacman", "-Si", pkg], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return result.returncode == 0
 
@@ -156,7 +143,7 @@ def prompt_yes_no(prompt: str, default: str = "N") -> bool:
         return default.upper() == "Y"
     return reply in ("y", "yes")
 
-def get_cpu_ucode() -> str:
+def get_cpu_ucode() -> str | None:
     try:
         with open("/proc/cpuinfo", "r") as f:
             for line in f:
@@ -323,7 +310,7 @@ def main():
             
         print(f"\n{Log.GREEN}Pacstrap Complete.{Log.RESET}")
     except subprocess.CalledProcessError as e:
-        Log.warn(f"Pacstrap interrupted (exit code {e.returncode}), purging all pacman locks and retrying...")
+        Log.warn(f"Pacstrap failed (exit code {e.returncode}); waiting for package transactions before one retry...")
         wait_for_pacman_lock()
         time.sleep(1)
         try:

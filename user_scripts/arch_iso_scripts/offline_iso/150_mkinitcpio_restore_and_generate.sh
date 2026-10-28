@@ -11,11 +11,10 @@ if [[ -t 1 ]]; then
     readonly C_BOLD=$'\033[1m'
     readonly C_CYAN=$'\033[36m'
     readonly C_GREEN=$'\033[32m'
-    readonly C_YELLOW=$'\033[33m'
     readonly C_RED=$'\033[31m'
     readonly C_RESET=$'\033[0m'
 else
-    readonly C_BOLD="" C_CYAN="" C_GREEN="" C_YELLOW="" C_RED="" C_RESET=""
+    readonly C_BOLD="" C_CYAN="" C_GREEN="" C_RED="" C_RESET=""
 fi
 
 printf "%s%s[INFO]%s Restoring pacman mkinitcpio hooks...\n" "${C_BOLD}" "${C_CYAN}" "${C_RESET}"
@@ -84,7 +83,8 @@ mkinitcpio -P < <(echo "n") || mkinitcpio_exit=$?
 
 printf "%s\n" "----------------------------------------"
 if [[ "$mkinitcpio_exit" -ne 0 ]]; then
-    printf "%s%s[WARN]%s mkinitcpio exited with status %d (checking image validity)...\n" "${C_BOLD}" "${C_YELLOW}" "${C_RESET}" "$mkinitcpio_exit"
+    printf "%s%s[ERROR]%s mkinitcpio failed with status %d; existing images do not prove this build succeeded.\n" "${C_BOLD}" "${C_RED}" "${C_RESET}" "$mkinitcpio_exit" >&2
+    exit "$mkinitcpio_exit"
 fi
 
 # The bootloader uses each kernel's main image; a fallback alone is insufficient.

@@ -3,6 +3,7 @@
 135_plymouth_setup.py - DUSKY - Python 3.14.6 + Rich 15.0.0
 Modern Plymouth 26.134.222-2 support (Arch 2026-05-30)
 Fixes:
+  - Shutdown splash font caches must not pin /var/cache while filesystems unmount.
   - Plymouth 26 reads keyboard layout from /etc/vconsole.conf, not just keymap.bin.
     Omarchy PR #6183: add FILES+=(/etc/vconsole.conf) or LUKS prompt falls back to US QWERTY.
   - sd-plymouth / plymouth-encrypt hooks removed Jan 2024: WARNING The plymouth-encrypt and sd-plymouth hooks no longer exist, replace with encrypt and plymouth.
@@ -16,11 +17,7 @@ from __future__ import annotations
 import os, sys, re, shlex, base64, shutil, subprocess
 from pathlib import Path
 
-def _ensure_rich():
-    import importlib.util
-    if importlib.util.find_spec("rich") is None:
-        subprocess.run(["pacman", "-Sy", "--needed", "--noconfirm", "python-rich"], check=False)
-_ensure_rich()
+# python-rich is supplied by the offline orchestrator/package manifest.
 from rich.console import Console
 from rich.panel import Panel
 from rich import box
@@ -36,6 +33,7 @@ console = make_console()
 THEME_NAME = "dusky"
 THEME_DIR = Path(f"/usr/share/plymouth/themes/{THEME_NAME}")
 MKINITCPIO_DROPIN = Path("/etc/mkinitcpio.conf.d/10-arch-btrfs-luks.conf")
+SYSTEMD_UNIT_DIR = Path("/etc/systemd/system")
 
 FILL_PNG_B64 = b"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII="
 
@@ -55,6 +53,18 @@ def ensure_plymouth():
             console.print(Panel("[red]CRITICAL: plymouth install failed. Include 'plymouth' in 070_pacstrap payload.[/red]", box=box.ROUNDED))
             sys.exit(1)
     console.print("[green]Plymouth binaries present[/green]")
+
+def configure_shutdown_font_cache():
+    # These daemons can outlive /var/cache. Read cache contents into memory
+    # instead of retaining filesystem mappings; keep normal desktop mmap use.
+    contents = (Path(__file__).resolve().parent / "assets/plymouth-font-cache.conf").read_text(encoding="utf-8")
+    for action in ("reboot", "poweroff", "halt", "kexec"):
+        directory = SYSTEMD_UNIT_DIR / f"plymouth-{action}.service.d"
+        directory.mkdir(parents=True, exist_ok=True)
+        dropin = directory / "90-dusky-font-cache.conf"
+        dropin.write_text(contents, encoding="utf-8")
+        dropin.chmod(0o644)
+    console.print("[green]Shutdown splash font caches will not pin /var/cache[/green]")
 
 def _strip_inline_comment(s: str) -> str:
     """Strip # comment unless inside single/double quotes (bash semantics)"""
@@ -321,6 +331,7 @@ def main():
     ensure_root()
     console.print(Panel("[bold]135 Plymouth Setup - Dusky - Plymouth 26 Modern (2026-07-15) - Robust Parser[/bold]", box=box.ROUNDED))
     ensure_plymouth()
+    configure_shutdown_font_cache()
     deploy_theme()
     patch_mkinitcpio()
     console.print(Panel("[bold green]Plymouth deployment successful.\n- Hook: plymouth; encryption hooks preserved from 120\n- FILES includes /etc/vconsole.conf for keyboard layout\n- Deferred: initramfs generation to 150[/bold green]", box=box.ROUNDED))

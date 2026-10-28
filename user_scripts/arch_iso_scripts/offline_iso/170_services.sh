@@ -25,7 +25,6 @@ readonly SERVICES=(
     "acpid.service"
     "systemd-resolved.service"
     "snapper-cleanup.timer"
-    "snapper-cleanup.service"
 )
 
 # 3. Formatting
@@ -43,15 +42,30 @@ log_warn()    { printf "${C_YELLOW}[WARN]${C_RESET} %s\n" "$*" >&2; }
 # Helper: Configure SSH root login
 configure_ssh() {
     log_info "Configuring SSH root login..."
-    mkdir -p /etc/ssh/sshd_config.d
-    echo "PermitRootLogin yes" > /etc/ssh/sshd_config.d/permit_root.conf
-    chmod 644 /etc/ssh/sshd_config.d/permit_root.conf
+    install -d -m0755 /etc/ssh/sshd_config.d || return 1
+    printf '%s\n' "PermitRootLogin yes" > /etc/ssh/sshd_config.d/permit_root.conf || return 1
+    chmod 644 /etc/ssh/sshd_config.d/permit_root.conf || return 1
     log_success "Configured /etc/ssh/sshd_config.d/permit_root.conf"
+}
+
+# Restrict sysfs writes to whole disks and schedulers exposed by this kernel.
+configure_io_schedulers() {
+    install -d -m0755 /etc/udev/rules.d || return 1
+    local temporary
+    temporary=$(mktemp /etc/udev/rules.d/.dusky-ioscheduler.XXXXXXXX) || return 1
+    if ! cat -- "${BASH_SOURCE[0]%/*}/assets/60-dusky-ioscheduler.rules" > "$temporary"
+    then
+        rm -f -- "$temporary"
+        return 1
+    fi
+    chmod 644 "$temporary" && mv -f -- "$temporary" /etc/udev/rules.d/60-dusky-ioscheduler.rules
 }
 
 # 4. Helper: Check if Unit Exists
 unit_exists() {
-    systemctl cat "$1" &>/dev/null
+    local units
+    units=$(systemctl --root=/ list-unit-files --no-legend --no-pager "$1") || return 1
+    [[ -n $units ]]
 }
 
 # 5. Main Execution
@@ -63,9 +77,11 @@ main() {
         exit 1
     fi
 
-    configure_ssh
+    configure_ssh || exit 1
+    configure_io_schedulers || exit 1
 
     local service
+    local enable_failures=0
     local output
     local -a failed_services=()
 
@@ -76,12 +92,13 @@ main() {
             continue
         fi
 
-        if output=$(systemctl enable "$service" --force 2>&1); then
+        if output=$(systemctl --root=/ --no-reload enable "$service" --force 2>&1); then
             log_success "Enabled: $service"
         else
             log_err "Failed to enable $service"
             printf "%s\n" "$output" >&2
             failed_services+=("$service (Systemd Error)")
+            enable_failures=1
         fi
     done
 
@@ -94,7 +111,7 @@ main() {
             printf "  - %s\n" "$fail"
         done
     fi
-    exit 0
+    return "$enable_failures"
 }
 
 main

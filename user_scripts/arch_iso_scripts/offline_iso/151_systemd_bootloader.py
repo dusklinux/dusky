@@ -1,28 +1,13 @@
 #!/usr/bin/env python3
-"""
-151_systemd_bootloader.py - DUSKY FINAL PRODUCTION - Python 3.14.6 - July 2026
-Target: systemd 261, kernel 7.1.3-arch1-2, mkinitcpio 38+, Plymouth 26.134.222-2
-No backwards compat - pure 2026 methodology
+"""Install systemd-boot entries for the Dusky ISO.
 
-10 subagent forensic research verified:
-
-1. UEFI only: systemd-boot supports UEFI only, no BIOS. Split UEFI->sd-boot / BIOS->GRUB is correct.
-2. bootctl flags: --efi-boot-option-description-with-device=yes (v260+) and --graceful (v244+, auto in chroot v258+) are current best.
-3. microcode hook: ALL_microcode deprecated 2024, use microcode hook. BLS must NOT have intel-ucode.img lines - microcode embedded in initramfs.
-4. BLS Type 1: loader.conf default @saved, timeout 2, console-mode max, editor no. Windows auto-windows auto-detected.
-5. Topology: findmnt -v (--nofsroot) strips btrfs [/@] since util-linux 2.39, lsblk -s inverse for LUKS, cryptsetup status for backing dev.
-6. Plymouth cmdline: quiet splash required, order quiet before loglevel, need systemd.show_status=auto rd.udev.log_level=3 vt.global_cursor_default=0
-7. GRUB BIOS: needs BIOS boot partition EF02 GUID 21686148-6449-6e6f-744e-656564454649, grub-install --target=i386-pc --boot-directory=/boot --recheck, argon2id unsupported (only pbkdf2).
-8. boot update: systemd-boot-update.service auto-updates, random-seed auto since systemd 257, no manual seeding.
-9. ESP: must be FAT32 vfat, is-mountpoint check mandatory, ESP at /boot is correct for Type #1 pipeline.
-10. LUKS cmdline: sd-encrypt uses rd.luks.name=UUID=name rd.luks.options=discard root=UUID=, encrypt uses cryptdevice=UUID:name:allow-discards root=/dev/mapper/name
-
-Pipeline: 070 masks hooks -> 120 optimizer -> 150 mkinitcpio -P (embeds microcode) -> 151 THIS (bootloader; grub-mkconfig sees final initramfs)
+Baseline: systemd 262+, current mkinitcpio, Linux 7.3+.
+Pipeline: 070 masks hooks; 120 configures initramfs; 150 builds; 151 deploys entries.
+Microcode is embedded by the mkinitcpio microcode hook.
 """
 from __future__ import annotations
-import os, sys, re, json, shlex, shutil, signal, subprocess, atexit
+import os, sys, re, json, shlex, shutil, signal, subprocess, atexit, tempfile
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 _udev_mounted = False
 
@@ -36,11 +21,6 @@ def _cleanup_udev_mount():
 
 atexit.register(_cleanup_udev_mount)
 
-def _ensure_rich():
-    import importlib.util
-    if importlib.util.find_spec("rich") is None:
-        subprocess.run(["pacman", "-Sy", "--needed", "--noconfirm", "python-rich"], check=False)
-_ensure_rich()
 from rich.console import Console
 from rich.panel import Panel
 from rich import box
@@ -61,14 +41,27 @@ def run(*cmd, check=True, capture=True, input_text=None, timeout=300):
     argv = [os.fspath(c) for c in cmd]
     try:
         if isinstance(input_text, (bytes, bytearray)):
-            return subprocess.run(argv, check=check, text=False, capture_output=capture, input=bytes(input_text), timeout=timeout)
+            return subprocess.run(argv, check=check, text=False, capture_output=capture, input=bytes(input_text), timeout=timeout, env=os.environ | {"LC_ALL": "C"})
         elif isinstance(input_text, str):
-            return subprocess.run(argv, check=check, text=True, capture_output=capture, input=input_text, timeout=timeout)
-        return subprocess.run(argv, check=check, text=True, capture_output=capture, timeout=timeout)
+            return subprocess.run(argv, check=check, text=True, capture_output=capture, input=input_text, timeout=timeout, env=os.environ | {"LC_ALL": "C"})
+        return subprocess.run(argv, check=check, text=True, capture_output=capture, timeout=timeout, env=os.environ | {"LC_ALL": "C"})
     except subprocess.CalledProcessError as e:
         if check:
             console.print(f"[red]Failed: {shlex.join([str(x) for x in argv])}[/red]")
         raise
+
+def write_boot_config(path: Path, content: str) -> None:
+    """Publish a complete file on the ESP, preserving the previous one on failure."""
+    fd, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(content)
+        temporary.chmod(0o644)
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
 
 def detect_boot_mode() -> str:
     for sp in (Path("/etc/dusky_state.json"), Path("/mnt/etc/dusky_state.json")):
@@ -147,44 +140,24 @@ def parse_mkinicpio_hooks() -> str:
     except:
         return " "
 
-def get_root_topology() -> Dict:
-    console.print("[cyan]Analyzing filesystem topology (findmnt -v for BTRFS)...[/cyan]")
-    r = run("findmnt", "-n", "-v", "-e", "-o", "SOURCE", "-T", "/", check=False)
-    root_blk_dev = r.stdout.strip().splitlines()[0].strip() if r.stdout.strip() else ""
-    root_blk_dev = root_blk_dev.split("[")[0]
+def get_root_topology() -> dict:
+    """Read one consistent root mount record; never guess the filesystem type."""
+    result = run("findmnt", "--json", "--output", "SOURCE,UUID,FSTYPE,OPTIONS", "--target", "/")
+    mount = json.loads(result.stdout)["filesystems"][0]
+    device = (mount.get("source") or "").split("[", 1)[0]
+    uuid = mount.get("uuid")
+    fstype = mount.get("fstype")
+    if not device or not uuid or not fstype:
+        raise RuntimeError("Cannot resolve root device, UUID, and filesystem type")
+    options = mount.get("options") or ""
+    subvol = next((option.removeprefix("subvol=") for option in options.split(",")
+                   if option.startswith("subvol=")), "")
+    return {"ROOT_BLK_DEV": device, "ROOT_UUID": uuid, "ROOT_FSTYPE": fstype,
+            "ROOT_OPTS": options, "ROOT_SUBVOL": subvol}
 
-    r = run("findmnt", "-n", "-e", "-o", "UUID", "-T", "/", check=False)
-    root_uuid = r.stdout.strip().splitlines()[0].strip() if r.stdout.strip() else ""
-
-    r = run("findmnt", "-n", "-e", "-o", "FSTYPE", "-T", "/", check=False)
-    root_fstype = r.stdout.strip().splitlines()[0].strip() if r.stdout.strip() else ""
-
-    r = run("findmnt", "-n", "-e", "-o", "OPTIONS", "-T", "/", check=False)
-    root_opts = r.stdout.strip().splitlines()[0].strip() if r.stdout.strip() else ""
-
-    if not root_blk_dev:
-        console.print("[red]Could not resolve root block device[/red]"); sys.exit(1)
-    if not root_uuid or root_uuid == "-":
-        try:
-            r = run("blkid", "-s", "UUID", "-o", "value", root_blk_dev, check=False)
-            root_uuid = r.stdout.strip().splitlines()[0].strip() if r.stdout.strip() else ""
-        except:
-            root_uuid = ""
-    if not root_uuid:
-        console.print("[red]Could not resolve root UUID[/red]"); sys.exit(1)
-    if not root_fstype or root_fstype == "-":
-        root_fstype = "btrfs"
-
-    subvol = ""
-    m = re.search(r"subvol=([^,]+)", root_opts)
-    if m:
-        subvol = m.group(1)
-
-    return {"ROOT_BLK_DEV": root_blk_dev, "ROOT_UUID": root_uuid, "ROOT_FSTYPE": root_fstype, "ROOT_OPTS": root_opts, "ROOT_SUBVOL": subvol}
-
-def detect_luks(root_blk_dev: str) -> Dict:
+def detect_luks(root_blk_dev: str) -> dict:
     try:
-        r = run("lsblk", "-nrspo", "PATH,TYPE", "-s", "--", root_blk_dev, check=False)
+        r = run("lsblk", "-nrspo", "PATH,TYPE", "-s", "--", root_blk_dev, check=True)
         crypt_dev = ""
         for line in r.stdout.splitlines():
             parts = line.strip().split()
@@ -195,7 +168,7 @@ def detect_luks(root_blk_dev: str) -> Dict:
             return {"found": False}
         console.print(f"[yellow]LUKS2 detected: {crypt_dev}[/yellow]")
         mapper_name = Path(crypt_dev).name
-        r = run("cryptsetup", "status", mapper_name, check=False)
+        r = run("cryptsetup", "status", mapper_name, check=True)
         backing_dev = ""
         for line in r.stdout.splitlines():
             if "device:" in line.lower():
@@ -203,14 +176,13 @@ def detect_luks(root_blk_dev: str) -> Dict:
                 break
         if not backing_dev:
             console.print(f"[red]Could not determine backing device for {mapper_name}[/red]"); sys.exit(1)
-        r = run("blkid", "-s", "UUID", "-o", "value", backing_dev, check=False)
+        r = run("blkid", "-s", "UUID", "-o", "value", backing_dev, check=True)
         luks_uuid = r.stdout.strip().splitlines()[0].strip() if r.stdout.strip() else ""
         if not luks_uuid:
             console.print(f"[red]Could not determine LUKS UUID for {backing_dev}[/red]"); sys.exit(1)
         return {"found": True, "CRYPT_DEV": crypt_dev, "MAPPER_NAME": mapper_name, "BACKING_DEV": backing_dev, "LUKS_UUID": luks_uuid}
     except Exception as e:
-        console.print(f"[yellow]LUKS detection failed: {e}, assuming plain[/yellow]")
-        return {"found": False}
+        raise RuntimeError(f"Cannot determine root encryption topology: {e}") from e
 
 def ensure_esp():
     if not is_mountpoint(ESP_MNT):
@@ -229,7 +201,7 @@ def ensure_esp():
     except Exception as e:
         console.print(f"[dim]Could not query ESP space: {e}[/dim]")
 
-def get_kernels() -> List[Tuple[Path, str]]:
+def get_kernels() -> list[tuple[Path, str]]:
     kernels = []
     for kdir in Path("/usr/lib/modules").glob("*"):
         if (kdir / "pkgbase").is_file() and (kdir / "vmlinuz").is_file():
@@ -238,18 +210,17 @@ def get_kernels() -> List[Tuple[Path, str]]:
                 kernels.append((kdir, pkgbase))
     return kernels
 
-def build_cmdlines(topo: Dict, luks: Dict, hooks_str: str) -> Tuple[str, str, str]:
+def build_cmdlines(topo: dict, luks: dict, hooks_str: str) -> tuple[str, str, str]:
     """
     Build modern 2026 cmdlines:
-    - base_core: root=UUID=... rootfstype=... rootflags=... + fsck.mode=skip if btrfs
+    - base_core: root=UUID=... rootfstype=... rootflags=...
     - luks_part: rd.luks.name=... or cryptdevice=...
     - primary (with Plymouth): rw quiet splash loglevel=3 systemd.show_status=auto rd.udev.log_level=3 vt.global_cursor_default=0 <luks> <base_core>
     - fallback (no Plymouth): rw loglevel=3 <luks> <base_core>
     Order: quiet before loglevel per Arch Silent Boot wiki.
     """
     base_core = f"rootfstype={topo['ROOT_FSTYPE']}"
-    if topo["ROOT_FSTYPE"] == "btrfs":
-        base_core += " fsck.mode=skip"
+    # fsck.mode is global: skipping a Btrfs root must not skip FAT ESP checks.
 
     luks_part = ""
     if luks["found"]:
@@ -306,7 +277,7 @@ def generate_secondary_linux_bls_entries(esp_mnt: Path):
         if v_path.is_file():
             conf_path = entries_dir / f"{vendor}-chainload.conf"
             content = f"title   {title}\nefi     /EFI/{vendor}/{efi_bin}\n"
-            conf_path.write_text(content)
+            write_boot_config(conf_path, content)
             console.print(f"[green]Generated secondary Linux BLS entry: {conf_path}[/green]")
 
 def ensure_udev_bind_mount_in_chroot():
@@ -331,8 +302,18 @@ def ensure_udev_bind_mount_in_chroot():
         pass
 
 def install_systemd_boot_uefi(primary_opts: str, fallback_opts: str):
-    console.print(Panel(f"[bold cyan]UEFI Mode - systemd-boot 261 - Type #1 BLS - No ucode lines[/bold cyan]", box=box.ROUNDED))
+    console.print(Panel(f"[bold cyan]UEFI Mode - systemd-boot - Type #1 BLS - No ucode lines[/bold cyan]", box=box.ROUNDED))
     ensure_esp()
+    kernels = get_kernels()
+    if not kernels:
+        console.print("[red]No kernels in /usr/lib/modules[/red]"); sys.exit(1)
+
+    # Validate before replacing entries: stale or absent initramfs files cannot boot.
+    for _, pkgbase in kernels:
+        image = ESP_MNT / f"initramfs-{pkgbase}.img"
+        if not image.is_file() or image.stat().st_size == 0:
+            raise RuntimeError(f"Required initramfs is missing or empty: {image}")
+
     ensure_udev_bind_mount_in_chroot()
 
     win_path = ESP_MNT / "EFI" / "Microsoft" / "Boot" / "bootmgfw.efi"
@@ -347,13 +328,13 @@ def install_systemd_boot_uefi(primary_opts: str, fallback_opts: str):
     is_installed = run("bootctl", "is-installed", f"--esp-path={ESP_MNT}", check=False).returncode == 0
     if is_installed:
         console.print("[cyan]Updating existing systemd-boot...[/cyan]")
-        run("bootctl", "update", f"--esp-path={ESP_MNT}", "--variables=yes", "--efi-boot-option-description-with-device=yes", "--graceful", check=False)
+        run("bootctl", "update", f"--esp-path={ESP_MNT}", "--variables=yes", "--efi-boot-option-description-with-device=yes", "--graceful")
     else:
         console.print("[cyan]Fresh install...[/cyan]")
         r = run("bootctl", "install", f"--esp-path={ESP_MNT}", "--variables=yes", "--efi-boot-option-description-with-device=yes", "--graceful", check=False)
         if r.returncode != 0:
             console.print("[yellow]bootctl install non-zero, trying fallback without EFI variable updates...[/yellow]")
-            run("bootctl", "install", f"--esp-path={ESP_MNT}", "--variables=no", "--graceful", check=False)
+            run("bootctl", "install", f"--esp-path={ESP_MNT}", "--variables=no", "--graceful")
 
     # Ensure systemd-bootx64.efi is present in ESP
     systemd_efi = ESP_MNT / "EFI" / "systemd" / "systemd-bootx64.efi"
@@ -424,14 +405,10 @@ def install_systemd_boot_uefi(primary_opts: str, fallback_opts: str):
         "auto-firmware 1\n"
         "reboot-for-bitlocker yes\n"
     )
-    LOADER_CONF.write_text(loader_conf_str)
+    write_boot_config(LOADER_CONF, loader_conf_str)
     console.print(f"[green]Wrote {LOADER_CONF} (default @saved = EFI var saved on every boot, BitLocker reboot enabled)[/green]")
 
     generate_secondary_linux_bls_entries(ESP_MNT)
-
-    kernels = get_kernels()
-    if not kernels:
-        console.print("[red]No kernels in /usr/lib/modules[/red]"); sys.exit(1)
 
     for kdir, pkgbase in kernels:
         src = kdir / "vmlinuz"
@@ -440,19 +417,20 @@ def install_systemd_boot_uefi(primary_opts: str, fallback_opts: str):
         shutil.copy2(src, dst)
 
     ENTRIES_DIR.mkdir(parents=True, exist_ok=True)
-    for old in ENTRIES_DIR.glob("arch-*.conf"):
-        try: old.unlink()
-        except: pass
-
     for _, pkgbase in kernels:
         console.print(f"[yellow]Generating BLS Type #1 for {pkgbase} (no microcode initrd - embedded via microcode hook)[/yellow]")
-        (ENTRIES_DIR / f"arch-{pkgbase}.conf").write_text(
+        write_boot_config(ENTRIES_DIR / f"arch-{pkgbase}.conf",
             f"title   Arch Linux ({pkgbase})\n"
             f"linux   /vmlinuz-{pkgbase}\n"
             f"initrd  /initramfs-{pkgbase}.img\n"
             f"options {primary_opts}\n"
         )
-        (ENTRIES_DIR / f"arch-{pkgbase}-fallback.conf").write_text(
+        fallback_image = ESP_MNT / f"initramfs-{pkgbase}-fallback.img"
+        if not fallback_image.is_file() or fallback_image.stat().st_size == 0:
+            (ENTRIES_DIR / f"arch-{pkgbase}-fallback.conf").unlink(missing_ok=True)
+            console.print(f"[yellow]No fallback image for {pkgbase}; skipping recovery entry.[/yellow]")
+            continue
+        write_boot_config(ENTRIES_DIR / f"arch-{pkgbase}-fallback.conf",
             f"title   Arch Linux ({pkgbase} - Fallback Recovery)\n"
             f"linux   /vmlinuz-{pkgbase}\n"
             f"initrd  /initramfs-{pkgbase}-fallback.img\n"
@@ -465,13 +443,13 @@ def install_systemd_boot_uefi(primary_opts: str, fallback_opts: str):
     selection = run("bootctl", f"--esp-path={ESP_MNT}", "set-oneshot", first_entry, check=False)
     if selection.returncode != 0:
         # Firmware with read-only variables still needs a usable initial default.
-        LOADER_CONF.write_text(loader_conf_str.replace("default  @saved", f"default  {first_entry}"))
+        write_boot_config(LOADER_CONF, loader_conf_str.replace("default  @saved", f"default  {first_entry}"))
         console.print("[yellow]EFI variables unavailable; using the installed kernel as the default.[/yellow]")
 
     run("systemctl", "enable", "systemd-boot-update.service", check=False)
     console.print(Panel(f"[bold green]UEFI Complete\nKernels: {', '.join([k[1] for k in kernels])}\nMicrocode: embedded via microcode hook (no initrd line)\nWindows: auto-windows\nrandom-seed: auto since systemd 257[/bold green]", box=box.ROUNDED))
 
-def install_grub_bios_fallback(topo: Dict, luks: Dict, primary_opts: str, fallback_opts: str):
+def install_grub_bios_fallback(topo: dict, luks: dict, primary_opts: str, fallback_opts: str):
     console.print(Panel(f"[bold yellow]BIOS Mode - GRUB i386-pc Fallback[/bold yellow]", box=box.ROUNDED))
     root_dev = Path(topo["ROOT_BLK_DEV"]).resolve()
     if luks["found"]:
@@ -488,7 +466,7 @@ def install_grub_bios_fallback(topo: Dict, luks: Dict, primary_opts: str, fallba
         console.print("[dim]sgdisk not found, skipping BIOS boot partition check[/dim]")
 
     console.print("[yellow]Ensuring GRUB & os-prober for BIOS mode...[/yellow]")
-    run("pacman", "-S", "--needed", "--noconfirm", "grub", "os-prober", check=False)
+    run("pacman", "-S", "--needed", "--noconfirm", "grub", "os-prober", timeout=None)
 
     if luks["found"]:
         console.print("[yellow]Checking LUKS2 PBKDF for GRUB (only PBKDF2 supported, not argon2id)...[/yellow]")
@@ -522,16 +500,13 @@ GRUB_TIMEOUT_STYLE=menu
     console.print(f"[green]Wrote {grub_default}[/green]")
 
     console.print(f"[yellow]Installing GRUB i386-pc to {disk}...[/yellow]")
-    r = run("grub-install", "--target=i386-pc", "--boot-directory=/boot", "--recheck", str(disk), check=False)
-    if r.returncode != 0:
-        console.print(f"[red]grub-install failed: {r.stdout} {r.stderr}, trying --force[/red]")
-        run("grub-install", "--target=i386-pc", "--boot-directory=/boot", "--recheck", "--force", str(disk), check=False)
+    run("grub-install", "--target=i386-pc", "--boot-directory=/boot", "--recheck", str(disk))
 
     console.print("[yellow]Synchronizing udev before os-prober...[/yellow]")
     run("udevadm", "settle", check=False)
 
     console.print("[yellow]Generating /boot/grub/grub.cfg (os-prober active)...[/yellow]")
-    r_mk = run("grub-mkconfig", "-o", "/boot/grub/grub.cfg", check=False)
+    r_mk = run("grub-mkconfig", "-o", "/boot/grub/grub.cfg")
     if "Found Windows" in (r_mk.stdout or "") or "Found Linux" in (r_mk.stdout or ""):
         console.print("[bold green]os-prober successfully detected secondary operating system(s)![/bold green]")
     console.print(Panel(f"[bold green]GRUB BIOS Complete\nDisk: {disk}\nConfig: /boot/grub/grub.cfg[/bold green]", box=box.ROUNDED))
@@ -541,7 +516,7 @@ def main():
         console.print("[red]Must be run as root inside arch-chroot[/red]"); sys.exit(1)
 
     boot_mode = detect_boot_mode()
-    console.print(Panel(f"[bold]DUSKY Bootloader Orchestrator - {boot_mode} - Python 3.14.6 - systemd 261 - Plymouth 26[/bold]", box=box.ROUNDED))
+    console.print(Panel(f"[bold]DUSKY Bootloader Orchestrator - {boot_mode} - systemd 262+ - Plymouth[/bold]", box=box.ROUNDED))
 
     topo = get_root_topology()
     hooks_str = parse_mkinicpio_hooks()
