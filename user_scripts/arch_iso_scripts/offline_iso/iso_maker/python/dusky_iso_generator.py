@@ -221,7 +221,7 @@ ALL_GROUPS: dict[str, list[str]] = {
         "qt5-wayland", "qt6-wayland", "gtk3", "gtk4", "glib2", "dconf", "gsettings-desktop-schemas", "nwg-look", "qt5ct", "qt6ct", "qt6-svg",
         "qt6-multimedia-ffmpeg", "adw-gtk-theme", "upower", "plocate", "matugen",
         "otf-font-awesome", "ttf-jetbrains-mono-nerd", "otf-atkinsonhyperlegiblemono-nerd",
-        "ttf-atkinson-hyperlegible", "otf-atkinson-hyperlegible",
+        "ttf-atkinson-hyperlegible", "otf-atkinson-hyperlegible", "ttf-dejavu",
         "noto-fonts-emoji", "ttf-liberation", "sassc", "python-packaging", "python", "python-gobject",
         "python-cairo", "python-opengl", "gtk-layer-shell", "python-evdev", "python-pyudev",
         "fontconfig", "python-pyquery", "python-textual", "python-rich", "python-regex", "python-pillow", "papirus-icon-theme",

@@ -36,6 +36,7 @@ python-textual
 python-pillow
 python-opengl
 papirus-icon-theme
+ttf-dejavu
 ufw
 wayvnc
 rnnoise

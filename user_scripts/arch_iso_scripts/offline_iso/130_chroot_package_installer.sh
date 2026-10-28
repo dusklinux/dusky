@@ -24,7 +24,7 @@ declare -ar pkgs_hyprland=(
 
 # Group 3: GUI, Toolkits & Fonts
 declare -ar pkgs_appearance=(
-  "qt5-wayland" "qt6-wayland" "gtk3" "gtk4" "glib2" "dconf" "gsettings-desktop-schemas" "nwg-look" "qt5ct" "qt6ct" "qt6-svg" "qt6-multimedia-ffmpeg" "adw-gtk-theme" "upower" "plocate" "matugen" "otf-font-awesome" "ttf-jetbrains-mono-nerd" "otf-atkinsonhyperlegiblemono-nerd" "ttf-atkinson-hyperlegible" "otf-atkinson-hyperlegible" "noto-fonts-emoji" "ttf-liberation" "sassc" "python-packaging" "python" "python-gobject" "python-cairo" "python-opengl" "gtk-layer-shell" "python-evdev" "python-pyudev" "fontconfig" "papirus-icon-theme" "python-pyquery" "python-textual" "python-rich" "python-regex" "python-pillow"
+  "qt5-wayland" "qt6-wayland" "gtk3" "gtk4" "glib2" "dconf" "gsettings-desktop-schemas" "nwg-look" "qt5ct" "qt6ct" "qt6-svg" "qt6-multimedia-ffmpeg" "adw-gtk-theme" "upower" "plocate" "matugen" "otf-font-awesome" "ttf-jetbrains-mono-nerd" "otf-atkinsonhyperlegiblemono-nerd" "ttf-atkinson-hyperlegible" "otf-atkinson-hyperlegible" "ttf-dejavu" "noto-fonts-emoji" "ttf-liberation" "sassc" "python-packaging" "python" "python-gobject" "python-cairo" "python-opengl" "gtk-layer-shell" "python-evdev" "python-pyudev" "fontconfig" "papirus-icon-theme" "python-pyquery" "python-textual" "python-rich" "python-regex" "python-pillow"
 )
 
 # Group 4: Desktop Experience
