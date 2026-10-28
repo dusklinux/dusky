@@ -1,3 +1,6 @@
+#[path = "../../../rust_shared/ui_fonts.rs"]
+mod fonts;
+
 mod apply;
 mod cache;
 mod color;
@@ -460,11 +463,10 @@ fn main() -> iced_exwlshell::Result {
     };
 
     optimize_gpu_environment();
+    fonts::initialize();
     // Cover the active output without entering native fullscreen or hiding its windows.
     let settings = iced_exwlshell::Settings {
-        // Cosmic Text's generic sans-serif/fallback families may be absent on
-        // the ISO. iced_renderer embeds this font via its fira-sans feature.
-        default_font: iced_core::Font::with_name("Fira Sans"),
+        default_font: iced_core::Font::with_name(fonts::DEFAULT_FAMILY),
         layer_settings: iced_exwlshell::settings::LayerShellSettings {
             layer: iced_exwlshell::reexport::Layer::Overlay,
             blur_option: iced_exwlshell::reexport::BlurOption::FullRegion,

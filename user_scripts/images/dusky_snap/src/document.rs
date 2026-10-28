@@ -91,7 +91,7 @@ pub struct Layer {
     pub text_style: u8,
 }
 fn default_font() -> String {
-    "Sans".into()
+    crate::fonts::DEFAULT_FAMILY.into()
 }
 impl Layer {
     pub fn bounds(&self) -> Rect {

@@ -6,11 +6,12 @@ authors = ["Dusk Linux"]
 description = "Dusky Center: Native Rust control center for Arch Linux / Hyprland (Iced + Wayland xdg-toplevel). Data-driven from dusky_config.toml."
 
 [dependencies]
+iced_graphics = "0.14.0"
 iced = { version = "0.14.0", default-features = false, features = ["wgpu", "wayland", "svg", "advanced", "thread-pool"] }
 iced_core = "0.14.0"
 iced_futures = { version = "0.14.0", features = ["thread-pool"] }
 iced_runtime = "0.14.0"
-iced_renderer = { version = "0.14.0", features = ["wgpu-bare", "fira-sans"] }
+iced_renderer = { version = "0.14.0", features = ["wgpu-bare"] }
 iced_widget = { version = "0.14.2", features = ["advanced", "svg", "wgpu"] }
 iced_wgpu = { version = "0.14.0", default-features = false }
 # Enable Vulkan and Wayland EGL explicitly for adapter selection.
@@ -32,3 +33,6 @@ strip = true
 [profile.dev]
 opt-level = 0
 debug = true
+
+[patch.crates-io]
+fontdb = { path = "../../rust_shared/fontdb" }

@@ -1,3 +1,6 @@
+#[path = "../../../rust_shared/ui_fonts.rs"]
+mod fonts;
+
 mod capture;
 mod document;
 mod focus;

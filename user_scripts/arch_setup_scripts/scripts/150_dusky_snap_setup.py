@@ -71,12 +71,13 @@ def source_digest(project: Path) -> str:
     src = project / "src"
     if src.is_dir():
         files.extend(sorted(path for path in src.rglob("*") if path.is_file()))
+    files.extend(build_support.font_source_files())
 
     digest = hashlib.sha256()
     digest.update(BUILD_RECIPE.encode())
     digest.update(b"\0")
     for path in files:
-        digest.update(str(path.relative_to(project)).encode())
+        digest.update(os.path.relpath(path, project).encode())
         digest.update(b"\0")
         digest.update(bytes.fromhex(sha256(path)))
     return digest.hexdigest()

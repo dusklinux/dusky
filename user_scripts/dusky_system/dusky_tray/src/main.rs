@@ -4,6 +4,9 @@
 //! on tmpfs (see `scripts/build-on-tmpfs.sh` and `backend::system::runtime_dir`)
 //! to avoid SSD write amplification.
 
+#[path = "../../../rust_shared/ui_fonts.rs"]
+mod fonts;
+
 mod appearance;
 mod backend;
 mod click_away;
@@ -283,6 +286,7 @@ fn main() -> Result<(), iced_winit::Error> {
     };
 
     optimize_gpu_environment();
+    fonts::initialize();
     let app_config = AppConfig::load();
 
     let Some(monitor) = backend::system::panel_monitor() else {
@@ -307,7 +311,7 @@ impl iced_winit::program::Program for TrayProgram {
 
     fn settings(&self) -> iced_core::Settings {
         iced_core::Settings {
-            default_font: iced_core::Font::with_name("Atkinson Hyperlegible"),
+            default_font: iced_core::Font::with_name(fonts::DEFAULT_FAMILY),
             ..Default::default()
         }
     }

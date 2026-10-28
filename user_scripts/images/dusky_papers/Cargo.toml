@@ -6,10 +6,11 @@ authors = ["Dusk Linux"]
 description = "Dusky Papers: fast, lightweight wallpapers for Arch Linux / Hyprland"
 
 [dependencies]
+iced_graphics = "0.14.0"
 iced_core = "0.14.0"
 iced_futures = { version = "0.14.0", features = ["thread-pool"] }
 iced_runtime = "0.14.0"
-iced_renderer = { version = "0.14.0", features = ["wgpu-bare", "fira-sans"] }
+iced_renderer = { version = "0.14.0", features = ["wgpu-bare"] }
 iced_widget = { version = "0.14.2", features = ["advanced", "image", "wgpu"] }
 iced_wgpu = { version = "0.14.0", default-features = false }
 # Enable Vulkan and Wayland EGL explicitly for adapter selection.
@@ -33,4 +34,5 @@ strip = true
 # The layer-shell crate enables window_clipboard defaults, including X11.
 # Keep its existing API with only the Wayland implementation.
 [patch.crates-io]
+fontdb = { path = "../../rust_shared/fontdb" }
 window_clipboard = { path = "src/wayland_clipboard" }

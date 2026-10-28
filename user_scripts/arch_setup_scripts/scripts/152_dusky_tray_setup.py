@@ -72,6 +72,7 @@ def source_digest(project: Path) -> str:
     src = project / "src"
     if src.is_dir():
         files.extend(sorted(path for path in src.rglob("*") if path.is_file()))
+    files.extend(build_support.font_source_files())
 
     helper = project.parent / "click_away_to_dismiss"
     files.extend(helper / name for name in (

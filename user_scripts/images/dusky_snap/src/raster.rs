@@ -356,7 +356,7 @@ fn draw_layer(pix: &mut Pixmap, l: &Layer, dx: f32, dy: f32) -> Result<()> {
     }
     Ok(())
 }
-thread_local! {static FONTS:RefCell<(cosmic_text::FontSystem,cosmic_text::SwashCache)>=RefCell::new((cosmic_text::FontSystem::new(),cosmic_text::SwashCache::new()));}
+thread_local! {static FONTS:RefCell<(cosmic_text::FontSystem,cosmic_text::SwashCache)>=RefCell::new((crate::fonts::font_system(),cosmic_text::SwashCache::new()));}
 #[allow(clippy::too_many_arguments)]
 fn text(
     pix: &mut Pixmap,
@@ -460,6 +460,19 @@ fn text(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn annotations_rasterize_with_selected_fonts_and_legacy_sans_alias() {
+        for family in ["Sans", crate::fonts::DEFAULT_FAMILY, "Unavailable Font"] {
+            let mut pixmap = Pixmap::new(500, 80).unwrap();
+            text(
+                &mut pixmap, "Dusky café Ω Ж ←→ ♥", family, 24.0,
+                10.0, 10.0, [1.0, 1.0, 1.0, 1.0], 0, false,
+            );
+            assert!(pixmap.data().chunks_exact(4).any(|pixel| pixel[3] != 0));
+        }
+        FONTS.with(|fonts| assert_eq!(fonts.borrow().0.db().len(), 7));
+    }
 
     #[test]
     fn row_copies_preserve_transparency_crops_and_grown_origins() {

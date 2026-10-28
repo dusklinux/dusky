@@ -3,6 +3,9 @@
 //! A fast, data-driven system control panel using Iced (Wayland xdg-toplevel),
 //! configured entirely by `dusky_config.toml`. Builds and caches stay on tmpfs.
 
+#[path = "../../../rust_shared/ui_fonts.rs"]
+mod fonts;
+
 pub mod appearance;
 pub mod backend;
 pub mod config;
@@ -129,6 +132,7 @@ fn main() -> iced::Result {
     };
 
     gpu::optimize_environment();
+    fonts::initialize();
 
     let app_config = match AppConfig::load() {
         Ok(cfg) => cfg,
@@ -163,7 +167,7 @@ fn main() -> iced::Result {
     .title("Dusky Center")
     .window(window_settings)
     .executor::<BackgroundExecutor>()
-    .default_font(iced_core::Font::with_name("Atkinson Hyperlegible"))
+    .default_font(iced_core::Font::with_name(fonts::DEFAULT_FAMILY))
     .subscription(CenterApp::subscription)
     .theme(theme)
     .style(style)

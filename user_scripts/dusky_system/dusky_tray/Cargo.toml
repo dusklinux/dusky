@@ -6,10 +6,11 @@ authors = ["Dusk Linux"]
 description = "Dusky Tray: Rust-native control center for Arch Linux / Hyprland (Iced + Wayland window). Mirrors the compact tray layout."
 
 [dependencies]
+iced_graphics = "0.14.0"
 iced_core = "0.14.0"
 iced_futures = { version = "0.14.0", features = ["thread-pool"] }
 iced_runtime = "0.14.0"
-iced_renderer = { version = "0.14.0", features = ["wgpu-bare", "fira-sans"] }
+iced_renderer = { version = "0.14.0", features = ["wgpu-bare"] }
 iced_widget = { version = "0.14.2", features = ["advanced", "svg", "wgpu"] }
 iced_wgpu = { version = "0.14.0", default-features = false }
 # Enable Vulkan and Wayland EGL explicitly for adapter selection.
@@ -36,3 +37,6 @@ strip = true
 [profile.dev]
 opt-level = 0
 debug = true
+
+[patch.crates-io]
+fontdb = { path = "../../rust_shared/fontdb" }

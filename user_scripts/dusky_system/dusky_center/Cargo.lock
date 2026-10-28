@@ -537,6 +537,7 @@ dependencies = [
  "iced",
  "iced_core",
  "iced_futures",
+ "iced_graphics",
  "iced_renderer",
  "iced_runtime",
  "iced_wgpu",
@@ -669,8 +670,6 @@ dependencies = [
 [[package]]
 name = "fontdb"
 version = "0.23.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "457e789b3d1202543297a350643cf459f836cade38934e7a4cf6a39e7cde2905"
 dependencies = [
  "fontconfig-parser",
  "log",

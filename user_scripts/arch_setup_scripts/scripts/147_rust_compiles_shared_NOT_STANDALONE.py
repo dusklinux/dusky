@@ -17,6 +17,15 @@ RESERVE = GIB
 _BUILD_LOCK: ContextVar[int | None] = ContextVar("dusky_build_lock", default=None)
 
 
+def font_source_files() -> list[Path]:
+    """Include the shared selective-font loader in binary fingerprints."""
+    root = Path(__file__).resolve().parents[2] / "rust_shared"
+    directory = root / "fontdb"
+    files = [root / "ui_fonts.rs", directory / "Cargo.toml"]
+    files.extend(sorted(path for path in (directory / "src").rglob("*") if path.is_file()))
+    return files
+
+
 def build_lock_fds() -> tuple[int, ...]:
     """Let compiler children retain serialization if the installer is killed."""
     fd = _BUILD_LOCK.get()

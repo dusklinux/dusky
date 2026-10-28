@@ -5,7 +5,8 @@ edition = "2024"
 description = "Minimal Wayland screenshot and annotation tool for Dusky / Hyprland"
 
 [dependencies]
-iced = { version = "0.14.0", default-features = false, features = ["wgpu-bare", "tiny-skia", "wayland", "canvas", "image-without-codecs", "advanced", "thread-pool", "fira-sans"] }
+iced_graphics = "0.14.0"
+iced = { version = "0.14.0", default-features = false, features = ["wgpu-bare", "tiny-skia", "wayland", "canvas", "image-without-codecs", "advanced", "thread-pool"] }
 wgpu = { version = "27.0.1", default-features = false, features = ["std", "wgsl", "vulkan", "gles", "parking_lot"] }
 tiny-skia = "0.11.4"
 cosmic-text = "0.15.0"
@@ -29,3 +30,6 @@ strip = true
 
 [profile.dev]
 debug = 0
+
+[patch.crates-io]
+fontdb = { path = "../../rust_shared/fontdb" }

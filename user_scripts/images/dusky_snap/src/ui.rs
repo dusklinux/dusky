@@ -304,21 +304,10 @@ pub fn run(options: Options, start: Instant) -> Result<()> {
     crate::gpu::optimize_environment();
     let config = output::config()?;
     let loaded = options.file.is_some() || options.clipboard || options.preview.is_some();
-    // Iced otherwise scans system fonts on the graphics startup path. Start
-    // the same global font system while Wayland captures the screen. Its
-    // OnceLock synchronizes the renderer if discovery is still in progress.
-    let _fonts = if loaded || options.editor || options.mode != "fullscreen" {
-        Some(
-            std::thread::Builder::new()
-                .name("snap-fonts".into())
-                .spawn(move || {
-                    let _ = iced::advanced::graphics::text::font_system();
-                    crate::trace(start, "fonts-ready");
-                })?,
-        )
-    } else {
-        None
-    };
+    if loaded || options.editor || options.mode != "fullscreen" {
+        crate::fonts::initialize();
+        crate::trace(start, "fonts-ready");
+    }
     let capture = if let Some(p) = &options.preview {
         capture::load(&Options {
             file: Some(p.clone()),
@@ -407,7 +396,7 @@ pub fn run(options: Options, start: Instant) -> Result<()> {
         }
         .to_owned()
     })
-    .default_font(iced::Font::with_name("Atkinson Hyperlegible"))
+    .default_font(iced::Font::with_name(crate::fonts::DEFAULT_FAMILY))
     .executor::<BackgroundExecutor>()
     .subscription(App::subscription)
     .theme(|app: &App| app.theme.clone())
@@ -530,7 +519,7 @@ impl App {
             busy: false,
             status: String::new(),
             text_draft: String::new(),
-            font: "Sans".into(),
+            font: crate::fonts::DEFAULT_FAMILY.into(),
             text_style: 0,
             text_anchor: None,
             save_path: None,
