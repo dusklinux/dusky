@@ -1,0 +1,13 @@
+# Route plain interactive power commands through Dusky's on-demand teardown.
+# Explicit flags, sudo and /usr/bin/systemctl retain the system interfaces.
+systemctl() {
+    if (( $# == 1 )) && [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]] &&
+        [[ $1 == reboot || $1 == poweroff || $1 == soft-reboot ]]; then
+        "$HOME/user_scripts/wlogout/dusky_session.sh" "$1"
+    else
+        command systemctl "$@"
+    fi
+}
+
+alias reboot='systemctl reboot'
+alias poweroff='systemctl poweroff'

@@ -252,7 +252,7 @@ local conf_dir="$HOME/.config/zshrc"
 local -a my_modules=(
     batstat git kvm lmstudio logs logs_old mon_info
     pkg pkg_search res_mon vfio waydroid win11 wthr cmd_atlas
-    sshfile scripts neovim_delta core gemini stt_dusky
+    sshfile scripts neovim_delta core gemini stt_dusky session
 )
 
 for mod in "${my_modules[@]}"; do
@@ -339,7 +339,8 @@ fi
 # -----------------------------------------------------------------------------
 # Native variable check avoids expensive $(tty) subshells
 if [[ -z "$DISPLAY" && -z "$WAYLAND_DISPLAY" && "$TTY" == "/dev/tty1" ]]; then
-  exec start-hyprland
+  # Preserve startup diagnostics in the journal instead of painting tty1.
+  exec systemd-cat --identifier=hyprland-session --stderr-priority=err start-hyprland
 fi
 
 

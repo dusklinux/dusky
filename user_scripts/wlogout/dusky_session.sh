@@ -5,6 +5,15 @@
 
 set -euo pipefail
 
+CALLER_PID=$$
+WORKER=false
+if [[ ${1:-} == --worker ]]; then
+  WORKER=true
+  shift
+  [[ $# == 2 && $2 =~ ^[1-9][0-9]*$ ]] || exit 1
+  CALLER_PID=$2
+  set -- "$1"
+fi
 ACTION="${1:-poweroff}"
 if (( $# > 1 )); then
   printf 'Usage: %s [poweroff|reboot|soft-reboot|logout]\n' "${0##*/}" >&2
@@ -19,8 +28,20 @@ case "$ACTION" in
     ;;
 esac
 
-commands=(hyprctl jq ps sleep)
-[[ "$ACTION" == logout ]] || commands+=(systemctl)
+if [[ $WORKER == false ]]; then
+  # The user service starts in its own working directory, not the caller's.
+  script_path=${BASH_SOURCE[0]}
+  [[ $script_path == /* ]] || script_path=$PWD/$script_path
+  # No PartOf=graphical-session.target: this job survives closing its menu.
+  # Fixed unit name serializes requests; --collect removes it after completion.
+  exec systemd-run --user --quiet --collect --wait --service-type=exec --expand-environment=no \
+    --unit=dusky-session-action --description='Dusky session action' \
+    --setenv="HYPRLAND_INSTANCE_SIGNATURE=${HYPRLAND_INSTANCE_SIGNATURE:-}" \
+    --setenv="WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-}" \
+    -- /usr/bin/bash "$script_path" --worker "$ACTION" "$CALLER_PID"
+fi
+
+commands=(hyprctl jq ps sleep systemctl)
 for cmd in "${commands[@]}"; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     printf "Error: Required command '%s' not found in PATH.\n" "$cmd" >&2
@@ -39,7 +60,8 @@ hyprctl dispatch 'hl.dsp.focus({ workspace = "1" })' >/dev/null 2>&1 || :
 # Protect the caller's ancestry, including its terminal's owning process.
 declare -A skip_pids=()
 read_ancestry() {
-  local pid=$$ ppid
+  local pid=$CALLER_PID ppid
+  skip_pids[$$]=1
   while (( pid > 1 )); do
     skip_pids["$pid"]=1
     ppid=$(ps -q "$pid" -o ppid= 2>/dev/null) || return 1
@@ -120,9 +142,35 @@ else
   printf 'Warning: Cannot read ancestry or clients; skipping window teardown.\n' >&2
 fi
 
-# Teardown is best-effort; preserve the final action's output and exit status.
-if [[ "$ACTION" == "logout" ]]; then
-  dispatch_checked dispatch 'hl.dsp.exit()'
-else
-  exec systemctl --no-wall "$ACTION"
+# Finish Wayland service teardown before asking logind to end the login scope.
+# This runs only on demand; no shutdown listener or idle process is required.
+was_active=false
+if systemctl --user is-active --quiet graphical-session.target; then
+  was_active=true
+  if systemctl --user stop graphical-session.target; then
+    printf 'Dusky: graphical services stopped before %s.\n' "$ACTION"
+  else
+    status=$?
+    systemctl --user start hyprland-session.target || :
+    exit "$status"
+  fi
 fi
+
+# Restore managed services if the final action is rejected.
+if [[ "$ACTION" == "logout" ]]; then
+  if dispatch_checked dispatch 'hl.dsp.exit()'; then
+    exit 0
+  else
+    status=$?
+  fi
+else
+  if systemctl --no-wall "$ACTION"; then
+    exit 0
+  else
+    status=$?
+  fi
+fi
+if [[ $was_active == true ]]; then
+  systemctl --user start hyprland-session.target || :
+fi
+exit "$status"
