@@ -1,0 +1,14 @@
+[Unit]
+Description=Capture holders if the cache filesystem remains after unmount
+DefaultDependencies=no
+# A stop job precedes an ordered start job: capture after the mount stop attempt.
+After=var-cache.mount
+Before=umount.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bash /usr/local/libexec/dusky-cache-unmount-diagnostics
+TimeoutStartSec=10
+
+[Install]
+WantedBy=umount.target
