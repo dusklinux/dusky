@@ -1858,31 +1858,6 @@ class EliteInstallerApp(App):
 
         self.log_widget.write(text)
 
-    @staticmethod
-    def _is_package_manager_active() -> bool:
-        """Scans /proc natively, ignoring current script and parent shell PIDs."""
-        target_procs = {"pacman", "paru", "yay", "makepkg", "fakeroot"}
-        my_pid = os.getpid()
-        parent_pid = os.getppid()
-        try:
-            for entry in Path("/proc").iterdir():
-                if not entry.name.isdigit():
-                    continue
-                try:
-                    pid = int(entry.name)
-                    if pid in (my_pid, parent_pid):
-                        continue
-                    comm_path = entry / "comm"
-                    if not comm_path.exists():
-                        continue
-                    if comm_path.read_text().strip() in target_procs:
-                        return True
-                except (OSError, FileNotFoundError, ValueError, PermissionError):
-                    continue
-        except OSError:
-            pass
-        return False
-
     async def resolve_pacman_lock(self) -> bool:
         if not PACMAN_DB_LOCK.exists():
             return True
@@ -1891,38 +1866,12 @@ class EliteInstallerApp(App):
         try:
             async with asyncio.timeout(300):
                 while PACMAN_DB_LOCK.exists():
-                    if not self._is_package_manager_active():
-                        self.log_system("No active package managers in /proc. Lock appears stale!", is_err=True)
-                        self.status_label.update("◈ Scrubbing stale pacman database lock...")
-
-                        if self.ctx.is_root:
-                            try:
-                                PACMAN_DB_LOCK.unlink(missing_ok=True)
-                            except OSError as e:
-                                self.log_system(f"Failed to remove lock: {e}", is_err=True)
-                                return False
-                        else:
-                            rm_proc = await asyncio.create_subprocess_exec(
-                                "sudo", "-n", "rm", "-f", str(PACMAN_DB_LOCK),
-                                stdout=asyncio.subprocess.DEVNULL,
-                                stderr=asyncio.subprocess.DEVNULL,
-                            )
-                            try:
-                                await asyncio.wait_for(rm_proc.wait(), timeout=10)
-                            except (TimeoutError, asyncio.TimeoutError):
-                                with suppress(ProcessLookupError): rm_proc.kill()
-                                return False
-                            if rm_proc.returncode != 0:
-                                self.log_system("Failed to remove lock file via sudo -n.", is_err=True)
-                                return False
-
-                        self.log_system("Stale lock scrubbed. Resuming pipeline.")
-                        return True
-
-                    self.status_label.update("◈ PACMAN DB LOCKED: Active process running...")
+                    # Process names cannot establish ownership or reserve this
+                    # pathname against a new transaction. Leave removal to its owner.
+                    self.status_label.update("◈ PACMAN DB LOCKED: Waiting for release...")
                     await asyncio.sleep(1)
-        except (TimeoutError, asyncio.TimeoutError):
-            self.log_system(f"Timed out after 300s waiting for {PACMAN_DB_LOCK}.", is_err=True)
+        except TimeoutError:
+            self.log_system(f"Timed out after 300s waiting for {PACMAN_DB_LOCK}; lock left untouched.", is_err=True)
             return False
 
         self.log_system("Pacman database lock released. Resuming pipeline.")
