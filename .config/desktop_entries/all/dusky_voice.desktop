@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Dusky Voice Memos
+Comment=Record and manage voice memos in a terminal
+Exec=sh -c "exec foot /home/dusk/user_scripts/dusky_recorder/dusky_voice/dusky_voice.py"
+TryExec=foot
+Icon=audio-input-microphone
+Terminal=false
+Categories=AudioVideo;Audio;Recorder;
+Keywords=dusky;voice;memo;audio;recorder;
