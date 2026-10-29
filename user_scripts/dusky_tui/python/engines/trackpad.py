@@ -21,7 +21,7 @@ ACTION_MAP = {
     "Native Workspace Swipe": '"workspace"',
     "Open Dusky Tray": 'function()\n        hl.exec_cmd([["$HOME/.local/bin/dusky-tray"]])\n    end',
     "Toggle Waybar": 'function()\n        hl.exec_cmd(dusky_scripts .. "waybar/waybar_toggle.sh")\n    end',
-    "Toggle Blur & Opacity": 'function()\n        hl.exec_cmd(dusky_scripts .. "hypr_blur_opacity_shadow_toggle.sh")\n    end',
+    "Toggle Blur & Opacity": 'function()\n        hl.exec_cmd(dusky_scripts .. "hypr/hypr_blur_opacity_shadow_toggle.sh")\n    end',
     "Media: Play / Pause": 'function()\n        hl.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --play-pause")\n    end',
     "Media: Volume Up (+10%)": 'function()\n        hl.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --vol-up 10")\n    end',
     "Media: Volume Down (-10%)": 'function()\n        hl.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --vol-down 10")\n    end',
