@@ -484,7 +484,7 @@ class DuskyAudioEngine:
         self.max_duration: float = 0.0
 
         # Telemetry callbacks
-        self.on_level_callback: Callable[[float, float], None] | None = None
+        self.on_level_callback: Callable[[list[float]], None] | None = None
         self.on_state_change: Callable[[RecordState], None] | None = None
         self.on_finished: Callable[[Path], None] | None = None
         self.on_error: Callable[[str], None] | None = None
@@ -716,12 +716,10 @@ class DuskyAudioEngine:
                 s = msg.get_structure()
                 if s and s.has_name("level"):
                     peak_list = s.get_value("peak")
-                    rms_list = s.get_value("rms")
-                    if peak_list and rms_list:
-                        peak_db = float(peak_list[0])
-                        rms_db = float(rms_list[0])
+                    if peak_list:
+                        peaks = [float(x) for x in peak_list]
                         if self.on_level_callback:
-                            self.on_level_callback(peak_db, rms_db)
+                            self.on_level_callback(peaks)
             elif msg.type == Gst.MessageType.ERROR:
                 err, dbg = msg.parse_error()
                 if self.on_error:
@@ -1099,16 +1097,14 @@ class AppFooter(Vertical):
 # =============================================================================
 
 class LiveVuMeter(Static):
-    """Sleek calibrated stereo audio decibel meter with smooth gradient lines."""
+    """Calibrated audio decibel meter with true multi-channel support."""
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self.peak_db: float = -80.0
-        self.rms_db: float = -80.0
+        self.channel_peaks: list[float] = [-80.0, -80.0]
 
-    def update_levels(self, peak_db: float, rms_db: float) -> None:
-        self.peak_db = peak_db
-        self.rms_db = rms_db
+    def update_levels(self, peaks: list[float]) -> None:
+        self.channel_peaks = peaks if peaks else [-80.0]
         self.refresh()
 
     def render(self) -> RenderableType:
@@ -1119,62 +1115,47 @@ class LiveVuMeter(Static):
         scale = Text()
         scale.append("     -60dB      -36dB    -18dB   -12dB   -6dB  -3dB  0dB", style=f"dim {tc['muted']}")
 
-        # Left channel (Peak)
-        clamped_peak = max(-60.0, min(0.0, self.peak_db))
-        frac_l = (clamped_peak + 60.0) / 60.0
-        filled_l = int(frac_l * width)
-        line_l = Text()
-        line_l.append(" L ╶", style=f"bold {tc['accent']}")
-        green_len = int(width * 0.70)
-        yellow_len = int(width * 0.88)
-        for i in range(width):
-            if i < filled_l:
-                if i < green_len:
-                    line_l.append("━", style=tc["success"])
-                elif i < yellow_len:
-                    line_l.append("━", style=tc["warning"])
-                else:
-                    line_l.append("━", style=f"bold {tc['error']}")
-            else:
-                line_l.append("─", style=f"dim {tc['muted']}")
-        line_l.append("╴ ", style=tc["muted"])
-        if self.peak_db <= -60.0:
-            line_l.append("-∞ dB", style=f"dim {tc['muted']}")
-        else:
-            style = f"bold {tc['error']}" if self.peak_db > -3.0 else tc["fg"]
-            line_l.append(f"{self.peak_db:5.1f} dB", style=style)
-        if self.peak_db >= -0.5:
-            line_l.append(" [CLIP]", style=f"bold {tc['error']} on {tc['bg']}")
+        lines = [scale]
+        is_mono = len(self.channel_peaks) == 1
 
-        # Right channel (RMS)
-        clamped_rms = max(-60.0, min(0.0, self.rms_db))
-        frac_r = (clamped_rms + 60.0) / 60.0
-        filled_r = int(frac_r * width)
-        line_r = Text()
-        line_r.append(" R ╶", style=f"bold {tc['accent']}")
-        for i in range(width):
-            if i < filled_r:
-                if i < green_len:
-                    line_r.append("━", style=tc["success"])
-                elif i < yellow_len:
-                    line_r.append("━", style=tc["warning"])
+        for idx, peak_db in enumerate(self.channel_peaks[:2]):
+            label = "MIC ╶" if is_mono else ("  L ╶" if idx == 0 else "  R ╶")
+            clamped_peak = max(-60.0, min(0.0, peak_db))
+            frac = (clamped_peak + 60.0) / 60.0
+            filled = int(frac * width)
+
+            line = Text()
+            line.append(label, style=f"bold {tc['accent']}")
+
+            green_len = int(width * 0.70)
+            yellow_len = int(width * 0.88)
+            for i in range(width):
+                if i < filled:
+                    if i < green_len:
+                        line.append("━", style=tc["success"])
+                    elif i < yellow_len:
+                        line.append("━", style=tc["warning"])
+                    else:
+                        line.append("━", style=f"bold {tc['error']}")
                 else:
-                    line_r.append("━", style=f"bold {tc['error']}")
+                    line.append("─", style=f"dim {tc['muted']}")
+            line.append("╴ ", style=tc["muted"])
+
+            if peak_db <= -60.0:
+                line.append("-∞ dB", style=f"dim {tc['muted']}")
             else:
-                line_r.append("─", style=f"dim {tc['muted']}")
-        line_r.append("╴ ", style=tc["muted"])
-        if self.rms_db <= -60.0:
-            line_r.append("-∞ dB", style=f"dim {tc['muted']}")
-        else:
-            style = f"bold {tc['error']}" if self.rms_db > -3.0 else tc["fg"]
-            line_r.append(f"{self.rms_db:5.1f} dB", style=style)
+                style = f"bold {tc['error']}" if peak_db > -3.0 else tc["fg"]
+                line.append(f"{peak_db:5.1f} dB", style=style)
+            if peak_db >= -0.5:
+                line.append(" [CLIP]", style=f"bold {tc['error']} on {tc['bg']}")
+
+            lines.append(line)
 
         res = Text()
-        res.append_text(scale)
-        res.append("\n")
-        res.append_text(line_l)
-        res.append("\n")
-        res.append_text(line_r)
+        for i, l in enumerate(lines):
+            res.append_text(l)
+            if i < len(lines) - 1:
+                res.append("\n")
         return res
 
 
@@ -2246,15 +2227,15 @@ class DuskyVoiceApp(App[None]):
         self.engine.cancel()
         self._update_banner()
 
-    def _on_engine_level(self, peak_db: float, rms_db: float) -> None:
-        # Match music_recognition.py meter_fraction: map dBFS from -60 to 0 dB
-        fraction = max(0.0, min(1.0, (peak_db - (-60.0)) / 60.0)) if peak_db > -80.0 else 0.0
-        self._safe_dispatch(self._update_meters, peak_db, rms_db, fraction)
+    def _on_engine_level(self, peaks: list[float]) -> None:
+        self._safe_dispatch(self._update_meters, peaks)
 
-    def _update_meters(self, peak_db: float, rms_db: float, fraction: float) -> None:
+    def _update_meters(self, peaks: list[float]) -> None:
         vu = self.query_one("#vu_meter", LiveVuMeter)
-        vu.update_levels(peak_db, rms_db)
+        vu.update_levels(peaks)
         if self.engine.state == RecordState.RECORDING:
+            max_peak = max(peaks) if peaks else -80.0
+            fraction = max(0.0, min(1.0, (max_peak - (-60.0)) / 60.0)) if max_peak > -80.0 else 0.0
             osc = self.query_one("#oscilloscope", RollingOscilloscope)
             osc.push_peak(fraction)
 
