@@ -1,10 +1,10 @@
 #!/usr/bin/python3
-"""Install the temporary CPython 3.15rc3 build on x86-64 Arch Linux.
+"""Install the temporary CPython 3.15 runtime on x86-64 Arch Linux.
 
 Run with the distro Python 3.14+; /usr/bin/python* is never modified.
-    python_rc3_install.py [check]
-    python_rc3_install.py install [--reinstall] [--no-default] [--force] [--tarball PATH]
-    python_rc3_install.py --undo [--purge]
+    temp_python_315_installer.py [check]
+    temp_python_315_installer.py install [--reinstall] [--no-default] [--force] [--tarball PATH]
+    temp_python_315_installer.py --undo [--purge]
 
 By default, installation shadows python and python3 in /usr/local/bin. That directory
 must precede /usr/bin in users' PATH for /usr/bin/env python3 shebangs.
@@ -21,6 +21,8 @@ The archive must contain a complete /usr/local runtime, including Python 3.15
 builds of PyGObject and pycairo. Installation never invokes pip or downloads
 dependencies. GTK 4 and the native libraries required by the build must already
 be installed. Absolute /usr/bin/python3 launchers keep using the distro Python.
+An already selected, unmanaged compatible Python 3.15 or newer is checked and
+retained on a normal install. Managed older builds are upgraded.
 Keep this bootstrap script parseable by Python 3.14 so install and undo work
 before the distro upgrade; Python 3.15-only syntax belongs in the payload.
 """
@@ -48,12 +50,12 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import NoReturn
 
-VERSION = "3.15.0rc3"
+VERSION = "3.15.2"
 ARCH_TAG = "x86_64-generic"
 REPO = "dusklinux/dusky_python"
 TAG = f"v{VERSION}"
 BASE_URL = "https://github.com"
-ASSET = f"dusky-python-{VERSION}-{ARCH_TAG}.tar.gz"
+ASSET = f"dusky-python-{VERSION}-{ARCH_TAG}-desktop.tar.gz"
 PREFIX = Path("/usr/local")
 MARKER = PREFIX / "lib/dusky-python.json"
 LOCKFILE = Path("/run/lock/dusky-python-install.lock")
@@ -84,6 +86,11 @@ DESKTOP_PROBE = (
     "assert Gtk.get_major_version() == 4; "
     "cairo.Context(cairo.ImageSurface(cairo.FORMAT_ARGB32, 1, 1)); "
     "print(gi.__version__)"
+)
+UPDATER_PROBE = (
+    "import rich, textual; from importlib.metadata import version; "
+    "v = tuple(map(int, version('textual').split('.')[:3])); "
+    "assert v >= (8, 2, 8), 'Textual 8.2.8 or newer is required'"
 )
 log = logging.getLogger("dusky-python")
 
@@ -123,7 +130,9 @@ def read_marker() -> dict | None:
         die(f"Invalid installation marker {MARKER}: {exc}")
     if not isinstance(data, dict) or not isinstance(data.get("files"), list):
         die(f"Invalid installation marker: {MARKER}")
-    if data.get("version") != VERSION or data.get("arch") != ARCH_TAG:
+    version = data.get("version")
+    if (not isinstance(version, str) or not re.fullmatch(r"3\.15\.\d+(?:rc\d+)?", version)
+            or data.get("arch") != ARCH_TAG):
         die(f"Installation marker belongs to a different build: {MARKER}")
     for rel in data["files"]:
         if not isinstance(rel, str):
@@ -172,6 +181,8 @@ def verify_runtime(path: Path) -> None:
         die(f"{path} loaded another installation's standard library: {prefix}")
     run_python(path, STDLIB_PROBE)
     run_python(path, DESKTOP_PROBE)
+    run_python(path, UPDATER_PROBE)
+    run_python(path, "import pyudev; from PIL import Image")
 
 
 def check_path() -> None:
@@ -398,13 +409,37 @@ def cmd_install(args: argparse.Namespace) -> int:
         die("This build requires Arch Linux.")
     if os.uname().machine != "x86_64":
         die("This release asset supports x86-64 only.")
+    marker = read_marker()
+    if marker and tuple(map(int, re.match(r"(\d+)\.(\d+)\.(\d+)", marker["version"]).groups())) > tuple(map(int, VERSION.split('.'))):
+        die(f"Managed Python {marker['version']} is newer than {VERSION}; update this installer instead of downgrading.")
+    if marker is None and not (args.reinstall or args.force or args.no_default or args.tarball):
+        selected = shutil.which("python3")
+        if selected:
+            info = run_python(Path(selected),
+                              "import sys; print(*sys.version_info[:3], sys.version_info.releaselevel, sys.version_info.serial)")
+            major, minor, micro, level, serial = info.split()
+            parts = (int(major), int(minor), int(micro))
+            compatible = parts > (3, 15, 0) or (
+                parts == (3, 15, 0) and
+                (level == "final" or (level == "candidate" and int(serial) >= 3))
+            )
+            if compatible:
+                run_python(Path(selected), STDLIB_PROBE)
+                run_python(Path(selected), DESKTOP_PROBE)
+                run_python(Path(selected), UPDATER_PROBE)
+                log.info("Selected Python %s is already compatible; leaving it unchanged.",
+                         ".".join(map(str, parts)))
+                return 0
     info = run_python(SYSTEM_PYTHON,
                       "import sys; print(*sys.version_info[:2], sys.version_info.releaselevel)")
     major, minor, level = info.split()
     if (int(major), int(minor)) >= (3, 15) and level == "final":
-        die("Distro Python is already stable 3.15+. Run --undo to use it.")
-    marker = read_marker()
-    if marker and not args.reinstall:
+        if marker:
+            log.warning("Distro Python is already stable 3.15+. Run --undo after the updater exits to use it.")
+        else:
+            log.info("Distro Python is already stable 3.15+; no temporary installation is needed.")
+        return 0
+    if marker and marker.get("version") == VERSION and not args.reinstall:
         verify_runtime(WANT_BIN)
         with transaction() as tx:
             set_shadow(marker, not args.no_default, tx)

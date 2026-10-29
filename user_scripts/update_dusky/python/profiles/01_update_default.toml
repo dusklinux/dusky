@@ -61,7 +61,10 @@ search_dirs = [
 [sequence]
 tasks = [
     # ================= CUSTOM =====================
-    "S | python_rc3_install.py install",
+
+    "S | temp_python_315_installer.py install",
+    # "S | once | temp_python_315_installer.py --undo",
+
     "U | once | backup_hyprlang_files.sh",
     "U | once | 480_dusky_commands.py -b",
     # ================= Scripts =====================
@@ -183,7 +186,6 @@ tasks = [
     # "U | once | system_update.sh --pacman",
     "S | once | fix_wayland_session.py",
     "S | once | cleanup_stale_boot_mem_reclaim.py",
-    # "S | once | python_rc3_install.py --undo",
     "S | once,ignore-fail | rename_already_deployed_servcies.py",
     "U | tui_starship.py --apply-state",
     "U | once | keylogger_installer.py",
