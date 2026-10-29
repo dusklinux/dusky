@@ -616,10 +616,13 @@ class DuskyAudioEngine:
             Gst.TAG_TITLE,
             title or output_path.stem,
         )
+        recorded_at = Gst.DateTime.new_now_local_time()
+        tag_list.add_value(Gst.TagMergeMode.REPLACE, Gst.TAG_DATE_TIME, recorded_at)
+        # Some muxers serialize the calendar date rather than the full timestamp.
         tag_list.add_value(
             Gst.TagMergeMode.REPLACE,
-            Gst.TAG_DATE_TIME,
-            Gst.DateTime.new_now_local_time(),
+            Gst.TAG_DATE,
+            GLib.Date.new_dmy(recorded_at.get_day(), GLib.DateMonth(recorded_at.get_month()), recorded_at.get_year()),
         )
         elements = self.pipeline.iterate_elements()
         while True:
@@ -627,7 +630,7 @@ class DuskyAudioEngine:
             if result != Gst.IteratorResult.OK:
                 break
             if isinstance(element, Gst.TagSetter):
-                element.merge_tags(tag_list, Gst.TagMergeMode.REPLACE)
+                Gst.TagSetter.merge_tags(element, tag_list, Gst.TagMergeMode.REPLACE)
 
         return True
 
@@ -891,12 +894,17 @@ class VoiceLibrary:
     """Manages voice memos in ~/.config/dusky/settings/dusky_voice/."""
 
     SUPPORTED_EXTS: Final[set[str]] = {".opus", ".flac", ".wav", ".mp3", ".ogg", ".m4a"}
+    # Keep successful duration results only for files in the latest scan.
+    _durations: dict[tuple[Path, int, int], float] = {}
 
     @classmethod
     def scan_memos(cls, exclude: Path | None = None) -> list[VoiceMemo]:
         """Scan directory and return sorted voice memos (newest first)."""
         ensure_storage_environment()
         memos: list[VoiceMemo] = []
+        previous_durations = cls._durations
+        durations: dict[tuple[Path, int, int], float] = {}
+        discoverer: GstPbutils.Discoverer | None = None
 
         try:
             entries = list(RECORDINGS_DIR.iterdir())
@@ -918,14 +926,23 @@ class VoiceLibrary:
             size = stat.st_size
             created_at = datetime.fromtimestamp(stat.st_mtime)
 
-            duration = 0.0
-            try:
-                disc = GstPbutils.Discoverer.new(Gst.SECOND)
-                info = disc.discover_uri(entry.resolve().as_uri())
-                duration_ns = info.get_duration()
-                duration = duration_ns / Gst.SECOND if duration_ns != Gst.CLOCK_TIME_NONE else 0.0
-            except GLib.Error:
-                pass
+            key = (entry, size, stat.st_mtime_ns)
+            if key in previous_durations:
+                duration = previous_durations[key]
+                durations[key] = duration
+            else:
+                duration = 0.0
+                try:
+                    if discoverer is None:
+                        discoverer = GstPbutils.Discoverer.new(Gst.SECOND)
+                    info = discoverer.discover_uri(entry.resolve().as_uri())
+                    duration_ns = info.get_duration()
+                    if duration_ns != Gst.CLOCK_TIME_NONE:
+                        duration = duration_ns / Gst.SECOND
+                        if info.get_result() == GstPbutils.DiscovererResult.OK:
+                            durations[key] = duration
+                except GLib.Error:
+                    pass
 
             memos.append(
                 VoiceMemo(
@@ -940,6 +957,7 @@ class VoiceLibrary:
                 )
             )
 
+        cls._durations = durations
         memos.sort(key=lambda m: m.created_at, reverse=True)
         return memos
 
