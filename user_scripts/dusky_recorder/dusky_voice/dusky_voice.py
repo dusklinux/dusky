@@ -438,8 +438,8 @@ def compute_waveform_peaks(file_path: Path, num_points: int = 120) -> list[float
             s = msg.get_structure()
             if s and s.has_name("level"):
                 db = s.get_value("peak")[0]
-                val = math.pow(10, db / 20.0) if db > -80.0 else 0.0
-                raw_peaks.append(min(1.0, max(0.0, val)))
+                frac = max(0.0, min(1.0, (float(db) - (-60.0)) / 60.0)) if db > -80.0 else 0.0
+                raw_peaks.append(frac)
         elif msg.type in (Gst.MessageType.EOS, Gst.MessageType.ERROR):
             break
 
@@ -1179,14 +1179,14 @@ class LiveVuMeter(Static):
 
 
 class RollingOscilloscope(Static):
-    """Dynamic real-time symmetrical voice waveform strip during live capture."""
+    """Dynamic real-time voice waveform strip matching music_recognition.py logic."""
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.history: deque[float] = deque(maxlen=100)
 
-    def push_peak(self, peak_linear: float) -> None:
-        self.history.append(min(1.0, max(0.0, peak_linear)))
+    def push_peak(self, peak_fraction: float) -> None:
+        self.history.append(min(1.0, max(0.0, peak_fraction)))
         self.refresh()
 
     def clear(self) -> None:
@@ -1195,6 +1195,7 @@ class RollingOscilloscope(Static):
 
     def render(self) -> RenderableType:
         width = max(10, self.size.width - 4)
+        height = 4
 
         if self.history.maxlen != width:
             old = list(self.history)
@@ -1205,39 +1206,37 @@ class RollingOscilloscope(Static):
             data = [0.0] * (width - len(data)) + data
 
         tc = getattr(self.app, "theme_colors", DEFAULT_THEME)
-        lines = [Text() for _ in range(5)]
+        lines = [Text() for _ in range(height)]
 
-        for val in data:
-            color = f"bold {tc['error']}" if val > 0.88 else (tc["warning"] if val > 0.65 else tc["accent"])
-            if val >= 0.75:
-                lines[0].append("▄", style=color)
-                lines[1].append("█", style=color)
-                lines[2].append("█", style=color)
-                lines[3].append("█", style=color)
-                lines[4].append("▀", style=color)
-            elif val >= 0.45:
-                lines[0].append(" ", style="dim")
-                lines[1].append("▄", style=color)
-                lines[2].append("█", style=color)
-                lines[3].append("▀", style=color)
-                lines[4].append(" ", style="dim")
-            elif val >= 0.15:
-                lines[0].append(" ", style="dim")
-                lines[1].append(" ", style="dim")
-                lines[2].append("━", style=color)
-                lines[3].append(" ", style="dim")
-                lines[4].append(" ", style="dim")
+        for frac in data:
+            total_steps = int(frac * height * 8)
+            if frac >= 0.88:
+                bar_color = f"bold {tc['error']}"
+            elif frac >= 0.65:
+                bar_color = tc["warning"]
+            elif frac > 0.08:
+                bar_color = tc["accent"]
             else:
-                lines[0].append(" ", style="dim")
-                lines[1].append(" ", style="dim")
-                lines[2].append("┄", style=f"dim {tc['muted']}")
-                lines[3].append(" ", style="dim")
-                lines[4].append(" ", style="dim")
+                bar_color = f"dim {tc['muted']}"
+
+            for r in range(height):
+                row_from_bottom = (height - 1) - r
+                row_base = row_from_bottom * 8
+                if total_steps >= row_base + 8:
+                    lines[r].append("█", style=bar_color)
+                elif total_steps <= row_base:
+                    if row_from_bottom == 0:
+                        lines[r].append("·", style=f"dim {tc['muted']}")
+                    else:
+                        lines[r].append(" ", style="dim")
+                else:
+                    sub = total_steps - row_base
+                    lines[r].append(UNICODE_BLOCKS[sub], style=bar_color)
 
         res = Text()
         for idx, line in enumerate(lines):
             res.append_text(line)
-            if idx < 4:
+            if idx < height - 1:
                 res.append("\n")
 
         return Panel(
@@ -1249,7 +1248,7 @@ class RollingOscilloscope(Static):
 
 
 class PlayerWaveformWidget(Static):
-    """Full-width symmetrical mirrored waveform with illuminated playhead."""
+    """Full-width high-resolution waveform with illuminated playhead matching music_recognition.py."""
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -1263,6 +1262,7 @@ class PlayerWaveformWidget(Static):
 
     def render(self) -> RenderableType:
         width = max(10, self.size.width - 4)
+        height = 4
         tc = getattr(self.app, "theme_colors", DEFAULT_THEME)
 
         if not self.peaks:
@@ -1278,44 +1278,34 @@ class PlayerWaveformWidget(Static):
             resampled.append(self.peaks[min(idx, len(self.peaks) - 1)])
 
         playhead_col = int(self.progress_fraction * width)
-        lines = [Text() for _ in range(5)]
+        lines = [Text() for _ in range(height)]
 
-        for x, p in enumerate(resampled):
+        for x, frac in enumerate(resampled):
             if x == playhead_col:
-                for r in range(5):
+                for r in range(height):
                     lines[r].append("│", style=f"bold {tc['bg']} on {tc['accent']}")
                 continue
 
             color = tc["success"] if x < playhead_col else f"dim {tc['muted']}"
-            if p >= 0.75:
-                lines[0].append("▄", style=color)
-                lines[1].append("█", style=color)
-                lines[2].append("█", style=color)
-                lines[3].append("█", style=color)
-                lines[4].append("▀", style=color)
-            elif p >= 0.45:
-                lines[0].append(" ", style="dim")
-                lines[1].append("▄", style=color)
-                lines[2].append("█", style=color)
-                lines[3].append("▀", style=color)
-                lines[4].append(" ", style="dim")
-            elif p >= 0.15:
-                lines[0].append(" ", style="dim")
-                lines[1].append(" ", style="dim")
-                lines[2].append("━", style=color)
-                lines[3].append(" ", style="dim")
-                lines[4].append(" ", style="dim")
-            else:
-                lines[0].append(" ", style="dim")
-                lines[1].append(" ", style="dim")
-                lines[2].append("┄", style=f"dim {tc['muted']}")
-                lines[3].append(" ", style="dim")
-                lines[4].append(" ", style="dim")
+            total_steps = int(frac * height * 8)
+            for r in range(height):
+                row_from_bottom = (height - 1) - r
+                row_base = row_from_bottom * 8
+                if total_steps >= row_base + 8:
+                    lines[r].append("█", style=color)
+                elif total_steps <= row_base:
+                    if row_from_bottom == 0:
+                        lines[r].append("·", style=f"dim {tc['muted']}")
+                    else:
+                        lines[r].append(" ", style="dim")
+                else:
+                    sub = total_steps - row_base
+                    lines[r].append(UNICODE_BLOCKS[sub], style=color)
 
         full = Text()
         for i, row in enumerate(lines):
             full.append_text(row)
-            if i < 4:
+            if i < height - 1:
                 full.append("\n")
 
         pct = int(self.progress_fraction * 100)
@@ -1530,7 +1520,7 @@ class DuskyVoiceApp(App[None]):
         border: solid $secondary 40%;
         background: $surface 30%;
         padding: 0 1;
-        margin-bottom: 1;
+        margin-bottom: 0;
     }
 
     /* NoticeBox Status Banner */
@@ -1538,7 +1528,7 @@ class DuskyVoiceApp(App[None]):
         width: 100%;
         height: auto;
         padding: 0 1;
-        margin: 1 0;
+        margin: 0 0 1 0;
         background: transparent;
     }
 
@@ -1570,7 +1560,7 @@ class DuskyVoiceApp(App[None]):
     #timer_box {
         height: 1;
         content-align: center middle;
-        margin-bottom: 1;
+        margin-bottom: 0;
     }
 
     #vu_meter {
@@ -1579,8 +1569,8 @@ class DuskyVoiceApp(App[None]):
     }
 
     #oscilloscope {
-        height: 7;
-        margin: 1 0;
+        height: 6;
+        margin: 0;
     }
 
     #studio_controls {
@@ -1716,7 +1706,7 @@ class DuskyVoiceApp(App[None]):
     }
 
     #player_waveform {
-        height: 7;
+        height: 6;
         margin: 0;
     }
 
@@ -2257,15 +2247,16 @@ class DuskyVoiceApp(App[None]):
         self._update_banner()
 
     def _on_engine_level(self, peak_db: float, rms_db: float) -> None:
-        linear = math.pow(10, peak_db / 20.0) if peak_db > -80.0 else 0.0
-        self._safe_dispatch(self._update_meters, peak_db, rms_db, linear)
+        # Match music_recognition.py meter_fraction: map dBFS from -60 to 0 dB
+        fraction = max(0.0, min(1.0, (peak_db - (-60.0)) / 60.0)) if peak_db > -80.0 else 0.0
+        self._safe_dispatch(self._update_meters, peak_db, rms_db, fraction)
 
-    def _update_meters(self, peak_db: float, rms_db: float, linear: float) -> None:
+    def _update_meters(self, peak_db: float, rms_db: float, fraction: float) -> None:
         vu = self.query_one("#vu_meter", LiveVuMeter)
         vu.update_levels(peak_db, rms_db)
         if self.engine.state == RecordState.RECORDING:
             osc = self.query_one("#oscilloscope", RollingOscilloscope)
-            osc.push_peak(linear)
+            osc.push_peak(fraction)
 
     def _on_engine_state_change(self, state: RecordState) -> None:
         self._safe_dispatch(self._update_ui_state, state)
