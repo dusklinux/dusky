@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 ===============================================================================
-DUSKY VOICE MEMOS — Native Wayland & PipeWire Audio Studio & Memo Manager
+DUSKY VOICE MEMOS — Wayland & PipeWire Audio Studio & Memo Manager
 ===============================================================================
 Target Platform: Wayland Only | PipeWire 1.6+ | GStreamer 1.28+ | Python 3.15+
 Arch Linux / Hyprland Native Architecture (Zero X11 / Zero legacy shims)
@@ -32,23 +32,23 @@ if sys.version_info < (3, 15):
 import argparse
 import asyncio
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum, auto
+from enum import StrEnum
 from pathlib import Path
 import threading
 import time
 from typing import Any, Callable, Final
 
 # Python 3.15 explicit lazy imports (PEP 810)
-lazy import csv
+lazy import hashlib
 lazy import json
 lazy import math
 lazy import os
 lazy import re
 lazy import shutil
-lazy import signal
 lazy import subprocess
+lazy import tempfile
 
 # GStreamer PyGObject initialization
 import gi
@@ -59,18 +59,17 @@ from gi.repository import Gst, GstPbutils, GLib
 Gst.init(None)
 
 # Textual 8.2+ TUI Framework & Rich
-from rich.console import Console, Group, RenderableType
+from rich.console import Group, RenderableType
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
+from rich.markup import escape
 
-from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.geometry import Offset, Region, Size, Spacing
 from textual.layout import Layout, WidgetPlacement
-from textual.message import Message
 from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.theme import Theme
@@ -78,10 +77,8 @@ from textual.widget import Widget
 from textual.widgets import (
     Button,
     DataTable,
-    Header,
     Input,
     Label,
-    Rule,
     Select,
     Static,
     Tab,
@@ -93,7 +90,6 @@ from textual.widgets import (
 # =============================================================================
 
 APP_NAME: Final[str] = "Dusky Voice Memos"
-APP_ID: Final[str] = "org.dusky.voice"
 VERSION: Final[str] = "1.2.0"
 
 HOME_DIR: Final[Path] = Path.home()
@@ -105,8 +101,7 @@ CONFIG_DIR: Final[Path] = (
 )
 RECORDINGS_DIR: Final[Path] = CONFIG_DIR
 CACHE_DIR: Final[Path] = RECORDINGS_DIR / ".waveform_cache"
-CONFIG_FILE: Final[Path] = CONFIG_DIR / "config.json"
-THEME_FILE: Final[Path] = HOME_DIR / ".config" / "matugen" / "generated" / "dusky_tui.json"
+THEME_FILE: Final[Path] = CONFIG_DIR.parents[2] / "matugen" / "generated" / "dusky_tui.json"
 
 # Audio constants
 SAMPLE_RATE: Final[int] = 48000
@@ -140,7 +135,7 @@ DEFAULT_THEME: Final[dict[str, str]] = {
 # DATA MODELS & ENUMS
 # =============================================================================
 
-class RecordSource(str, Enum):
+class RecordSource(StrEnum):
     MIC = "mic"
     SYSTEM = "system"
     BOTH = "both"
@@ -154,7 +149,7 @@ class RecordSource(str, Enum):
         }[self]
 
 
-class AudioFormat(str, Enum):
+class AudioFormat(StrEnum):
     OPUS = "opus"
     FLAC = "flac"
     WAV = "wav"
@@ -176,7 +171,7 @@ class AudioFormat(str, Enum):
         }[self]
 
 
-class RecordState(str, Enum):
+class RecordState(StrEnum):
     IDLE = "IDLE"
     COUNTDOWN = "COUNTDOWN"
     RECORDING = "RECORDING"
@@ -184,7 +179,7 @@ class RecordState(str, Enum):
     FINALIZING = "FINALIZING"
 
 
-class PlayerState(str, Enum):
+class PlayerState(StrEnum):
     STOPPED = "STOPPED"
     PLAYING = "PLAYING"
     PAUSED = "PAUSED"
@@ -255,7 +250,7 @@ def load_matugen_theme() -> dict[str, str]:
             with open(THEME_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 if isinstance(data, dict):
-                    return {**DEFAULT_THEME, **data}
+                    return {key: value if isinstance(value := data.get(key), str) and re.fullmatch(r"#[0-9a-fA-F]{6}", value) else default for key, default in DEFAULT_THEME.items()}
         except (OSError, ValueError):
             pass
     return DEFAULT_THEME.copy()
@@ -277,7 +272,7 @@ def copy_to_wayland_clipboard(text: str) -> bool:
         return False
     try:
         subprocess.run(
-            ["wl-copy", text],
+            ["wl-copy", "--type", "text/plain", "--", text],
             check=True,
             timeout=2.0,
             stdout=subprocess.DEVNULL,
@@ -392,26 +387,36 @@ def discover_pipewire_nodes() -> tuple[list[PipeWireNode], list[PipeWireNode]]:
 # WAVEFORM GENERATOR & CACHING ENGINE
 # =============================================================================
 
-def compute_waveform_peaks(file_path: Path, num_points: int = 120) -> list[float]:
+def clean_memo_stem(value: str) -> str:
+    """Leave room for timestamps and extensions under Linux's filename byte limit."""
+    value = re.sub(r'[\\/*?:"<>|\x00-\x1f]', "", value).strip(" .")
+    return value.encode("utf-8")[:180].decode("utf-8", errors="ignore").rstrip(" .")
+
+
+def compute_waveform_peaks(file_path: Path, num_points: int = 120, cancelled: threading.Event | None = None) -> list[float]:
     """
     Extract or load audio amplitude peaks for a recording.
-    Fast GStreamer decoding at 100x real-time speed, cached as JSON.
+    Decode without clock synchronization; cache only complete waveforms.
     """
-    if not file_path.is_file():
+    if num_points <= 0 or (cancelled and cancelled.is_set()):
         return []
-
-    cache_file = CACHE_DIR / f"{file_path.stem}_{file_path.stat().st_size}_peaks.json"
+    try:
+        stat = file_path.stat()
+    except OSError:
+        return []
+    cache_key = hashlib.sha256(str(file_path.resolve()).encode()).hexdigest()
+    cache_file = CACHE_DIR / f"{cache_key}_{stat.st_size}_{stat.st_mtime_ns}_{num_points}.json"
     if cache_file.is_file():
         try:
             with open(cache_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                if isinstance(data, list) and all(isinstance(x, (int, float)) for x in data):
+                if isinstance(data, list) and len(data) == num_points and all(isinstance(x, (int, float)) and math.isfinite(x) and 0 <= x <= 1 for x in data):
                     return [float(x) for x in data]
         except (OSError, ValueError):
             pass
 
     pipe_str = (
-        f"uridecodebin uri=file://{file_path.resolve()} ! "
+        "uridecodebin name=decoder ! "
         f"audioconvert ! audio/x-raw,channels=1 ! "
         f"level interval={LEVEL_INTERVAL_NS} ! fakesink sync=false qos=false"
     )
@@ -421,52 +426,71 @@ def compute_waveform_peaks(file_path: Path, num_points: int = 120) -> list[float
     except GLib.Error:
         return []
 
-    bus = pipeline.get_bus()
-    pipeline.set_state(Gst.State.PLAYING)
+    try:
+        pipeline.get_by_name("decoder").set_property("uri", file_path.resolve().as_uri())
+        bus = pipeline.get_bus()
+        pipeline.set_state(Gst.State.PLAYING)
 
-    raw_peaks: list[float] = []
-    deadline = time.monotonic() + 5.0
+        raw_peaks: list[float] = []
+        complete = False
+        deadline = time.monotonic() + 30.0
 
-    while time.monotonic() < deadline:
-        msg = bus.timed_pop_filtered(
-            100 * Gst.MSECOND,
-            Gst.MessageType.ELEMENT | Gst.MessageType.EOS | Gst.MessageType.ERROR,
-        )
-        if not msg:
-            continue
-        if msg.type == Gst.MessageType.ELEMENT:
-            s = msg.get_structure()
-            if s and s.has_name("level"):
-                db = s.get_value("peak")[0]
-                frac = max(0.0, min(1.0, (float(db) - (-60.0)) / 60.0)) if db > -80.0 else 0.0
-                raw_peaks.append(frac)
-        elif msg.type in (Gst.MessageType.EOS, Gst.MessageType.ERROR):
-            break
+        while time.monotonic() < deadline and not (cancelled and cancelled.is_set()):
+            msg = bus.timed_pop_filtered(
+                100 * Gst.MSECOND,
+                Gst.MessageType.ELEMENT | Gst.MessageType.EOS | Gst.MessageType.ERROR,
+            )
+            if not msg:
+                continue
+            if msg.type == Gst.MessageType.ELEMENT:
+                s = msg.get_structure()
+                if s and s.has_name("level"):
+                    db = s.get_value("peak")[0]
+                    frac = max(0.0, min(1.0, (float(db) - (-60.0)) / 60.0)) if db > -80.0 else 0.0
+                    raw_peaks.append(frac)
+            elif msg.type in (Gst.MessageType.EOS, Gst.MessageType.ERROR):
+                complete = msg.type == Gst.MessageType.EOS
+                break
 
-    pipeline.set_state(Gst.State.NULL)
+    finally:
+        pipeline.set_state(Gst.State.NULL)
 
-    if not raw_peaks:
-        return [0.0] * num_points
+    if not complete or not raw_peaks or (cancelled and cancelled.is_set()):
+        return []
 
     if len(raw_peaks) == num_points:
         resampled = raw_peaks
     else:
         resampled = []
         for i in range(num_points):
-            idx = int(i * len(raw_peaks) / num_points)
-            resampled.append(raw_peaks[min(idx, len(raw_peaks) - 1)])
+            start = i * len(raw_peaks) // num_points
+            end = max(start + 1, (i + 1) * len(raw_peaks) // num_points)
+            resampled.append(max(raw_peaks[start:end]))
 
+    temporary: Path | None = None
     try:
-        with open(cache_file, "w", encoding="utf-8") as f:
-            json.dump(resampled, f)
+        current = file_path.stat()
+        if (current.st_size, current.st_mtime_ns) != (stat.st_size, stat.st_mtime_ns):
+            return []
+        # Readers must see either a complete old cache or a complete new one.
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=CACHE_DIR, delete=False) as cache:
+            temporary = Path(cache.name)
+            json.dump(resampled, cache)
+        temporary.replace(cache_file)
     except OSError:
         pass
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     return resampled
 
 
 # =============================================================================
-# DUSKY AUDIO RECORDING ENGINE (PIPEWIRE NATIVE)
+# DUSKY AUDIO RECORDING ENGINE (PIPEWIRE-PULSE)
 # =============================================================================
 
 class DuskyAudioEngine:
@@ -475,8 +499,6 @@ class DuskyAudioEngine:
     def __init__(self) -> None:
         self.state: RecordState = RecordState.IDLE
         self.pipeline: Gst.Pipeline | None = None
-        self.bus_thread: threading.Thread | None = None
-        self._stop_bus = threading.Event()
         self.output_path: Path | None = None
         self.start_time: float = 0.0
         self.pause_start: float = 0.0
@@ -506,50 +528,45 @@ class DuskyAudioEngine:
         channels: int,
         custom_source_node: str = "",
         custom_sink_node: str = "",
+        sample_rate: int = SAMPLE_RATE,
     ) -> str:
         """Construct the optimized GStreamer pipeline for PipeWire."""
         encoder_str = {
             AudioFormat.OPUS: "opusenc bitrate=128000 ! oggmux",
             AudioFormat.FLAC: "flacenc",
             AudioFormat.WAV: "wavenc",
-            AudioFormat.MP3: "lamemp3enc target=1 quality=2 ! id3v2mux",
+            AudioFormat.MP3: "lamemp3enc target=quality quality=2 ! id3v2mux",
             AudioFormat.OGG: "vorbisenc quality=0.6 ! oggmux",
         }[format_]
 
-        mic_target = custom_source_node or "@DEFAULT_SOURCE@"
-        sys_target = (
-            f"{custom_sink_node}.monitor"
-            if custom_sink_node
-            else "@DEFAULT_MONITOR@"
-        )
-
-        escaped_dest = str(output_path.resolve())
+        if format_ == AudioFormat.OPUS:
+            sample_rate = 48000  # Opus does not accept 44.1 kHz PCM.
 
         if source == RecordSource.MIC:
             return (
-                f"pulsesrc device={mic_target} ! "
+                "pulsesrc name=mic ! "
                 f"audioconvert ! audioresample ! "
-                f"audio/x-raw,channels={channels} ! "
+                f"audio/x-raw,channels={channels},rate={sample_rate} ! "
                 f"level interval={LEVEL_INTERVAL_NS} name=lvl ! "
-                f"{encoder_str} ! filesink location=\"{escaped_dest}\""
+                f"{encoder_str} ! filesink name=output"
             )
         elif source == RecordSource.SYSTEM:
             return (
-                f"pulsesrc device={sys_target} ! "
+                "pulsesrc name=desktop ! "
                 f"audioconvert ! audioresample ! "
-                f"audio/x-raw,channels={channels} ! "
+                f"audio/x-raw,channels={channels},rate={sample_rate} ! "
                 f"level interval={LEVEL_INTERVAL_NS} name=lvl ! "
-                f"{encoder_str} ! filesink location=\"{escaped_dest}\""
+                f"{encoder_str} ! filesink name=output"
             )
         else:  # RecordSource.BOTH
             return (
                 f"audiomixer name=mix latency={MIXER_LATENCY_NS} ! "
                 f"audioconvert ! audioresample ! "
-                f"audio/x-raw,channels={channels} ! "
+                f"audio/x-raw,channels={channels},rate={sample_rate} ! "
                 f"level interval={LEVEL_INTERVAL_NS} name=lvl ! "
-                f"{encoder_str} ! filesink location=\"{escaped_dest}\" "
-                f"pulsesrc device={mic_target} ! audioconvert ! audioresample ! mix.sink_0 "
-                f"pulsesrc device={sys_target} ! audioconvert ! audioresample ! mix.sink_1"
+                f"{encoder_str} ! filesink name=output "
+                "pulsesrc name=mic ! queue ! audioconvert ! audioresample ! mix.sink_0 "
+                "pulsesrc name=desktop ! queue ! audioconvert ! audioresample ! mix.sink_1"
             )
 
     def prepare(
@@ -562,9 +579,10 @@ class DuskyAudioEngine:
         title: str = "",
         custom_source_node: str = "",
         custom_sink_node: str = "",
+        sample_rate: int = SAMPLE_RATE,
     ) -> bool:
-        """Initialize GStreamer pipeline and bus monitor."""
-        if self.state != RecordState.IDLE:
+        """Prepare the pipeline; the TUI polls its bus."""
+        if self.state != RecordState.IDLE or self.pipeline is not None:
             return False
 
         self.output_path = output_path
@@ -573,11 +591,18 @@ class DuskyAudioEngine:
         self.stopped_by_timer = False
 
         pipe_str = self.build_pipeline_string(
-            output_path, source, format_, channels, custom_source_node, custom_sink_node
+            output_path, source, format_, channels, custom_source_node, custom_sink_node, sample_rate
         )
 
         try:
             self.pipeline = Gst.parse_launch(pipe_str)
+            self.pipeline.get_by_name("output").set_property("location", str(output_path.resolve()))
+            mic = self.pipeline.get_by_name("mic")
+            desktop = self.pipeline.get_by_name("desktop")
+            if mic is not None:
+                mic.set_property("device", custom_source_node or "@DEFAULT_SOURCE@")
+            if desktop is not None:
+                desktop.set_property("device", f"{custom_sink_node}.monitor" if custom_sink_node else "@DEFAULT_MONITOR@")
         except GLib.Error as e:
             if self.on_error:
                 self.on_error(f"GStreamer pipeline initialization failed: {e.message}")
@@ -596,30 +621,26 @@ class DuskyAudioEngine:
             Gst.TAG_DATE_TIME,
             Gst.DateTime.new_now_local_time(),
         )
-        self.pipeline.send_event(Gst.Event.new_tag(tag_list))
-
-        self._stop_bus.clear()
-        bus = self.pipeline.get_bus()
-        self.bus_thread = threading.Thread(
-            target=self._bus_worker,
-            args=(bus,),
-            daemon=True,
-            name="DuskyRecorderBus",
-        )
-        self.bus_thread.start()
+        elements = self.pipeline.iterate_elements()
+        while True:
+            result, element = elements.next()
+            if result != Gst.IteratorResult.OK:
+                break
+            if isinstance(element, Gst.TagSetter):
+                element.merge_tags(tag_list, Gst.TagMergeMode.REPLACE)
 
         return True
 
     def start(self) -> bool:
         """Transition from prepare/countdown into active recording."""
-        if not self.pipeline:
+        if not self.pipeline or self.state not in (RecordState.IDLE, RecordState.COUNTDOWN):
             return False
 
         ret = self.pipeline.set_state(Gst.State.PLAYING)
         if ret == Gst.StateChangeReturn.FAILURE:
+            self.cancel()
             if self.on_error:
                 self.on_error("Failed to activate recording pipeline.")
-            self.cancel()
             return False
 
         self.start_time = time.monotonic()
@@ -633,7 +654,8 @@ class DuskyAudioEngine:
         if self.state != RecordState.RECORDING or not self.pipeline:
             return False
 
-        self.pipeline.set_state(Gst.State.PAUSED)
+        if self.pipeline.set_state(Gst.State.PAUSED) == Gst.StateChangeReturn.FAILURE:
+            return False
         self.pause_start = time.monotonic()
         self.state = RecordState.PAUSED
         if self.on_state_change:
@@ -645,8 +667,9 @@ class DuskyAudioEngine:
         if self.state != RecordState.PAUSED or not self.pipeline:
             return False
 
+        if self.pipeline.set_state(Gst.State.PLAYING) == Gst.StateChangeReturn.FAILURE:
+            return False
         self.paused_duration += time.monotonic() - self.pause_start
-        self.pipeline.set_state(Gst.State.PLAYING)
         self.state = RecordState.RECORDING
         if self.on_state_change:
             self.on_state_change(self.state)
@@ -662,12 +685,14 @@ class DuskyAudioEngine:
         if self.on_state_change:
             self.on_state_change(self.state)
 
+        finalized = False
         if self.pipeline:
             self.pipeline.set_state(Gst.State.PLAYING)
             self.pipeline.send_event(Gst.Event.new_eos())
 
             bus = self.pipeline.get_bus()
-            bus.timed_pop_filtered(2 * Gst.SECOND, Gst.MessageType.EOS)
+            message = bus.timed_pop_filtered(5 * Gst.SECOND, Gst.MessageType.EOS | Gst.MessageType.ERROR)
+            finalized = message is not None and message.type == Gst.MessageType.EOS
             self.pipeline.set_state(Gst.State.NULL)
 
         self._cleanup()
@@ -675,6 +700,10 @@ class DuskyAudioEngine:
         if self.on_state_change:
             self.on_state_change(self.state)
 
+        if not finalized:
+            if self.on_error:
+                self.on_error("Finalization failed; the partial recording was retained for recovery.")
+            return False
         if self.output_path and self.output_path.is_file():
             if self.on_finished:
                 self.on_finished(self.output_path, self.stopped_by_timer)
@@ -683,7 +712,7 @@ class DuskyAudioEngine:
 
     def cancel(self) -> bool:
         """Discard recording and delete partially written file."""
-        if self.state == RecordState.IDLE:
+        if self.state == RecordState.IDLE and self.pipeline is None:
             return False
 
         self.stopped_by_timer = False
@@ -692,45 +721,43 @@ class DuskyAudioEngine:
             self.pipeline.set_state(Gst.State.NULL)
 
         self._cleanup()
-        if self.output_path and self.output_path.is_file():
-            self.output_path.unlink(missing_ok=True)
-
+        error: OSError | None = None
+        try:
+            if self.output_path:
+                self.output_path.unlink(missing_ok=True)
+        except OSError as exc:
+            error = exc
         self.state = RecordState.IDLE
         if self.on_state_change:
             self.on_state_change(self.state)
+        if error is not None:
+            if self.on_error:
+                self.on_error(f"Capture stopped, but could not discard {self.output_path}: {error}")
+            return False
         return True
 
     def _cleanup(self) -> None:
-        self._stop_bus.set()
-        if self.bus_thread and self.bus_thread.is_alive():
-            self.bus_thread.join(timeout=0.5)
-        self.bus_thread = None
         self.pipeline = None
 
-    def _bus_worker(self, bus: Gst.Bus) -> None:
-        """Threaded GStreamer bus monitor for level messages and errors."""
-        while not self._stop_bus.is_set():
-            msg = bus.timed_pop_filtered(
-                50 * Gst.MSECOND,
-                Gst.MessageType.ELEMENT | Gst.MessageType.EOS | Gst.MessageType.ERROR,
-            )
-            if not msg:
-                continue
-
-            if msg.type == Gst.MessageType.ELEMENT:
-                s = msg.get_structure()
-                if s and s.has_name("level"):
-                    peak_list = s.get_value("peak")
-                    if peak_list:
-                        peaks = [float(x) for x in peak_list]
-                        if self.on_level_callback:
-                            self.on_level_callback(peaks)
-            elif msg.type == Gst.MessageType.ERROR:
-                err, dbg = msg.parse_error()
+    def poll(self) -> None:
+        """Drain telemetry on the TUI thread; stop() exclusively consumes final EOS."""
+        if not self.pipeline:
+            return
+        bus = self.pipeline.get_bus()
+        while message := bus.pop_filtered(Gst.MessageType.ELEMENT | Gst.MessageType.ERROR | Gst.MessageType.EOS):
+            if message.type == Gst.MessageType.ELEMENT:
+                structure = message.get_structure()
+                if structure and structure.has_name("level") and self.on_level_callback:
+                    self.on_level_callback([float(x) for x in structure.get_value("peak")])
+            else:
+                error = message.parse_error()[0].message if message.type == Gst.MessageType.ERROR else "Audio source ended unexpectedly."
+                self.pipeline.set_state(Gst.State.NULL)
+                self._cleanup()
+                self.state = RecordState.IDLE
+                if self.on_state_change:
+                    self.on_state_change(self.state)
                 if self.on_error:
-                    self.on_error(f"GStreamer Error: {err.message} ({dbg})")
-                break
-            elif msg.type == Gst.MessageType.EOS:
+                    self.on_error(error + " Partial recording retained.")
                 break
 
 
@@ -746,32 +773,32 @@ class DuskyAudioPlayer:
         self.state: PlayerState = PlayerState.STOPPED
         self.current_path: Path | None = None
         self.duration_sec: float = 0.0
-        self._bus_thread: threading.Thread | None = None
-        self._stop_bus = threading.Event()
 
         self.on_state_change: Callable[[PlayerState], None] | None = None
         self.on_eos: Callable[[], None] | None = None
+        self.on_error: Callable[[str], None] | None = None
 
         self.player = Gst.ElementFactory.make("playbin3", "audio_player")
-        if not self.player:
-            self.player = Gst.ElementFactory.make("playbin", "audio_player")
 
-    def load(self, file_path: Path) -> bool:
+    def load(self, file_path: Path, duration: float | None = None) -> bool:
         """Load an audio memo for playback and cache duration."""
         self.stop()
         self.current_path = file_path
 
-        try:
-            disc = GstPbutils.Discoverer.new(Gst.SECOND)
-            info = disc.discover_uri(f"file://{file_path.resolve()}")
-            self.duration_sec = info.get_duration() / Gst.SECOND
-        except GLib.Error:
-            self.duration_sec = 0.0
-
+        if duration is not None:
+            self.duration_sec = duration
+        else:
+            try:
+                disc = GstPbutils.Discoverer.new(Gst.SECOND)
+                info = disc.discover_uri(file_path.resolve().as_uri())
+                duration_ns = info.get_duration()
+                self.duration_sec = duration_ns / Gst.SECOND if duration_ns != Gst.CLOCK_TIME_NONE else 0.0
+            except GLib.Error:
+                self.duration_sec = 0.0
         if self.player:
-            self.player.set_property("uri", f"file://{file_path.resolve()}")
-
-        return True
+            self.player.set_property("uri", file_path.resolve().as_uri())
+            return True
+        return False
 
     def play(self) -> bool:
         """Start or resume playback."""
@@ -786,7 +813,6 @@ class DuskyAudioPlayer:
         if self.on_state_change:
             self.on_state_change(self.state)
 
-        self._start_bus_monitor()
         return True
 
     def pause(self) -> bool:
@@ -794,7 +820,8 @@ class DuskyAudioPlayer:
         if not self.player or self.state != PlayerState.PLAYING:
             return False
 
-        self.player.set_state(Gst.State.PAUSED)
+        if self.player.set_state(Gst.State.PAUSED) == Gst.StateChangeReturn.FAILURE:
+            return False
         self.state = PlayerState.PAUSED
         if self.on_state_change:
             self.on_state_change(self.state)
@@ -805,7 +832,6 @@ class DuskyAudioPlayer:
         if self.player:
             self.player.set_state(Gst.State.NULL)
 
-        self._stop_bus.set()
         self.state = PlayerState.STOPPED
         if self.on_state_change:
             self.on_state_change(self.state)
@@ -834,40 +860,32 @@ class DuskyAudioPlayer:
         success, pos_ns = self.player.query_position(Gst.Format.TIME)
         return pos_ns / 1e9 if success else 0.0
 
-    def _start_bus_monitor(self) -> None:
-        if self._bus_thread and self._bus_thread.is_alive():
+    def poll(self) -> None:
+        if not self.player or self.state == PlayerState.STOPPED:
             return
-        self._stop_bus.clear()
-        bus = self.player.get_bus() if self.player else None
-        if not bus:
-            return
-
-        def _monitor() -> None:
-            while not self._stop_bus.is_set():
-                msg = bus.timed_pop_filtered(
-                    100 * Gst.MSECOND,
-                    Gst.MessageType.EOS | Gst.MessageType.ERROR,
-                )
-                if not msg:
-                    continue
-                if msg.type == Gst.MessageType.EOS:
-                    self.stop()
-                    if self.on_eos:
-                        self.on_eos()
-                    break
-                elif msg.type == Gst.MessageType.ERROR:
-                    self.stop()
-                    break
-
-        self._bus_thread = threading.Thread(
-            target=_monitor, daemon=True, name="DuskyPlayerBus"
-        )
-        self._bus_thread.start()
+        message = self.player.get_bus().pop_filtered(Gst.MessageType.EOS | Gst.MessageType.ERROR)
+        if message:
+            error = message.parse_error()[0].message if message.type == Gst.MessageType.ERROR else None
+            self.stop()
+            if error and self.on_error:
+                self.on_error(error)
+            elif self.on_eos:
+                self.on_eos()
 
 
 # =============================================================================
 # VOICE MEMO LIBRARY REPOSITORY
 # =============================================================================
+
+def remove_waveform_cache(path: Path) -> None:
+    """Cache cleanup must never turn a successful file operation into a failure."""
+    key = hashlib.sha256(str(path.resolve()).encode()).hexdigest()
+    try:
+        for cache in CACHE_DIR.glob(f"{key}_*.json"):
+            cache.unlink(missing_ok=True)
+    except OSError:
+        pass
+
 
 class VoiceLibrary:
     """Manages voice memos in ~/.config/dusky/settings/dusky_voice/."""
@@ -875,7 +893,7 @@ class VoiceLibrary:
     SUPPORTED_EXTS: Final[set[str]] = {".opus", ".flac", ".wav", ".mp3", ".ogg", ".m4a"}
 
     @classmethod
-    def scan_memos(cls) -> list[VoiceMemo]:
+    def scan_memos(cls, exclude: Path | None = None) -> list[VoiceMemo]:
         """Scan directory and return sorted voice memos (newest first)."""
         ensure_storage_environment()
         memos: list[VoiceMemo] = []
@@ -886,22 +904,26 @@ class VoiceLibrary:
             return []
 
         for entry in entries:
-            if not entry.is_file():
+            if entry == exclude or not entry.is_file():
                 continue
             if entry.name.startswith("."):
                 continue
             if entry.suffix.lower() not in cls.SUPPORTED_EXTS:
                 continue
 
-            stat = entry.stat()
+            try:
+                stat = entry.stat()
+            except OSError:
+                continue
             size = stat.st_size
             created_at = datetime.fromtimestamp(stat.st_mtime)
 
             duration = 0.0
             try:
                 disc = GstPbutils.Discoverer.new(Gst.SECOND)
-                info = disc.discover_uri(f"file://{entry.resolve()}")
-                duration = info.get_duration() / Gst.SECOND
+                info = disc.discover_uri(entry.resolve().as_uri())
+                duration_ns = info.get_duration()
+                duration = duration_ns / Gst.SECOND if duration_ns != Gst.CLOCK_TIME_NONE else 0.0
             except GLib.Error:
                 pass
 
@@ -923,8 +945,8 @@ class VoiceLibrary:
 
     @classmethod
     def rename_memo(cls, memo: VoiceMemo, new_stem: str) -> VoiceMemo | None:
-        """Rename memo and its associated cached waveform."""
-        clean_stem = re.sub(r'[\\/*?:"<>|]', "", new_stem).strip()
+        """Rename a memo; waveform keys are derived from its current identity."""
+        clean_stem = clean_memo_stem(new_stem)
         if not clean_stem or clean_stem == memo.stem:
             return None
 
@@ -934,12 +956,9 @@ class VoiceLibrary:
 
         try:
             memo.path.rename(new_path)
+            remove_waveform_cache(memo.path)
         except OSError:
             return None
-
-        old_cache = CACHE_DIR / f"{memo.stem}_{memo.size_bytes}_peaks.json"
-        if old_cache.is_file():
-            old_cache.unlink(missing_ok=True)
 
         return VoiceMemo(
             path=new_path,
@@ -954,11 +973,10 @@ class VoiceLibrary:
 
     @classmethod
     def delete_memo(cls, memo: VoiceMemo) -> bool:
-        """Delete memo and its cached waveform."""
+        """Delete the selected memo."""
         try:
             memo.path.unlink(missing_ok=True)
-            cache_file = CACHE_DIR / f"{memo.stem}_{memo.size_bytes}_peaks.json"
-            cache_file.unlink(missing_ok=True)
+            remove_waveform_cache(memo.path)
             return True
         except OSError:
             return False
@@ -1076,7 +1094,7 @@ class AppFooter(Vertical):
         with Horizontal(id="footer-bottom-row"):
             yield Label(f"󰈔 {RECORDINGS_DIR}", id="file-link")
             yield Label("│", classes="footer-sep")
-            yield Label("PIPEWIRE NATIVE", id="mode-btn")
+            yield Label("PIPEWIRE-PULSE", id="mode-btn")
             yield Label("│", classes="footer-sep")
             yield Label("", id="status-bar")
 
@@ -1863,7 +1881,7 @@ class DuskyVoiceApp(App[None]):
     """
 
     BINDINGS = [
-        Binding("tab", "switch_tab", "Switch Tab", priority=True),
+        Binding("ctrl+tab", "switch_tab", "Switch Tab"),
         Binding("1", "tab_studio", "Studio"),
         Binding("2", "tab_library", "Library"),
         Binding("3", "tab_devices", "Devices"),
@@ -1903,14 +1921,22 @@ class DuskyVoiceApp(App[None]):
         # Setup player hooks
         self.player.on_state_change = self._on_player_state_change
         self.player.on_eos = self._on_player_eos
+        self.player.on_error = lambda message: self.notify(message, title="Playback Error", severity="error")
+        self._closing = False
+        self._library_refresh_pending = False
+        self._library_scanning = False
+        self._waveform_cancel = threading.Event()
+        self._waveform_generation = 0
 
     def _safe_dispatch(self, func: Callable[..., Any], *args: Any) -> None:
-        """Execute callback directly if already on main thread, else dispatch via call_from_thread."""
+        """Execute callback directly if already on main thread, else enqueue without blocking the worker."""
+        if getattr(self, "_closing", False):
+            return
         if threading.current_thread() is threading.main_thread():
             func(*args)
         else:
             try:
-                self.call_from_thread(func, *args)
+                self.call_later(func, *args)
             except RuntimeError:
                 pass
 
@@ -1977,11 +2003,13 @@ class DuskyVoiceApp(App[None]):
                                     ("󰋋 Desktop Audio", "system"),
                                     ("󰮔 Both (Mic + Desktop)", "both"),
                                 ],
+                                allow_blank=False,
                                 value="mic",
                                 id="select_source",
                             )
                             yield Select(
                                 [("Stereo (2 Channels)", 2), ("Mono (1 Channel)", 1)],
+                                allow_blank=False,
                                 value=2,
                                 id="select_channels",
                             )
@@ -1989,12 +2017,13 @@ class DuskyVoiceApp(App[None]):
                             yield Label("󰋋  CODEC & FORMAT", classes="config_label")
                             yield Select(
                                 [
-                                    ("Opus (.opus) • Voice", "opus"),
+                                    ("Opus (.opus) • 48 kHz", "opus"),
                                     ("FLAC (.flac) • Lossless", "flac"),
                                     ("WAV (.wav) • Raw PCM", "wav"),
                                     ("MP3 (.mp3) • Compatible", "mp3"),
                                     ("OGG (.ogg) • Vorbis", "ogg"),
                                 ],
+                                allow_blank=False,
                                 value="opus",
                                 id="select_format",
                             )
@@ -2003,6 +2032,7 @@ class DuskyVoiceApp(App[None]):
                                     ("48 kHz • Studio Master", 48000),
                                     ("44.1 kHz • CD Standard", 44100),
                                 ],
+                                allow_blank=False,
                                 value=48000,
                                 id="select_rate",
                             )
@@ -2015,6 +2045,7 @@ class DuskyVoiceApp(App[None]):
                                     ("Pre-roll: 5 Seconds", 5),
                                     ("Pre-roll: 10 Seconds", 10),
                                 ],
+                                allow_blank=False,
                                 value=0,
                                 id="select_delay",
                             )
@@ -2027,6 +2058,7 @@ class DuskyVoiceApp(App[None]):
                                     ("Limit: 10 Minutes", 600),
                                     ("Limit: 30 Minutes", 1800),
                                 ],
+                                allow_blank=False,
                                 value=0,
                                 id="select_duration",
                             )
@@ -2041,7 +2073,6 @@ class DuskyVoiceApp(App[None]):
                         yield Input(placeholder="󰍉  Search voice memos by title... (Press / to focus)", id="search_input")
                         yield Label(" 0 memos ", id="lbl_memo_count")
                         yield Button("󰑕  Refresh", id="btn_refresh_lib", classes="player_btn")
-                        yield Button("󰉋  Open Folder", id="btn_open_folder", classes="player_btn")
 
                     yield DataTable(id="library_table", cursor_type="row")
 
@@ -2161,9 +2192,9 @@ class DuskyVoiceApp(App[None]):
         if self.engine.state == RecordState.COUNTDOWN:
             self._abort_countdown()
         elif self.engine.state != RecordState.IDLE:
-            self.engine.cancel()
-            self.set_status("Recording discarded", "warning")
-            self.notify("Recording discarded.", title="Cancelled", severity="warning")
+            if self.engine.cancel():
+                self.set_status("Recording discarded", "warning")
+                self.notify("Recording discarded.", title="Cancelled", severity="warning")
 
     def _start_recording_flow(self) -> None:
         if self.player.state == PlayerState.PLAYING:
@@ -2190,9 +2221,9 @@ class DuskyVoiceApp(App[None]):
         max_duration = float(self.query_one("#select_duration", Select).value or 0)
         custom_title = self.query_one("#input_title", Input).value.strip()
 
-        timestamp_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        timestamp_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")
         prefix = custom_title if custom_title else "Memo"
-        clean_prefix = re.sub(r'[\\/*?:"<>|]', "", prefix)
+        clean_prefix = clean_memo_stem(prefix) or "Memo"
         filename = f"{clean_prefix}_{timestamp_str}{fmt.extension}"
         output_path = RECORDINGS_DIR / filename
 
@@ -2202,6 +2233,7 @@ class DuskyVoiceApp(App[None]):
             format_=fmt,
             channels=channels,
             max_duration=max_duration,
+            sample_rate=int(self.query_one("#select_rate", Select).value),
             title=custom_title or f"Memo {timestamp_str}",
         )
         if not ok:
@@ -2300,6 +2332,8 @@ class DuskyVoiceApp(App[None]):
 
     def _clock_tick(self) -> None:
         """Periodic clock update for recording or playback."""
+        self.engine.poll()
+        self.player.poll()
         timer_box = self.query_one("#timer_box", DigitalTimerDisplay)
         if self.engine.state in (RecordState.RECORDING, RecordState.PAUSED):
             elapsed = self.engine.elapsed_seconds
@@ -2348,7 +2382,7 @@ class DuskyVoiceApp(App[None]):
                 size_str = f"{total_size_kb / 1024:.1f} MB"
             else:
                 size_str = f"{total_size_kb:.1f} KB"
-            stats.update(Text(f"{len(self.memos)} memos • {size_str} • 48 kHz", style=f"dim {tc['muted']}"))
+            stats.update(Text(f"{len(self.memos)} memos • {size_str}", style=f"dim {tc['muted']}"))
         except Exception:
             pass
 
@@ -2356,8 +2390,12 @@ class DuskyVoiceApp(App[None]):
         self._safe_dispatch(self._handle_recording_saved, path, stopped_by_timer)
 
     def _handle_recording_saved(self, path: Path, stopped_by_timer: bool = False) -> None:
-        stat = path.stat()
-        size_kb = stat.st_size / 1024
+        try:
+            size_kb = path.stat().st_size / 1024
+        except OSError:
+            self.notify("Saved recording is no longer accessible.", severity="warning")
+            self._refresh_library()
+            return
         self.set_status(f"Saved {path.name}", "success")
 
         if stopped_by_timer:
@@ -2381,13 +2419,6 @@ class DuskyVoiceApp(App[None]):
 
         self._refresh_library()
 
-        threading.Thread(
-            target=compute_waveform_peaks,
-            args=(path,),
-            daemon=True,
-            name="PrecomputeWaveform",
-        ).start()
-
     def _on_engine_error(self, message: str) -> None:
         self._safe_dispatch(self._handle_engine_error, message)
 
@@ -2400,51 +2431,86 @@ class DuskyVoiceApp(App[None]):
     # -------------------------------------------------------------------------
 
     def _refresh_library(self) -> None:
+        self._library_refresh_pending = True
+        if self._library_scanning:
+            return
+        self._library_scanning = True
+
+        async def scan() -> None:
+            try:
+                while self._library_refresh_pending:
+                    self._library_refresh_pending = False
+                    exclude = self.engine.output_path if self.engine.pipeline is not None else None
+                    memos = await asyncio.to_thread(VoiceLibrary.scan_memos, exclude)
+                    if not self._closing:
+                        self.memos = memos
+                        if self.selected_memo and not any(m.path == self.selected_memo.path for m in memos):
+                            self.player.stop()
+                            self._waveform_cancel.set()
+                            self.selected_memo = None
+                            self.query_one("#player_waveform", PlayerWaveformWidget).set_data([])
+                            self.query_one("#lbl_player_title", Label).update("No recording selected")
+                        self._render_library()
+            except OSError as error:
+                if not self._closing:
+                    self.notify(str(error), title="Library Error", severity="error")
+            finally:
+                self._library_scanning = False
+
+        self.run_worker(scan(), group="library")
+
+    def _render_library(self) -> None:
         table = self.query_one("#library_table", DataTable)
-        table.clear(columns=True)
-        table.add_columns("Status", "Title", "Format", "Duration", "Size", "Date Recorded")
+        with self.prevent(DataTable.RowHighlighted):
+            table.clear(columns=True)
+            table.add_columns("Status", "Title", "Format", "Duration", "Size", "Date Recorded")
 
-        search_query = self.query_one("#search_input", Input).value.lower().strip()
-        self.memos = VoiceLibrary.scan_memos()
+            search_query = self.query_one("#search_input", Input).value.lower().strip()
 
-        filtered = [
-            m for m in self.memos if not search_query or search_query in m.name.lower()
-        ]
+            filtered = [
+                m for m in self.memos if not search_query or search_query in m.name.lower()
+            ]
 
-        tc = self.theme_colors
-        for m in filtered:
-            is_active = (
-                self.player.state == PlayerState.PLAYING
-                and self.selected_memo
-                and m.path == self.selected_memo.path
-            )
-            if is_active:
-                status_cell = Text("  PLAY ", style=f"bold {tc['bg']} on {tc['success']}")
-            else:
-                status_cell = Text(" 󰍬 MEMO ", style=f"dim {tc['muted']}")
+            tc = self.theme_colors
+            for m in filtered:
+                is_active = (
+                    self.player.state == PlayerState.PLAYING
+                    and self.selected_memo
+                    and m.path == self.selected_memo.path
+                )
+                if is_active:
+                    status_cell = Text("  PLAY ", style=f"bold {tc['bg']} on {tc['success']}")
+                else:
+                    status_cell = Text(" 󰍬 MEMO ", style=f"dim {tc['muted']}")
 
-            title_cell = Text(m.name, style=f"bold {tc['fg']}")
+                title_cell = Text(m.name, style=f"bold {tc['fg']}")
 
-            fmt_color = tc["accent"]
-            if m.format_name == "FLAC":
-                fmt_color = tc["warning"]
-            elif m.format_name == "WAV":
-                fmt_color = tc["success"]
+                fmt_color = tc["accent"]
+                if m.format_name == "FLAC":
+                    fmt_color = tc["warning"]
+                elif m.format_name == "WAV":
+                    fmt_color = tc["success"]
 
-            format_cell = Text(f" {m.format_name} ", style=f"bold {tc['bg']} on {fmt_color}")
-            dur_cell = Text(m.formatted_duration, style=tc["warning"])
-            size_cell = Text(m.formatted_size, style=f"dim {tc['fg']}")
-            date_cell = Text(m.formatted_date, style=f"dim {tc['muted']}")
+                format_cell = Text(f" {m.format_name} ", style=f"bold {tc['bg']} on {fmt_color}")
+                dur_cell = Text(m.formatted_duration, style=tc["warning"])
+                size_cell = Text(m.formatted_size, style=f"dim {tc['fg']}")
+                date_cell = Text(m.formatted_date, style=f"dim {tc['muted']}")
 
-            table.add_row(
-                status_cell,
-                title_cell,
-                format_cell,
-                dur_cell,
-                size_cell,
-                date_cell,
-                key=str(m.path),
-            )
+                table.add_row(
+                    status_cell,
+                    title_cell,
+                    format_cell,
+                    dur_cell,
+                    size_cell,
+                    date_cell,
+                    key=str(m.path),
+                )
+
+            if self.selected_memo:
+                for row, memo in enumerate(filtered):
+                    if memo.path == self.selected_memo.path:
+                        table.move_cursor(row=row, scroll=False)
+                        break
 
         try:
             self.query_one("#lbl_memo_count", Label).update(f" {len(filtered)} memos ")
@@ -2457,7 +2523,7 @@ class DuskyVoiceApp(App[None]):
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "search_input":
-            self._refresh_library()
+            self._render_library()
         elif event.input.id == "input_title":
             self._update_target_preview()
 
@@ -2494,21 +2560,32 @@ class DuskyVoiceApp(App[None]):
                 break
 
     def _select_memo(self, memo: VoiceMemo) -> None:
-        if self.selected_memo and self.selected_memo.path == memo.path and self.player.state == PlayerState.PLAYING:
+        if self.selected_memo and (self.selected_memo.path, self.selected_memo.size_bytes, self.selected_memo.created_at) == (memo.path, memo.size_bytes, memo.created_at):
+            self.selected_memo = memo
             return
+        self._waveform_cancel.set()
+        self._waveform_cancel = threading.Event()
+        cancelled = self._waveform_cancel
+        self._waveform_generation += 1
+        generation = self._waveform_generation
         self.selected_memo = memo
-        self.player.load(memo.path)
+        self.player.load(memo.path, memo.duration_sec)
+        self.query_one("#player_waveform", PlayerWaveformWidget).set_data([])
         self._update_player_title(0.0)
 
         def _load_peaks() -> None:
-            peaks = compute_waveform_peaks(memo.path)
-            self._safe_dispatch(self._apply_waveform_peaks, peaks)
+            peaks = compute_waveform_peaks(memo.path, cancelled=cancelled)
+            if not cancelled.is_set():
+                self._safe_dispatch(self._apply_waveform_peaks, memo.path, peaks, generation)
 
         threading.Thread(target=_load_peaks, daemon=True).start()
 
-    def _apply_waveform_peaks(self, peaks: list[float]) -> None:
+    def _apply_waveform_peaks(self, path: Path, peaks: list[float], generation: int) -> None:
+        if self._closing or generation != self._waveform_generation or not self.selected_memo or self.selected_memo.path != path:
+            return
         wf = self.query_one("#player_waveform", PlayerWaveformWidget)
-        wf.set_data(peaks, 0.0)
+        fraction = self.player.get_position() / self.player.duration_sec if self.player.duration_sec > 0 else 0.0
+        wf.set_data(peaks, fraction)
 
     def _update_player_title(self, current_pos: float) -> None:
         if not self.selected_memo:
@@ -2522,7 +2599,7 @@ class DuskyVoiceApp(App[None]):
         tc = self.theme_colors
         lbl.update(
             Text.from_markup(
-                f"󰎆 [bold {tc['fg']}]{self.selected_memo.name}[/]   "
+                f"󰎆 [bold {tc['fg']}]{escape(self.selected_memo.name)}[/]   "
                 f"[bold {tc['bg']} on {tc['accent']}] {self.selected_memo.format_name} [/]   "
                 f"[{tc['success']}]{pos_str}[/] / [{tc['muted']}]{dur_str}[/] [dim]({rem_str})[/]   "
                 f"[bold {tc['accent']}][ {pct:2d}% ][/]   "
@@ -2534,10 +2611,14 @@ class DuskyVoiceApp(App[None]):
         if not self.selected_memo:
             return
         if self.player.state == PlayerState.PLAYING:
-            self.player.pause()
+            if not self.player.pause():
+                self.notify("Could not pause playback.", severity="error")
+                return
             self.set_status(f"Paused {self.selected_memo.name}", "warning")
         else:
-            self.player.play()
+            if not self.player.play():
+                self.notify("Could not start playback.", severity="error")
+                return
             self.set_status(f"Playing {self.selected_memo.name}", "success")
         self._update_hud()
 
@@ -2573,6 +2654,7 @@ class DuskyVoiceApp(App[None]):
             if new_stem:
                 updated = VoiceLibrary.rename_memo(memo, new_stem)
                 if updated:
+                    self.player.stop()
                     self.notify(f"Renamed to: {updated.name}", title="Success")
                     self.set_status(f"Renamed to {updated.name}", "success")
                     self._refresh_library()
@@ -2590,17 +2672,15 @@ class DuskyVoiceApp(App[None]):
         def _on_delete_done(confirmed: bool) -> None:
             if confirmed:
                 self.player.stop()
-                VoiceLibrary.delete_memo(memo)
+                if not VoiceLibrary.delete_memo(memo):
+                    self.notify("Could not delete memo.", severity="error")
+                    return
                 self.notify(f"Deleted: {memo.name}", title="Deleted", severity="warning")
                 self.set_status(f"Deleted {memo.name}", "warning")
                 self.selected_memo = None
                 self._refresh_library()
 
         self.push_screen(DeleteMemoModal(memo), _on_delete_done)
-
-    def action_open_folder(self) -> None:
-        if shutil.which("xdg-open"):
-            subprocess.Popen(["xdg-open", str(RECORDINGS_DIR)])
 
     def _on_player_state_change(self, state: PlayerState) -> None:
         self._safe_dispatch(self._update_player_buttons, state)
@@ -2660,15 +2740,7 @@ class DuskyVoiceApp(App[None]):
             def_str = "● DEFAULT" if snk.is_default else ""
             table_out.add_row(str(snk.id), def_str, snk.description, snk.name)
 
-        topo_text = Text()
-        topo_text.append("󰮔  AUDIO GRAPH ROUTING & SYSTEM TOPOLOGY\n", style=f"bold {tc['accent']}")
-        topo_text.append("┌──────────────────────────┐       ┌──────────────────────────┐       ┌──────────────────────────┐\n", style=tc["muted"])
-        topo_text.append("│   PipeWire Audio Nodes   │ ────▶ │  GStreamer Studio Engine │ ────▶ │    Voice Memo Storage    │\n", style=f"bold {tc['fg']}")
-        topo_text.append("│  • Default Source (Mic)  │       │  • pipewiresrc           │       │  • ~/.config/dusky/      │\n", style=f"dim {tc['muted']}")
-        topo_text.append("│  • Desktop Output Monitor│       │  • audiomixer (1s buf)   │       │    settings/dusky_voice/ │\n", style=f"dim {tc['muted']}")
-        topo_text.append("│  • 48,000 Hz / 24-bit    │       │  • Level Meter (50ms)    │       │  • Waveform Cache (.db)  │\n", style=f"dim {tc['muted']}")
-        topo_text.append("└──────────────────────────┘       └──────────────────────────┘       └──────────────────────────┘\n", style=tc["muted"])
-        topo_panel = Panel(topo_text, border_style=tc["muted"])
+        topo_panel = Panel(Text(f"Capture: PipeWire PulseAudio server → GStreamer\nMixing: audiomixer • level telemetry every 50 ms\nStorage: {RECORDINGS_DIR}\nWaveforms: JSON cache"), border_style=tc["muted"])
 
         self.query_one("#devices_info", Static).update(
             Panel(
@@ -2703,12 +2775,26 @@ class DuskyVoiceApp(App[None]):
             self.action_rename_selected()
         elif btn_id == "btn_player_delete":
             self.action_delete_selected()
-        elif btn_id == "btn_open_folder":
-            self.action_open_folder()
         elif btn_id == "btn_refresh_lib":
             self._refresh_library()
 
+    def on_unmount(self) -> None:
+        self.engine.on_state_change = None
+        self.engine.on_finished = None
+        self.engine.on_error = None
+        self.player.on_state_change = None
+        self._closing = True
+        self._waveform_cancel.set()
+        if self.engine.pipeline:
+            if self.engine.state in (RecordState.RECORDING, RecordState.PAUSED):
+                self.engine.stop()
+            else:
+                self.engine.cancel()
+        self.player.stop()
+
     def action_quit_app(self) -> None:
+        if self.engine.state == RecordState.COUNTDOWN:
+            self._abort_countdown()
         if self.engine.state in (RecordState.RECORDING, RecordState.PAUSED):
             self.engine.stop()
         self.player.stop()
@@ -2716,181 +2802,14 @@ class DuskyVoiceApp(App[None]):
 
 
 # =============================================================================
-# CLI HEADLESS CAPTURE & HELPER ROUTINES (ZERO EMOJIS)
-# =============================================================================
-
-def cli_list_memos() -> None:
-    """Print formatted terminal table of recorded voice memos."""
-    console = Console()
-    tc = load_matugen_theme()
-    memos = VoiceLibrary.scan_memos()
-    if not memos:
-        console.print("[yellow]No voice memos found in ~/.config/dusky/settings/dusky_voice/[/yellow]")
-        return
-
-    table = Table(title="Dusky Voice Memos Library", border_style=tc["accent"])
-    table.add_column("#", justify="right", style="dim")
-    table.add_column("Title", style=f"bold {tc['fg']}")
-    table.add_column("Format", style=tc["success"])
-    table.add_column("Duration", justify="right", style=tc["warning"])
-    table.add_column("Size", justify="right", style=tc["accent"])
-    table.add_column("Date", style=f"dim {tc['muted']}")
-
-    for i, m in enumerate(memos, 1):
-        table.add_row(
-            str(i),
-            m.name,
-            m.format_name,
-            m.formatted_duration,
-            m.formatted_size,
-            m.formatted_date,
-        )
-    console.print(table)
-
-
-def cli_list_devices() -> None:
-    """Print terminal table of detected PipeWire hardware nodes."""
-    console = Console()
-    tc = load_matugen_theme()
-    sources, sinks = discover_pipewire_nodes()
-
-    table = Table(title="PipeWire Audio Devices", border_style=tc["accent"])
-    table.add_column("Type", style="bold")
-    table.add_column("ID", justify="right")
-    table.add_column("Default", justify="center")
-    table.add_column("Description", style=tc["accent"])
-    table.add_column("Node Name", style=f"dim {tc['muted']}")
-
-    for s in sources:
-        table.add_row("Source (Mic)", str(s.id), "●" if s.is_default else "", s.description, s.name)
-    for s in sinks:
-        table.add_row("Sink (Out)", str(s.id), "●" if s.is_default else "", s.description, s.name)
-
-    console.print(table)
-
-
-def cli_record(
-    duration: float,
-    source: RecordSource,
-    format_: AudioFormat,
-    output_name: str = "",
-) -> None:
-    """Run headless recording session from CLI with live terminal VU meter."""
-    console = Console()
-    tc = load_matugen_theme()
-    ensure_storage_environment()
-
-    timestamp_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    prefix = output_name if output_name else "Memo"
-    out_file = RECORDINGS_DIR / f"{prefix}_{timestamp_str}{format_.extension}"
-
-    console.print(f"[bold {tc['accent']}]● Recording started ({source.label}, {format_.label})[/bold {tc['accent']}]")
-    console.print(f"Target: [cyan]{out_file}[/cyan]")
-    console.print("Press [bold red]Ctrl+C[/bold red] to finish recording early.\n")
-
-    engine = DuskyAudioEngine()
-    if not engine.prepare(out_file, source, format_):
-        console.print("[red]Failed to initialize recording pipeline.[/red]")
-        sys.exit(1)
-
-    stop_flag = threading.Event()
-
-    def handle_sig(sig: int, frame: Any) -> None:
-        stop_flag.set()
-
-    signal.signal(signal.SIGINT, handle_sig)
-    signal.signal(signal.SIGTERM, handle_sig)
-
-    engine.start()
-    start_t = time.monotonic()
-    timer_stopped = False
-
-    try:
-        while not stop_flag.is_set():
-            elapsed = time.monotonic() - start_t
-            if duration > 0 and elapsed >= duration:
-                timer_stopped = True
-                break
-            mins = int(elapsed) // 60
-            secs = int(elapsed) % 60
-            sys.stdout.write(f"\rElapsed: {mins:02d}:{secs:02d} | Target: {out_file.name} ")
-            sys.stdout.flush()
-            time.sleep(0.1)
-    finally:
-        sys.stdout.write("\nFinalizing and flushing audio headers...\n")
-        sys.stdout.flush()
-        engine.stop(stopped_by_timer=timer_stopped)
-
-    if out_file.is_file():
-        size_kb = out_file.stat().st_size / 1024
-        console.print(f"[bold green]󰄬 Recording saved successfully ({size_kb:.1f} KB):[/bold green] {out_file}")
-        if timer_stopped:
-            send_desktop_notification(
-                "Voice Memo Saved",
-                f"Timer limit reached: {out_file.name} ({size_kb:.1f} KB)",
-                icon_name="audio-input-microphone",
-            )
-    else:
-        console.print("[red]Recording failed or was aborted.[/red]")
-
-
-def cli_copy_latest() -> None:
-    """Copy the path of the latest recorded voice memo to Wayland clipboard."""
-    memos = VoiceLibrary.scan_memos()
-    if not memos:
-        print("No voice memos found.", file=sys.stderr)
-        sys.exit(1)
-    latest = str(memos[0].path.resolve())
-    if copy_to_wayland_clipboard(latest):
-        print(f"Copied latest memo path to clipboard: {latest}")
-    else:
-        print("Failed to invoke wl-copy.", file=sys.stderr)
-        sys.exit(1)
-
-
-# =============================================================================
 # MAIN ENTRYPOINT
 # =============================================================================
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        prog="dusky_voice",
-        description="Dusky Voice Memos — Native Wayland & PipeWire Audio Studio & Manager",
-    )
-    parser.add_argument("-l", "--list", action="store_true", help="List all voice memos in terminal table")
-    parser.add_argument("-d", "--devices", action="store_true", help="List PipeWire audio devices")
-    parser.add_argument("-c", "--copy-latest", action="store_true", help="Copy latest memo path to Wayland clipboard")
-    parser.add_argument("-r", "--record", action="store_true", help="Headless CLI recording mode")
-    parser.add_argument("--duration", type=float, default=0.0, help="Recording duration limit in seconds (0 = manual)")
-    parser.add_argument("--source", choices=["mic", "system", "both"], default="mic", help="Audio source to capture")
-    parser.add_argument("--format", choices=["opus", "flac", "wav", "mp3", "ogg"], default="opus", help="Audio codec")
-    parser.add_argument("--name", type=str, default="", help="Custom memo title / prefix")
-
-    args = parser.parse_args()
-
-    if args.list:
-        cli_list_memos()
-    elif args.devices:
-        cli_list_devices()
-    elif args.copy_latest:
-        cli_copy_latest()
-    elif args.record:
-        src = {
-            "mic": RecordSource.MIC,
-            "system": RecordSource.SYSTEM,
-            "both": RecordSource.BOTH,
-        }[args.source]
-        fmt = {
-            "opus": AudioFormat.OPUS,
-            "flac": AudioFormat.FLAC,
-            "wav": AudioFormat.WAV,
-            "mp3": AudioFormat.MP3,
-            "ogg": AudioFormat.OGG,
-        }[args.format]
-        cli_record(args.duration, src, fmt, args.name)
-    else:
-        app = DuskyVoiceApp()
-        app.run()
+    parser = argparse.ArgumentParser(description="Dusky Voice Memos — terminal audio recorder")
+    parser.add_argument("--version", action="version", version=VERSION)
+    parser.parse_args()
+    DuskyVoiceApp().run()
 
 
 if __name__ == "__main__":
