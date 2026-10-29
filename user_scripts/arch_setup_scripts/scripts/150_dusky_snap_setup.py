@@ -37,6 +37,7 @@ def env_int(name: str, default: int, *, minimum: int = 1, maximum: int = 3600) -
     return max(minimum, min(value, maximum))
 
 
+FETCH_TIMEOUT_S = env_int("DUSKY_SNAP_FETCH_TIMEOUT", 120, maximum=1800)
 BUILD_TIMEOUT_S = env_int("DUSKY_SNAP_BUILD_TIMEOUT", 7200, maximum=7200)
 
 
@@ -213,13 +214,30 @@ def run_bounded(command: list[str], *, timeout: int, cwd: Path | None = None,
 
 
 def fetch_dependencies(cargo: str, project: Path, env: dict[str, str]) -> bool:
-    """Installation is offline; the ISO must supply a package or cached crates."""
+    """Use cached crates, or fetch the locked dependencies when online."""
     rc, _, stderr, _ = run_bounded(
         [cargo, "fetch", "--locked", "--offline", "--target", TARGET],
         cwd=project, env=env, timeout=30, capture_output=True,
     )
-    if rc:
+    if rc == 0:
+        return True
+    if env.get("CARGO_NET_OFFLINE", "").lower() in {"true", "1"}:
         log("WARN", f"Offline dependencies unavailable: {stderr[-1000:].strip()}")
+        return False
+    log("INFO", f"Missing dependencies; fetching from crates.io (timeout: {FETCH_TIMEOUT_S}s)...")
+    fetch_env = env.copy()
+    fetch_env["CARGO_HTTP_TIMEOUT"] = "30"
+    fetch_env["CARGO_NET_RETRY"] = "2"
+    fetch_env["CARGO_REGISTRIES_CRATES_IO_PROTOCOL"] = "sparse"
+    rc, _, stderr, timed_out = run_bounded(
+        [cargo, "fetch", "--locked", "--target", TARGET],
+        cwd=project, env=fetch_env, timeout=FETCH_TIMEOUT_S, capture_output=True,
+    )
+    if timed_out:
+        log("WARN", f"Cargo dependency fetch exceeded {FETCH_TIMEOUT_S}s")
+        return False
+    if rc:
+        log("WARN", f"Cargo dependency fetch failed (exit {rc}): {stderr[-1000:].strip()}")
         return False
     return True
 
@@ -241,7 +259,6 @@ def build_native(project: Path, binary: Path, manifest_path: Path, version: str,
     env["CARGO_HOME"] = str(cargo_home)
     env["CARGO_BUILD_BUILD_DIR"] = str(target_dir)
     env["TMPDIR"] = str(temp_dir)
-    env["CARGO_NET_OFFLINE"] = "true"
     env["RUSTUP_AUTO_INSTALL"] = "0"
     env["RUSTFLAGS"] = "-C target-cpu=native"
     env.pop("CARGO_ENCODED_RUSTFLAGS", None)
@@ -250,7 +267,7 @@ def build_native(project: Path, binary: Path, manifest_path: Path, version: str,
     env["CPPFLAGS"] = ""
     jobs = workspace.jobs
 
-    # Verify the ISO dependency cache before starting compilation
+    # Prefer cached dependencies; populate the cache if needed.
     if not fetch_dependencies(cargo, project, env):
         return False
 
