@@ -6,8 +6,8 @@
 -- This file can also be managed with dusky input from the rofi menu or
 -- from dusky control center.
 
--- See: https://wiki.hypr.land/Configuring/Basics/Variables/
--- See: https://wiki.hypr.land/Configuring/Advanced-and-Cool/Devices/
+-- See: https://wiki.hypr.land/configuring/core/config-options/
+-- See: https://wiki.hypr.land/configuring/core/devices/
 -- -------------------------------------------------------------------------------------------------
 -- 1. INPUT (KEYBOARD, MOUSE, TOUCHPAD, TABLET, VIRTUAL KEYBOARD)
 -- -------------------------------------------------------------------------------------------------
@@ -46,6 +46,7 @@ hl.config({
         follow_mouse_shrink = 0,         -- Shrinks the inactive window hitboxes used for focus detection by pixels.
         follow_mouse_threshold = 0.0,    -- Smallest distance in logical pixels the mouse needs to travel to focus a window.
         focus_on_close = 0,              -- Controls window focus behavior when a window is closed (0: next, 1: under cursor, 2: recent).
+        swallow_focus_click = false, -- Forward the focus-changing click to the app.
         mouse_refocus = true,            -- If disabled, mouse focus won't switch unless crossing a window boundary when follow_mouse=1.
         float_switch_override_focus = 1, -- Focus changes to window under cursor when changing tiled-to-floating and vice versa.
         special_fallthrough = false,     -- Having only floating windows in special workspace will not block focusing in regular workspace.

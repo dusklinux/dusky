@@ -1731,6 +1731,15 @@ SCHEMA = {
             extended_help="**Blur Passes**\n\nHow many times the blur algorithm is applied."
         ),
         ConfigItem(
+            label="Proportional Blur",
+            key="proportional",
+            scope="decoration/blur",
+            type_="bool",
+            default=False,
+            parent_ref="decoration/blur.enabled",
+            extended_help="Make blur strength proportional to pixel opacity. Disabled preserves the existing blur appearance."
+        ),
+        ConfigItem(
             label="Ignore Opacity",
             key="ignore_opacity",
             scope="decoration/blur",
@@ -2026,7 +2035,7 @@ SCHEMA = {
             scope='decoration/blur/fluid_jar',
             type_='float',
             default=1.4,
-            min_val=0.1,
+            min_val=0.100001,
             max_val=10.0,
             step=0.1,
             group='Fluid Jar',
@@ -2146,7 +2155,7 @@ SCHEMA = {
             scope='decoration/blur/ripple',
             type_='float',
             default=0.45,
-            min_val=0.05,
+            min_val=0.050001,
             max_val=5.0,
             step=0.1,
             group='Ripple',
@@ -2311,7 +2320,7 @@ SCHEMA = {
             scope="decoration/shadow",
             type_="float",
             default=1.0,
-            min_val=0.05,
+            min_val=0.050001,
             max_val=2.0,
             step=0.1,
             parent_ref="decoration/shadow.enabled",
@@ -3503,7 +3512,7 @@ SCHEMA = {
             max_val=2,
             step=1,
             group='Color Management',
-            extended_help='Use FP16 buffers internally. `0` - disabled, `1` - enabled, `2` - enabled in HDR mode.'
+            extended_help='Use FP16 buffers internally. 0 disabled, 1 enabled, 2 automatic when supported, including SDR.'
         ),
         ConfigItem(
             label='Use Shader Blur Blend',
@@ -3597,6 +3606,16 @@ SCHEMA = {
     # Cursor controls belong to Input; layouts/group behavior belong to Workspace
     # Rules. Animation curves and the master switch belong to the Rofi switcher.
     13: [
+        ConfigItem(
+            label="Animate Manual Resizes", key="animate_manual_resizes", scope="misc",
+            type_="bool", default=False, group="Mouse",
+            extended_help="Animate manual window resizing. Requires animations to be enabled in the animation configuration."
+        ),
+        ConfigItem(
+            label="Animate Mouse Window Dragging", key="animate_mouse_windowdragging", scope="misc",
+            type_="bool", default=False, group="Mouse",
+            extended_help="Animate windows dragged with the mouse. Requires animations to be enabled in the animation configuration."
+        ),
         ConfigItem(
             label="Floating Window Snapping",
             key="enabled",

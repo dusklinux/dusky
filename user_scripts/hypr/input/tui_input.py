@@ -151,6 +151,11 @@ SCHEMA = {
             extended_help="**Focus Hitbox Shrink**\n\nShrinks the inactive window hitboxes used for focus detection by the specified pixels. Creates a dead zone in gaps where moving the cursor won't change focus (Only applies if Follow Mouse is 1)."
         ),
         ConfigItem(
+            label="Consume Focus Click", key="swallow_focus_click", scope="input",
+            type_="bool", default=False, group="Focus",
+            extended_help="Consume the click that changes window focus instead of forwarding it to the application."
+        ),
+        ConfigItem(
             label="Mouse Refocus",
             key="mouse_refocus",
             scope="input",
@@ -782,7 +787,7 @@ SCHEMA = {
             default=0,
             group='Mapping',
             options=[0, 1, 2, 3, 4, 5, 6],
-            extended_help='Normal/rotated/flipped Wayland transform; installed Git build accepts 0–6.'
+            extended_help='Normal/rotated/flipped Wayland transform; Hyprland 0.57 accepts 0–6.'
         ),
         ConfigItem(
             label='Tablet Output',
