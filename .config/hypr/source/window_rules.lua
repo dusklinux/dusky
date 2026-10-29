@@ -1856,7 +1856,7 @@ hl.layer_rule({
 
 --- 1. Behavior for Single Tiled Window (w[tv1]) ---
 -- A. Workspace Rule: Remove gaps when only 1 tiled window is visible
--- hl.workspace_rule({ name = "w[tv1]", gapsout = 0, gapsin = 0 })
+-- hl.workspace_rule({ workspace = "w[tv1]", gaps_out = 0, gaps_in = 0 })
 
 -- B. Window Rule: Remove border & rounding for windows on that workspace
 -- hl.window_rule({
@@ -1872,7 +1872,7 @@ hl.layer_rule({
 --- 2. Behavior for Maximized Layout State (f[1]) ---
 
 -- A. Workspace Rule: Remove gaps when workspace is maximized
--- hl.workspace_rule({ name = "f[1]", gapsout = 0, gapsin = 0 })
+-- hl.workspace_rule({ workspace = "f[1]", gaps_out = 0, gaps_in = 0 })
 
 -- B. Window Rule: Remove border & rounding for windows on maximized workspace
 -- hl.window_rule({

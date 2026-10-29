@@ -17,6 +17,6 @@
 --       blur  = true,
 --   })
 --
--- See: https://wiki.hypr.land/Configuring/Basics/Window-Rules/
+-- See: https://wiki.hypr.land/configuring/core/rules/window-rules/
 -- ==============================================================================
 

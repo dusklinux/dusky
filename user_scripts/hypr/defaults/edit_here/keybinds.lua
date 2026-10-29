@@ -13,7 +13,7 @@
 --
 -- NOTE: 'terminal', 'browser', etc. are globals defined in default_apps.lua.
 --
--- See: https://wiki.hypr.land/Configuring/Basics/Binds/
+-- See: https://wiki.hypr.land/configuring/core/binds/
 -- ==============================================================================
 
 -- local mainMod = "SUPER"

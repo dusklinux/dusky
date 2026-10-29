@@ -9,14 +9,14 @@ Number keys apply a preset directly; e accepts custom Lua expressions.
 Vim navigation is active outside text entry; F1 or ? shows all keybindings.
 The window list refreshes automatically; options freeze the list while editing.
 
-Rule reference: https://wiki.hypr.land/Configuring/Basics/Window-Rules/
+Rule reference: https://wiki.hypr.land/configuring/core/rules/window-rules/
 """
 
 import argparse
 lazy import curses
 lazy import fcntl
 import json
-from math import gcd
+from math.integer import gcd
 import os
 from pathlib import Path
 import re
