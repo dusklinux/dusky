@@ -59,7 +59,7 @@ from gi.repository import Gst, GstPbutils, GLib
 Gst.init(None)
 
 # Textual 8.2+ TUI Framework & Rich
-from rich.console import Console, RenderableType
+from rich.console import Console, Group, RenderableType
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -1099,7 +1099,7 @@ class AppFooter(Vertical):
 # =============================================================================
 
 class LiveVuMeter(Static):
-    """Sleek linear audio decibel meter with smooth gradient lines."""
+    """Sleek calibrated stereo audio decibel meter with smooth gradient lines."""
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -1112,46 +1112,74 @@ class LiveVuMeter(Static):
         self.refresh()
 
     def render(self) -> RenderableType:
-        width = max(10, self.size.width - 28)
-        clamped_peak = max(-60.0, min(0.0, self.peak_db))
-        fraction = (clamped_peak + 60.0) / 60.0
-        filled = int(fraction * width)
-
+        width = max(14, self.size.width - 24)
         tc = getattr(self.app, "theme_colors", DEFAULT_THEME)
-        text = Text()
-        text.append("󰍬  IN ", style=f"bold {tc['accent']}")
-        text.append("╶", style=tc["muted"])
 
+        # Calibrated dB scale header
+        scale = Text()
+        scale.append("     -60dB      -36dB    -18dB   -12dB   -6dB  -3dB  0dB", style=f"dim {tc['muted']}")
+
+        # Left channel (Peak)
+        clamped_peak = max(-60.0, min(0.0, self.peak_db))
+        frac_l = (clamped_peak + 60.0) / 60.0
+        filled_l = int(frac_l * width)
+        line_l = Text()
+        line_l.append(" L ╶", style=f"bold {tc['accent']}")
         green_len = int(width * 0.70)
         yellow_len = int(width * 0.88)
-
         for i in range(width):
-            if i < filled:
+            if i < filled_l:
                 if i < green_len:
-                    text.append("━", style=tc["success"])
+                    line_l.append("━", style=tc["success"])
                 elif i < yellow_len:
-                    text.append("━", style=tc["warning"])
+                    line_l.append("━", style=tc["warning"])
                 else:
-                    text.append("━", style=f"bold {tc['error']}")
+                    line_l.append("━", style=f"bold {tc['error']}")
             else:
-                text.append("─", style=f"dim {tc['muted']}")
-
-        text.append("╴ ", style=tc["muted"])
-
+                line_l.append("─", style=f"dim {tc['muted']}")
+        line_l.append("╴ ", style=tc["muted"])
         if self.peak_db <= -60.0:
-            text.append("-∞ dB", style=f"dim {tc['muted']}")
+            line_l.append("-∞ dB", style=f"dim {tc['muted']}")
         else:
-            style = f"{tc['error']} bold" if self.peak_db > -3.0 else tc["fg"]
-            text.append(f"{self.peak_db:5.1f} dB", style=style)
-
+            style = f"bold {tc['error']}" if self.peak_db > -3.0 else tc["fg"]
+            line_l.append(f"{self.peak_db:5.1f} dB", style=style)
         if self.peak_db >= -0.5:
-            text.append(" [CLIP]", style=f"bold {tc['error']} on {tc['bg']}")
+            line_l.append(" [CLIP]", style=f"bold {tc['error']} on {tc['bg']}")
 
-        return text
+        # Right channel (RMS)
+        clamped_rms = max(-60.0, min(0.0, self.rms_db))
+        frac_r = (clamped_rms + 60.0) / 60.0
+        filled_r = int(frac_r * width)
+        line_r = Text()
+        line_r.append(" R ╶", style=f"bold {tc['accent']}")
+        for i in range(width):
+            if i < filled_r:
+                if i < green_len:
+                    line_r.append("━", style=tc["success"])
+                elif i < yellow_len:
+                    line_r.append("━", style=tc["warning"])
+                else:
+                    line_r.append("━", style=f"bold {tc['error']}")
+            else:
+                line_r.append("─", style=f"dim {tc['muted']}")
+        line_r.append("╴ ", style=tc["muted"])
+        if self.rms_db <= -60.0:
+            line_r.append("-∞ dB", style=f"dim {tc['muted']}")
+        else:
+            style = f"bold {tc['error']}" if self.rms_db > -3.0 else tc["fg"]
+            line_r.append(f"{self.rms_db:5.1f} dB", style=style)
+
+        res = Text()
+        res.append_text(scale)
+        res.append("\n")
+        res.append_text(line_l)
+        res.append("\n")
+        res.append_text(line_r)
+        return res
 
 
 class RollingOscilloscope(Static):
-    """Dynamic real-time voice waveform strip during live capture."""
+    """Dynamic real-time symmetrical voice waveform strip during live capture."""
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -1167,7 +1195,6 @@ class RollingOscilloscope(Static):
 
     def render(self) -> RenderableType:
         width = max(10, self.size.width - 4)
-        height = 3
 
         if self.history.maxlen != width:
             old = list(self.history)
@@ -1178,25 +1205,39 @@ class RollingOscilloscope(Static):
             data = [0.0] * (width - len(data)) + data
 
         tc = getattr(self.app, "theme_colors", DEFAULT_THEME)
-        lines: list[Text] = []
-        for h in reversed(range(height)):
-            t_low = h / height
-            t_high = (h + 1) / height
-            line = Text()
-            for val in data:
-                if val >= t_high:
-                    line.append("█", style=tc["accent"])
-                elif val > t_low:
-                    sub = int((val - t_low) / (t_high - t_low) * 8)
-                    line.append(UNICODE_BLOCKS[max(0, min(8, sub))], style=tc["success"])
-                else:
-                    line.append(" ", style="dim")
-            lines.append(line)
+        lines = [Text() for _ in range(5)]
+
+        for val in data:
+            color = f"bold {tc['error']}" if val > 0.88 else (tc["warning"] if val > 0.65 else tc["accent"])
+            if val >= 0.75:
+                lines[0].append("▄", style=color)
+                lines[1].append("█", style=color)
+                lines[2].append("█", style=color)
+                lines[3].append("█", style=color)
+                lines[4].append("▀", style=color)
+            elif val >= 0.45:
+                lines[0].append(" ", style="dim")
+                lines[1].append("▄", style=color)
+                lines[2].append("█", style=color)
+                lines[3].append("▀", style=color)
+                lines[4].append(" ", style="dim")
+            elif val >= 0.15:
+                lines[0].append(" ", style="dim")
+                lines[1].append(" ", style="dim")
+                lines[2].append("━", style=color)
+                lines[3].append(" ", style="dim")
+                lines[4].append(" ", style="dim")
+            else:
+                lines[0].append(" ", style="dim")
+                lines[1].append(" ", style="dim")
+                lines[2].append("┄", style=f"dim {tc['muted']}")
+                lines[3].append(" ", style="dim")
+                lines[4].append(" ", style="dim")
 
         res = Text()
         for idx, line in enumerate(lines):
             res.append_text(line)
-            if idx < len(lines) - 1:
+            if idx < 4:
                 res.append("\n")
 
         return Panel(
@@ -1208,7 +1249,7 @@ class RollingOscilloscope(Static):
 
 
 class PlayerWaveformWidget(Static):
-    """Full-width high-resolution waveform with playhead indicator."""
+    """Full-width symmetrical mirrored waveform with illuminated playhead."""
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -1222,7 +1263,6 @@ class PlayerWaveformWidget(Static):
 
     def render(self) -> RenderableType:
         width = max(10, self.size.width - 4)
-        height = 3
         tc = getattr(self.app, "theme_colors", DEFAULT_THEME)
 
         if not self.peaks:
@@ -1238,33 +1278,44 @@ class PlayerWaveformWidget(Static):
             resampled.append(self.peaks[min(idx, len(self.peaks) - 1)])
 
         playhead_col = int(self.progress_fraction * width)
+        lines = [Text() for _ in range(5)]
 
-        lines: list[Text] = []
-        for h in reversed(range(height)):
-            t_low = h / height
-            t_high = (h + 1) / height
-            row = Text()
-            for x, p in enumerate(resampled):
-                if p >= t_high:
-                    ch = "█"
-                elif p > t_low:
-                    sub = int((p - t_low) / (t_high - t_low) * 8)
-                    ch = UNICODE_BLOCKS[max(0, min(8, sub))]
-                else:
-                    ch = " "
+        for x, p in enumerate(resampled):
+            if x == playhead_col:
+                for r in range(5):
+                    lines[r].append("│", style=f"bold {tc['bg']} on {tc['accent']}")
+                continue
 
-                if x == playhead_col:
-                    row.append("│", style=f"bold {tc['bg']} on {tc['accent']}")
-                elif x < playhead_col:
-                    row.append(ch, style=tc["success"])
-                else:
-                    row.append(ch, style=f"dim {tc['muted']}")
-            lines.append(row)
+            color = tc["success"] if x < playhead_col else f"dim {tc['muted']}"
+            if p >= 0.75:
+                lines[0].append("▄", style=color)
+                lines[1].append("█", style=color)
+                lines[2].append("█", style=color)
+                lines[3].append("█", style=color)
+                lines[4].append("▀", style=color)
+            elif p >= 0.45:
+                lines[0].append(" ", style="dim")
+                lines[1].append("▄", style=color)
+                lines[2].append("█", style=color)
+                lines[3].append("▀", style=color)
+                lines[4].append(" ", style="dim")
+            elif p >= 0.15:
+                lines[0].append(" ", style="dim")
+                lines[1].append(" ", style="dim")
+                lines[2].append("━", style=color)
+                lines[3].append(" ", style="dim")
+                lines[4].append(" ", style="dim")
+            else:
+                lines[0].append(" ", style="dim")
+                lines[1].append(" ", style="dim")
+                lines[2].append("┄", style=f"dim {tc['muted']}")
+                lines[3].append(" ", style="dim")
+                lines[4].append(" ", style="dim")
 
         full = Text()
         for i, row in enumerate(lines):
             full.append_text(row)
-            if i < len(lines) - 1:
+            if i < 4:
                 full.append("\n")
 
         pct = int(self.progress_fraction * 100)
@@ -1298,6 +1349,7 @@ class DigitalTimerDisplay(Static):
 
         tc = getattr(self.app, "theme_colors", DEFAULT_THEME)
         text = Text()
+        text.append("TIMECODE  ", style=f"dim {tc['muted']}")
         text.append(clock_str, style=f"bold {tc['fg']}")
 
         if self.max_limit > 0:
@@ -1305,7 +1357,7 @@ class DigitalTimerDisplay(Static):
             rem_total = int(remaining)
             rem_min = rem_total // 60
             rem_sec = rem_total % 60
-            text.append(f"   󰔛 Limit: {rem_min:02d}:{rem_sec:02d}", style=tc["warning"])
+            text.append(f"   󰔛 Limit: {rem_min:02d}:{rem_sec:02d} (-{int(remaining)}s)", style=tc["warning"])
 
         return text
 
@@ -1391,6 +1443,33 @@ class DuskyVoiceApp(App[None]):
         padding: 0 1;
     }
 
+    /* Top HUD Header */
+    #hud-header {
+        width: 100%;
+        height: 1;
+        margin-bottom: 1;
+        background: transparent;
+        padding: 0 1;
+    }
+
+    #hud-app-name {
+        width: auto;
+        color: $primary;
+        text-style: bold;
+    }
+
+    #hud-status-badge {
+        width: 1fr;
+        content-align: center middle;
+        text-style: bold;
+    }
+
+    #hud-stats {
+        width: auto;
+        color: $foreground 60%;
+        text-style: dim;
+    }
+
     /* Tab Bar (ui.py pattern) */
     #tab-bar {
         width: 100%;
@@ -1442,6 +1521,16 @@ class DuskyVoiceApp(App[None]):
 
     .tab_pane {
         height: 1fr;
+        overflow-y: auto;
+    }
+
+    /* Console Deck */
+    #console_deck {
+        height: auto;
+        border: solid $secondary 40%;
+        background: $surface 30%;
+        padding: 0 1;
+        margin-bottom: 1;
     }
 
     /* NoticeBox Status Banner */
@@ -1479,17 +1568,18 @@ class DuskyVoiceApp(App[None]):
     }
 
     #timer_box {
-        height: 3;
+        height: 1;
         content-align: center middle;
+        margin-bottom: 1;
     }
 
     #vu_meter {
-        height: 1;
+        height: 3;
         margin: 0 1;
     }
 
     #oscilloscope {
-        height: 5;
+        height: 7;
         margin: 1 0;
     }
 
@@ -1503,18 +1593,21 @@ class DuskyVoiceApp(App[None]):
         margin: 0 1;
         min-width: 18;
         height: 3;
-        border: solid $secondary;
+        border: solid $secondary 40%;
         background: $surface;
         color: $foreground;
+        text-style: bold;
     }
 
     .studio_btn:hover {
+        border: solid $primary;
         background: $primary 25%;
+        color: $foreground;
     }
 
     #btn_record.-recording {
-        background: $error 20%;
-        color: $error;
+        background: $error;
+        color: $background;
         text-style: bold;
         border: solid $error;
     }
@@ -1522,8 +1615,8 @@ class DuskyVoiceApp(App[None]):
     #settings_card {
         height: auto;
         border: solid $secondary 40%;
-        background: $surface;
-        padding: 1 2;
+        background: $surface 30%;
+        padding: 1 1;
         margin-top: 1;
     }
 
@@ -1540,24 +1633,40 @@ class DuskyVoiceApp(App[None]):
 
     Select {
         border: none;
-        border-bottom: solid $primary;
-        background: transparent;
+        border-bottom: solid $primary 60%;
+        background: $primary 10%;
         color: $foreground;
         height: 3;
         margin-bottom: 1;
     }
 
-    Input {
+    Select:focus {
         border: none;
         border-bottom: solid $primary;
-        background: transparent;
+    }
+
+    Input {
+        border: none;
+        border-bottom: solid $primary 60%;
+        background: $primary 10%;
         color: $foreground;
         height: 3;
+        padding: 0 1;
     }
 
     Input:focus {
         border: none;
         border-bottom: solid $primary;
+        background: $primary 20%;
+    }
+
+    #lbl_target_preview {
+        height: 3;
+        content-align: center middle;
+        color: $primary;
+        text-style: dim;
+        background: $primary 10%;
+        border-bottom: solid $primary 60%;
     }
 
     /* Library Styling */
@@ -1571,22 +1680,43 @@ class DuskyVoiceApp(App[None]):
         margin-right: 1;
     }
 
+    #lbl_memo_count {
+        height: 3;
+        content-align: center middle;
+        color: $primary;
+        text-style: bold;
+        margin-right: 1;
+    }
+
     #library_table {
         height: 1fr;
+        min-height: 8;
         background: transparent;
         border: solid $secondary 40%;
     }
 
+    #library_table > .datatable--cursor {
+        background: $primary 25%;
+        color: $foreground;
+        text-style: bold;
+    }
+
     #player_panel {
         height: auto;
-        border: solid $secondary 50%;
-        background: $surface;
-        padding: 1 2;
+        border: solid $secondary 40%;
+        background: $surface 30%;
+        padding: 1 1;
         margin-top: 1;
     }
 
+    #lbl_player_title {
+        content-align: center middle;
+        margin-bottom: 1;
+        text-style: bold;
+    }
+
     #player_waveform {
-        height: 5;
+        height: 7;
         margin: 0;
     }
 
@@ -1600,24 +1730,43 @@ class DuskyVoiceApp(App[None]):
         margin: 0 1;
         min-width: 13;
         height: 3;
-        border: solid $secondary;
-        background: transparent;
+        border: solid $secondary 40%;
+        background: $surface;
         color: $foreground;
     }
 
     .player_btn:hover {
+        border: solid $primary;
         background: $primary 25%;
+        color: $foreground;
     }
 
     .player_btn.-primary {
-        background: $primary 15%;
+        border: solid $primary;
+        background: $primary 20%;
         color: $primary;
         text-style: bold;
     }
 
+    .player_btn.-primary:hover {
+        background: $primary;
+        color: $background;
+    }
+
     .player_btn.-danger {
-        background: $error 15%;
+        border: solid $error 50%;
         color: $error;
+    }
+
+    .player_btn.-danger:hover {
+        background: $error;
+        color: $background;
+    }
+
+    /* Devices View */
+    #devices_info {
+        height: auto;
+        padding: 0 1;
     }
 
     /* AppFooter (ui.py pattern) */
@@ -1811,6 +1960,11 @@ class DuskyVoiceApp(App[None]):
     def compose(self) -> ComposeResult:
         with Container(id="main-box") as box:
             box.border_title = " 󰍬  DUSKY VOICE MEMOS "
+            with Horizontal(id="hud-header"):
+                yield Label("󰍬  DUSKY VOICE", id="hud-app-name")
+                yield Label("● STANDBY", id="hud-status-badge")
+                yield Label("0 memos • 0.0 KB", id="hud-stats")
+
             with Horizontal(id="tab-bar"):
                 with Horizontal(id="tabs-container"):
                     yield Tabs(
@@ -1823,14 +1977,15 @@ class DuskyVoiceApp(App[None]):
             with Container(id="content-area"):
                 # Pane 1: Studio Recorder
                 with Vertical(id="pane_studio", classes="tab_pane"):
-                    yield NoticeBox(
-                        "󰐽  STANDBY • READY TO CAPTURE",
-                        level="info",
-                        id="banner_box",
-                    )
-                    yield DigitalTimerDisplay(id="timer_box")
-                    yield LiveVuMeter(id="vu_meter")
-                    yield RollingOscilloscope(id="oscilloscope")
+                    with Vertical(id="console_deck"):
+                        yield NoticeBox(
+                            "󰐽  STANDBY • READY TO CAPTURE",
+                            level="info",
+                            id="banner_box",
+                        )
+                        yield DigitalTimerDisplay(id="timer_box")
+                        yield LiveVuMeter(id="vu_meter")
+                        yield RollingOscilloscope(id="oscilloscope")
 
                     with Horizontal(id="studio_controls"):
                         yield Button("󰐽  Record", id="btn_record", classes="studio_btn")
@@ -1839,7 +1994,7 @@ class DuskyVoiceApp(App[None]):
 
                     with Horizontal(id="settings_card"):
                         with Vertical(classes="config_col"):
-                            yield Label("Audio Source", classes="config_label")
+                            yield Label("󰍬  INPUT SOURCE", classes="config_label")
                             yield Select(
                                 [
                                     ("󰍬 Microphone Only", "mic"),
@@ -1849,26 +2004,34 @@ class DuskyVoiceApp(App[None]):
                                 value="mic",
                                 id="select_source",
                             )
-                        with Vertical(classes="config_col"):
-                            yield Label("Codec / Format", classes="config_label")
-                            yield Select(
-                                [
-                                    ("Opus (.opus)", "opus"),
-                                    ("FLAC (.flac)", "flac"),
-                                    ("WAV (.wav)", "wav"),
-                                    ("MP3 (.mp3)", "mp3"),
-                                    ("OGG (.ogg)", "ogg"),
-                                ],
-                                value="opus",
-                                id="select_format",
-                            )
-                        with Vertical(classes="config_col"):
-                            yield Label("Channels & Delay", classes="config_label")
                             yield Select(
                                 [("Stereo (2 Channels)", 2), ("Mono (1 Channel)", 1)],
                                 value=2,
                                 id="select_channels",
                             )
+                        with Vertical(classes="config_col"):
+                            yield Label("󰋋  CODEC & FORMAT", classes="config_label")
+                            yield Select(
+                                [
+                                    ("Opus (.opus) • Voice", "opus"),
+                                    ("FLAC (.flac) • Lossless", "flac"),
+                                    ("WAV (.wav) • Raw PCM", "wav"),
+                                    ("MP3 (.mp3) • Compatible", "mp3"),
+                                    ("OGG (.ogg) • Vorbis", "ogg"),
+                                ],
+                                value="opus",
+                                id="select_format",
+                            )
+                            yield Select(
+                                [
+                                    ("48 kHz • Studio Master", 48000),
+                                    ("44.1 kHz • CD Standard", 44100),
+                                ],
+                                value=48000,
+                                id="select_rate",
+                            )
+                        with Vertical(classes="config_col"):
+                            yield Label("󰔛  TIMERS & LIMITS", classes="config_label")
                             yield Select(
                                 [
                                     ("Pre-roll: Instant (0s)", 0),
@@ -1879,26 +2042,28 @@ class DuskyVoiceApp(App[None]):
                                 value=0,
                                 id="select_delay",
                             )
-                        with Vertical(classes="config_col"):
-                            yield Label("Duration Limit & Name", classes="config_label")
                             yield Select(
                                 [
-                                    ("Unlimited", 0),
-                                    ("30 Seconds", 30),
-                                    ("1 Minute", 60),
-                                    ("5 Minutes", 300),
-                                    ("10 Minutes", 600),
-                                    ("30 Minutes", 1800),
+                                    ("Limit: Unlimited", 0),
+                                    ("Limit: 30 Seconds", 30),
+                                    ("Limit: 1 Minute", 60),
+                                    ("Limit: 5 Minutes", 300),
+                                    ("Limit: 10 Minutes", 600),
+                                    ("Limit: 30 Minutes", 1800),
                                 ],
                                 value=0,
                                 id="select_duration",
                             )
+                        with Vertical(classes="config_col"):
+                            yield Label("󰏫  MEMO METADATA", classes="config_label")
                             yield Input(placeholder="Title prefix (optional)", id="input_title")
+                            yield Static("Target: ~/.config/dusky/settings/dusky_voice/", id="lbl_target_preview")
 
                 # Pane 2: Memo Library
                 with Vertical(id="pane_library", classes="tab_pane"):
                     with Horizontal(id="library_header_row"):
                         yield Input(placeholder="󰍉  Search voice memos by title... (Press / to focus)", id="search_input")
+                        yield Label(" 0 memos ", id="lbl_memo_count")
                         yield Button("󰑕  Refresh", id="btn_refresh_lib", classes="player_btn")
                         yield Button("󰉋  Open Folder", id="btn_open_folder", classes="player_btn")
 
@@ -2174,6 +2339,42 @@ class DuskyVoiceApp(App[None]):
             wf.set_data(wf.peaks, frac)
             self._update_player_title(pos)
 
+        self._update_hud()
+
+    def _update_hud(self) -> None:
+        try:
+            badge = self.query_one("#hud-status-badge", Label)
+            tc = self.theme_colors
+            state = self.engine.state
+            if state == RecordState.RECORDING:
+                elapsed = self.engine.elapsed_seconds
+                mins = int(elapsed) // 60
+                secs = int(elapsed) % 60
+                badge.update(Text(f"● RECORDING  {mins:02d}:{secs:02d}", style=f"bold {tc['error']}"))
+            elif state == RecordState.PAUSED:
+                elapsed = self.engine.elapsed_seconds
+                mins = int(elapsed) // 60
+                secs = int(elapsed) % 60
+                badge.update(Text(f"󰏤 PAUSED  {mins:02d}:{secs:02d}", style=f"bold {tc['warning']}"))
+            elif state == RecordState.COUNTDOWN:
+                badge.update(Text(f"󰔛 COUNTDOWN: {self.countdown_remaining}s", style=f"bold {tc['warning']}"))
+            elif self.player.state == PlayerState.PLAYING and self.selected_memo:
+                pos = self.player.get_position()
+                dur = self.player.duration_sec
+                badge.update(Text(f" PLAYING  {int(pos)//60:02d}:{int(pos)%60:02d} / {int(dur)//60:02d}:{int(dur)%60:02d}", style=f"bold {tc['success']}"))
+            else:
+                badge.update(Text("● STANDBY", style=f"dim {tc['accent']}"))
+
+            stats = self.query_one("#hud-stats", Label)
+            total_size_kb = sum(m.size_bytes for m in self.memos) / 1024
+            if total_size_kb >= 1024:
+                size_str = f"{total_size_kb / 1024:.1f} MB"
+            else:
+                size_str = f"{total_size_kb:.1f} KB"
+            stats.update(Text(f"{len(self.memos)} memos • {size_str} • 48 kHz", style=f"dim {tc['muted']}"))
+        except Exception:
+            pass
+
     def _on_engine_finished(self, path: Path) -> None:
         self._safe_dispatch(self._handle_recording_saved, path)
 
@@ -2214,7 +2415,7 @@ class DuskyVoiceApp(App[None]):
     def _refresh_library(self) -> None:
         table = self.query_one("#library_table", DataTable)
         table.clear(columns=True)
-        table.add_columns("Title", "Format", "Duration", "Size", "Date Recorded")
+        table.add_columns("Status", "Title", "Format", "Duration", "Size", "Date Recorded")
 
         search_query = self.query_one("#search_input", Input).value.lower().strip()
         self.memos = VoiceLibrary.scan_memos()
@@ -2223,22 +2424,68 @@ class DuskyVoiceApp(App[None]):
             m for m in self.memos if not search_query or search_query in m.name.lower()
         ]
 
+        tc = self.theme_colors
         for m in filtered:
+            is_active = (
+                self.player.state == PlayerState.PLAYING
+                and self.selected_memo
+                and m.path == self.selected_memo.path
+            )
+            if is_active:
+                status_cell = Text("  PLAY ", style=f"bold {tc['bg']} on {tc['success']}")
+            else:
+                status_cell = Text(" 󰍬 MEMO ", style=f"dim {tc['muted']}")
+
+            title_cell = Text(m.name, style=f"bold {tc['fg']}")
+
+            fmt_color = tc["accent"]
+            if m.format_name == "FLAC":
+                fmt_color = tc["warning"]
+            elif m.format_name == "WAV":
+                fmt_color = tc["success"]
+
+            format_cell = Text(f" {m.format_name} ", style=f"bold {tc['bg']} on {fmt_color}")
+            dur_cell = Text(m.formatted_duration, style=tc["warning"])
+            size_cell = Text(m.formatted_size, style=f"dim {tc['fg']}")
+            date_cell = Text(m.formatted_date, style=f"dim {tc['muted']}")
+
             table.add_row(
-                m.name,
-                m.format_name,
-                m.formatted_duration,
-                m.formatted_size,
-                m.formatted_date,
+                status_cell,
+                title_cell,
+                format_cell,
+                dur_cell,
+                size_cell,
+                date_cell,
                 key=str(m.path),
             )
 
+        try:
+            self.query_one("#lbl_memo_count", Label).update(f" {len(filtered)} memos ")
+        except Exception:
+            pass
+
         if filtered and not self.selected_memo:
             self._select_memo(filtered[0])
+        self._update_hud()
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "search_input":
             self._refresh_library()
+        elif event.input.id == "input_title":
+            self._update_target_preview()
+
+    def _update_target_preview(self) -> None:
+        try:
+            val = self.query_one("#input_title", Input).value.strip()
+            prefix = val if val else "Memo"
+            lbl = self.query_one("#lbl_target_preview", Static)
+            tc = self.theme_colors
+            txt = Text()
+            txt.append("Target: ", style=f"dim {tc['muted']}")
+            txt.append(f"{prefix}_YYYY-MM-DD.ext", style=f"bold {tc['accent']}")
+            lbl.update(txt)
+        except Exception:
+            pass
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         row_key = event.row_key.value
@@ -2254,10 +2501,14 @@ class DuskyVoiceApp(App[None]):
         row_key = event.row_key.value
         for m in self.memos:
             if str(m.path) == row_key:
+                if self.selected_memo and self.selected_memo.path == m.path:
+                    break
                 self._select_memo(m)
                 break
 
     def _select_memo(self, memo: VoiceMemo) -> None:
+        if self.selected_memo and self.selected_memo.path == memo.path and self.player.state == PlayerState.PLAYING:
+            return
         self.selected_memo = memo
         self.player.load(memo.path)
         self._update_player_title(0.0)
@@ -2278,12 +2529,17 @@ class DuskyVoiceApp(App[None]):
         lbl = self.query_one("#lbl_player_title", Label)
         pos_str = f"{int(current_pos)//60:02d}:{int(current_pos)%60:02d}"
         dur_str = self.selected_memo.formatted_duration
+        remaining = max(0.0, self.player.duration_sec - current_pos)
+        rem_str = f"-{int(remaining)//60:02d}:{int(remaining)%60:02d}"
+        pct = int((current_pos / self.player.duration_sec) * 100) if self.player.duration_sec > 0 else 0
         tc = self.theme_colors
         lbl.update(
             Text.from_markup(
-                f"[bold {tc['accent']}]{self.selected_memo.name}[/]   "
-                f"[{tc['success']}]{pos_str}[/] / [{tc['muted']}]{dur_str}[/]   "
-                f"[dim]({self.selected_memo.formatted_size})[/]"
+                f"󰎆 [bold {tc['fg']}]{self.selected_memo.name}[/]   "
+                f"[bold {tc['bg']} on {tc['accent']}] {self.selected_memo.format_name} [/]   "
+                f"[{tc['success']}]{pos_str}[/] / [{tc['muted']}]{dur_str}[/] [dim]({rem_str})[/]   "
+                f"[bold {tc['accent']}][ {pct:2d}% ][/]   "
+                f"[dim]• {self.selected_memo.formatted_size}[/]"
             )
         )
 
@@ -2296,6 +2552,7 @@ class DuskyVoiceApp(App[None]):
         else:
             self.player.play()
             self.set_status(f"Playing {self.selected_memo.name}", "success")
+        self._update_hud()
 
     def action_seek_fwd(self) -> None:
         self.player.seek_relative(5.0)
@@ -2385,33 +2642,58 @@ class DuskyVoiceApp(App[None]):
 
     def _refresh_devices_view(self) -> None:
         sources, sinks = discover_pipewire_nodes()
-        panel_text = Text()
         tc = self.theme_colors
 
-        panel_text.append("󰍬  PipeWire Input Sources (Microphones):\n", style=f"bold {tc['accent']}")
+        table_in = Table(
+            title="󰍬  PIPEWIRE INPUT CAPTURE NODES (SOURCES)",
+            border_style=tc["muted"],
+            title_justify="left",
+            width=78,
+        )
+        table_in.add_column("ID", justify="right", style="bold", width=4)
+        table_in.add_column("Default", justify="center", width=12)
+        table_in.add_column("Description", style=f"bold {tc['fg']}")
+        table_in.add_column("Node Name", style=f"dim {tc['muted']}")
+
         if not sources:
-            panel_text.append("  (No input sources discovered via pw-dump)\n", style="dim")
+            table_in.add_row("-", "", "No input sources detected", "")
         for src in sources:
-            star = "● [DEFAULT] " if src.is_default else "  "
-            panel_text.append(f"{star}ID {src.id:3d}: {src.description}\n", style=tc["success"] if src.is_default else tc["fg"])
-            panel_text.append(f"          node.name = {src.name}\n", style=f"dim {tc['muted']}")
+            def_str = "● DEFAULT" if src.is_default else ""
+            table_in.add_row(str(src.id), def_str, src.description, src.name)
 
-        panel_text.append("\n󰋋  PipeWire Output Sinks (Speakers / Monitors):\n", style=f"bold {tc['accent']}")
+        table_out = Table(
+            title="󰋋  PIPEWIRE OUTPUT PLAYBACK NODES (SINKS)",
+            border_style=tc["muted"],
+            title_justify="left",
+            width=78,
+        )
+        table_out.add_column("ID", justify="right", style="bold", width=4)
+        table_out.add_column("Default", justify="center", width=12)
+        table_out.add_column("Description", style=f"bold {tc['fg']}")
+        table_out.add_column("Node Name", style=f"dim {tc['muted']}")
+
         if not sinks:
-            panel_text.append("  (No output sinks discovered via pw-dump)\n", style="dim")
+            table_out.add_row("-", "", "No output sinks detected", "")
         for snk in sinks:
-            star = "● [DEFAULT] " if snk.is_default else "  "
-            panel_text.append(f"{star}ID {snk.id:3d}: {snk.description}\n", style=tc["warning"] if snk.is_default else tc["fg"])
-            panel_text.append(f"          node.name = {snk.name}\n", style=f"dim {tc['muted']}")
+            def_str = "● DEFAULT" if snk.is_default else ""
+            table_out.add_row(str(snk.id), def_str, snk.description, snk.name)
 
-        panel_text.append("\n󰉋  Storage Environment:\n", style=f"bold {tc['accent']}")
-        panel_text.append(f"  Recordings Directory: {RECORDINGS_DIR}\n", style=tc["fg"])
-        panel_text.append(f"  Waveform Cache:       {CACHE_DIR}\n", style=f"dim {tc['muted']}")
+        topo_text = Text()
+        topo_text.append("󰮔  AUDIO GRAPH ROUTING & SYSTEM TOPOLOGY\n", style=f"bold {tc['accent']}")
+        topo_text.append("┌──────────────────────────┐       ┌──────────────────────────┐       ┌──────────────────────────┐\n", style=tc["muted"])
+        topo_text.append("│   PipeWire Audio Nodes   │ ────▶ │  GStreamer Studio Engine │ ────▶ │    Voice Memo Storage    │\n", style=f"bold {tc['fg']}")
+        topo_text.append("│  • Default Source (Mic)  │       │  • pipewiresrc           │       │  • ~/.config/dusky/      │\n", style=f"dim {tc['muted']}")
+        topo_text.append("│  • Desktop Output Monitor│       │  • audiomixer (1s buf)   │       │    settings/dusky_voice/ │\n", style=f"dim {tc['muted']}")
+        topo_text.append("│  • 48,000 Hz / 24-bit    │       │  • Level Meter (50ms)    │       │  • Waveform Cache (.db)  │\n", style=f"dim {tc['muted']}")
+        topo_text.append("└──────────────────────────┘       └──────────────────────────┘       └──────────────────────────┘\n", style=tc["muted"])
+        topo_panel = Panel(topo_text, border_style=tc["muted"])
 
-        total_files = len(list(RECORDINGS_DIR.glob("*.*")))
-        panel_text.append(f"  Total Saved Memos:    {total_files} files\n", style=tc["success"])
-
-        self.query_one("#devices_info", Static).update(panel_text)
+        self.query_one("#devices_info", Static).update(
+            Panel(
+                Group(table_in, Text("\n"), table_out, Text("\n"), topo_panel),
+                border_style="none",
+            )
+        )
 
     # -------------------------------------------------------------------------
     # BUTTON DISPATCHER
