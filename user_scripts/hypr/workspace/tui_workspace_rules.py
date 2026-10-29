@@ -110,15 +110,6 @@ for i in range(1, 11):
             parent_ref=f"ws_{i}_menu",
             extended_help='Default display name; empty keeps the numbered name.'
         ),
-        ConfigItem(
-            label='Launch on Empty Creation',
-            key='on_created_empty',
-            scope=f"workspace_rule/{i}",
-            type_='string',
-            default='',
-            parent_ref=f"ws_{i}_menu",
-            extended_help='Command to run when this workspace is created empty; empty launches nothing.'
-        ),
     ])
 
 
@@ -544,10 +535,11 @@ SCHEMA = {
             label="Follow Focus",
             key="follow_focus",
             scope="scrolling",
-            type_="bool",
-            default=True,
+            type_="int",
+            default=1,
+            min_val=0, max_val=2, step=1,
             group="Scrolling Layout Settings",
-            extended_help="**Follow Focus**\n\nBring focused columns into view automatically. Pointer-driven focus also obeys Min Focus Visibility."
+            extended_help="**Follow Focus**\n\n0: focus does not move the tape. 1: follow focus and always scroll on mouse clicks. 2: follow focus without forcing click scrolling. Pointer focus also obeys Min Focus Visibility."
         ),
         ConfigItem(
             label="Min Focus Visibility",
@@ -878,7 +870,7 @@ SCHEMA = {
                 "scrolling.focus_fit_method": 0,
                 "scrolling.column_width": 0.9,
                 "scrolling.fullscreen_on_one_column": True,
-                "scrolling.follow_focus": True,
+                "scrolling.follow_focus": 1,
                 "scrolling.follow_min_visible": 0.4
             },
             extended_help="**Balanced Scrolling Profile**\n\nCenter focused columns with 90% column size and previews of neighboring columns. Preserve the current scrolling direction."
@@ -923,8 +915,13 @@ for key, label, help_text in (
     ("always_follow_on_dnd", "Follow Focus While Dragging", "Let focus follow the pointer during drag and drop, including when focus follows mouse is disabled."),
     ("layers_hog_keyboard_focus", "Layers Retain Keyboard Focus", "Keyboard-interactive layers keep keyboard focus when the pointer moves."),
 ):
-    SCHEMA[0].append(ConfigItem(label=label, key=key, scope="misc", type_="bool", default=True,
-                                parent_ref="misc_menu_id", extended_help=help_text))
+    SCHEMA[0].append(ConfigItem(label=label, key=key, scope="layers" if key == "layers_hog_keyboard_focus" else "misc",
+                                type_="bool", default=True, parent_ref="misc_menu_id", extended_help=help_text))
+SCHEMA[0].append(ConfigItem(
+    label="New Top Layers Over Fullscreen", key="allow_new_top_layers_over_existing_fullscreen",
+    scope="layers", type_="bool", default=True, parent_ref="misc_menu_id",
+    extended_help="Allow newly opened top layers over an existing covering fullscreen window. Pre-existing top layers remain hidden by fullscreen."
+))
 SCHEMA[0].append(ConfigItem(label="Enable Window Swallowing", key="enable_swallow", scope="misc",
                             type_="bool", default=False, group="Window Swallowing",
                             extended_help="Hide a matching parent window while its child window is open."))

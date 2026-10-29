@@ -43,7 +43,6 @@
 --   default         (bool)    -- Make this the default workspace on its monitor.
 --   persistent      (bool)    -- Keep workspace alive even when empty.
 --   default_name    (string)  -- Human-readable display name (shown in bars, etc.).
---   on_created_empty(string)  -- Shell command to run when workspace is first created.
 --   layout          (string)  -- Override layout: "dwindle" | "master" | "scrolling" | "monocle"
 --   layout_opts     (table)   -- Layout-specific options (see §8 for details).
 --   gaps_in         (number/table)  -- Inner gap override (px).
@@ -56,52 +55,52 @@
 --   no_shadow       (bool)    -- Disable window shadows on this workspace.
 --   animation       (string)  -- Override workspace switch animation style.
 -- ==============================================================================
-hl.workspace_rule({ workspace = "1", layout = nil, persistent = false, monitor = "", default = false, default_name = "", on_created_empty = "",
+hl.workspace_rule({ workspace = "1", layout = nil, persistent = false, monitor = "", default = false, default_name = "",
     border_size = nil, gaps_in = nil, gaps_out = nil, float_gaps = nil,
     no_border = nil, no_rounding = nil, no_shadow = nil, decorate = nil, animation = nil,
     layout_opts = { orientation = nil, direction = nil },
 })
-hl.workspace_rule({ workspace = "2", layout = nil, persistent = false, monitor = "", default = false, default_name = "", on_created_empty = "",
+hl.workspace_rule({ workspace = "2", layout = nil, persistent = false, monitor = "", default = false, default_name = "",
     border_size = nil, gaps_in = nil, gaps_out = nil, float_gaps = nil,
     no_border = nil, no_rounding = nil, no_shadow = nil, decorate = nil, animation = nil,
     layout_opts = { orientation = nil, direction = nil },
 })
-hl.workspace_rule({ workspace = "3", layout = nil, persistent = false, monitor = "", default = false, default_name = "", on_created_empty = "",
+hl.workspace_rule({ workspace = "3", layout = nil, persistent = false, monitor = "", default = false, default_name = "",
     border_size = nil, gaps_in = nil, gaps_out = nil, float_gaps = nil,
     no_border = nil, no_rounding = nil, no_shadow = nil, decorate = nil, animation = nil,
     layout_opts = { orientation = nil, direction = nil },
 })
-hl.workspace_rule({ workspace = "4", layout = nil, persistent = false, monitor = "", default = false, default_name = "", on_created_empty = "",
+hl.workspace_rule({ workspace = "4", layout = nil, persistent = false, monitor = "", default = false, default_name = "",
     border_size = nil, gaps_in = nil, gaps_out = nil, float_gaps = nil,
     no_border = nil, no_rounding = nil, no_shadow = nil, decorate = nil, animation = nil,
     layout_opts = { orientation = nil, direction = nil },
 })
-hl.workspace_rule({ workspace = "5", layout = nil, persistent = false, monitor = "", default = false, default_name = "", on_created_empty = "",
+hl.workspace_rule({ workspace = "5", layout = nil, persistent = false, monitor = "", default = false, default_name = "",
     border_size = nil, gaps_in = nil, gaps_out = nil, float_gaps = nil,
     no_border = nil, no_rounding = nil, no_shadow = nil, decorate = nil, animation = nil,
     layout_opts = { orientation = nil, direction = nil },
 })
-hl.workspace_rule({ workspace = "6", layout = nil, persistent = false, monitor = "", default = false, default_name = "", on_created_empty = "",
+hl.workspace_rule({ workspace = "6", layout = nil, persistent = false, monitor = "", default = false, default_name = "",
     border_size = nil, gaps_in = nil, gaps_out = nil, float_gaps = nil,
     no_border = nil, no_rounding = nil, no_shadow = nil, decorate = nil, animation = nil,
     layout_opts = { orientation = nil, direction = nil },
 })
-hl.workspace_rule({ workspace = "7", layout = nil, persistent = false, monitor = "", default = false, default_name = "", on_created_empty = "",
+hl.workspace_rule({ workspace = "7", layout = nil, persistent = false, monitor = "", default = false, default_name = "",
     border_size = nil, gaps_in = nil, gaps_out = nil, float_gaps = nil,
     no_border = nil, no_rounding = nil, no_shadow = nil, decorate = nil, animation = nil,
     layout_opts = { orientation = nil, direction = nil },
 })
-hl.workspace_rule({ workspace = "8", layout = nil, persistent = false, monitor = "", default = false, default_name = "", on_created_empty = "",
+hl.workspace_rule({ workspace = "8", layout = nil, persistent = false, monitor = "", default = false, default_name = "",
     border_size = nil, gaps_in = nil, gaps_out = nil, float_gaps = nil,
     no_border = nil, no_rounding = nil, no_shadow = nil, decorate = nil, animation = nil,
     layout_opts = { orientation = nil, direction = nil },
 })
-hl.workspace_rule({ workspace = "9", layout = nil, persistent = false, monitor = "", default = false, default_name = "", on_created_empty = "",
+hl.workspace_rule({ workspace = "9", layout = nil, persistent = false, monitor = "", default = false, default_name = "",
     border_size = nil, gaps_in = nil, gaps_out = nil, float_gaps = nil,
     no_border = nil, no_rounding = nil, no_shadow = nil, decorate = nil, animation = nil,
     layout_opts = { orientation = nil, direction = nil },
 })
-hl.workspace_rule({ workspace = "10", layout = "scrolling", persistent = true, monitor = "", default = false, default_name = "", on_created_empty = "",
+hl.workspace_rule({ workspace = "10", layout = "scrolling", persistent = true, monitor = "", default = false, default_name = "",
     border_size = nil, gaps_in = nil, gaps_out = nil, float_gaps = nil,
     no_border = nil, no_rounding = nil, no_shadow = nil, decorate = nil, animation = nil,
     layout_opts = { orientation = nil, direction = nil },
@@ -127,21 +126,34 @@ hl.workspace_rule({ workspace = "10", layout = "scrolling", persistent = true, m
 -- Notes:
 --   • Only one special workspace can be visible on a monitor at a time.
 --   • `misc.close_special_on_empty` (§10e) controls auto-close behaviour.
---   • `on_created_empty` launches an app the first time the workspace is shown.
+--   • Use the workspace.created event below to launch apps on empty creation.
 --   • Use gaps_out in hl.workspace_rule() for scratchpad margins.
 --     The magic scratchpad geometry is managed in appearance.lua (Appearance TUI → Special).
 -- ==============================================================================
 local special_workspaces = {
-    -- { name = "scratchpad", on_created_empty = "kitty" },
-    -- { name = "browser",    on_created_empty = "firefox",   layout = "scrolling" },
-    -- { name = "music",      on_created_empty = "spotify" },
-    -- { name = "notes",      on_created_empty = "obsidian" },
+    -- { name = "scratchpad", startup_command = "kitty" },
+    -- { name = "browser",    startup_command = "firefox",   layout = "scrolling" },
+    -- { name = "music",      startup_command = "spotify" },
+    -- { name = "notes",      startup_command = "obsidian" },
 }
 
+-- Optional startup commands run only when a new workspace is created empty.
+-- Reloading the config does not launch apps on existing workspaces.
+local startup_commands = {
+    -- ["2"] = "kitty", -- Numbered workspace example.
+}
+
+hl.on("workspace.created", function(ws)
+    local command = startup_commands[ws.addressable_name]
+    if ws.is_empty and command and command ~= "" then
+        hl.exec_cmd(command, { workspace = ws.addressable_name .. " silent" })
+    end
+end)
+
 for _, ws in ipairs(special_workspaces) do
+    startup_commands["special:" .. ws.name] = ws.startup_command
     hl.workspace_rule({
         workspace        = "special:" .. ws.name,
-        on_created_empty = ws.on_created_empty,
         layout           = ws.layout,  -- nil is safe; Hyprland ignores nil fields
     })
 end
@@ -154,19 +166,19 @@ end
 -- Navigate with: hl.dispatch(hl.dsp.focus({ workspace = "name:coding" }))
 -- ==============================================================================
 local named_workspaces = {
-    -- { name = "coding",  monitor = "DP-1",  on_created_empty = "kitty",
+    -- { name = "coding",  monitor = "DP-1",  startup_command = "kitty",
     --   gaps_in = 0, gaps_out = 0, no_border = true, no_rounding = true, decorate = false },
-    -- { name = "browser", monitor = "DP-2",  on_created_empty = "firefox" },
+    -- { name = "browser", monitor = "DP-2",  startup_command = "firefox" },
     -- { name = "gaming",  monitor = "desc:Chimei Innolux Corporation 0x150C",
     --   no_border = true, no_rounding = true, decorate = false,
     --   layout = "scrolling" },
 }
 
 for _, ws in ipairs(named_workspaces) do
+    startup_commands["name:" .. ws.name] = ws.startup_command
     hl.workspace_rule({
         workspace        = "name:" .. ws.name,
         monitor          = ws.monitor,
-        on_created_empty = ws.on_created_empty,
         layout           = ws.layout,
         layout_opts      = ws.layout_opts,
         gaps_in          = ws.gaps_in,
@@ -322,7 +334,7 @@ hl.config({
         column_width             = 0.9,
         -- 0 = center (previews adjacent windows on both left & right) | 1 = fit with minimal scrolling
         focus_fit_method         = 0,
-        follow_focus             = true,
+        follow_focus             = 1, -- 0=off, 1=follow with click scrolling, 2=follow without forced click scrolling
         -- Require 40% window visibility before mouse hover auto-scrolls; prevents runaway scrolling on edge previews
         follow_min_visible       = 0.4,
         explicit_column_widths   = "0.333, 0.5, 0.667, 1.0",
@@ -363,6 +375,10 @@ hl.config({
 
 -- Additional TUI controls; existing configuration layers keep their load order.
 hl.config({
+    layers = {
+        layers_hog_keyboard_focus = true,
+        allow_new_top_layers_over_existing_fullscreen = true,
+    },
     binds = {
         focus_preferred_method = 0,
         movefocus_cycles_groupfirst = false,
@@ -381,7 +397,6 @@ hl.config({
         size_limits_tiled = false,
         mouse_move_focuses_monitor = true,
         always_follow_on_dnd = true,
-        layers_hog_keyboard_focus = true,
         enable_swallow = false,
         swallow_regex = "",
         swallow_exception_regex = "",

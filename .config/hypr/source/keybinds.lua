@@ -499,13 +499,14 @@ if f_state then
 end
 
 if use_terminal_clipboard then
-    hl.bind("SUPER + V", function()
-        os.execute("pkill -15 -f '^foot.*terminal_clipboard'")
-        hl.dispatch(hl.dsp.exec_cmd(
-            "foot --app-id=terminal_clipboard.sh " ..
+    hl.bind(
+        "SUPER + V",
+        hl.dsp.exec_cmd(
+            "pkill -15 -f '^foot.*terminal_clipboard'; exec foot --app-id=terminal_clipboard.sh " ..
             "'" .. (os.getenv("HOME") .. "/user_scripts/clipboard/terminal_clipboard.sh"):gsub("'", "'\\''") .. "'"
-        ))
-    end, { description = "Clipboard History (Terminal)" })
+        ),
+        { description = "Clipboard History (Terminal)" }
+    )
 else
     hl.bind(
         "SUPER + V",
@@ -836,7 +837,7 @@ hl.bind(
 
 hl.bind(
     "SUPER + ALT + K",
-    hl.dsp.group.lock_active({ action = "toggle" }),
+    hl.dsp.group.lock({ action = "toggle" }),
     { description = "Group Lock Toggle" }
 )
 
