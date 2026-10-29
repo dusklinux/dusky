@@ -10,9 +10,8 @@ lazy import fnmatch
 lazy import json
 import os
 import re
-lazy import stat
+lazy import threading
 lazy import subprocess
-lazy import tempfile
 from pathlib import Path
 from typing import Any, Self
 
@@ -22,7 +21,8 @@ if str(_DUSKY_TUI_ROOT) not in sys.path:
     sys.path.insert(0, str(_DUSKY_TUI_ROOT))
 
 from python.frontend.core_types import BaseEngine
-lazy from python.engines.cmdline import BridgedStateDict
+lazy from python.engines.cmdline import BridgedStateDict, CmdlineEngine
+from python.shared.config_io import atomic_write, privileged_atomic_write, read_text, current_stamp, split_lines
 
 # PEP 695 Bleeding-Edge Type Aliases
 type KernelMeta = dict[str, Any]
@@ -235,7 +235,7 @@ def resolve_pkgbase_for_kernel(identifier: str) -> str:
         return f"dusky-{sub}"
 
     # 5. Handle version strings like 7.3.0-rc2-xanmod1 or 7.2.11-zen1-1-zen
-    m_ver = re.match(r"^\d+\.\d+(?:\.\d+)?(?:-rc\d+)?(?:-git\d*)?-(.+)$", s)
+    m_ver = re.prefixmatch(r"^\d+\.\d+(?:\.\d+)?(?:-rc\d+)?(?:-git\d*)?-(.+)$", s)
     if m_ver:
         tail = m_ver.group(1)
         base_cand = re.sub(r"\d+-\d+(?:-.+)?$", "", tail).rstrip("-_")
@@ -331,6 +331,7 @@ def resolve_kver_for_pkgbase(pkgbase: str) -> str:
                         try:
                             if pb_file.read_text(encoding="utf-8", errors="replace").strip().lower() == clean_pb:
                                 return d.name
+                            continue  # Authoritative pkgbase metadata names another kernel.
                         except Exception:
                             pass
                     if d.name.endswith(f"-{clean_pb}") or d.name.startswith(f"{clean_pb}-") or clean_pb in d.name:
@@ -346,13 +347,9 @@ def resolve_kver_for_pkgbase(pkgbase: str) -> str:
                 for line in preset_file.read_text(encoding="utf-8", errors="replace").splitlines():
                     if line.strip().startswith("ALL_kver="):
                         val = line.split("=", 1)[1].strip("\"' ")
-                        val_path = Path(val)
-                        if val_path.is_file():
-                            try:
-                                return val_path.read_text(encoding="utf-8", errors="replace").strip()
-                            except Exception:
-                                pass
-                        elif val:
+                        # ALL_kver commonly names a binary vmlinuz image. It is
+                        # not a text file containing the release string.
+                        if re.fullmatch(r'[0-9]+\.[0-9]+[^/\s]*', val):
                             return val
             except Exception:
                 pass
@@ -734,8 +731,8 @@ def discover_all_kernels_and_entries() -> EntryMap:
         except Exception:
             pass
 
-    # Guarantee stock "Arch Linux" always exists as an available baseline
-    if "Arch Linux" not in results:
+    # Offer the stock kernel only when its actual image exists.
+    if "Arch Linux" not in results and (Path("/boot") / "vmlinuz-linux").is_file():
         results["Arch Linux"] = {
             "clean_name": "Arch Linux",
             "entry_file": "arch-linux.conf",
@@ -776,6 +773,8 @@ class SystemdBootEngine(BaseEngine):
         self.cache: BridgedStateDict = BridgedStateDict()
         self.file_mtime_ns: int = 0
         self.loader_mtime_ns: int = 0
+        self._snapshots = {}
+        self._lock = threading.RLock()
 
     @staticmethod
     def _resolve_loader_path() -> Path:
@@ -791,8 +790,7 @@ class SystemdBootEngine(BaseEngine):
     def _resolve_config_path(self, config_path: str = "") -> Path:
         if config_path:
             p = Path(config_path).expanduser().resolve()
-            if p.exists():
-                return p
+            return p
 
         candidate_dirs = [
             self.loader_conf_path.parent / "entries",
@@ -880,6 +878,8 @@ class SystemdBootEngine(BaseEngine):
             src = entries[clean_name].get("entry_path") or entries[clean_name].get("entry_file")
             if src:
                 p = Path(src)
+                if not p.is_absolute():
+                    p = self.loader_conf_path.parent / "entries" / p
                 if p.is_file():
                     return p
                 if str(p).endswith(".conf"):
@@ -924,7 +924,7 @@ class SystemdBootEngine(BaseEngine):
 
     def map_raw_to_clean(self, raw_val: str) -> str:
         """Translates a raw loader.conf default value to its clean UI name."""
-        if not raw_val or raw_val.startswith("@"):
+        if not raw_val or raw_val.startswith("@") or any(c in raw_val for c in "*?["):
             return raw_val
 
         entries = self.get_entries_map()
@@ -954,7 +954,7 @@ class SystemdBootEngine(BaseEngine):
 
     def map_clean_to_raw(self, clean_name: str) -> str:
         """Translates a clean UI selection to the exact loader.conf entry format."""
-        if not clean_name or clean_name.startswith("@"):
+        if not clean_name or clean_name.startswith("@") or any(c in clean_name for c in "*?["):
             return clean_name
 
         entries = self.get_entries_map()
@@ -1045,14 +1045,16 @@ class SystemdBootEngine(BaseEngine):
                         fb_lines.append(f"initrd     /{img}")
             fb_lines.append(f"initrd     {fb_rel}")
             fb_lines.append(f"options    {fb_opts}")
-            self._atomic_write(fb_path, "\n".join(fb_lines) + "\n")
+            ok, msg = self._atomic_write(fb_path, "\n".join(fb_lines) + "\n")
+            if not ok:
+                return False, entry_path, f"Primary entry saved; fallback failed: {msg}"
 
         self._cached_entries_map = {}
         return True, entry_path, f"Synthesized BLS entry: {entry_file}"
 
     def ensure_entry_exists(self, clean_name: str) -> tuple[bool, Path | None, str]:
         """Ensures that a physical .conf entry exists on disk for the given clean kernel name."""
-        if not clean_name or clean_name.startswith("@"):
+        if not clean_name or clean_name.startswith("@") or any(c in clean_name for c in "*?["):
             return True, None, "Special target"
 
         p = self.get_entry_path_for_name(clean_name)
@@ -1065,6 +1067,7 @@ class SystemdBootEngine(BaseEngine):
         """Scans for any installed kernels lacking BLS entries and generates them."""
         entries = self.get_entries_map()
         synthesized: list[str] = []
+        all_ok = True
         for clean_name, meta in entries.items():
             if clean_name.startswith("@"):
                 continue
@@ -1072,39 +1075,43 @@ class SystemdBootEngine(BaseEngine):
                 ok, _, _ = self.synthesize_entry_for_kernel(clean_name)
                 if ok:
                     synthesized.append(clean_name)
-        return True, synthesized
+                else:
+                    all_ok = False
+        return all_ok, synthesized
 
     def load_state(self) -> dict[str, Any]:
+        with self._lock:
+            return self._load_state()
+
+    def _read_loaded(self, path):
+        text, snapshot = read_text(path)
+        self._snapshots[path] = snapshot
+        return text
+
+    def _load_state(self) -> dict[str, Any]:
+        self._snapshots = {}
         self.cache = BridgedStateDict()
         self._cached_entries_map = discover_all_kernels_and_entries()
-
-        # If running as root, auto-heal and synthesize missing entries immediately
-        if os.geteuid() == 0:
-            try:
-                self.auto_synthesize_all_missing_entries()
-                self._cached_entries_map = discover_all_kernels_and_entries()
-            except Exception:
-                pass
 
         # 1. Load global loader.conf (LOADER scope)
         raw_default = ""
         clean_default = "Arch Linux"
         if self.loader_conf_path.exists():
             try:
-                with open(self.loader_conf_path, "r", encoding="utf-8", errors="replace") as f:
-                    self.loader_mtime_ns = os.fstat(f.fileno()).st_mtime_ns
-                    for line in f.read().splitlines():
-                        line_clean = line.strip()
-                        if line_clean and not line_clean.startswith("#") and (" " in line_clean or "\t" in line_clean):
-                            k, v = line_clean.split(None, 1)
-                            raw_val = v.strip()
-                            if k == "default":
-                                raw_default = raw_val
-                                clean_default = self.map_raw_to_clean(raw_val)
-                                self.cache["LOADER/default"] = clean_default
-                                self.cache["LOADER/default_raw"] = raw_val
-                            else:
-                                self.cache[f"LOADER/{k}"] = raw_val
+                content = self._read_loaded(self.loader_conf_path)
+                self.loader_mtime_ns = self._snapshots[self.loader_conf_path][3] if self._snapshots[self.loader_conf_path] else 0
+                for line in split_lines(content):
+                    line_clean = line.strip()
+                    if line_clean and not line_clean.startswith("#") and (" " in line_clean or "\t" in line_clean):
+                        k, v = line_clean.split(None, 1)
+                        raw_val = v.strip()
+                        if k == "default":
+                            raw_default = raw_val
+                            clean_default = self.map_raw_to_clean(raw_val)
+                            self.cache["LOADER/default"] = clean_default
+                            self.cache["LOADER/default_raw"] = raw_val
+                        else:
+                            self.cache[f"LOADER/{k}"] = raw_val
             except OSError:
                 pass
 
@@ -1132,7 +1139,7 @@ class SystemdBootEngine(BaseEngine):
             title_in_file = clean_name
             if p and p.is_file():
                 try:
-                    for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
+                    for line in split_lines(self._read_loaded(p)):
                         line_s = line.strip()
                         if line_s.startswith(("title ", "title\t")):
                             title_in_file = line_s.split(None, 1)[1].strip()
@@ -1147,26 +1154,18 @@ class SystemdBootEngine(BaseEngine):
         # 4. Load active entry config (DEFAULT cmdline parameters and ENTRY metadata)
         if self.config_path.exists():
             try:
-                with open(self.config_path, "r", encoding="utf-8", errors="replace") as f:
-                    self.file_mtime_ns = os.fstat(f.fileno()).st_mtime_ns
-                    content = f.read()
+                content = self._read_loaded(self.config_path)
+                self.file_mtime_ns = self._snapshots[self.config_path][3] if self._snapshots[self.config_path] else 0
 
                 initrd_count = 0
-                for line in content.splitlines():
+                option_lines = []
+                for line in split_lines(content):
                     line_clean = line.strip()
                     if not line_clean or line_clean.startswith("#"):
                         continue
 
                     if match := re.prefixmatch(r"^([ \t]*)options([ \t]+)(.*)$", line):
-                        tokens = re.split(r'((?:[^\s"\']|"[^"]*"|\'[^\']*\')+)', match.group(3))
-                        args = [t for t in tokens if t.strip()]
-                        counts: dict[str, int] = {}
-
-                        for arg in args:
-                            k, v = arg.split("=", 1) if "=" in arg else (arg, "true")
-                            counts[k] = counts.get(k, 0) + 1
-                            self.cache[f"DEFAULT/{k}:{counts[k]}"] = v
-                            self.cache[f"DEFAULT/{k}"] = v
+                        option_lines.append(match.group(3))
                     elif " " in line_clean or "\t" in line_clean:
                         k, v = line_clean.split(None, 1)
                         if k == "initrd":
@@ -1176,20 +1175,14 @@ class SystemdBootEngine(BaseEngine):
                         else:
                             self.cache[f"ENTRY/{k}"] = v.strip()
 
+                self.cache.update(CmdlineEngine._parse(" ".join(option_lines)))
                 self.cache["ENTRY/entry_file"] = self.config_path.name
             except OSError:
                 pass
         else:
             # Active entry is planned/virtual: pre-populate with proven baseline options
             base_opts = get_baseline_options([self.loader_conf_path.parent / "entries", Path("/boot/loader/entries")])
-            tokens = re.split(r'((?:[^\s"\']|"[^"]*"|\'[^\']*\')+)', base_opts)
-            args = [t for t in tokens if t.strip()]
-            counts: dict[str, int] = {}
-            for arg in args:
-                k, v = arg.split("=", 1) if "=" in arg else (arg, "true")
-                counts[k] = counts.get(k, 0) + 1
-                self.cache[f"DEFAULT/{k}:{counts[k]}"] = v
-                self.cache[f"DEFAULT/{k}"] = v
+            self.cache.update(CmdlineEngine._parse(base_opts))
 
             target_clean = clean_kernel_name(self.config_path.stem)
             pkgbase = resolve_pkgbase_for_kernel(self.config_path.stem)
@@ -1204,12 +1197,46 @@ class SystemdBootEngine(BaseEngine):
             self.cache["ENTRY/initrd"] = img_rel
             self.cache["ENTRY/needs_synthesis"] = "true"
 
+        self._snapshots.setdefault(self.config_path, None)
+        self._snapshots.setdefault(self.loader_conf_path, None)
         return self.cache
 
     def write_value(self, target_key: str, target_scope: str, new_value: str, item_type: str = "string") -> tuple[bool, str, str]:
         return self.write_batch([(target_key, target_scope, new_value, item_type)])
 
     def write_batch(self, changes: list[ChangeTuple]) -> tuple[bool, str, str]:
+        if not changes:
+            return True, "No pending changes.", ""
+        with self._lock:
+            try:
+                for key, scope, value, _ in changes:
+                    if scope not in {'LOADER', 'ENTRY_OVERRIDE', 'DEFAULT', 'ENTRY'}:
+                        raise ValueError(f'Unknown boot configuration scope: {scope}')
+                    if not key or any(c.isspace() or c == '\0' for c in key):
+                        raise ValueError(f'Invalid boot configuration key: {key!r}')
+                    if any(c in str(value) for c in '\r\n\0'):
+                        raise ValueError('Boot configuration values must be single-line.')
+                if any(scope == 'DEFAULT' for _, scope, _, _ in changes) and any(scope == 'ENTRY' and key == 'options' for key, scope, _, _ in changes):
+                    raise ValueError('Edit either ENTRY/options or DEFAULT parameters in one batch, not both.')
+                override_keys = {}
+                if any(c[1] == 'ENTRY_OVERRIDE' for c in changes):
+                    for name in self.get_entries_map():
+                        slug = slugify_entry_key(name)
+                        override_keys[slug] = override_keys.get(slug, 0) + 1
+                for key, scope, _, _ in changes:
+                    if scope == 'ENTRY_OVERRIDE':
+                        if key not in override_keys:
+                            raise ValueError(f'Unknown boot entry override: {key}')
+                        if override_keys[key] != 1:
+                            raise ValueError(f'Ambiguous boot entry override: {key}; edit the entry file directly.')
+                for path, expected in self._snapshots.items():
+                    if current_stamp(path) != expected:
+                        raise OSError(f'{path.name} modified externally. Reload required.')
+                return self._write_batch(list({(c[0], c[1]): c for c in changes}.values()))
+            except (OSError, UnicodeError, ValueError, subprocess.SubprocessError) as exc:
+                return False, f'Boot configuration write failed: {exc}', ''
+
+    def _write_batch(self, changes):
         if not changes:
             return True, "No pending changes.", ""
 
@@ -1222,24 +1249,30 @@ class SystemdBootEngine(BaseEngine):
         # Handle target_entry switch if present in batch
         for k, scope, val, _ in loader_changes:
             if k == "target_entry":
-                self._target_override = str(val).strip()
-                if not self._target_override.startswith("Auto"):
-                    ok_ens, _, msg_ens = self.ensure_entry_exists(self._target_override)
-                    if not ok_ens and "AUTH_REQUIRED" in msg_ens:
-                        return False, "AUTH_REQUIRED", ""
+                requested_target = str(val).strip()
+                if not requested_target.startswith("Auto"):
+                    ok_ens, _, msg_ens = self.ensure_entry_exists(requested_target)
+                    if not ok_ens:
+                        return False, msg_ens, ""
+                self._target_override = requested_target
                 self.config_path = self._resolve_config_path()
+
+        if entry_and_cmdline_changes:
+            valid, validation_message = self._prepare_entry_conf(entry_and_cmdline_changes)
+            if not valid:
+                return False, validation_message, ''
 
         # Handle default entry selection: ensure entry exists on disk first
         for k, scope, val, _ in loader_changes:
             if k == "default":
                 clean_def = str(val).strip()
-                if clean_def and not clean_def.startswith("@"):
+                if clean_def and clean_def not in {"unset", "nil", "__DELETE__", "__delete__"} and not clean_def.startswith("@") and not any(c in clean_def for c in "*?["):
                     ok_ens, _, msg_ens = self.ensure_entry_exists(clean_def)
-                    if not ok_ens and "AUTH_REQUIRED" in msg_ens:
-                        return False, "AUTH_REQUIRED", ""
+                    if not ok_ens:
+                        return False, msg_ens, ""
 
         # Write loader.conf
-        if loader_changes:
+        if any(c[0] != "target_entry" for c in loader_changes):
             ok_l, msg_l = self._write_loader_conf(loader_changes)
             if not ok_l:
                 return False, msg_l, ""
@@ -1249,7 +1282,7 @@ class SystemdBootEngine(BaseEngine):
         if override_changes:
             ok_o, msg_o = self._write_entry_overrides(override_changes)
             if not ok_o:
-                return False, msg_o, ""
+                return False, ("Earlier updates saved: " + " ".join(msgs) + "; " if msgs else "") + msg_o, ""
             msgs.append(msg_o)
             self._cached_entries_map = {}
 
@@ -1257,7 +1290,7 @@ class SystemdBootEngine(BaseEngine):
         if entry_and_cmdline_changes:
             ok_e, msg_e = self._write_entry_conf(entry_and_cmdline_changes)
             if not ok_e:
-                return False, msg_e, ""
+                return False, ("Earlier updates saved: " + " ".join(msgs) + "; " if msgs else "") + msg_e, ""
             msgs.append(msg_e)
 
         return True, " ".join(msgs) or "Successfully saved changes.", ""
@@ -1272,7 +1305,7 @@ class SystemdBootEngine(BaseEngine):
         updated_files = []
         for key, _, new_title, _ in changes:
             if key not in slug_to_entry:
-                continue
+                return False, f"Unknown boot entry override: {key}"
             clean_name = slug_to_entry[key]
 
             ok_ens, entry_path, msg_ens = self.ensure_entry_exists(clean_name)
@@ -1282,7 +1315,7 @@ class SystemdBootEngine(BaseEngine):
                 continue
 
             try:
-                lines = entry_path.read_text(encoding="utf-8").splitlines()
+                lines = [line.rstrip('\r\n') for line in split_lines(self._read_for_write(entry_path))]
             except OSError as e:
                 return False, f"Failed to read {entry_path.name}: {e}"
 
@@ -1311,17 +1344,16 @@ class SystemdBootEngine(BaseEngine):
         lines: list[str] = []
         if self.loader_conf_path.exists():
             try:
-                with open(self.loader_conf_path, "r", encoding="utf-8") as f:
-                    lines = f.read().splitlines()
-            except OSError:
-                lines = []
+                lines = [line.rstrip('\r\n') for line in split_lines(self._read_for_write(self.loader_conf_path))]
+            except (OSError, UnicodeError) as exc:
+                return False, f"Cannot read loader configuration: {exc}"
 
         changes_dict = {}
         for key, _, val, _ in changes:
             if key == "target_entry":
                 continue
             elif key == "default":
-                changes_dict[key] = self.map_clean_to_raw(str(val))
+                changes_dict[key] = str(val) if str(val) in {"unset", "nil", "__DELETE__", "__delete__"} else self.map_clean_to_raw(str(val))
             else:
                 changes_dict[key] = str(val)
 
@@ -1335,7 +1367,7 @@ class SystemdBootEngine(BaseEngine):
                 if k in changes_dict:
                     val = str(changes_dict[k]).strip()
                     handled_keys.add(k)
-                    if val not in ("unset", "__delete__", ""):
+                    if val not in ("unset", "__delete__", "__DELETE__", "nil", ""):
                         out_lines.append(f"{k:<32}{val}")
                     continue
             out_lines.append(line)
@@ -1343,7 +1375,7 @@ class SystemdBootEngine(BaseEngine):
         for k, val in changes_dict.items():
             if k not in handled_keys:
                 val_s = str(val).strip()
-                if val_s not in ("unset", "__delete__", ""):
+                if val_s not in ("unset", "__delete__", "__DELETE__", "nil", ""):
                     out_lines.append(f"{k:<32}{val_s}")
 
         content = "\n".join(out_lines) + "\n"
@@ -1351,51 +1383,30 @@ class SystemdBootEngine(BaseEngine):
         if not ok:
             return ok, msg
 
-        # Sync the LoaderEntryDefault EFI variable via bootctl set-default
-        if "default" in changes_dict:
-            default_val = changes_dict["default"]
-            bootctl_arg = default_val if default_val not in ("unset", "__delete__", "") else ""
+        for key, command in (('default', 'set-default'), ('timeout', 'set-timeout')):
+            if key not in changes_dict:
+                continue
+            value = changes_dict[key]
+            argument = '' if value in ('unset', '__delete__', '__DELETE__', 'nil', '') else value
             try:
-                res = subprocess.run(
-                    ["bootctl", "set-default", bootctl_arg],
-                    capture_output=True, text=True, timeout=5,
-                )
-                if res.returncode != 0:
-                    res_sudo = subprocess.run(
-                        ["sudo", "-n", "bootctl", "set-default", bootctl_arg],
-                        capture_output=True, text=True, timeout=5,
-                    )
-                    if res_sudo.returncode != 0:
-                        stderr = (res.stderr or res_sudo.stderr or "").strip()
-                        msg += f" (Warning: bootctl set-default: {stderr})"
-            except Exception:
-                pass
-
-        # Sync the LoaderConfigTimeout EFI variable via bootctl set-timeout
-        if "timeout" in changes_dict:
-            timeout_val = changes_dict["timeout"]
-            bootctl_timeout = timeout_val if timeout_val not in ("unset", "__delete__", "") else ""
-            try:
-                res = subprocess.run(
-                    ["bootctl", "set-timeout", bootctl_timeout],
-                    capture_output=True, text=True, timeout=5,
-                )
-                if res.returncode != 0:
-                    subprocess.run(
-                        ["sudo", "-n", "bootctl", "set-timeout", bootctl_timeout],
-                        capture_output=True, text=True, timeout=5,
-                    )
-            except Exception:
-                pass
-
+                result = subprocess.run(['bootctl', command, argument], capture_output=True, text=True, timeout=5)
+                if result.returncode:
+                    result = subprocess.run(['sudo', '-n', 'bootctl', command, argument], capture_output=True, text=True, timeout=5)
+                if result.returncode:
+                    return False, f'{self.loader_conf_path.name} saved, but bootctl {command} failed: {result.stderr.strip() or f"exit {result.returncode}"}'
+            except (OSError, subprocess.SubprocessError) as exc:
+                return False, f'{self.loader_conf_path.name} saved, but bootctl {command} failed: {exc}'
         return ok, msg
 
     def _write_entry_conf(self, changes: list[ChangeTuple]) -> tuple[bool, str]:
+        valid, content = self._prepare_entry_conf(changes)
+        return self._atomic_write(self.config_path, content) if valid else (False, content)
+
+    def _prepare_entry_conf(self, changes: list[ChangeTuple]) -> tuple[bool, str]:
         lines: list[str] = []
         if self.config_path.exists():
             try:
-                with open(self.config_path, "r", encoding="utf-8") as f:
-                    lines = f.read().splitlines()
+                lines = [line.rstrip('\r\n') for line in split_lines(self._read_for_write(self.config_path))]
             except OSError as e:
                 return False, f"Failed to open config for verification: {e}"
         else:
@@ -1424,186 +1435,82 @@ class SystemdBootEngine(BaseEngine):
             base_opts = get_baseline_options([self.loader_conf_path.parent / "entries", Path("/boot/loader/entries")])
             lines.append(f"options    {base_opts}")
 
-        cmdline_changes = [c for c in changes if c[1] == "DEFAULT"]
-        entry_changes = {c[0]: c[2] for c in changes if c[1] == "ENTRY"}
-
-        out_lines: list[str] = []
-        options_found = False
-        handled_entry_keys: set[str] = set()
-
-        changes_dict = {(scope, key): (val, itype) for key, scope, val, itype in cmdline_changes}
-        applied_commits: set[tuple[str, str]] = set()
-
+        cmdline_changes = [c for c in changes if c[1] == 'DEFAULT']
+        metadata = {c[0]: c[2] for c in changes if c[1] == 'ENTRY'}
+        # entry_file is descriptive state, not a BLS directive.
+        if 'entry_file' in metadata or 'needs_synthesis' in metadata:
+            return False, 'Entry filenames and synthesis status are read-only.'
+        maximum = {}
         for line in lines:
-            line_s = line.strip()
-            # Handle ENTRY metadata lines (title, sort-key, version, etc.)
-            if line_s and not line_s.startswith("#") and not line_s.startswith("options"):
-                if " " in line_s or "\t" in line_s:
-                    k, _ = line_s.split(None, 1)
-                    if k in entry_changes:
-                        val = str(entry_changes[k]).strip()
-                        handled_entry_keys.add(k)
-                        if val not in ("unset", "__delete__", ""):
-                            out_lines.append(f"{k:<10} {val}")
-                        continue
-
-            # Handle options line (DEFAULT scope)
-            if match := re.prefixmatch(r"^([ \t]*)options([ \t]+)(.*)$", line):
-                options_found = True
-                leading_space, spacing, options_val = match.groups()
-                tokens = re.split(r'((?:[^\s"\']|"[^"]*"|\'[^\']*\')+)', options_val)
-
-                max_counts: dict[str, int] = {}
-                for t in tokens:
-                    if t.strip():
-                        k = t.split("=", 1)[0]
-                        max_counts[k] = max_counts.get(k, 0) + 1
-
-                out_tokens: list[str] = []
-                counts: dict[str, int] = {}
-
-                for t in tokens:
-                    if not t.strip():
-                        out_tokens.append(t)
-                        continue
-
-                    k = t.split("=", 1)[0]
-                    counts[k] = counts.get(k, 0) + 1
-
-                    lookup_exact = ("DEFAULT", f"{k}:{counts[k]}")
-                    lookup_base = ("DEFAULT", k)
-                    is_last = counts[k] == max_counts.get(k, 1)
-
-                    match_key = None
-                    if lookup_exact in changes_dict:
-                        match_key = lookup_exact
-                    elif is_last and lookup_base in changes_dict:
-                        match_key = lookup_base
-
-                    if match_key:
-                        val, itype = changes_dict[match_key]
-                        applied_commits.add(match_key)
-                        val_str = str(val)
-                        val_lower = val_str.lower()
-
-                        match (val_lower, itype):
-                            case ("__delete__" | "unset" | "", _) | ("false", "bool"):
-                                if out_tokens and not out_tokens[-1].strip():
-                                    out_tokens.pop()
-                            case _:
-                                if itype == "bool" and val_lower == "true":
-                                    out_tokens.append(k)
-                                else:
-                                    out_tokens.append(f"{k}={val_str}")
-                    else:
-                        out_tokens.append(t)
-
-                for key_raw, scope, val, target_itype in cmdline_changes:
-                    lookup = (scope, key_raw)
-                    if lookup in applied_commits:
-                        continue
-
-                    val_str = str(val)
-                    val_lower = val_str.lower()
-
-                    match (val_lower, target_itype):
-                        case ("__delete__" | "unset" | "", _) | ("false", "bool"):
-                            continue
-                        case _:
-                            clean_key = key_raw.split(":")[0] if ":" in key_raw else key_raw
-                            needs_space = False
-                            for tk in reversed(out_tokens):
-                                if tk:
-                                    needs_space = bool(tk.strip())
-                                    break
-                            if needs_space:
-                                out_tokens.append(" ")
-
-                            if target_itype == "bool" and val_lower == "true":
-                                out_tokens.append(clean_key)
-                            else:
-                                out_tokens.append(f"{clean_key}={val_str}")
-                            applied_commits.add(lookup)
-
-                out_lines.append(f"{leading_space}options{spacing}{''.join(out_tokens).strip()}")
+            parts = line.strip().split(None, 1)
+            if parts and not parts[0].startswith('#'):
+                maximum[parts[0]] = maximum.get(parts[0], 0) + 1
+        pending = {}
+        for raw_key, value in metadata.items():
+            key, sep, index = raw_key.rpartition(':')
+            if sep:
+                if not index.isdecimal() or int(index) < 1:
+                    return False, f'Invalid BLS directive index: {raw_key}'
+                occurrence = int(index)
             else:
-                out_lines.append(line)
+                key, occurrence = raw_key, maximum.get(raw_key, 1)
+            pending[key, occurrence] = str(value).strip()
+        output, applied, counts = [], set(), {}
+        options, options_position = [], None
+        for line in lines:
+            parts = line.strip().split(None, 1)
+            if not parts or parts[0].startswith('#'):
+                output.append(line)
+                continue
+            key = parts[0]
+            if key == 'options' and cmdline_changes:
+                if options_position is None:
+                    options_position = len(output)
+                options.append(parts[1] if len(parts) == 2 else '')
+                continue
+            count = counts[key] = counts.get(key, 0) + 1
+            target = key, count
+            if target not in pending:
+                output.append(line)
+            else:
+                applied.add(target)
+                value = pending[target]
+                if value not in ('unset', '__DELETE__', '__delete__', 'nil', ''):
+                    output.append(f'{key} {value}')
+        for target, value in pending.items():
+            if target in applied or value in ('unset', '__DELETE__', '__delete__', 'nil', ''):
+                continue
+            key, occurrence = target
+            next_count = counts.get(key, 0) + 1
+            if occurrence != next_count:
+                return False, f'Cannot append {key}:{occurrence}; next occurrence is {next_count}.'
+            counts[key] = next_count
+            output.append(f'{key} {value}')
+        if cmdline_changes:
+            options_value = CmdlineEngine.transform(' '.join(options), cmdline_changes).rstrip('\n')
+            output.insert(options_position if options_position is not None else len(output), 'options '+options_value)
+        return True, '\n'.join(output)+'\n'
 
-        # Append any new ENTRY metadata keys that weren't in file
-        for k, val in entry_changes.items():
-            if k not in handled_entry_keys:
-                val_s = str(val).strip()
-                if val_s not in ("unset", "__delete__", ""):
-                    out_lines.insert(0, f"{k:<10} {val_s}")
-
-        if not options_found and cmdline_changes:
-            new_tokens: list[str] = []
-            for key_raw, scope, val, target_itype in cmdline_changes:
-                val_str = str(val)
-                val_lower = val_str.lower()
-                if val_lower in ("__delete__", "unset", "") or (target_itype == "bool" and val_lower == "false"):
-                    continue
-                clean_key = key_raw.split(":")[0] if ":" in key_raw else key_raw
-                if new_tokens:
-                    new_tokens.append(" ")
-                if target_itype == "bool" and val_lower == "true":
-                    new_tokens.append(clean_key)
-                else:
-                    new_tokens.append(f"{clean_key}={val_str}")
-            if new_tokens:
-                out_lines.append(f"options\t{''.join(new_tokens)}")
-
-        content = "\n".join(out_lines) + "\n"
-        return self._atomic_write(self.config_path, content)
+    def _read_for_write(self, path):
+        text, snapshot = read_text(path)
+        if path in self._snapshots and snapshot != self._snapshots[path]:
+            raise OSError(f'{path.name} modified externally. Reload required.')
+        self._snapshots[path] = snapshot
+        return text
 
     def _atomic_write(self, target_path: Path, final_content: str) -> tuple[bool, str]:
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        temp_file_path = None
-        success = False
         try:
-            with tempfile.NamedTemporaryFile(mode="w", delete=False, encoding="utf-8", dir=target_path.parent) as tf:
-                temp_file_path = Path(tf.name)
-                tf.write(final_content)
-                tf.flush()
-                os.fsync(tf.fileno())
-
-            if target_path.exists():
-                try:
-                    stat_info = target_path.stat()
-                    os.chmod(temp_file_path, stat.S_IMODE(stat_info.st_mode))
-                    os.chown(temp_file_path, stat_info.st_uid, stat_info.st_gid)
-                except OSError:
-                    pass
-
-            os.replace(temp_file_path, target_path)
-            success = True
-            return True, f"Updated {target_path.name}"
-        except PermissionError:
-            if temp_file_path and temp_file_path.exists():
-                try:
-                    temp_file_path.unlink()
-                except OSError:
-                    pass
+            expected = self._snapshots[target_path] if target_path in self._snapshots else current_stamp(target_path)
             try:
-                res = subprocess.run(
-                    ["sudo", "-n", "tee", str(target_path)],
-                    input=final_content.encode(),
-                    capture_output=True,
-                    timeout=5,
-                )
-                if res.returncode == 0:
-                    return True, f"Updated {target_path.name} (via sudo)"
-                return False, "AUTH_REQUIRED"
-            except Exception:
-                return False, "AUTH_REQUIRED"
-        except OSError as e:
-            return False, f"Write error on {target_path.name}: {e}"
-        finally:
-            if temp_file_path and temp_file_path.exists() and not success:
-                try:
-                    temp_file_path.unlink()
-                except OSError:
-                    pass
+                snapshot = atomic_write(target_path, final_content, expected)
+            except PermissionError:
+                snapshot = privileged_atomic_write(target_path, final_content, expected)
+            self._snapshots[target_path] = snapshot
+            return True, f'Updated {target_path.name}'
+        except PermissionError:
+            return False, 'AUTH_REQUIRED'
+        except (OSError, UnicodeError, ValueError, subprocess.SubprocessError) as exc:
+            return False, f'Write error on {target_path.name}: {exc}'
 
 
 # =============================================================================
