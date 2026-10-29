@@ -77,8 +77,7 @@ def source_digest(project: Path) -> str:
     helper = project.parent / "click_away_to_dismiss"
     files.extend(helper / name for name in (
         "dusky.c",
-        "hyprland-focus-grab-v1-client-protocol.c",
-        "hyprland-focus-grab-v1-client-protocol.h",
+        "hyprland-focus-grab-v1.xml",
     ))
 
     digest = hashlib.sha256()
