@@ -9,6 +9,7 @@ while handling `hl.exec_cmd(...)` autostart directives inside `hl.on("hyprland.s
 """
 
 import re
+lazy import shlex
 lazy from bisect import bisect_right
 lazy from pathlib import Path
 lazy from typing import Any
@@ -135,187 +136,187 @@ AUTOSTART_DEFAULTS: dict[str, dict[str, Any]] = {
 
     # --- Dusky Glance Dashboards Autostart ---
     "autostart/glance_cpu": {
-        "pattern": r'dusky_glance\.sh\s+--cpu(?:["\'\s]|$)',
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--cpu(?:["\'\s]|$)""",
         "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --cpu")',
         "default": False
     },
     "autostart/glance_cpu_power": {
-        "pattern": r'dusky_glance\.sh\s+--cpu-power',
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--cpu-power""",
         "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --cpu-power")',
         "default": False
     },
     "autostart/glance_ram": {
-        "pattern": r'dusky_glance\.sh\s+--ram(?:["\'\s]|$)',
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--ram(?:["\'\s]|$)""",
         "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --ram")',
         "default": False
     },
     "autostart/glance_ram_temp": {
-        "pattern": r'dusky_glance\.sh\s+--ram-temp',
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--ram-temp""",
         "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --ram-temp")',
         "default": False
     },
     "autostart/glance_zram": {
-        "pattern": r'dusky_glance\.sh\s+--zram',
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--zram""",
         "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --zram")',
         "default": False
     },
     "autostart/glance_temp": {
-        "pattern": r'dusky_glance\.sh\s+--temp(?:["\'\s]|$)',
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--temp(?:["\'\s]|$)""",
         "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --temp")',
         "default": False
     },
     "autostart/glance_battery": {
-        "pattern": r'dusky_glance\.sh\s+--battery(?:["\'\s]|$)',
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--battery(?:["\'\s]|$)""",
         "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --battery")',
         "default": False
     },
     "autostart/glance_battery_percent": {
-        "pattern": r'dusky_glance\.sh\s+--battery-percent',
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--battery-percent""",
         "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --battery-percent")',
         "default": False
     },
     "autostart/glance_battery_watts": {
-        "pattern": r'dusky_glance\.sh\s+--battery-watts',
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--battery-watts""",
         "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --battery-watts")',
         "default": False
     },
     "autostart/glance_battery_time": {
-        "pattern": r'dusky_glance\.sh\s+--battery-time',
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--battery-time""",
         "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --battery-time")',
         "default": False
     },
     "autostart/glance_gpu_power": {
-        "pattern": r'dusky_glance\.sh\s+--gpu-power',
-        "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --gpu-power card1 Intel")',
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--gpu-power""",
+        "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --gpu-power")',
         "default": False
     },
     "autostart/glance_gpu_usage": {
-        "pattern": r'dusky_glance\.sh\s+--gpu-usage',
-        "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --gpu-usage card1 Intel")',
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--gpu-usage""",
+        "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --gpu-usage")',
         "default": False
     },
     "autostart/glance_gpu_mem": {
-        "pattern": r'dusky_glance\.sh\s+--gpu-mem',
-        "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --gpu-mem card1 Intel")',
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--gpu-mem""",
+        "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --gpu-mem")',
         "default": False
     },
     "autostart/glance_network": {
-        "pattern": r'dusky_glance\.sh\s+--network(?:["\'\s]|$)',
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--network(?:["\'\s]|$)""",
         "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --network")',
         "default": False
     },
     "autostart/glance_network_down": {
-        "pattern": r'dusky_glance\.sh\s+--network-down(?:["\'\s]|$)',
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--network-down(?:["\'\s]|$)""",
         "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --network-down")',
         "default": False
     },
     "autostart/glance_network_up": {
-        "pattern": r'dusky_glance\.sh\s+--network-up(?:["\'\s]|$)',
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--network-up(?:["\'\s]|$)""",
         "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --network-up")',
         "default": False
     },
     "autostart/glance_network_combined": {
-        "pattern": r'dusky_glance\.sh\s+--network-combined(?:["\'\s]|$)',
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--network-combined(?:["\'\s]|$)""",
         "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --network-combined")',
         "default": False
     },
     "autostart/glance_network_down_session": {
-        "pattern": r'dusky_glance\.sh\s+--network-down-session(?:["\'\s]|$)',
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--network-down-session(?:["\'\s]|$)""",
         "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --network-down-session")',
         "default": False
     },
     "autostart/glance_network_up_session": {
-        "pattern": r'dusky_glance\.sh\s+--network-up-session(?:["\'\s]|$)',
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--network-up-session(?:["\'\s]|$)""",
         "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --network-up-session")',
         "default": False
     },
     "autostart/glance_network_session": {
-        "pattern": r'dusky_glance\.sh\s+--network-session(?:["\'\s]|$)',
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--network-session(?:["\'\s]|$)""",
         "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --network-session")',
         "default": False
     },
     "autostart/glance_network_boot_down": {
-        "pattern": r'dusky_glance\.sh\s+--network-boot-down(?:["\'\s]|$)',
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--network-boot-down(?:["\'\s]|$)""",
         "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --network-boot-down")',
         "default": False
     },
     "autostart/glance_network_boot_up": {
-        "pattern": r'dusky_glance\.sh\s+--network-boot-up(?:["\'\s]|$)',
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--network-boot-up(?:["\'\s]|$)""",
         "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --network-boot-up")',
         "default": False
     },
     "autostart/glance_network_boot": {
-        "pattern": r'dusky_glance\.sh\s+--network-boot(?:["\'\s]|$)',
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--network-boot(?:["\'\s]|$)""",
         "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --network-boot")',
         "default": False
     },
     "autostart/glance_uptime": {
-        "pattern": r'dusky_glance\.sh\s+--uptime',
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--uptime""",
         "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --uptime")',
         "default": False
     },
     "autostart/glance_workspace": {
-        "pattern": r'dusky_glance\.sh\s+--workspace',
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--workspace""",
         "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --workspace")',
         "default": False
     },
     "autostart/glance_clock": {
-        "pattern": r'dusky_glance\.sh\s+--clock(?:["\'\s]|$)',
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--clock(?:["\'\s]|$)""",
         "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --clock")',
         "default": False
     },
     "autostart/glance_clock_short": {
-        "pattern": r'dusky_glance\.sh\s+--clock-short',
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--clock-short""",
         "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --clock-short")',
         "default": False
     },
     "autostart/glance_disk": {
-        "pattern": r'dusky_glance\.sh\s+--disk(?:["\'\s]|$)',
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--disk(?:["\'\s]|$)""",
         "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --disk")',
         "default": False
     },
     "autostart/glance_disk_read": {
-        "pattern": r'dusky_glance\.sh\s+--disk-read',
-        "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --disk-read nvme0n1")',
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--disk-read""",
+        "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --disk-read")',
         "default": False
     },
     "autostart/glance_disk_write": {
-        "pattern": r'dusky_glance\.sh\s+--disk-write',
-        "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --disk-write nvme0n1")',
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--disk-write""",
+        "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --disk-write")',
         "default": False
     },
     "autostart/glance_disk_temp": {
-        "pattern": r'dusky_glance\.sh\s+--disk-temp',
-        "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --disk-temp nvme0n1")',
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--disk-temp""",
+        "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --disk-temp")',
         "default": False
     },
     "autostart/glance_stopwatch": {
-        "pattern": r'dusky_glance\.sh\s+--stopwatch',
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--stopwatch""",
         "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --stopwatch")',
         "default": False
     },
     "autostart/glance_timer": {
-        "pattern": r'dusky_glance\.sh\s+--timer',
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--timer""",
         "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --timer 15m")',
         "default": False
     },
     "autostart/glance_hud": {
-        "pattern": r'dusky_glance\.sh\s+--hud',
-        "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --hud card1 Intel")',
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--hud""",
+        "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --hud")',
         "default": False
     },
     "autostart/glance_world_ny": {
-        "pattern": r'dusky_glance\.sh\s+--world-clock\s+America/New_York',
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--world-clock\s+America/New_York""",
         "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --world-clock America/New_York NY")',
         "default": False
     },
     "autostart/glance_world_tokyo": {
-        "pattern": r'dusky_glance\.sh\s+--world-clock\s+Asia/Tokyo',
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--world-clock\s+Asia/Tokyo""",
         "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --world-clock Asia/Tokyo Japan")',
         "default": False
     },
     "autostart/glance_world_london": {
-        "pattern": r'dusky_glance\.sh\s+--world-clock\s+Europe/London',
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--world-clock\s+Europe/London""",
         "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --world-clock Europe/London London")',
         "default": False
     },
@@ -340,6 +341,38 @@ def _event_for(key):
 
 
 class AutostartLuaEngine(HyprlandLuaEngine):
+    @staticmethod
+    def _canonical_command(key, meta):
+        """Resolve hardware only when enabling a new dashboard command."""
+        gpu_modes = {'glance_gpu_power': '--gpu-power', 'glance_gpu_usage': '--gpu-usage', 'glance_gpu_mem': '--gpu-mem'}
+        disk_modes = {'glance_disk_read': '--disk-read', 'glance_disk_write': '--disk-write', 'glance_disk_temp': '--disk-temp'}
+        arguments = None
+        if key in gpu_modes:
+            vendors = {'0x8086': 'intel', '0x1002': 'amd', '0x10de': 'nvidia'}
+            for card in sorted(Path('/sys/class/drm').glob('card*')):
+                if not re.fullmatch(r'card[0-9]+', card.name):
+                    continue
+                try:
+                    vendor = vendors.get((card / 'device/vendor').read_text(encoding='ascii').strip())
+                except OSError:
+                    continue
+                if vendor:
+                    arguments = [gpu_modes[key], card.name, vendor]
+                    break
+            if arguments is None:
+                raise ValueError('No supported DRM GPU found for this dashboard.')
+        elif key in disk_modes:
+            for device in sorted(Path('/sys/class/block').iterdir()):
+                if (device / 'device').exists() and not (device / 'partition').exists():
+                    arguments = [disk_modes[key], device.name]
+                    break
+            if arguments is None:
+                raise ValueError('No physical block device found for this dashboard.')
+        if arguments is None:
+            return meta['canonical']
+        command = shlex.join([str(Path.home() / 'user_scripts/rofi/dusky_glance.sh'), *arguments])
+        return 'hl.exec_cmd(' + HyprlandLuaEngine._lua_string(command) + ')'
+
     def _commands(self, content):
         registered = {(c['line'], c['id']) for c in self._call_sites
                       if c['file'] == str(self.config_path) and c['method'] == 'on'}
@@ -382,7 +415,7 @@ class AutostartLuaEngine(HyprlandLuaEngine):
                 if managed:
                     entries.append((event, first+ca, first+cb, managed[2], 'managed'))
                     continue
-                match = re.match(r'--[ \t]*(hl\.exec_cmd.*)', line)
+                match = re.prefixmatch(r'--[ \t]*(hl\.exec_cmd.*)', line)
                 if match and list(calls(match[1], 'exec_cmd')):
                     entries.append((event, first+ca, first+cb, match[1], True))
         return regions, entries
@@ -447,7 +480,7 @@ class AutostartLuaEngine(HyprlandLuaEngine):
                         for e in managed or matches[:1]:
                             edits[e[1], e[2]] = e[3]
                     else:
-                        additions.setdefault(event, []).append(meta['canonical'])
+                        additions.setdefault(event, []).append(self._canonical_command(key, meta))
                 elif not enabled:
                     for e in active:
                         eq = '='

@@ -9,6 +9,7 @@ relative spatial positioning geometry, hardware enrichment, and workspace planni
 ensuring exact integer logical pixel coordinates and zero compositor scaling warnings.
 """
 
+import os
 lazy import math
 lazy from math.integer import gcd
 lazy import json
@@ -18,6 +19,8 @@ lazy from pathlib import Path
 lazy from typing import Any
 
 from python.engines.lua import HyprlandLuaEngine
+from python.shared.config_io import atomic_write, read_text, boolean
+from python.shared.lua_source import calls, replace_field
 
 # =============================================================================
 # 1. WAYLAND / HYPRLAND FRACTIONAL SCALING MATHEMATICS (wp_fractional_scale_v1)
@@ -42,7 +45,7 @@ def sharp_at_numerator(width: int, height: int, numerator: int) -> bool:
 
 def is_sharp(width: int, height: int, scale: float) -> bool:
     """Verifies whether a given scale float divides the display resolution cleanly."""
-    if scale <= 0 or width <= 0 or height <= 0:
+    if not math.isfinite(scale) or scale <= 0 or width <= 0 or height <= 0:
         return False
     lw = width / scale
     lh = height / scale
@@ -73,10 +76,10 @@ def clean_scale(width: int, height: int, requested: float) -> float:
     divisor that divides the mode. Never rounds down, ensuring the desktop never
     becomes larger than requested on the 1/120 quantum grid.
     """
-    if width <= 0 or height <= 0 or requested <= 0:
+    if not math.isfinite(requested) or width <= 0 or height <= 0 or requested <= 0:
         return 1.0
     divisor = gcd(width * HYPRLAND_SCALE_STEPS, height * HYPRLAND_SCALE_STEPS)
-    units = int(round(requested * HYPRLAND_SCALE_STEPS))
+    units = math.ceil(requested * HYPRLAND_SCALE_STEPS)
     if units > divisor:
         units = divisor
     if units < 1:
@@ -88,7 +91,7 @@ def clean_scale(width: int, height: int, requested: float) -> float:
 
 def closest_sharp(width: int, height: int, requested: float, min_scale: float = 0.5, max_scale: float = 4.0) -> float:
     """Finds the sharp scale closest to the requested float."""
-    if width <= 0 or height <= 0 or requested <= 0:
+    if not math.isfinite(requested) or width <= 0 or height <= 0 or requested <= 0:
         return 1.0
     all_sharp = grid_scales(width, height, min_scale, max_scale)
     if not all_sharp:
@@ -123,7 +126,7 @@ def preset_choices(width: int, height: int) -> list[float]:
 
 def format_scale(value: float) -> str:
     """Formats scale float cleanly, stripping redundant trailing zeros."""
-    fmt = f"{value:.4f}".rstrip("0").rstrip(".")
+    fmt = f"{value:.{PRECISION}f}".rstrip("0").rstrip(".")
     return fmt if fmt else "1"
 
 
@@ -262,6 +265,7 @@ class MonitorLuaEngine(HyprlandLuaEngine):
 
     def load_state(self) -> dict[str, Any]:
         state = super().load_state()
+        self._ast_state = dict(state)
         self._scope_map.clear()
         self._monitor_resolutions.clear()
         self._monitor_metadata.clear()
@@ -387,7 +391,7 @@ class MonitorLuaEngine(HyprlandLuaEngine):
         # -------------------------------------------------------------
         # WORKSPACE RULES (SECTION 6): Load or initialize Workspaces 1..10
         # -------------------------------------------------------------
-        primary_monitor = available_monitor_names[0] if available_monitor_names else "eDP-1"
+        primary_monitor = available_monitor_names[0] if available_monitor_names else ""
         for ws_idx in range(1, 11):
             ws_str = str(ws_idx)
             ws_scope = f"workspace_rule/{ws_str}"
@@ -425,7 +429,7 @@ class MonitorLuaEngine(HyprlandLuaEngine):
         # -------------------------------------------------------------
         # PRIMARY MONITOR FOR BANKED WORKSPACES (~/.config/hypr/primary_monitor)
         # -------------------------------------------------------------
-        primary_file = Path("~/.config/hypr/primary_monitor").expanduser()
+        primary_file = self._primary_path()
         if primary_file.exists():
             try:
                 cached_pri = primary_file.read_text(encoding="utf-8").strip()
@@ -433,264 +437,114 @@ class MonitorLuaEngine(HyprlandLuaEngine):
                     primary_monitor = cached_pri
             except Exception:
                 pass
+        for key, value in global_defaults.items():
+            normalized_state.setdefault(key, value)
         normalized_state["DEFAULT/primary_monitor"] = primary_monitor
 
         self.cache = normalized_state
         return normalized_state
 
+    @staticmethod
+    def _primary_path():
+        configured = Path(os.environ.get('XDG_CONFIG_HOME', ''))
+        base = configured if configured.is_absolute() else Path.home() / '.config'
+        return (base / 'hypr/primary_monitor').resolve()
+
     def write_batch(self, changes: list[tuple[str, str, str, str]]) -> tuple[bool, str, str]:
-        standard_changes = []
-        primary_mon_to_save: str | None = None
-        for key, scope, val, itype in changes:
-            if key == "primary_monitor" and scope in ("DEFAULT", "workspace", "globals"):
-                primary_mon_to_save = str(val).strip()
-            else:
-                standard_changes.append((key, scope, val, itype))
-
-        if primary_mon_to_save is not None:
+        if not changes:
+            return True, 'No pending changes.', ''
+        with self._lock:
             try:
-                pri_path = Path("~/.config/hypr/primary_monitor").expanduser()
-                pri_path.parent.mkdir(parents=True, exist_ok=True)
-                pri_path.write_text(f"{primary_mon_to_save}\n", encoding="utf-8")
-                self.cache["DEFAULT/primary_monitor"] = primary_mon_to_save
-            except Exception:
-                pass
+                return self._write_monitor_batch(changes)
+            except (OSError, UnicodeError, ValueError, TypeError, OverflowError) as exc:
+                return False, f'Monitor edit failed: {exc}', ''
 
-        if not standard_changes:
-            return True, "Primary monitor configuration updated", ""
-
-        changes = standard_changes
-        translated_changes = []
-        required_ast_scopes: set[str] = set()
-        required_ws_scopes: set[str] = set()
-        missing_monitor_keys: dict[str, list[tuple[str, str]]] = {}
-
-        for key, scope, val, itype in changes:
+    def _write_monitor_batch(self, changes):
+        if not self.loaded_files and self.config_path.exists():
+            self.load_state()
+            if not self.loaded_files:
+                return False, 'Cannot evaluate monitor configuration.', ''
+        primary = None
+        translated = {}
+        requested_modes = {self._scope_map.get(scope, scope): str(value) for key, scope, value, _ in changes if key == 'mode'}
+        for key, scope, value, kind in changes:
+            if key == 'primary_monitor' and scope in ('DEFAULT', 'workspace', 'globals'):
+                primary = str(value).strip()
+                if any(c in primary for c in '\n\r\0'):
+                    raise ValueError('Invalid primary monitor name.')
+                continue
             ast_scope = self._scope_map.get(scope, scope)
-
-            # Map virtual 'enabled' key to Hyprland's native 'disabled' property
-            if key == "enabled" and ast_scope.startswith("monitor/"):
-                key = "disabled"
-                is_on = str(val).lower() in ("true", "1", "yes", "on", "t", "y")
-                val = "false" if is_on else "true"
-                itype = "bool"
-
-            # Enforce Lua integer types for compositor fields
-            if key in ("transform", "vrr", "bitdepth", "reserved_area") and ast_scope.startswith("monitor/"):
-                itype = "int"
-                try:
-                    val = str(int(val))
-                except (ValueError, TypeError):
-                    val = "0"
-
-            # --- FRACTIONAL SCALING VALIDATION & HYPRLAND QUANTUM ENFORCEMENT ---
-            if key == "scale" and ast_scope.startswith("monitor/"):
-                mon_name = ast_scope.split("/")[1] if len(ast_scope.split("/")) >= 2 else ""
-                if isinstance(val, (int, float)) or (isinstance(val, str) and val not in ("auto", "preferred", "highres", "highrr")):
-                    try:
-                        scale_val = float(val)
-                        phys_w, phys_h = self._monitor_resolutions.get(mon_name, (1920, 1080))
-                        val = self._get_valid_scale(scale_val, phys_w, phys_h)
-                        itype = "float"
-                    except ValueError:
-                        pass
-
-            # Enforce Lua float types for color/luminance fields
-            if key in ("sdrbrightness", "sdrsaturation", "sdr_min_luminance", "sdr_max_luminance", "min_luminance", "max_luminance", "max_avg_luminance") and ast_scope.startswith("monitor/"):
-                itype = "float"
-                try:
-                    val = str(float(val))
-                except (ValueError, TypeError):
-                    pass
-
-            translated_changes.append((key, ast_scope, val, itype))
-
-            if ast_scope.startswith("monitor/"):
-                parts = ast_scope.split("/")
-                if len(parts) >= 2:
-                    mon_id = parts[1]
-                    required_ast_scopes.add(mon_id)
-                    if mon_id not in missing_monitor_keys:
-                        missing_monitor_keys[mon_id] = []
-                    missing_monitor_keys[mon_id].append((key, str(val)))
-
-            elif ast_scope.startswith("workspace_rule/"):
-                parts = ast_scope.split("/")
-                if len(parts) >= 2:
-                    required_ws_scopes.add(parts[1])
-
-        current_ast_state = super().load_state()
-
-        # 1. Ensure monitor blocks exist for entirely new monitors
-        if required_ast_scopes:
-            existing_outputs = set()
-            for k in current_ast_state.keys():
-                if k.startswith("monitor/"):
-                    parts = k.split("/")
-                    if len(parts) >= 2:
-                        existing_outputs.add(parts[1])
-            missing_monitors = required_ast_scopes - existing_outputs
-            if missing_monitors:
-                self._ensure_monitor_blocks_exist(missing_monitors)
-                current_ast_state = super().load_state()
-
-        # 2. Ensure missing keys inside existing uncommented monitor blocks are injected safely
-        if self.config_path.exists() and missing_monitor_keys:
-            self._ensure_monitor_keys_exist(missing_monitor_keys, current_ast_state)
-
-        # 3. Ensure workspace rule blocks exist
-        if required_ws_scopes:
-            existing_ws = set()
-            for k in current_ast_state.keys():
-                if k.startswith("workspace_rule/"):
-                    parts = k.split("/")
-                    if len(parts) >= 2:
-                        existing_ws.add(parts[1])
-            missing_workspaces = required_ws_scopes - existing_ws
-            if missing_workspaces:
-                self._ensure_workspace_rule_blocks_exist(missing_workspaces)
-
-        # 4. Inject missing global keys via hl.config deep merging
-        missing_globals: dict[str, list[str]] = {}
-        for key, ast_scope, val, itype in translated_changes:
-            if ast_scope in ("misc", "debug", "render"):
-                state_key = f"{ast_scope}/{key}"
-                if state_key not in current_ast_state:
-                    if ast_scope not in missing_globals:
-                        missing_globals[ast_scope] = []
-                    missing_globals[ast_scope].append(key)
-
-        if missing_globals:
-            self._ensure_globals_block_exists(missing_globals)
-
-        return super().write_batch(translated_changes)
-
-    def _ensure_monitor_keys_exist(self, missing_keys_by_output: dict[str, list[tuple[str, str]]], current_ast_state: dict[str, Any]) -> None:
-        """Injects missing property fields into active uncommented hl.monitor tables so the AST mutator finds them."""
-        try:
-            content = self.config_path.read_text(encoding="utf-8")
-        except Exception:
-            return
-
-        modified = False
-        for mon_id, key_vals in missing_keys_by_output.items():
-            for key, val_repr in key_vals:
-                state_key = f"monitor/{mon_id}/{key}"
-                if state_key not in current_ast_state:
-                    if val_repr in ("true", "false") or key in ("disabled", "vrr", "bitdepth", "transform", "reserved_area"):
-                        lua_val = val_repr
-                    elif key in ("scale", "sdrbrightness", "sdrsaturation", "sdr_min_luminance", "sdr_max_luminance", "min_luminance", "max_luminance", "max_avg_luminance") and val_repr not in ("auto", "preferred", "highres", "highrr"):
-                        try:
-                            float(val_repr)
-                            lua_val = val_repr
-                        except ValueError:
-                            lua_val = json.dumps(val_repr)
+            deleting = value is None or str(value) in {'nil', '__DELETE__'}
+            if ast_scope.startswith('monitor/') and key == 'enabled':
+                key = 'disabled'
+                if not deleting:
+                    value, kind = str(not boolean(value)).lower(), 'bool'
+            if ast_scope.startswith('monitor/') and not deleting:
+                if key in ('transform', 'vrr', 'bitdepth', 'reserved_area'):
+                    value, kind = str(int(value)), 'int'
+                if key == 'scale':
+                    if str(value) == 'auto':
+                        kind = 'string'
                     else:
-                        lua_val = json.dumps(val_repr)
+                        scale = float(value)
+                        if not math.isfinite(scale) or scale <= 0:
+                            raise ValueError('Scale must be finite and positive; use auto for automatic scaling.')
+                        resolution = self._monitor_resolutions.get(scope.removeprefix('monitor/'))
+                        mode = requested_modes.get(ast_scope, getattr(self, '_ast_state', {}).get(ast_scope + '/mode', ''))
+                        if match := re.fullmatch(r'([0-9]+)x([0-9]+)(?:@[^\s]+)?', str(mode)):
+                            resolution = int(match[1]), int(match[2])
+                        value = self._get_valid_scale(scale, *resolution) if resolution else str(scale)
+                        kind = 'float'
+                if key in ('sdrbrightness', 'sdrsaturation', 'sdr_min_luminance', 'sdr_max_luminance', 'min_luminance', 'max_luminance', 'max_avg_luminance'):
+                    value, kind = str(float(value)), 'float'
+            translated[key, ast_scope] = (key, ast_scope, value, kind)
 
-                    # Only match uncommented, active hl.monitor lines (line-anchored)
-                    pattern = r'(?m)^([ \t]*hl\.monitor\s*\(\s*\{[^}]*?output\s*=\s*[\"\']' + re.escape(mon_id) + r'[\"\'][^}]*?)(\})'
-                    def repl(m, k=key, v=lua_val):
-                        block = m.group(1)
-                        if re.search(r'\b' + re.escape(k) + r'\s*=', block):
-                            return m.group(0)
-                        clean_block = block.rstrip()
-                        comma_prefix = "" if clean_block.endswith(",") else ","
-                        return clean_block + comma_prefix + '\n    ' + k + ' = ' + v + '\n' + m.group(2)
+        def transform(content):
+            edits, additions = [], []
+            grouped = {}
+            for key, scope, value, kind in translated.values():
+                if f'{scope}/{key}' not in getattr(self, '_ast_state', {}):
+                    grouped.setdefault(scope, []).append(key)
+            for scope, keys in grouped.items():
+                method, sep, identity = scope.partition('/')
+                if method in ('monitor', 'workspace_rule') and sep:
+                    sites = [c for c in self._call_sites if c['method'] == method and c['id'] == identity]
+                    if sites:
+                        candidates = []
+                        for a, b, first, last in calls(content, method):
+                            line = content.count('\n', 0, a) + 1
+                            if any(c['file'] == str(self.config_path) and c['line'] == line for c in sites):
+                                candidates.append((a, b, content[a:b]))
+                        if len(candidates) != 1 or len(sites) != 1:
+                            raise ValueError(f'Cannot uniquely edit missing fields in {scope}.')
+                        a, b, block = candidates[0]
+                        for key in keys:
+                            block = replace_field(block, key, 'nil')
+                        edits.append((a, b, block))
+                    else:
+                        id_key = 'output' if method == 'monitor' else 'workspace'
+                        entries = [f'{id_key} = {self._lua_string(identity)}']
+                        entries.extend(f'[{self._lua_string(key)}] = nil' for key in keys)
+                        additions.append(f'hl.{method}({{{", ".join(entries)}}})')
+                elif method in ('misc', 'debug', 'render') and not sep:
+                    entries = ', '.join(f'[{self._lua_string(key)}] = nil' for key in keys)
+                    additions.append(f'hl.config({{{method} = {{{entries}}}}})')
+            for a, b, block in sorted(edits, reverse=True):
+                content = content[:a] + block + content[b:]
+            return content + ''.join('\n' + block + '\n' for block in additions)
 
-                    new_content, count = re.subn(pattern, repl, content)
-                    if count > 0:
-                        content = new_content
-                        modified = True
-
-        if modified:
-            self.config_path.write_text(content, encoding="utf-8")
-            self.file_mtimes[str(self.config_path)] = self.config_path.stat().st_mtime
-
-    def _ensure_monitor_blocks_exist(self, missing_monitors: set[str]) -> None:
-        if not self.config_path.exists():
-            self.config_path.parent.mkdir(parents=True, exist_ok=True)
-            self.config_path.write_text("-- Auto-generated Configuration\n\n")
-
-        append_text = ""
-        for mon in missing_monitors:
-            append_text += (
-                f"\n-- Auto-injected by Dusky Monitor Engine\n"
-                f"hl.monitor({{\n"
-                f"    output = \"{mon}\",\n"
-                f"    mode = \"preferred\",\n"
-                f"    position = \"auto\",\n"
-                f"    scale = \"auto\",\n"
-                f"    disabled = false,\n"
-                f"    transform = 0,\n"
-                f"    bitdepth = 8,\n"
-                f"    cm = \"auto\",\n"
-                f"    sdr_eotf = \"default\",\n"
-                f"    sdrbrightness = 1.0,\n"
-                f"    sdrsaturation = 1.0,\n"
-                f"    vrr = 0,\n"
-                f"    reserved_area = 0\n"
-                f"}})\n"
-            )
-
-        if append_text:
-            with open(self.config_path, "a", encoding="utf-8") as f:
-                f.write(append_text)
-            self.file_mtimes[str(self.config_path)] = self.config_path.stat().st_mtime
-
-    def _ensure_workspace_rule_blocks_exist(self, missing_workspaces: set[str], default_monitor: str = "eDP-1") -> None:
-        if not self.config_path.exists():
-            self.config_path.parent.mkdir(parents=True, exist_ok=True)
-            self.config_path.write_text("-- Auto-generated Configuration\n\n")
-
-        if self._monitor_resolutions:
-            default_monitor = next(iter(self._monitor_resolutions.keys()))
-
-        append_text = ""
-        for ws in sorted(missing_workspaces, key=lambda x: int(x) if x.isdigit() else 999):
-            append_text += (
-                f"\n-- Auto-injected Workspace Binding\n"
-                f"hl.workspace_rule({{\n"
-                f"    workspace = \"{ws}\",\n"
-                f"    monitor = \"{default_monitor}\",\n"
-                f"    default = {'true' if ws == '1' else 'false'},\n"
-                f"    persistent = false\n"
-                f"}})\n"
-            )
-
-        if append_text:
-            with open(self.config_path, "a", encoding="utf-8") as f:
-                f.write(append_text)
-            self.file_mtimes[str(self.config_path)] = self.config_path.stat().st_mtime
-
-    def _ensure_globals_block_exists(self, missing_globals: dict[str, list[str]] = None) -> None:
-        if not self.config_path.exists():
-            self.config_path.parent.mkdir(parents=True, exist_ok=True)
-            self.config_path.write_text("-- Auto-generated Configuration\n\n")
-
-        append_text = ""
-        if missing_globals:
-            append_text += "\n-- Auto-injected missing globals\nhl.config({\n"
-            for scope, keys in missing_globals.items():
-                append_text += f"    {scope} = {{\n"
-                for k in keys:
-                    append_text += f"        {k} = 0,\n"
-                append_text += "    },\n"
-            append_text += "})\n"
-        else:
-            with open(self.config_path, "r", encoding="utf-8") as f:
-                content = f.read()
-            if "hl.config" not in content:
-                append_text = (
-                    "\n-- Auto-injected Global Render & Power Settings\n"
-                    "hl.config({\n"
-                    "    misc = { vrr = 0 },\n"
-                    "    debug = { vfr = true },\n"
-                    "    render = { cm_sdr_eotf = \"auto\", cm_fs_passthrough = false, cm_auto_hdr = false }\n"
-                    "})\n"
-                )
-
-        if append_text:
-            with open(self.config_path, "a", encoding="utf-8") as f:
-                f.write(append_text)
-            self.file_mtimes[str(self.config_path)] = self.config_path.stat().st_mtime
+        if translated:
+            missing = any(f'{scope}/{key}' not in getattr(self, '_ast_state', {}) for key, scope, _, _ in translated.values())
+            result = self.write_transformed(list(translated.values()), transform) if missing else super().write_batch(list(translated.values()))
+            if not result[0]:
+                return result
+        if primary is not None:
+            path = self._primary_path()
+            try:
+                _, expected = read_text(path)
+                atomic_write(path, primary + '\n', expected)
+                self.cache['DEFAULT/primary_monitor'] = primary
+            except (OSError, UnicodeError) as exc:
+                context = ' (Lua changes already saved)' if translated else ''
+                return False, f'Primary monitor save failed{context}: {exc}', ''
+        return True, 'Monitor configuration saved.', ''

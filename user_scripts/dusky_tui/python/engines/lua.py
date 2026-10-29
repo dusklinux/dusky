@@ -12,7 +12,7 @@ lazy from pathlib import Path
 lazy from typing import Any
 
 from python.frontend.core_types import BaseEngine
-from python.shared.config_io import current_stamp, stamp
+from python.shared.config_io import current_stamp, stamp, read_text, atomic_write
 
 # =============================================================================
 # [ BLOCK 1: THE ENGINE ]
@@ -592,7 +592,6 @@ class HyprlandLuaEngine(BaseEngine):
 
     def write_transformed(self, standard_changes, transform):
         """Stage hybrid edits and AST changes before committing the single target."""
-        from python.shared.config_io import read_text, atomic_write
         with self._lock:
             staged = None
             try:
@@ -600,6 +599,10 @@ class HyprlandLuaEngine(BaseEngine):
                 remembered = self._file_stamps.get(str(self.config_path))
                 if remembered and expected != remembered[1]:
                     raise OSError('Configuration modified externally. Reload required.')
+                dependencies = {file: remembered[1] for file, remembered in self._file_stamps.items()}
+                for file, before in dependencies.items():
+                    if current_stamp(Path(file)) != before:
+                        raise OSError(f'{file} modified externally. Reload required.')
                 text = transform(text)
                 self.config_dir.mkdir(parents=True, exist_ok=True)
                 with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', suffix='.lua',
@@ -610,8 +613,11 @@ class HyprlandLuaEngine(BaseEngine):
                     shadow = HyprlandLuaEngine(str(staged))
                     shadow.module_root = self.module_root
                     shadow.load_state()
-                    if shadow.loaded_files != [str(staged)]:
-                        raise ValueError('Mixed hybrid edits require the configuration bindings in this file.')
+                    if str(staged) not in shadow.loaded_files:
+                        raise ValueError('Cannot evaluate staged hybrid configuration.')
+                    # Includes participate in evaluation, but only the staged
+                    # target may be mutated. Missing cross-file bindings abort.
+                    shadow.loaded_files = [str(staged)]
                     result = shadow.write_batch(standard_changes)
                     if not result[0]:
                         return result
@@ -620,14 +626,22 @@ class HyprlandLuaEngine(BaseEngine):
                                         capture_output=True, text=True, timeout=5)
                 if syntax.returncode:
                     raise ValueError(syntax.stderr.strip())
+                for file, before in dependencies.items():
+                    if current_stamp(Path(file)) != before:
+                        raise OSError(f'{file} changed while staging edits. Reload required.')
                 atomic_write(self.config_path, text, expected)
                 self.load_state()
+                if not self.loaded_files:
+                    return False, 'Configuration saved, but Lua state refresh failed. Reload required.', ''
                 return True, 'Configuration saved.', ''
             except (OSError, UnicodeError, ValueError, TypeError, subprocess.SubprocessError) as exc:
                 return False, f'Lua edit failed: {exc}', ''
             finally:
                 if staged is not None:
-                    staged.unlink(missing_ok=True)
+                    try:
+                        staged.unlink(missing_ok=True)
+                    except OSError:
+                        pass
 
     def write_batch(self, changes: list[tuple[str, str, str, str]]) -> tuple[bool, str, str]:
         with self._lock:
