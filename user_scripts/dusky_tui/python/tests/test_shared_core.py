@@ -661,8 +661,8 @@ class FileEngineTests(unittest.TestCase):
                 files.append(stream)
                 return stream
 
-            with patch("python.engines.json_engine.tempfile.NamedTemporaryFile", side_effect=track_file), \
-                 patch("python.engines.json_engine.json.dump", side_effect=TypeError("serialization fixture")):
+            with patch("python.shared.config_io.tempfile.NamedTemporaryFile", side_effect=track_file), \
+                 patch("os.fsync", side_effect=OSError("commit fixture")):
                 self.assertFalse(JsonEngine(str(path)).write_value("x", "DEFAULT", "2", "int")[0])
             self.assertTrue(files[0].closed)
             self.assertEqual(path.read_text(encoding="utf-8"), '{"x": 1}')

@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
-import os
 import re
 lazy import json
-lazy import tempfile
 lazy import threading
 lazy from pathlib import Path
 lazy from typing import Any
 
 from python.frontend.core_types import BaseEngine
+from python.shared.config_io import atomic_write, read_text
 
 _RE_JSONC_COMMENTS = re.compile(r'("(?:\\.|[^"\\])*")|//[^\r\n]*|/\*.*?\*/', re.DOTALL)
 _RE_JSONC_TRAILING_COMMAS = re.compile(r'("(?:\\.|[^"\\])*")|,\s*(?=[}\]])')
@@ -29,6 +28,8 @@ class JsonEngine(BaseEngine):
         self.cache: dict[str, Any] = {}
         self.file_mtime_ns: int = 0
         self._lock = threading.Lock()
+        self._snapshot = None
+        self._loaded = False
 
     @property
     def target_path(self) -> str:
@@ -42,16 +43,29 @@ class JsonEngine(BaseEngine):
         clean = _RE_JSONC_COMMENTS.sub(lambda match: match.group(1) or " ", text)
         return _RE_JSONC_TRAILING_COMMAS.sub(lambda match: match.group(1) or "", clean)
 
+    @staticmethod
+    def _state(data):
+        cache = {}
+        def flatten(mapping, dotted='', slash=''):
+            for key, value in mapping.items():
+                full = f'{dotted}.{key}' if dotted else key
+                qualified = f'{slash}/{key}' if slash else key
+                for alias in (full, qualified, key):
+                    cache.setdefault(alias, value)
+                if isinstance(value, dict):
+                    flatten(value, full, qualified)
+        flatten(data)
+        return cache
+
     def load_state(self) -> dict[str, Any]:
         with self._lock:
             self.cache = {}
-            if not self.config_path.exists():
-                return self.cache
+            self._loaded = False
 
             try:
-                with open(self.config_path, "r", encoding="utf-8") as f:
-                    self.file_mtime_ns = os.fstat(f.fileno()).st_mtime_ns
-                    content = f.read()
+                content, self._snapshot = read_text(self.config_path)
+                self._loaded = True
+                self.file_mtime_ns = self._snapshot[3] if self._snapshot else 0
 
                 if not content.strip():
                     return self.cache
@@ -65,25 +79,7 @@ class JsonEngine(BaseEngine):
                 if not isinstance(data, dict):
                     return self.cache
 
-                # Flatten nested state into scope.key, scope/key, and unique key entries
-                def _flatten(d: dict, prefix: str = "", slash_prefix: str = ""):
-                    for k, v in d.items():
-                        full_key = f"{prefix}.{k}" if prefix else k
-                        slash_key = f"{slash_prefix}/{k}" if slash_prefix else k
-
-                        if full_key not in self.cache:
-                            self.cache[full_key] = v
-                        if slash_key not in self.cache:
-                            self.cache[slash_key] = v
-
-                        # Store bare key if unique or first encountered
-                        if k not in self.cache:
-                            self.cache[k] = v
-
-                        if isinstance(v, dict):
-                            _flatten(v, full_key, slash_key)
-
-                _flatten(data)
+                self.cache = self._state(data)
 
             except Exception as e:
                 print(f"[JsonEngine] Failed to read JSON/JSONC config ({self.config_path.name}): {e}")
@@ -100,10 +96,9 @@ class JsonEngine(BaseEngine):
         with self._lock:
             data = {}
             try:
-                with open(self.config_path, "r", encoding="utf-8") as f:
-                    self.file_mtime_ns = os.fstat(f.fileno()).st_mtime_ns
-                    content = f.read()
-
+                content, snapshot = read_text(self.config_path)
+                if self._loaded and snapshot != self._snapshot:
+                    return False, 'Configuration modified externally. Reload required.', ''
                 if content.strip():
                     try:
                         data = json.loads(content)
@@ -118,7 +113,7 @@ class JsonEngine(BaseEngine):
                 return False, "Refusing to write: Target JSON must contain an object.", ""
 
             for key, scope, val, itype in changes:
-                if val is None or val == "nil":
+                if val is None or val in ("nil", "__DELETE__"):
                     parsed_val = None
                 elif itype == "bool":
                     if isinstance(val, str):
@@ -147,53 +142,37 @@ class JsonEngine(BaseEngine):
                 # Determine nested dict path
                 path_parts = []
                 if scope and scope != "DEFAULT":
-                    path_parts.extend(scope.replace("/", ".").split("."))
+                    path_parts.extend((scope.split("/") if "/" in scope else scope.split(".")))
 
-                if "." in key:
-                    path_parts.extend(key.split("."))
-                else:
-                    path_parts.append(key)
+                path_parts.extend(key.split("/") if "/" in key else key.split("."))
+
+                if any(not part for part in path_parts):
+                    return False, f"Invalid JSON path: {scope}/{key}", ""
 
                 # Traverse/instantiate nested dictionary hierarchy
                 curr = data
                 for part in path_parts[:-1]:
+                    if parsed_val is None and part not in curr:
+                        curr = None
+                        break
                     curr = curr.setdefault(part, {})
                     if not isinstance(curr, dict):
                         return False, f"Cannot write {scope}.{key}: {part!r} is not a JSON object.", ""
 
+                if curr is None:
+                    continue
                 target_prop = path_parts[-1]
                 if parsed_val is None:
                     curr.pop(target_prop, None)
                 else:
                     curr[target_prop] = parsed_val
 
-            # Atomic Crash-Proof Disk Commit
             try:
-                parent_dir = self.config_path.parent
-                parent_dir.mkdir(parents=True, exist_ok=True)
-
-                with tempfile.NamedTemporaryFile("w", dir=parent_dir, delete=False, encoding="utf-8") as tmp_file:
-                    tmp_path = Path(tmp_file.name)
-                    json.dump(data, tmp_file, indent=4, ensure_ascii=False)
-                    tmp_file.flush()
-                    os.fsync(tmp_file.fileno())
-
-                if self.config_path.exists():
-                    try:
-                        mode = self.config_path.stat().st_mode
-                        os.chmod(tmp_path, mode)
-                    except Exception:
-                        pass
-
-                os.replace(tmp_path, self.config_path)
-                self.file_mtime_ns = os.stat(self.config_path).st_mtime_ns
-
-            except Exception as e:
-                if "tmp_path" in locals() and tmp_path.exists():
-                    try:
-                        tmp_path.unlink()
-                    except Exception:
-                        pass
-                return False, f"Failed to write json: {e}", ""
-
-            return True, f"Successfully saved {len(changes)} changes.", ""
+                formatted = json.dumps(data, indent=4, ensure_ascii=False, allow_nan=False) + '\n'
+                self._snapshot = atomic_write(self.config_path, formatted, snapshot) if formatted != content else snapshot
+                self._loaded = True
+                self.file_mtime_ns = self._snapshot[3] if self._snapshot else 0
+                self.cache = self._state(data)
+            except (OSError, UnicodeError, ValueError, TypeError) as exc:
+                return False, f'Failed to write JSON: {exc}', ''
+            return True, f'Successfully saved {len(changes)} changes.', ''
