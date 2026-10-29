@@ -312,7 +312,7 @@ verify_stub_listener() {
 
     read_dns_listeners
     while read -r netid _state _recvq _sendq address _peer owner; do
-        [[ "$address" == 127.0.0.53:53 && "$RESOLVED_PID" != 0 &&
+        [[ "$address" =~ ^127\.0\.0\.53(%[^:[:space:]]+)?:53$ && "$RESOLVED_PID" != 0 &&
            "$owner" == *"pid=${RESOLVED_PID},"* ]] || continue
         case "$netid" in
             udp) udp=yes ;;
