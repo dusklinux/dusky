@@ -1,126 +1,184 @@
 # Storage Stack — How a Byte Reaches the Disk
 
-> [!note] Scope
-> The mental model behind every other note in this folder: the layers storage is built from, what each device name actually means, why names change, and the exact path from power button to mounted filesystem. **Read this first** — [[Disk]], [[BTRFS]], [[Bitlocker]], and [[Fixing Un Mountable NTFS drive]] each cover one layer in depth.
+> [!abstract] Start here
+> Learn the layers first, then use [[Disk]] for routine operations, [[Mounting and fstab]] for mounts, [[BTRFS]] for Btrfs, [[Bitlocker]] for Windows encryption, and [[Fixing Un Mountable NTFS drive]] for NTFS failures. [[Disk Verification]] records what was actually checked on this system on **2026-10-29**.
 
-> [!info] This machine (verified August 2026)
-> - Two NVMe controllers (`nvme0`, `nvme1`), both formatted 512-byte sectors
-> - Stack instances: `nvme0n1p3` → btrfs directly · `nvme0n1p1` → LUKS2 → ext4 · `nvme1n1p1` → LUKS2 → ext4 · `nvme0n1p2` → vfat ESP
-> - Firmware UEFI → **systemd-boot** → custom kernels (`linux-dusky-gaming` / `-battery`)
-> - RAM-disks too: `zram0` (swap), `zram1` (ext4 at `/mnt/zram1`) — they occupy `/dev` and `df` like real disks but vanish at power-off
+## A path is the top of a stack
 
----
-
-## The Stack
-
-Each layer only ever talks to its neighbors. A tool that operates at one layer is meaningless at another — this explains half of all disk mistakes (`ntfsfix` against a *locked* BitLocker partition, `chkdsk` advice for an encrypted container, benchmarking zram thinking it's an SSD).
+A filename such as `$HOME/Documents/example.txt` is resolved through the process's mount namespace. The filesystem translates the file's extents into block addresses. Lower layers may translate those addresses again before the hardware receives an I/O request.
 
 ```text
-path            /home/dusk/file.txt
-                │  resolved by the VFS through mount points
-    ────────────┼──────────────────────────────
-mount point     /home                       ← mount(8), fstab
-subvolume       @home (id 257)              ← btrfs-only layer
-filesystem      btrfs on UUID c7c2a1a4-…    ← checksums, compression
-partition       p3 (GPT entry, PARTUUID)    ← fdisk/sfdisk
-disk            /dev/nvme0n1                ← PCIe controller nvme0
+application opens /mnt/data/example.txt
+                  │
+VFS + mount table │ which mounted filesystem contains this path?
+                  ▼
+filesystem        ext4 / Btrfs / NTFS / exFAT
+                  │ files, directories, metadata, free space
+                  ▼
+optional mapping  dm-crypt / LVM / MD RAID
+                  │ encryption / logical extents / redundancy
+                  ▼
+partition         a bounded range of sectors described by GPT
+                  ▼
+block device      NVMe namespace / SATA disk / USB-attached disk
+                  ▼
+controller        translates host requests to the physical medium
 ```
 
-| Layer | Created by | Appears as | On this machine |
+Layers are optional. Btrfs can use a whole device directly. A loop device can expose an image file as a block device. Btrfs can manage multiple devices without LVM or MD. The diagram is a common layout, not a required layout.
+
+| Layer | What it manages | Inspect it with | Change it with |
 |---|---|---|---|
-| Hardware | — | `/dev/nvme0n1`, `/dev/sda` | Intel 512G, Samsung 980 |
-| Partition table (GPT) | `fdisk`, `sfdisk` | `/dev/nvme0n1p3` | p1 LUKS · p2 ESP · p3 root |
-| Encryption (LUKS2/dm-crypt) | `cryptsetup luksFormat` | `/dev/mapper/luks-<uuid>` | mozilla + media volumes |
-| Filesystem | `mkfs.btrfs/ext4/…` | has a `UUID=` | btrfs, ext4, vfat |
-| Subvolume | `btrfs subvolume create` | directory-like | `@`, `@home`, `@snapshots`, … |
-| Mount point | `mount`, fstab | a path in the tree | `/`, `/home`, `/.snapshots` |
+| Physical device/controller | Capacity, firmware, errors, power states | `lsblk`, `smartctl`, `nvme` | Device-specific tools |
+| Partition table | Sector ranges and partition identifiers | `fdisk -l`, `sfdisk --dump` | `fdisk`, `sfdisk`, `parted` |
+| Encryption mapping | Decrypted view of encrypted sectors | `cryptsetup status`, `lsblk` | `cryptsetup open` / `close` |
+| Filesystem | Files, directories, allocation, metadata | `findmnt`, `df`, filesystem tools | `mkfs.*`, filesystem tools |
+| Btrfs subvolume | Independently snapshotable file tree | `btrfs subvolume list` | `btrfs subvolume ...` |
+| Mount | Attaches a tree at a pathname | `findmnt`, `/proc/self/mountinfo` | `mount`, `umount`, systemd |
 
----
+**Choose the tool for the layer.** An NTFS checker needs the NTFS volume. If BitLocker surrounds it, unlock the container first and give the checker the decrypted mapper. Formatting the outer partition would overwrite the encrypted container instead.
 
-## Decoding Device Names
+## Disk, partition, filesystem, and mount point are different
 
-| Name | Meaning |
-|---|---|
-| `nvme0n1p3` | NVMe **controller 0**, **namespace 1**, **partition 3** |
-| `sda2` | SCSI/SATA/USB disk **a** (letter = detection order!), partition 2 |
-| `mmcblk0p1` | SD/eMMC block 0, partition 1 |
-| `zram0` | compressed RAM disk — no hardware behind it |
-| `loop7` | file pretending to be a block device (absent from custom kernels here) |
-| `dm-0` | device-mapper's internal numbering — **transient**; always prefer `/dev/mapper/<name>` |
+A **disk** is the addressable block device. A **partition** is a range within it. A **filesystem** is a data structure stored on a partition or another block device. A **mount point** is the directory where that filesystem becomes visible.
 
-The mapper names you'll meet: `luks-<uuid>` (systemd-cryptsetup default), `<name-you-chose>` (manual `cryptsetup open`), `bitlk-<uuid>` (UDisks BitLocker unlocks).
-
----
-
-## Why Names Change — Persistent Naming
-
-`sda` vs `sdb` and `nvme0` vs `nvme1` are assigned by **probe order**, which depends on hardware init timing — driver load order, enclosure enumeration, even boot firmware updates change it. This machine really did move its root disk from `nvme1n1` to `nvme0n1` across one boot; only the fact that fstab used `UUID=` kept it bootable (the comments in the file still say `nvme1n1p3` — comments lie, UUIDs don't).
-
-The kernel keeps stable symlinks under `/dev/disk/`:
-
-| Directory | Anchored to | Best for |
-|---|---|---|
-| `by-uuid` | filesystem signature | fstab mounts |
-| `by-partuuid` | GPT partition entry (survives reformatting!) | fstab when a partition gets reformatted often |
-| `by-id` | model + serial or EUI/WWWN | scripts addressing whole disks |
-| `by-label` | human-set label | quick manual work |
-| `by-path` | physical connector/slot | pinning to a port |
+Creating a directory does not mount anything. If `/mnt/data` exists while its intended drive is absent, writing there can fill the filesystem that contains the directory. Verify mounts before bulk copies:
 
 ```bash
-ls -l /dev/disk/by-id          # nvme-eui.… -> ../../nvme0n1
+findmnt --mountpoint /mnt/data
+findmnt --target /mnt/data
 ```
 
----
+`--mountpoint` asks whether the path is an exact mount point. `--target` asks which mount contains a path, so it can correctly return `/` when `/mnt/data` is an ordinary directory.
 
-## Partition Tables
+Mounting over a populated directory hides its underlying contents until unmount. It does not merge the directories or delete the hidden files.
 
-| | GPT | MBR |
-|---|---|---|
-| Max disk | 9.4 ZB (64-bit LBA) | 2 TiB |
-| Max partitions | 128 default | 4 primary |
-| Integrity | CRC32 of table + backup copy at end of disk | none — single fragile copy |
-| IDs | every partition gets a GUID | nothing comparable |
+## Read the device names
 
-Modern tools align the first partition at 1 MiB automatically — never fight this. Every UEFI system also carries an **ESP**: a small FAT32 partition holding bootloaders/kernels (here: `DUSKY_EFI`, mounted at `/boot`).
-
----
-
-## Stacking Order Matters
-
-- **LUKS below the filesystem**: everything above it (files, snapshots, scrubs, `df`) sees plaintext; everything below (the SSD) sees ciphertext. TRIM must be explicitly allowed to pierce it — see [[Disk#TRIM / Discard]]
-- **Resize rule**: the filesystem must always fit inside its partition — grow outside-in, shrink inside-out — see [[BTRFS#Resizing]]
-- btrfs multi-device and btrfs RAID profiles replace mdadm/LVM at the filesystem layer; don't stack both without meaning it.
-
----
-
-## From Power Button to Prompt (verified chain)
-
-1. **UEFI firmware** executes the bootloader from the ESP: systemd-boot reads `/boot/loader/loader.conf`
-2. A **loader entry** (`arch-linux.conf`, `…-dusky-gaming.conf`) names kernel + initrd + options
-3. **Kernel command line** locates the root — see `/proc/cmdline`: `root=UUID=c7c2a1a4-… rootfstype=btrfs rootflags=subvol=/@` — the root subvolume `@` is chosen *at boot*, not by fstab
-4. **initramfs** (early userspace) loads storage drivers, assembles the root device by UUID, then `switch_root`s into it
-5. **systemd** translates `/etc/fstab` into mount units and mounts everything else: `@home`, `@var_log`, `@snapshots`, … plus generated swaps
-6. Anything not unlocked at boot waits for later: this machine's LUKS volumes are opened post-boot by `drive_manager` using keyfiles, after which their fstab/automount entries fire
-
-When boot drops to an emergency shell, diagnose **downward through the stack**: does `blkid` still show the filesystem? (yes → mount-layer problem; no → encryption/partition/hardware layer problem).
-
----
-
-## Mounts Are a Runtime Tree
-
-A mount point is not a property of the disk — it's a live entry in the kernel's mount table. Consequences worth internalizing:
-
-- `findmnt` shows the tree; stacked mounts **hide** whatever was underneath (overmounting)
-- One filesystem can appear at many paths simultaneously — every `@var_*` mount here is the *same* btrfs showing different subvolumes
-- `/.snapshots` and `/home/.snapshots` being their own mounts is deliberate: snapshot stores live outside `@`/`@home` so restores stay atomic ([[BTRFS]])
-
----
-
-## Which Note Covers Which Question
-
-| Question | Note |
+| Example | Meaning |
 |---|---|
-| What is this device, how fast, how healthy? | [[Disk]] |
-| CoW, NOCOW, compression, snapshots, ENOSPC, resizing | [[BTRFS]] |
-| Open a Windows-encrypted volume | [[Bitlocker]] |
-| NTFS mounts fail / metadata damage | [[Fixing Un Mountable NTFS drive]] |
+| `/dev/nvme0` | NVMe controller character device; used by many administration commands |
+| `/dev/nvme0n1` | NVMe namespace block device |
+| `/dev/nvme0n1p3` | Partition 3 of that namespace |
+| `/dev/sda`, `/dev/sda2` | SCSI-style disk and partition names; also used by SATA and USB storage |
+| `/dev/mmcblk0p1` | Partition on an SD/eMMC block device |
+| `/dev/dm-0` | Kernel-assigned device-mapper node |
+| `/dev/mapper/media` | Named mapping, for example one created with `cryptsetup open ... media` |
+| `/dev/loop0` | Block-device view of a file |
+| `/dev/zram0` | Compressed RAM-backed block device; can contain swap or a filesystem |
+
+Numbers and letters are discovery names, not permanent hardware identities. NVMe multipath can introduce additional naming distinctions; inspect `nvme list-subsys` rather than inferring an entire topology from a name.
+
+For a mapper, prefer the name chosen at creation or the name reported by the unlocking tool. UDisks often uses `luks-...` or `bitlk-...`; `/etc/crypttab` uses its first field. There is no universal mandatory `luks-UUID` name.
+
+## Persistent naming
+
+`/dev/disk/` links are normally maintained by **udev**, not created as permanent identities by the kernel itself.
+
+| Identifier | Identifies | What can change it? | Useful for |
+|---|---|---|---|
+| `UUID=` / `by-uuid` | Filesystem or encrypted-container signature | Reformatting, explicit UUID change | Filesystem mounts; outer UUID in crypttab |
+| `PARTUUID=` / `by-partuuid` | Partition-table identity | Recreating/changing the partition entry | Locating a partition independently of its filesystem |
+| `by-id` | Device identity exposed by hardware/bridge | Different bridge, firmware, missing/duplicated serials | Whole-disk operations |
+| `LABEL=` / `by-label` | Human-assigned filesystem label | Relabeling; another volume can share the label | Convenient recognizable names |
+| `by-path` | Connection topology | Moving ports/controllers | A particular connector |
+
+```bash
+lsblk -o NAME,PATH,TYPE,FSTYPE,LABEL,UUID,PARTUUID,MOUNTPOINTS
+ls -l /dev/disk/by-id /dev/disk/by-uuid /dev/disk/by-partuuid
+```
+
+A LUKS volume has an **outer LUKS UUID**. Its decrypted filesystem usually has a different **inner filesystem UUID**. Use the outer UUID to unlock; use the inner UUID or named mapper to mount.
+
+Cloning a disk can duplicate filesystem UUIDs, partition UUIDs, and labels. Persistent does not mean globally unique after copying. Connect clones carefully and verify which underlying device each link resolves to.
+
+## Sectors, blocks, alignment, and units
+
+A sector is a block-device addressing unit. A filesystem block is a filesystem allocation/checksum unit. Neither is necessarily the device's internal NAND page or erase-block size.
+
+```bash
+lsblk -d -o NAME,SIZE,LOG-SEC,PHY-SEC,MIN-IO,OPT-IO,ROTA,TRAN
+```
+
+| Unit | Exact bytes |
+|---|---:|
+| kB / MB / GB / TB | 1,000 / 1,000,000 / 1,000,000,000 / 1,000,000,000,000 |
+| KiB / MiB / GiB / TiB | 1,024 / 1,048,576 / 1,073,741,824 / 1,099,511,627,776 |
+
+A marketed 1 TB drive is about 931 GiB before filesystem overhead. That difference is primarily a unit conversion.
+
+GPT stores LBAs in the device's logical-sector units. Linux sysfs `start` and `size` block-device attributes use **512-byte sectors**, even on devices whose logical sectors are larger. A resize script must distinguish these units; blindly multiplying every sector count by the same value is incorrect.
+
+Current partitioning tools normally choose suitable alignment. Preserve the original partition start when resizing: changing the start changes which bytes the filesystem sees as its beginning.
+
+## GPT and the ESP
+
+Use GPT for a new Arch installation on the supported UEFI platform. GPT has a primary and backup header/table with CRC checks. These help detect and recover partition-table damage; they do not checksum filesystem contents or replace a backup.
+
+The often-quoted MBR 2 TiB limit assumes 512-byte logical sectors. GPT's address range and partition count depend on sector size and table layout; “128 partitions” is a common default, not an intrinsic maximum.
+
+The **EFI System Partition (ESP)** is identified by its GPT type and normally contains a FAT filesystem. Its mount point can be `/boot`, `/efi`, or another installation-specific path. FAT32 is also a general-purpose filesystem; it is not restricted to ESPs. A FAT32 filesystem alone does not set the GPT ESP type.
+
+## Mounts are a runtime tree
+
+One Btrfs filesystem can be mounted several times with different subvolumes. These mounts share one allocation pool; their `df` free-space numbers are not independent capacities.
+
+A Btrfs subvolume is not a disk partition. Its files can share extents with snapshots and reflinks. Separately mounting it does not reserve a fixed amount of disk space.
+
+A **bind mount** exposes an existing directory tree at another path; it does not make another copy of the files:
+
+```bash
+sudo mount --bind /srv/data /mnt/data-view
+sudo umount /mnt/data-view
+```
+
+Processes can have different mount namespaces. A container's or service's mount view can differ from your terminal's. `/proc/self/mountinfo` describes the calling process's view.
+
+## From power button to mounted root
+
+For a typical systemd-boot Arch setup:
+
+1. UEFI executes a bootloader from the ESP.
+2. A boot entry selects a kernel/initramfs or a unified kernel image (UKI), plus its command line.
+3. Early userspace loads the needed drivers and assembles/unlocks the root device.
+4. The root filesystem is mounted; `rootflags=subvol=/@` can select a Btrfs root subvolume explicitly.
+5. The system switches into the installed root. systemd generates mount/swap units from fstab and encryption units from crypttab.
+6. Other filesystems mount at boot, on first access, or after a later explicit unlock.
+
+```bash
+bootctl status --no-pager
+cat /proc/cmdline
+findmnt --mountpoint /
+```
+
+A configured `subvol=`/`subvolid=` overrides the Btrfs default-subvolume choice for that mount. `btrfs subvolume set-default` therefore does not automatically switch a system booting with explicit `rootflags=subvol=/@`.
+
+The exact initramfs setup matters for encrypted root and hibernation. Read the active boot configuration; do not copy an unrelated system's root UUID, resume offset, or hook list.
+
+## Resize from the correct side
+
+**Grow outside-in; shrink inside-out.** Each inner layer must fit inside the layer containing it.
+
+```text
+grow:   partition → encryption/LVM mapping → filesystem
+shrink: filesystem → encryption/LVM mapping → partition
+```
+
+Only include layers actually present. Resize support and the required online/offline state are filesystem-specific. Free space in `df` is not proof that an arbitrary shrink target is valid. See [[BTRFS#Resizing]].
+
+## Diagnose the first failing layer
+
+| Observation | Next check |
+|---|---|
+| Device absent from `lsblk` | Power, cabling, USB/PCIe/controller logs |
+| Device present, expected partition absent | Partition table and the actual target device |
+| Encrypted partition visible, mapper absent | Unlock operation and encryption credentials/support |
+| Mapper exists, filesystem probe fails | Probe the correct mapper; inspect logs and container state |
+| Filesystem recognized, mount fails | Driver, exact mount options, filesystem condition, kernel log |
+| Mount works, application fails | Path, ownership, permissions, free space, read-only state |
+
+Recognizing a filesystem signature proves only that a recognizable signature exists. Unlocking a mapper proves a mapping was created. Neither observation proves that all data is intact.
+
+## Further reading
+
+Installed references: `lsblk(8)`, `findmnt(8)`, `mount(8)`, `fstab(5)`, `sfdisk(8)`, `cryptsetup(8)`, and `btrfs(5)`. Prefer the installed manual for exact behavior on this installation. Use [[Disk Verification]] to distinguish verified host observations from examples.

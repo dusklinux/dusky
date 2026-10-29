@@ -1,246 +1,256 @@
-# Repairing a BitLocker-Unlocked NTFS Volume That Will Not Mount
+# Diagnosing and Recovering an NTFS Volume That Will Not Mount
 
-> [!summary]
-> BitLocker unlock succeeded but mounting `/dev/mapper/bitlk-*` fails with `$MFTMirr does not match $MFT`, `volume is dirty`, `Failed to load $MFT`, or `Input/output error`?
-> Then **decryption worked** — the fault is in the **NTFS filesystem or the hardware path**. Linux `ntfsfix` is triage only; authoritative repair is Windows `chkdsk /f`.
+> [!abstract] Start with the failing layer
+> An unlock that succeeded followed by a mount failure narrows the investigation to the decrypted device, filesystem/driver/options, and hardware path. It does **not** prove BitLocker or every decrypted block is healthy. This procedure applies to plain NTFS too: skip the encryption steps when there is no container.
 >
-> Related: [[Bitlocker]] · [[Storage Stack]] · [[BTRFS]] · [[Disk]]
+> Related: [[Bitlocker]] · [[Storage Stack]] · [[Mounting and fstab]] · [[Disk]] · [[Disk Verification]].
 
----
+## Classify the error before changing the volume
 
-## Representative Errors
-
-```text
-Error mounting /dev/dm-0: GDBus.Error:org.freedesktop.UDisks2.Error.Failed:
-wrong fs type, bad option, bad superblock on /dev/mapper/bitlk-..., ...
-```
-
-```text
-$MFTMirr does not match $MFT (record 3).
-Failed to mount '/dev/mapper/bitlk-...': Input/output error
-```
-
-```text
-ntfs3(dm-0): It is recommened to use chkdsk.
-ntfs3(dm-0): volume is dirty and "force" flag is not set!
-```
-
-## What They Mean
-
-- **Mapper exists → BitLocker layer is fine.** Failure happens at the NTFS layer.
-- **`$MFTMirr does not match $MFT`** — MFT and its mirror disagree. Causes: unsafe unplug, unflushed write cache, Fast Startup/hibernation, flaky USB bridge/cable, interrupted operations, real media damage.
-- **`volume is dirty`** — dirty bit set / journal unclean. Combined with MFT errors, treat as *real corruption until proven otherwise*.
-- **`wrong fs type, bad option, bad superblock`** — generic `mount(8)` boilerplate, not a diagnosis.
-- **The `SoftRAID/FakeRAID` hint** in NTFS errors is boilerplate too — ignore unless true.
-- First `ntfs3:` lines about ACLs/compression are informational.
-
-## Corrections to Common Advice
-
-| Myth | Reality |
-|---|---|
-| "`dm-0` is the device" | Transient name; use `/dev/mapper/bitlk-*` or your own mapper name |
-| "Run `ntfsfix`" | Fixes a tiny subset, resets some state, flags volume for Windows. Never full repair |
-| "`ntfsfix --clear-dirty` clears bad blocks" | Clears the dirty flag only; repairs nothing |
-| "Reboot Windows twice" | Legacy folklore; one successful `chkdsk X: /f` on a data volume is enough. Do ensure a **full shutdown** if hibernation/Fast Startup is involved |
-| "TestDisk: select Intel, …" on `bitlk-*` | A decrypted mapper is a single volume, no partition table — generic TestDisk guides mislead. Forensics belong on a clone |
-
-## Differential Diagnosis
-
-| Symptom after unlock | Likely cause | Response |
+| Evidence | What it establishes | Useful next step |
 |---|---|---|
-| "Windows is hibernated" refusal | Hibernation / Fast Startup | Boot Windows, disable it, full shutdown, retry |
-| `$MFTMirr`/`Failed to load $MFT`/I/O errors | NTFS metadata corruption | Copy data read-only first; Windows `chkdsk /f` |
-| Only `volume is dirty` | Unclean journal, possibly shallow | Prefer `chkdsk /f`; read-only mount may rescue data |
-| `Buffer I/O error`, USB resets, SMART failures | Hardware path | Stop repairing; image first |
-| `unknown filesystem` | Wrong device targeted | Verify you are on the unlocked mapper |
+| Generic “wrong fs type, bad option, bad superblock” | Mount failed; reason still unknown | Read kernel log and actual requested type/options |
+| “Unknown filesystem type” or absent driver | Driver selection/support problem is possible | Check module and native mount type |
+| Dirty-volume refusal | Volume requests consistency handling | Prefer read-only access; inspect Windows state and logs |
+| Hibernated/Fast Startup refusal | Windows state cannot safely be shared writable | Resume Windows and fully shut down; do not bypass it |
+| `$MFTMirr` differs from `$MFT` | NTFS metadata inconsistency detected | Preserve data; decide whether hardware needs imaging first |
+| Read I/O errors, USB resets, disappearing drive | Lower-layer failure is possible | Stabilize connection and image before repair |
+| Mapper exists but filesystem probe fails | Mapping is present; contents not established | Verify target/container state and logs |
 
----
+MFT/mirror errors can result from corruption, interrupted writes, or hardware-path failures. A generic error does not uniquely identify a cause. The SoftRAID/FakeRAID suggestion in some old error text is not evidence that the device actually uses RAID.
 
-## Safe Triage on Arch
-
-### 1. Target the Right Device
-
-```bash
-lsblk -o NAME,PATH,TYPE,FSTYPE,FSVER,SIZE,LABEL,UUID,MOUNTPOINTS
-```
-
-`/dev/sdXN` = locked BitLocker partition · `/dev/mapper/<name>` = decrypted NTFS.
-
-> [!warning]
-> Never point repair tools at the locked outer partition — only at the unlocked mapper.
-
-### 2. Unlock Read-Only, Deterministically
+## Capture identity and logs
 
 ```bash
-sudo cryptsetup open --type bitlk --readonly /dev/sdXN bitlk_slow   # → /dev/mapper/bitlk_slow
+lsblk -o NAME,PATH,TYPE,SIZE,FSTYPE,FSVER,LABEL,UUID,MOUNTPOINTS
+findmnt -o TARGET,SOURCE,FSTYPE,OPTIONS
+journalctl -k -b -g 'ntfs|NTFS|I/O error|Buffer I/O|reset|usb|USB|nvme' --no-pager
 ```
 
-Desktop alternative: `udisksctl unlock -b /dev/sdXN` (creates `/dev/mapper/bitlk-<uuid>`).
+Use the current device tree and persistent identifiers. `/dev/dm-0` is a transient number, not an enduring identity. Record the exact error and command used before trying a different command.
 
-### 3. Confirm + Check Logs Before Forcing Anything
+For BitLocker, the outer partition/device contains encrypted data; the mapper contains the NTFS view. `ntfsfix` and `chkdsk` must operate on the NTFS volume, not the locked outer sectors.
+
+## Use the actual supported driver
+
+On this running kernel, the native read/write NTFS module is **`ntfs`**. The old notes' `ntfs3` command does not match this build.
 
 ```bash
-lsblk -f /dev/mapper/bitlk_slow          # expect TYPE ntfs
-journalctl -k -b -g 'ntfs|bitlk|dm-|udisks'
-dmesg --level=warn,err                   # dirty flag, $MFT, I/O errors, USB resets
+modinfo ntfs
+# A built-in/already-loaded driver can appear here:
+cat /proc/filesystems
 ```
 
-### 4. Try a Read-Only Mount
+Absence from `/proc/filesystems` does not prove a module is unavailable; it may simply not be loaded. `modinfo` checks the installed module, and the actual mount is the meaningful test. If `/proc/config.gz` is available:
 
 ```bash
-sudo install -d -m 0755 /mnt/slow
-sudo mount -t ntfs3 -o ro /dev/mapper/bitlk_slow /mnt/slow
+zgrep -E 'CONFIG_NTFS|CONFIG_FUSE' /proc/config.gz
 ```
 
-Mounts? Copy data off immediately, then unmount. Still fails with MFT/I/O errors → stop write-capable attempts on Linux, go to Windows.
+This system has `CONFIG_NTFS_FS=m` and lacks `CONFIG_NTFS3_FS`. A disposable NTFS image was successfully mounted/written/remounted with `mount -i -t ntfs`. `-i` bypasses external mount helpers; ordinary `mount -t ntfs` can select a `mount.ntfs` helper if one is later installed.
 
-> [!warning]
-> Avoid `-o force` on the original volume; force-writing damaged NTFS can deepen corruption.
+Changing a driver can distinguish a driver/options problem. It does not itself repair NTFS metadata.
 
-### Script Form
+## Read-only triage
+
+### Encrypted volume
 
 ```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-src='/dev/disk/by-id/...'   # stable path, never /dev/sdXN in production
-name='slow'
-mnt='/mnt/slow'
-
-sudo cryptsetup open --type bitlk --readonly -- "$src" "$name"
-sudo install -d -m 0755 -- "$mnt"
-sudo mount -t ntfs3 -o ro -- "/dev/mapper/$name" "$mnt"
-# ... rescue data ...
-sudo umount -- "$mnt"
-sudo cryptsetup close -- "$name"
+outer='/dev/disk/by-uuid/REPLACE_WITH_OUTER_BITLOCKER_UUID'
+sudo cryptsetup open --type bitlk --readonly "$outer" ntfs_recovery
+vol='/dev/mapper/ntfs_recovery'
+sudo cryptsetup status ntfs_recovery
+sudo blkid "$vol"
 ```
 
----
+### Plain NTFS volume
 
-## Linux-Side Tools: Honest Limits
+Use this instead of the encrypted setup:
 
 ```bash
-sudo pacman -S --needed ntfs-3g smartmontools
+vol='/dev/disk/by-uuid/REPLACE_WITH_NTFS_UUID'
+sudo blkid "$vol"
 ```
 
-`ntfs3` mounts; `ntfs-3g` provides `ntfsfix`. Switching drivers repairs nothing.
-
-`ntfsfix` flags:
+### Attempt a read-only mount
 
 ```bash
-sudo ntfsfix -n /dev/mapper/bitlk_slow   # -n = dry run: show what it would do first
-sudo ntfsfix -d /dev/mapper/bitlk_slow   # clear the dirty flag (hibernation/Fast Startup leftovers)
-sudo ntfsfix -b /dev/mapper/bitlk_slow   # clear the bad-sector list (forces re-check)
+sudo install -d -m 0755 /mnt/ntfs-recovery
+sudo mount -i -t ntfs -o ro -- "$vol" /mnt/ntfs-recovery
+findmnt --mountpoint /mnt/ntfs-recovery -o TARGET,SOURCE,FSTYPE,OPTIONS
 ```
 
-It can clear simple inconsistencies, reset journal state in some cases, and schedule a Windows check. It cannot rebuild MFT metadata, fix media, or replace `chkdsk`. Output like this means stop:
+If it mounts and the hardware is stable, copy important data to independent healthy storage. If reads cause repeated hardware errors, stop exploratory filesystem walks and consider an image-first strategy. A failed read-only mount does not justify a forced writable mount.
 
-```text
-Failed to load $MFT: Input/output error
-Unrecoverable error
-Volume is corrupt. You should run chkdsk.
+After copying:
+
+```bash
+sudo umount /mnt/ntfs-recovery
+# Only if this workflow opened the encrypted mapping:
+sudo cryptsetup close ntfs_recovery
 ```
 
-> [!note]
-> `fsck.ntfs` on Linux is just `ntfsfix`, not a checker.
+A read-only encrypted mapping blocks underlying writes through that mapping. A mount option alone is a filesystem-level request and is not a universal no-write forensic guarantee across all drivers/filesystems.
 
-## Authoritative Repair: Windows `chkdsk`
+## ntfsfix: what it does and does not do
 
-On a normal Windows install:
+On this package set:
 
-1. Attach drive, unlock the BitLocker volume
-2. Admin Command Prompt: `chkdsk X: /f`
-3. `/r` adds surface scanning — only if physical reads are suspect (much slower)
-
-> [!warning]
-> Real I/O errors or SMART failures? Image before any `chkdsk`. `chkdsk` is not data recovery.
-
-Rebooting afterwards: scheduled offline repair → reboot once; hibernation involved → full shutdown before returning to Linux.
-
-### From Windows Install Media / WinRE
-
-```text
-Repair your computer -> Troubleshoot -> Command Prompt
+```bash
+pacman -Qo /usr/bin/ntfsfix
+ntfsfix --help
 ```
+
+`ntfsfix` is provided by **`ntfsprogs`**, not by the separate FUSE driver package. It addresses a limited set of fundamental inconsistencies, handles some NTFS state, and normally requests a Windows check. It is not a complete `chkdsk` replacement.
+
+Run it only against the unmounted NTFS volume:
+
+```bash
+sudo ntfsfix -n "$vol"
+```
+
+`-n` is the no-action mode. The fixture's entire image hash was unchanged after this command. A successful clean-image result validates the interface, not every corruption case.
+
+| Option | Documented effect | What it does not establish |
+|---|---|---|
+| `-n`, `--no-action` | Does not write; shows the attempted checks/actions | Full NTFS consistency or hardware health |
+| `-d`, `--clear-dirty` | Clears the dirty flag if the volume can be fixed/mounted | That Windows hibernation is resolved or the volume fully repaired |
+| `-b`, `--clear-bad-sectors` | Clears the recorded bad-sector list; useful after cloning to good media | That the original medium has become healthy |
+
+A deliberate write-capable basic triage attempt on stable media is `sudo ntfsfix "$vol"`. It must use a writable mapping, with the filesystem unmounted, and changes the volume. Prefer preserving data first and choose the operation from actual evidence.
+
+Do **not** turn `ntfsfix -b -d` into a generic “make the drive healthy” recipe. Clearing remembered bad sectors on the same failing medium is particularly misleading. Clearing the dirty flag is not a substitute for completing filesystem recovery.
+
+On this installation, `fsck.ntfs` is absent. Other distributions/package versions can provide different helpers. Never assume a Linux command named `fsck.ntfs` is a complete repair tool or simply a symlink to `ntfsfix` without inspecting the actual installed implementation.
+
+The local `ntfs_fix.sh` currently invokes `ntfsfix -b -d` and prints an unjustified hibernation-cleared message. It was inspected, not executed against a real drive, and is **not recommended as the default workflow**. See [[Local Drive Tools]].
+
+## Windows repair, even if Arch is the everyday OS
+
+Arch remains the operating environment for these notes. Windows tools are included because NTFS/BitLocker are Windows formats and some repair operations are best performed with their supported filesystem tooling. If Windows is unavailable, preserve/copy/image data instead of pretending Linux has an identical repair command.
+
+On Windows, identify the actual volume letter after unlocking BitLocker. In an Administrator Command Prompt:
+
+```bat
+chkdsk X: /f
+```
+
+`/f` fixes filesystem errors and needs a lock on the volume; Windows may schedule work at restart if it cannot acquire the lock. `/r` includes `/f` and adds bad-sector/readability work, making it more intensive. Neither should precede imaging when the medium is failing. These meanings were checked against [Microsoft's chkdsk documentation](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/chkdsk); the commands were not run on Windows here.
+
+For a BitLocker recovery password:
+
+```bat
+manage-bde -status
+manage-bde -unlock X: -RecoveryPassword REPLACE_WITH_THE_ACTUAL_48_DIGIT_RECOVERY_PASSWORD
+```
+
+For an interactive password prompt:
+
+```bat
+manage-bde -unlock X: -Password
+```
+
+Then run the selected filesystem check. Recovery-password, password, and external `.bek` recovery-key methods are distinct. See [Microsoft's manage-bde unlock reference](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/manage-bde-unlock).
+
+### Windows installation/recovery media
+
+Drive letters in WinRE can differ from a normal Windows boot. Identify the volume before assigning or using a letter:
 
 ```text
 diskpart
 list volume
-select volume <N>
+select volume REPLACE_WITH_VOLUME_NUMBER
 assign letter=Z
 exit
 ```
 
-```bat
-manage-bde -status
-manage-bde -unlock Z: -RecoveryPassword 111111-222222-333333-444444-555555-666666-777777-888888
-chkdsk Z: /f
-```
+Unlock `Z:` if encrypted, then use the appropriate check. Replace placeholders; do not copy a fabricated recovery password. A successful repair log matters more than a fixed “reboot twice” rule. Complete any scheduled repair and fully shut down Windows before writable sharing with Arch.
 
-(`manage-bde -unlock Z: -Password` prompts instead.)
+## Hardware errors: image before repair
 
----
-
-## If Hardware Is Failing, Image First
-
-Warning signs: repeated `Input/output error`, dmesg USB resets/disconnects, reallocated/pending sectors, drive disappearing intermittently.
-
-Check SMART (`-d sat` for many USB bridges):
+Repeated media I/O errors, disconnects, or an unstable device justify preserving readable sectors before write-capable filesystem repair. Check cable/power/bridge conditions as well as the medium. Read SMART using the correct transport:
 
 ```bash
-sudo smartctl -d sat -a /dev/sdX
+sudo smartctl --scan-open
+sudo smartctl -x /dev/disk/by-id/REPLACE_WITH_WHOLE_DISK_ID
 ```
 
-Image the **outer encrypted partition** (preserves evidence, avoids repeat reads):
+Use `-d sat` only when appropriate for the actual bridge. A SMART “PASSED” result does not overrule repeated read failures.
+
+### GNU ddrescue first pass
+
+The Arch package is `ddrescue`. Keep the image **and its mapfile on healthy independent storage** with enough capacity for the source. A sparse file's apparent size still matters for eventual capacity planning.
+
+For an encrypted partition, image the **outer encrypted partition** to preserve BitLocker metadata and encrypted sectors together. If the partition table or disk layout is also in doubt, a whole-disk image may be appropriate instead; identify the scope deliberately.
 
 ```bash
-sudo pacman -S --needed gddrescue
-sudo ddrescue -f -n /dev/sdXN bitlocker-partition.img bitlocker-partition.map
+src='/dev/disk/by-id/REPLACE_WITH_SOURCE_PARTITION_ID'
+rescue_dir='/mnt/healthy-recovery'
+
+sudo ddrescue -n "$src" \
+    "$rescue_dir/bitlocker-partition.img" \
+    "$rescue_dir/bitlocker-partition.map"
 ```
 
-All further experiments happen on the image.
+`-n` skips scraping in the first pass. The mapfile records what was read and lets the same rescue resume. Retain the same source/image/mapfile relationship; never reuse another rescue's mapfile. `-f` is not needed for an ordinary output image file and is deliberately omitted.
 
----
-
-## After Repair: Mount Cleanly
+A possible follow-up, when additional reads are justified:
 
 ```bash
-sudo cryptsetup open --type bitlk /dev/sdXN bitlk_slow
-sudo install -d -m 0755 /mnt/slow
-sudo mount -t ntfs3 -o uid=1000,gid=1000,windows_names /dev/mapper/bitlk_slow /mnt/slow
-
-sudo umount /mnt/slow
-sudo cryptsetup close bitlk_slow
+sector_size=$(sudo blockdev --getss "$src")
+sudo ddrescue -d -b "$sector_size" -r1 "$src" \
+    "$rescue_dir/bitlocker-partition.img" \
+    "$rescue_dir/bitlocker-partition.map"
 ```
 
-UDisks flow: `unlock` → `mount -b /dev/mapper/bitlk-<uuid>` → `unmount` → `lock -b /dev/sdXN` → optional `power-off`.
+`-d` requests direct input; the sector size must match the source's requirements. Some bridges/devices do not support that path correctly. Re-evaluate errors instead of adding unlimited retries. The direct-input/resume syntax was tested on regular-file fixtures; no failing medium was available to validate recovery yield.
 
-## Automation Guidance
+### Open the partition image read-only on Arch
 
-> [!warning]
-> Never put `/dev/dm-N` in `/etc/fstab`.
+For an image containing the BitLocker partition itself (not a whole disk):
 
-Stable design: `/etc/crypttab` entry for the BitLocker volume → `/etc/fstab` entry for the inner NTFS (by inner UUID once unlocked) → zero hard-coded `dm-*` names. The limitation is not "BitLocker integrity" — unlocked volumes are ordinary NTFS; the gap is that Linux has no `chkdsk` equivalent.
+```bash
+image='/mnt/healthy-recovery/bitlocker-partition.img'
+loop=$(sudo losetup --find --show --read-only -- "$image")
+sudo cryptsetup open --type bitlk --readonly "$loop" recovered_bitlk
+sudo blkid /dev/mapper/recovered_bitlk
+sudo install -d -m 0755 /mnt/recovered-bitlk
+sudo mount -i -t ntfs -o ro /dev/mapper/recovered_bitlk /mnt/recovered-bitlk
+```
 
-## Last-Resort Recovery
+Cleanup only after the corresponding earlier steps succeeded:
 
-TestDisk / DMDE / R-Studio / professional services — when `chkdsk` cannot repair, MFT is shredded, or recovery outranks mountability. Run them against a **clone**, never the original.
+```bash
+sudo umount /mnt/recovered-bitlk
+sudo cryptsetup close recovered_bitlk
+sudo losetup --detach "$loop"
+```
 
-## Prevention
+A whole-disk image instead needs partition discovery/offset handling; this partition-image recipe must not be pointed blindly at it. If a step fails, preserve the image/mapfile and unwind only resources actually created.
 
-- Always unmount before unplugging; close/lock the mapper too
-- `udisksctl power-off` USB drives after locking
-- No writable sharing with Windows installs using Fast Startup/hibernation
-- Replace flaky cables/hubs/bridges; monitor SMART
-- Pure shuttle disk without NTFS needs? Consider exFAT — but check kernel support first (`zgrep CONFIG_EXFAT_FS /proc/config.gz`; the custom `dusky-*` kernels here lack it). exFAT is still not immune to unsafe removal.
+Keep a master image unchanged. Perform write-capable repair experiments on a working copy/clone. Missing source sectors remain missing: a successful copy of the readable sectors cannot reconstruct unreadable data by itself.
 
----
+## Retest after repair
 
-## Bottom Line
+After the chosen repair completes and Windows has fully shut down:
 
-1. Unlock success ⇒ BitLocker is fine
-2. Mount failure on `mapper` ⇒ NTFS or hardware
-3. Read-only first when data matters
-4. `ntfsfix` = triage only
-5. Windows `chkdsk /f` = real repair
-6. Unstable hardware ⇒ image first, repair the clone
+1. Re-identify the device and inspect recent logs.
+2. Unlock normally if encrypted.
+3. Probe the inner filesystem and test a read-only mount first if condition remains uncertain.
+4. For a clean volume, use the normal native NTFS ownership/mask options from [[Mounting and fstab]].
+5. Read representative files and check any available application checksums/backups.
+6. Unmount, close the mapping, then optionally power off a USB drive.
+
+Mount success is a useful milestone; it is not a checksum of all recovered files. Continue monitoring the hardware path if resets/errors were involved.
+
+## Habits that prevent repeat failures
+
+Unmount before disconnecting. Close encrypted mappings after unmount. Avoid concurrent writable access to a filesystem from two operating systems. Do not share NTFS writable while Windows retains hibernated/Fast Startup state. Keep independent backups and replace demonstrably faulty cables/bridges/media.
+
+Switching to exFAT can fit a simple portable-storage use case, but changes filesystem features and does not make unsafe removal harmless. Both loop and exFAT support are available in this current kernel; old statements that they were absent are stale.
+
+## Verification boundary
+
+Tested: clean NTFS creation, no-action `ntfsfix` with an unchanged image hash, native read/write mount, ownership/masks, `windows_names`, persistence after remount, and read-only write rejection. Tested separately: ddrescue first pass/resume and matching output hash on healthy regular files.
+
+Not tested: real BitLocker unlock, damaged NTFS repair, Windows/WinRE commands, failing-media recovery, or boot-time automation. These are documented procedures with explicit limits, not claims of successful recovery on this hardware.
