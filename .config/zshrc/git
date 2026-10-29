@@ -3,7 +3,7 @@
 #
 #   git_dusky ARGS...      raw git pinned to the bare repo + $HOME work tree
 #   git_dusky_add_list     stage the .git_dusky_list manifest (+ add -u)
-#   git_dusky_restore      DANGER: hard reset $HOME to HEAD (now confirmed)
+#   git_dusky_restore      DANGER: hard reset $HOME to HEAD
 #   git_dusky_push FILE    add -> prompt -> scoped commit -> push
 #   gitdelta               uncommitted changes vs HEAD (stages manifest first)
 #   gitdelta N             Nth most recent commit (1 = HEAD)
@@ -163,31 +163,11 @@ function git_dusky_add_list() {
 }
 
 # -----------------------------------------------------------------------------
-# 4. Destructive restore — same alias name, now with a safety interlock
+# 4. Destructive restore
 # -----------------------------------------------------------------------------
 function _git_dusky_restore() {
     emulate -L zsh
-    local ans
-    local -i force=0
-    [[ ${1-} == (-y|--force) ]] && force=1
-
     print -ru2 -- "/usr/bin/git --git-dir=$DUSKY_GIT_DIR --work-tree=$HOME reset --hard HEAD"
-    print -ru2 -- 'DANGER: discards ALL staged and unstaged changes to tracked dotfiles in $HOME.'
-    if (( ! force )); then
-        if [[ ! -t 0 ]]; then
-            print -ru2 -- 'Refusing to hard-reset non-interactively. Pass -y to force.'
-            return 1
-        fi
-        if ! vared -p "Proceed? [Y/n] " ans; then
-            print
-            print -ru2 -- 'Aborted.'
-            return 1
-        fi
-        if [[ -n $ans && $ans != [Yy]* ]]; then
-            print -ru2 -- 'Aborted.'
-            return 1
-        fi
-    fi
     git_dusky reset --hard HEAD
 }
 alias git_dusky_restore='_git_dusky_restore'
