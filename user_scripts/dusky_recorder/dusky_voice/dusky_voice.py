@@ -482,11 +482,12 @@ class DuskyAudioEngine:
         self.pause_start: float = 0.0
         self.paused_duration: float = 0.0
         self.max_duration: float = 0.0
+        self.stopped_by_timer: bool = False
 
         # Telemetry callbacks
         self.on_level_callback: Callable[[list[float]], None] | None = None
         self.on_state_change: Callable[[RecordState], None] | None = None
-        self.on_finished: Callable[[Path], None] | None = None
+        self.on_finished: Callable[[Path, bool], None] | None = None
         self.on_error: Callable[[str], None] | None = None
 
     @property
@@ -569,6 +570,7 @@ class DuskyAudioEngine:
         self.output_path = output_path
         self.max_duration = max_duration
         self.paused_duration = 0.0
+        self.stopped_by_timer = False
 
         pipe_str = self.build_pipeline_string(
             output_path, source, format_, channels, custom_source_node, custom_sink_node
@@ -650,11 +652,12 @@ class DuskyAudioEngine:
             self.on_state_change(self.state)
         return True
 
-    def stop(self) -> bool:
+    def stop(self, *, stopped_by_timer: bool = False) -> bool:
         """Stop recording cleanly with EOS flushing."""
         if self.state not in (RecordState.RECORDING, RecordState.PAUSED):
             return False
 
+        self.stopped_by_timer = stopped_by_timer
         self.state = RecordState.FINALIZING
         if self.on_state_change:
             self.on_state_change(self.state)
@@ -674,7 +677,7 @@ class DuskyAudioEngine:
 
         if self.output_path and self.output_path.is_file():
             if self.on_finished:
-                self.on_finished(self.output_path)
+                self.on_finished(self.output_path, self.stopped_by_timer)
             return True
         return False
 
@@ -682,6 +685,8 @@ class DuskyAudioEngine:
         """Discard recording and delete partially written file."""
         if self.state == RecordState.IDLE:
             return False
+
+        self.stopped_by_timer = False
 
         if self.pipeline:
             self.pipeline.set_state(Gst.State.NULL)
@@ -2138,7 +2143,7 @@ class DuskyVoiceApp(App[None]):
         if self.engine.state == RecordState.IDLE:
             self._start_recording_flow()
         elif self.engine.state in (RecordState.RECORDING, RecordState.PAUSED):
-            self.engine.stop()
+            self.engine.stop(stopped_by_timer=False)
         elif self.engine.state == RecordState.COUNTDOWN:
             self._abort_countdown()
 
@@ -2300,7 +2305,7 @@ class DuskyVoiceApp(App[None]):
             elapsed = self.engine.elapsed_seconds
             timer_box.update_time(elapsed, self.engine.max_duration)
             if self.engine.max_duration > 0 and elapsed >= self.engine.max_duration:
-                self.engine.stop()
+                self.engine.stop(stopped_by_timer=True)
         else:
             timer_box.update_time(0.0)
 
@@ -2347,23 +2352,33 @@ class DuskyVoiceApp(App[None]):
         except Exception:
             pass
 
-    def _on_engine_finished(self, path: Path) -> None:
-        self._safe_dispatch(self._handle_recording_saved, path)
+    def _on_engine_finished(self, path: Path, stopped_by_timer: bool = False) -> None:
+        self._safe_dispatch(self._handle_recording_saved, path, stopped_by_timer)
 
-    def _handle_recording_saved(self, path: Path) -> None:
+    def _handle_recording_saved(self, path: Path, stopped_by_timer: bool = False) -> None:
         stat = path.stat()
         size_kb = stat.st_size / 1024
-        self.notify(
-            f"Saved: {path.name} ({size_kb:.1f} KB)",
-            title="Recording Complete",
-            severity="information",
-        )
         self.set_status(f"Saved {path.name}", "success")
-        send_desktop_notification(
-            "Voice Memo Saved",
-            f"File: {path.name}\nSize: {size_kb:.1f} KB",
-            icon_name="audio-input-microphone",
-        )
+
+        if stopped_by_timer:
+            self.notify(
+                f"Auto-stop timer reached: {path.name} ({size_kb:.1f} KB)",
+                title="Timer Limit Complete",
+                severity="information",
+            )
+            send_desktop_notification(
+                "Voice Memo Saved",
+                f"Timer limit reached: {path.name}\nSize: {size_kb:.1f} KB",
+                icon_name="audio-input-microphone",
+            )
+        else:
+            self.notify(
+                f"Saved: {path.name} ({size_kb:.1f} KB)",
+                title="Recording Saved",
+                severity="information",
+                timeout=2.5,
+            )
+
         self._refresh_library()
 
         threading.Thread(
@@ -2580,11 +2595,6 @@ class DuskyVoiceApp(App[None]):
                 self.set_status(f"Deleted {memo.name}", "warning")
                 self.selected_memo = None
                 self._refresh_library()
-                send_desktop_notification(
-                    "Voice Memo Deleted",
-                    f"Removed: {memo.name}",
-                    icon_name="edit-delete",
-                )
 
         self.push_screen(DeleteMemoModal(memo), _on_delete_done)
 
@@ -2793,11 +2803,13 @@ def cli_record(
 
     engine.start()
     start_t = time.monotonic()
+    timer_stopped = False
 
     try:
         while not stop_flag.is_set():
             elapsed = time.monotonic() - start_t
             if duration > 0 and elapsed >= duration:
+                timer_stopped = True
                 break
             mins = int(elapsed) // 60
             secs = int(elapsed) % 60
@@ -2807,16 +2819,17 @@ def cli_record(
     finally:
         sys.stdout.write("\nFinalizing and flushing audio headers...\n")
         sys.stdout.flush()
-        engine.stop()
+        engine.stop(stopped_by_timer=timer_stopped)
 
     if out_file.is_file():
         size_kb = out_file.stat().st_size / 1024
-        console.print(f"[bold green]✓ Recording saved successfully ({size_kb:.1f} KB):[/bold green] {out_file}")
-        send_desktop_notification(
-            "Voice Memo Saved",
-            f"{out_file.name} ({size_kb:.1f} KB)",
-            icon_name="audio-input-microphone",
-        )
+        console.print(f"[bold green]󰄬 Recording saved successfully ({size_kb:.1f} KB):[/bold green] {out_file}")
+        if timer_stopped:
+            send_desktop_notification(
+                "Voice Memo Saved",
+                f"Timer limit reached: {out_file.name} ({size_kb:.1f} KB)",
+                icon_name="audio-input-microphone",
+            )
     else:
         console.print("[red]Recording failed or was aborted.[/red]")
 
