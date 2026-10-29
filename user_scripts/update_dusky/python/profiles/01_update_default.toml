@@ -61,6 +61,7 @@ search_dirs = [
 [sequence]
 tasks = [
     # ================= CUSTOM =====================
+    "S | python_rc3_install.py install",
     "U | once | backup_hyprlang_files.sh",
     "U | once | 480_dusky_commands.py -b",
     # ================= Scripts =====================
@@ -93,6 +94,7 @@ tasks = [
     # "U | 100_paru_packages.sh",
     # "S | 120_create_mount_directories.sh",
     "S | once | 127_pam_keyring_greetd.py --mode auto",
+    "U | 154_dusky_network_meter_setup.py",
     "U | once | 130_systemd_dbus_service_manager.py --default",
     # "U | 135_battery_notify_service.sh",
     "U | once | 137_snapper_isolation_subvolume.sh --auto",
@@ -167,8 +169,10 @@ tasks = [
     # "U | cc_restart.sh --quiet",
     "U | ignore-fail | wallpaper_selector.py --build-cache",
     "U | once,ignore-fail | wallpaper_selector_to_dusky_paper_rename_cache.py",
+    "U | 150_dusky_snap_setup.py",
     "U | 151_dusky_papers_setup.py --update-cache",
     "U | 152_dusky_tray_setup.py",
+    "U | 153_dusky_center_setup.py",
     "U | once,ignore-fail | wallpaper_selector_to_dusky_paper_rename_cache.py --cleanup",
     # "U | once | append_defaults_keybinds_edit_here.sh",
     "U | ignore-fail | tui_matugen.py --smart",
@@ -179,7 +183,6 @@ tasks = [
     # "U | once | system_update.sh --pacman",
     "S | once | fix_wayland_session.py",
     "S | once | cleanup_stale_boot_mem_reclaim.py",
-    #"S | once | python_rc3_install.py install",
     # "S | once | python_rc3_install.py --undo",
     "S | once,ignore-fail | rename_already_deployed_servcies.py",
     "U | tui_starship.py --apply-state",
