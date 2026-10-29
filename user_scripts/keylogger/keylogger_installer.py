@@ -34,6 +34,7 @@ import string
 import json
 import subprocess
 import sys
+import tempfile
 from contextlib import ExitStack
 from pathlib import Path
 
@@ -354,6 +355,37 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
 def build_venv(user: str, home: str, *, offline: bool = False) -> str:
     venv = venv_dir(home)
     ensure_user_directory(venv.parent, user)
+    previous = python_version(str(venv / "bin" / "python")) if venv.exists() else None
+    if previous is None or previous >= REQUIRED_PYTHON:
+        return _build_venv(user, home, offline=offline)
+
+    # Keep the previous environment intact until the replacement and package
+    # installation both succeed; its scripts may contain user-added packages.
+    backup_dir = Path(tempfile.mkdtemp(prefix=f"{venv.name}.backup-", dir=venv.parent))
+    record = pwd.getpwnam(user)
+    os.chown(backup_dir, record.pw_uid, record.pw_gid)
+    backup = backup_dir / venv.name
+    try:
+        venv.rename(backup)
+    except BaseException:
+        backup_dir.rmdir()
+        raise
+    warn(f"Backing up Python {version_str(previous)} environment to {backup}")
+    try:
+        result = _build_venv(user, home, offline=offline)
+    except BaseException:
+        if venv.is_symlink():
+            venv.unlink()
+        elif venv.exists():
+            shutil.rmtree(venv)
+        backup.rename(venv)
+        backup_dir.rmdir()
+        raise
+    return result
+
+
+def _build_venv(user: str, home: str, *, offline: bool = False) -> str:
+    venv = venv_dir(home)
     step(f"Creating virtual environment at {venv}...")
     if not venv.exists():
         created = False
@@ -485,8 +517,13 @@ def cmd_install(args: argparse.Namespace) -> int:
     if was_active:
         step("Stopping the running service before updating its package and unit...")
         run(["systemctl", "stop", SERVICE_NAME])
-    venv_py = build_venv(user, home, offline=args.offline)
-    install_service(venv_py, user, home)
+    try:
+        venv_py = build_venv(user, home, offline=args.offline)
+        install_service(venv_py, user, home)
+    except BaseException:
+        if was_active:
+            run(["systemctl", "start", SERVICE_NAME], check=False)
+        raise
 
     if args.enable:
         step("Enabling and starting service...")

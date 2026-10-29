@@ -310,3 +310,57 @@ def test_installer_preserves_service_state(tmp_path, monkeypatch, installer, act
     if active:
         assert commands.index(stop) < commands.index(["update-package"])
         assert commands.index(stop) < commands.index(["replace-unit"])
+
+
+@pytest.mark.parametrize("fail_install", [False, True])
+def test_installer_upgrades_old_venv_with_backup(tmp_path, monkeypatch, installer, fail_install):
+    user = pwd.getpwuid(os.getuid()).pw_name
+    venv = installer.venv_dir(str(tmp_path))
+    venv.mkdir(parents=True)
+    (venv / "old-data").write_text("keep")
+    monkeypatch.setattr(installer, "ensure_user_directory", lambda *_: None)
+    monkeypatch.setattr(installer, "python_version", lambda *_: (3, 14, 8))
+    monkeypatch.setattr(installer.os, "chown", lambda *_: None)
+
+    def build(*_args, **_kwargs):
+        venv.mkdir()
+        (venv / "new-data").write_text("new")
+        if fail_install:
+            raise RuntimeError("installation failed")
+        return str(venv / "bin/python")
+
+    monkeypatch.setattr(installer, "_build_venv", build)
+    if fail_install:
+        with pytest.raises(RuntimeError, match="installation failed"):
+            installer.build_venv(user, str(tmp_path))
+        assert (venv / "old-data").read_text() == "keep"
+        assert not list(venv.parent.glob(venv.name + ".backup-*"))
+    else:
+        installer.build_venv(user, str(tmp_path))
+        assert (venv / "new-data").read_text() == "new"
+        backups = list(venv.parent.glob(venv.name + ".backup-*"))
+        assert len(backups) == 1
+        assert (backups[0] / venv.name / "old-data").read_text() == "keep"
+
+
+def test_installer_restarts_active_service_after_upgrade_failure(tmp_path, monkeypatch, installer):
+    user = pwd.getpwuid(os.getuid()).pw_name
+    monkeypatch.setattr(installer.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(installer, "original_user", lambda: (user, str(tmp_path)))
+    monkeypatch.setattr(installer, "python_version", lambda *_: (3, 15, 0))
+    monkeypatch.setattr(installer, "user_in_group", lambda *_: True)
+    commands = []
+
+    def run(command, **_kwargs):
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "active", "")
+
+    def fail_build(*_args, **_kwargs):
+        raise RuntimeError("build failed")
+
+    monkeypatch.setattr(installer, "run", run)
+    monkeypatch.setattr(installer, "build_venv", fail_build)
+    with pytest.raises(RuntimeError, match="build failed"):
+        installer.main([])
+    assert ["systemctl", "stop", installer.SERVICE_NAME] in commands
+    assert ["systemctl", "start", installer.SERVICE_NAME] in commands
