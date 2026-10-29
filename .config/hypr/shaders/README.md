@@ -1,6 +1,6 @@
 # Screen shaders
 
-Open the usual `shader_menu.sh` menu. Files `20`–`31` are the new collection;
+Open the usual `shader_menu.sh` menu. Files `20`–`39` are the new collection;
 the original `01`–`19` effects are unchanged. Up/Down previews, Enter accepts,
 and Escape restores the shader and rendering settings from before the preview.
 
@@ -18,6 +18,14 @@ and Escape restores the shader and rendering settings from before the preview.
 | `29_liquid_marble.glsl` | Smooth swirling eddies from an analytic curl field | Time | 1 |
 | `30_prismatic_tide.glsl` | Broad ocean swells combined with color dispersion | Time | 3 |
 | `31_cursor_kaleidoscope.glsl` | A rotating portal of six mirrored sectors | Pointer + time | 1 outside, 2 inside |
+| `32_cursor_black_hole.glsl` | Strong gravitational twist, dark core, and a spectral rim | Pointer + time | 1 outside, 3 inside |
+| `33_wormhole.glsl` | The desktop folds into a spiraling tunnel with moving walls | Time | 1 |
+| `34_fractured_glass.glsl` | Triangular shards slide independently along fine cracks | Time | 1 |
+| `35_glitch_storm.glsl` | Bursts of displaced scan bands and separated RGB channels | Time, intentionally discrete 12 Hz ticks | 3 |
+| `36_cursor_reality_tear.glsl` | A bending rift pulls opposite sides of the desktop apart | Pointer + time | 1 |
+| `37_digital_melt.glsl` | Columns of pixels liquefy, sink, and recover independently | Time | 1 |
+| `38_orbital_spheres.glsl` | Three orbiting glass spheres carry inverted desktop reflections | Time | 1 outside, 2 inside |
+| `39_mirror_dimension.glsl` | Full-screen mirrored desktop tiles rotate and bend together | Time | 1 |
 
 For gentle effects, start with `20`, `21`, `26`, or `28`. For stronger distortion,
 try `22`, `23`, `29`, or `31`. The constants near the top of each file control
@@ -25,10 +33,18 @@ strength, radius, wavelength, and timing. Distances ending in `_PX` use source
 texture pixels rather than logical desktop coordinates. Screen shape and
 texture size are discovered at render time.
 
+For the extreme collection, start with `32` (black hole), `33` (wormhole), `35`
+(glitch storm), `36` (reality tear), or `39` (mirror dimension). These intentionally
+make large areas of the desktop distorted or unreadable. `34` and `37` introduce
+sharp boundaries between independently moving shards or columns. `39` replaces
+the entire screen with reflected tiles, including the edges. There is no feedback
+buffer: repeated images always come from the current desktop frame.
+
 The new effects use GLSL ES **3.20** and Hyprland's native screen-shader uniforms;
 they require an OpenGL ES 3.2 renderer. They were verified against installed
 Hyprland **0.57.0**, commit `0aa6745f705f2c4b0a5004eb019ef76e5bbdb426`, and Mesa
-26.2.6 on Intel Iris Xe. Confirm these interfaces and GPU support in the final
+26.2.6 on Intel Iris Xe. The extreme collection was also rendered on the installed
+NVIDIA GeForce RTX 3050 Ti. Confirm these interfaces and GPU support in the final
 ISO build rather than assuming every companion package has the same version.
 The renderer explicitly selects its ES 3.20 vertex shader when the file starts
 with `#version 320 es`.
@@ -47,19 +63,28 @@ the pointer or press history. The existing menu consequently sets
 already does for ripple and soft warp. This keeps the entire output updating
 at the monitor's refresh rate. No polling process or plugin is required.
 
-Sampling stays within half-texel texture bounds. Warps fade at display edges;
+Sampling stays within half-texel texture bounds. Most warps fade at display edges;
+the mirror dimension intentionally reflects across the whole display. Glitch
+storm and digital melt mirror displaced coordinates before bounded sampling.
 RGBA moves together, and dispersive effects recombine channels using the
 center sample's premultiplied alpha. The new shaders do not clip RGB to SDR.
-Time-based effects use closed loops with integer temporal harmonics, avoiding
-reset seams. Host float timestamp precision can still limit motion after very
+Smooth time-based effects use closed loops with integer temporal harmonics,
+avoiding reset seams. Glitch storm deliberately changes discontinuously at its
+12 Hz tick boundaries, including its loop boundary. Host float timestamp
+precision can still limit motion after very
 long uninterrupted runs; applying a shader resets its native `time` origin.
 
-Validation included glslang compilation and GPU linking/rendering of all 31
+Validation included glslang compilation and GPU linking/rendering of all 39
 shaders with Hyprland's vertex shader. New effects were exercised at landscape,
 portrait, ultrawide, and small resolutions, plus a transparent fixture, with
 checks for finite output, premultiplied alpha, cursor boundaries/visibility,
 movement settling, expired/overlapping clicks, and matching loop endpoints.
 Physical rotated outputs and other GPU drivers require their own validation.
+All eight extreme effects also passed live application/readback through the
+existing menu's apply function; the prior shader and redraw settings were restored.
+In offscreen 1080p RGBA32F tests, `39` was the heaviest effect on both GPUs.
+Those timings include CPU submission and GPU work, and do not measure compositor
+frame rate or the cost with its usual framebuffer formats.
 
 Native interface references:
 [screen-shader loading and uniform uploads](https://github.com/hyprwm/Hyprland/blob/0aa6745f705f2c4b0a5004eb019ef76e5bbdb426/src/render/OpenGL.cpp),
