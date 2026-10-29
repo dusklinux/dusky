@@ -1384,3 +1384,19 @@ hl.bind(
     hl.dsp.exec_cmd("gnome-calculator"),
     { description = "Calculator" }
 )
+
+-- Unified Craft Suite Menu / Chrome Toggle (Control + \) for EffectCraft, PhotoCraft, FilmCraft
+hl.bind(
+    "CTRL + backslash",
+    function()
+        local w = hl.get_active_window()
+        local class = (w and (w.class or w.initialClass)) or ""
+        local c = class:lower()
+        if string.find(c, "effectcraft") or string.find(c, "photocraft") or string.find(c, "filmcraft") then
+            hl.dispatch(hl.dsp.exec_cmd("craft-menu-toggle"))
+        else
+            hl.dispatch(hl.dsp.pass({ window = "activewindow" }))
+        end
+    end,
+    { description = "Toggle Craft Suite Menu / Chrome" }
+)
