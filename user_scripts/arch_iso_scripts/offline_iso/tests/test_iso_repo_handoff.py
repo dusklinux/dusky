@@ -91,10 +91,11 @@ class IsoRepositoryHandoff(unittest.TestCase):
             for name in ('60-dusky-ioscheduler.rules', 'plymouth-font-cache.conf'):
                 self.assertEqual((staged / 'assets' / name).read_bytes(), (source / 'assets' / name).read_bytes())
 
-    def test_rtkit_is_targeted_by_generator_and_installer(self):
+    def test_audio_tools_are_targeted_by_generator_and_installer(self):
         self.assertIn('rtkit', self.factory.ALL_GROUPS['audio'])
         targets = self.factory.installer_package_targets(ROOT)
-        self.assertEqual(targets.count('rtkit'), 1)
+        for package in ('rtkit', 'pamixer'):
+            self.assertEqual(targets.count(package), 1)
 
     def test_real_repository_index_is_accepted_by_switcher_and_pacman(self):
         module = self.factory
@@ -124,6 +125,8 @@ class IsoRepositoryHandoff(unittest.TestCase):
                                         check=True, capture_output=True, text=True)
                 self.assertEqual(result.stdout.strip(), f'file://{repo}')
             module.verify_repo_closure(repo, ['dusky-handoff-fixture'])
+            with self.assertRaises(module.FactoryError):
+                module.verify_repo_closure(repo, ['pamixer'])
 
     def test_selected_checkout_and_installer_override_remain_distinct(self):
         module = self.factory
