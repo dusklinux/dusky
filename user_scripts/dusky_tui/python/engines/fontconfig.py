@@ -897,19 +897,32 @@ class FontconfigEngine(BaseEngine):
         """Flush a complete UTF-8 file before atomically replacing its target."""
         path = path.resolve()
         try:
-            mode = path.stat().st_mode & 0o7777
+            original = path.stat()
+            mode = original.st_mode & 0o7777
         except FileNotFoundError:
+            original = None
             mode = None
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(f".{path.name}.tmp-{os.getpid()}-{threading.get_ident()}-{time.monotonic_ns()}")
         try:
             with tmp.open("w", encoding="utf-8") as stream:
+                if original is not None:
+                    temporary = os.fstat(stream.fileno())
+                    if (temporary.st_uid, temporary.st_gid) != (original.st_uid, original.st_gid):
+                        os.fchown(stream.fileno(), original.st_uid, original.st_gid)
                 if mode is not None:
                     os.fchmod(stream.fileno(), mode)
                 stream.write(content)
                 stream.flush()
                 os.fsync(stream.fileno())
             tmp.replace(path)
+            directory_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory_fd)
+            except OSError as exc:
+                raise OSError(f'Configuration saved, but directory sync failed: {exc}') from exc
+            finally:
+                os.close(directory_fd)
         finally:
             tmp.unlink(missing_ok=True)
 
