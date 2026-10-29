@@ -67,7 +67,6 @@ tasks = [
     # "U | 002_pre_generated_colors.sh",
     # "U | 003_network_connect.sh",
     "U | once | 005_hypr_custom_config_setup.py",
-    "U | once:forever | user_scripts/misc_extra/delete_after_merging_future_branch/hyprland_57_temp_fixes_on_main_pre_future_merge.py",
     "U | once | 006_animation_default.sh",
     # "U | once | 005_hypr_custom_config_setup.py --force --workspace_rules",
     "U | once | 005_hypr_custom_config_setup.py --force --environment_variables",
