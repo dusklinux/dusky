@@ -1493,6 +1493,8 @@ class DuskyVoiceApp(App[None]):
     #tabs-container {
         width: 1fr;
         height: 1;
+        overflow-x: auto;
+        scrollbar-size: 0 0;
         align: center middle;
     }
 
@@ -1500,6 +1502,22 @@ class DuskyVoiceApp(App[None]):
         width: auto;
         height: 1;
         background: transparent;
+    }
+
+    Tabs #tabs-scroll {
+        width: auto;
+    }
+
+    Tabs #tabs-list-bar {
+        width: auto;
+        height: 1;
+        min-width: 0;
+    }
+
+    Tabs #tabs-list {
+        width: auto;
+        height: 1;
+        min-width: 0;
     }
 
     Tabs Underline {
