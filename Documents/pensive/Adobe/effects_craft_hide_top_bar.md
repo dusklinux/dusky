@@ -650,6 +650,17 @@ If compiling clean upstream code in the future without cloning the fork, the com
        }
    }
    ```
+8. **`crates/ui-egui/src/control.rs`** (Headless IPC `ui.set` layout handler macOS synchronization):
+   ```rust
+   if let Some(b) = p.get("menuBar").and_then(Value::as_bool) {
+       app.ui.show_menu_bar = b;
+       app.session.prefs.appearance.show_menu_bar = b;
+       if b && cfg!(target_os = "macos") {
+           app.session.prefs.appearance.in_window_menu_bar_mac = true;
+       }
+       app.session.save_prefs();
+   }
+   ```
 
 ### 4. Installation & Desktop Launcher Integration
 Install the native executable into user path:
