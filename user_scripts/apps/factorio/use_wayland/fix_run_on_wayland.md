@@ -365,3 +365,79 @@ no assumptions:
   events only; no hot-path logging).
 - This fix is for **Factorio 2.1.x on native Wayland**. If a future Factorio
   build fixes the underlying bug, the `ENV=` line can simply be removed.
+
+---
+
+## 11. Factorio 2.1.23 Verification & Standalone / Custom Compilation (2026-10-30)
+
+### Upstream Status
+As of **Factorio 2.1.23 (build 87750, linux64, full, Space Age)**, the upstream bug has **not** been merged/fixed by Wube. Without the interposer shim, running Factorio 2.1.23 under native Wayland still crashes during early shader compilation:
+
+```text
+0.558 Initialised OpenGL:[3] Mesa Intel(R) Iris(R) Xe Graphics (ADL GT2); driver: 4.6 Mesa 26.2.6
+Factorio crashed. Generating symbolized stacktrace, please wait ...
+Error ShaderOpenGL.cpp:15: Failed to create shader '__core__/graphics/shaders/sprite.vert'.
+```
+
+With `libEGL.so.1` preloaded, the context is automatically restored on thread 52052:
+```text
+[eglfix] ensure_current: rebind d=0x55c5d6fa1690 s=0x55c5d6ff3be0 c=0x55c5d6fe72c0 -> 1
+```
+The game immediately proceeds to load all 8,792 sprite sheets and runs at 144 Hz with zero OpenGL errors.
+
+---
+
+### Compiling Your Own Shim Manually (Zero Repack / Zero Script Dependency)
+
+If you ever need to compile the fix yourself for custom builds or fresh machines without using the repack installer scripts:
+
+#### 1. Prerequisites
+Ensure development tools and EGL headers are installed:
+```bash
+sudo pacman -S --needed gcc libglvnd
+```
+
+#### 2. Source Files
+The source files are located in `~/.factorio/wayland_fix/` or in `user_scripts/apps/factorio/use_wayland/sources/`:
+- `eglfix.c` — The C interposer code.
+- `export.map` — Linker version script ensuring only `egl*` and `gl*` symbols are exported.
+
+#### 3. Compile Command
+```bash
+mkdir -p "$HOME/.factorio/wayland_fix"
+
+gcc -shared -fPIC -O2 -Wall \
+    -o "$HOME/.factorio/wayland_fix/libEGL.so.1" \
+    "$HOME/.factorio/wayland_fix/eglfix.c" \
+    -ldl -pthread \
+    -Wl,-soname,libEGL.so.1 \
+    -Wl,--version-script="$HOME/.factorio/wayland_fix/export.map"
+```
+
+#### 4. Verify the Binary
+Verify that the `SONAME` is properly set to `libEGL.so.1` (crucial so `dlopen("libEGL.so.1")` binds to it):
+```bash
+readelf -d "$HOME/.factorio/wayland_fix/libEGL.so.1" | grep SONAME
+# Expected output:
+#  0x000000000000000e (SONAME)             Library soname: [libEGL.so.1]
+```
+
+---
+
+### Launching Standalone Factorio Versions
+
+To run any standalone Factorio version (e.g. tarball extract from factorio.com, GOG standalone, or uncompressed zram directory):
+
+1. **Direct Shell Execution**:
+   ```bash
+   LD_PRELOAD="$HOME/.factorio/wayland_fix/libEGL.so.1" ./bin/x64/factorio
+   ```
+
+2. **Master Game Runner Integration (`factorio.toml`)**:
+   In your profile, define:
+   ```toml
+   [env]
+   LD_PRELOAD = "$HOME/.factorio/wayland_fix/libEGL.so.1"
+   ```
+   The runner automatically applies this variable, sets `SDL_VIDEODRIVER=wayland`, unsets `DISPLAY`, and binds to your preferred GPU.
+

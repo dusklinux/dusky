@@ -530,3 +530,93 @@ PhotoCraft and FilmCraft enforce token validation on loopback. The wrapper scrip
 
 ### Q4: Does this modification survive upstream updates?
 **Yes.** The JSON-RPC control server is a stable, documented feature of the Storyteller Craft suite used by their MCP plugin ecosystem and automated QA test harnesses. When updating to newer releases, simply re-apply the transparent in-place AppImage wrapper to the new AppImage binary. No recompilation will ever be required.
+
+---
+
+## 7. Custom Native Build from Source (With Built-in Fixes & Hardware Optimizations)
+
+If upstream Pull Request [#2647](https://github.com/storytold/effectcraft/pull/2647) takes time to merge, or if you want maximum rendering throughput, sub-100ms cold startup, and zero FUSE overhead on modern hardware, you can compile EffectCraft directly as a host-native binary.
+
+### 1. In-RAM Build Strategy (Zero NAND Flash Wear)
+Compiling a 40+ crate Rust workspace produces 4–6 GB of intermediate target artifacts. To prevent SSD write wear and accelerate disk I/O, build directly inside the system's compressed RAM drive (`/mnt/zram1`):
+
+```bash
+# Prepare RAM workspace
+mkdir -p /mnt/zram1/build
+cd /mnt/zram1/build
+
+# Clone the fork branch containing the native menu bar toggle fix (PR #2647)
+git clone --depth=1 -b feat/2596-toggle-menu-bar https://github.com/dusklinux/effectcraft.git
+cd effectcraft
+```
+
+### 2. Host-Native Toolchain & Optimization Flags
+EffectCraft's rendering engine (`crates/raster`, `crates/path`, `tiny-skia`) and software codecs (`crates/vp9enc`, `crates/av1enc`, `filmcraft-h264enc`) heavily utilize SIMD vector operations. Generic AppImages are restricted to baseline `x86-64` (SSE2) to remain bootable on legacy processors. 
+
+Compiling with `-C target-cpu=native` activates **AVX2**, **FMA3**, and **BMI1/2**, doubling vector throughput for software alpha compositing, color grading, and video encoding. Mirroring the system build configuration (`~/.config/pacman/makepkg.conf`):
+
+```bash
+# CPU instruction set, linker, and relocation flags
+export RUSTFLAGS="-C target-cpu=native -C opt-level=3 -C link-arg=-fuse-ld=mold -C link-arg=-Wl,-z,pack-relative-relocs"
+export CFLAGS="-march=native -mtune=native -O2"
+export CXXFLAGS="$CFLAGS"
+
+# Compile desktop release binary on all CPU cores
+cargo build --release -p effectcraft --jobs $(nproc)
+```
+
+### 3. Surgical Code Modification Reference
+If compiling clean upstream code in the future without cloning the fork, the native Menu Bar toggle requires only 5 surgical insertions:
+
+1. **`crates/engine/src/cmd/frontend.rs`** (Add command ID to `fe!` macro):
+   ```rust
+   (ViewMenuBar, "view.menuBar", "Toggle Menu Bar", "Toggle Top Menu Bar"),
+   ```
+2. **`crates/engine/src/menus.rs`** (Add menu item under `Menu::View`):
+   ```rust
+   Entry::item("Menu Bar", "view.menuBar"),
+   ```
+3. **`crates/ui-egui/src/menus/frontend.rs`** (Dispatch handler):
+   ```rust
+   "view.menuBar" => toggle(&mut app.ui.show_menu_bar, &p),
+   ```
+4. **`crates/ui-egui/src/menus/entries.rs`** (Menu checkmark state):
+   ```rust
+   "view.menuBar" => Some(app.ui.show_menu_bar),
+   ```
+5. **`crates/ui-egui/src/menus/tests.rs`** (Unit test):
+   ```rust
+   #[test]
+   fn view_menu_bar_toggles_show_menu_bar() {
+       let mut app = dummy_app();
+       assert!(app.ui.show_menu_bar);
+       menus::handle_command(&mut app, "view.menuBar", &Default::default());
+       assert!(!app.ui.show_menu_bar);
+       menus::handle_command(&mut app, "view.menuBar", &Default::default());
+       assert!(app.ui.show_menu_bar);
+   }
+   ```
+
+### 4. Installation & Desktop Launcher Integration
+Install the native executable into user path:
+
+```bash
+# Copy compiled ELF binary to ~/.local/bin
+install -Dm755 /mnt/zram1/build/effectcraft/target/release/effectcraft ~/.local/bin/effectcraft
+
+# Update desktop launcher (~/.local/share/applications/ai.storyteller.effectcraft.desktop)
+cat << 'EOF' > ~/.local/share/applications/ai.storyteller.effectcraft.desktop
+[Desktop Entry]
+Type=Application
+Name=EffectCraft
+Comment=Motion graphics and visual effects compositor (Native Build)
+Exec=/home/dusk/.local/bin/effectcraft %F
+Icon=ai.storyteller.effectcraft
+Terminal=false
+StartupWMClass=ai.storyteller.effectcraft
+Categories=Graphics;Video;AudioVideo;
+EOF
+```
+
+With this binary installed, pressing <kbd>Ctrl</kbd> + <kbd>\</kbd> or toggling **View ▸ Menu Bar** operates directly inside the application process without requiring IPC sockets or wrapper scripts.
+

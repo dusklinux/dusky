@@ -7,20 +7,16 @@ extends = "base_native"
 [meta]
 id = "factorio"
 name = "Factorio"
-version = "2.1.14"
-icon = "applications-games"
+version = "2.1.23"
+icon = "$GAME_DIR/game/data/base/thumbnail.png"
 developer = "Wube Software"
 genre = "Automation / Strategy"
-description = "Build and maintain automated factories on an alien planet."
+description = "Build and maintain automated factories on an alien planet. Factorio 2.1 Space Age (native Linux build)."
 
 [paths]
-game_dir = "/mnt/media/games/good_quality/factorio/Factorio_2.1.14"
-dwarfs_image = "files/game-root.dwarfs"
-dwarfs_mount = "files/.game-root-mnt"
-overlay_dir = "files/game-root"
-overlay_storage = "files/overlay-storage"
-overlay_work = "files/.game-root-work"
-executable = "bin/x64/factorio"
+game_dir = "/mnt/media/games/good_quality/factorio/installed/Factorio"
+executable = "game/bin/x64/factorio"
+working_dir = "game"
 arguments = []
 
 [runtime]
@@ -33,8 +29,8 @@ wayland_native = true
 [graphics.gamescope]
 enabled = false
 mode = "embedded"
-# Was enabled=true with wayland backend, but Factorio was running via gamescope nested (gamescope-0) with 198% CPU + 1715MiB GPU yet not visible as Hyprland client (only 5 clients, no factorio/gamescope).
-# Tested 2026-08-31: pure Wayland (prefer_xwayland=false, gamescope=false) with LD_PRELOAD Wayland fix correctly shows as com.factorio.Factorio on workspace 9, wayland driver, visible.
+# Factorio runs directly under pure Wayland.
+# Pure Wayland with the EGL interposer shim renders smoothly as com.factorio.Factorio.
 
 [performance]
 gamemode = true
@@ -42,7 +38,7 @@ mangohud = false
 fps_limit = 60
 
 [hooks]
-pre_launch = ["bash -c 'if [ ! -f \"$HOME/.factorio/wayland_fix/libEGL.so.1\" ]; then python3 \"$HOME/user_scripts/apps/factorio/use_wayland/fix_run_on_wayland.py\" --game-dir \"/mnt/media/games/good_quality/factorio/Factorio_2.1.14\" --force; fi'"]
+pre_launch = ["bash -c 'if [ ! -f \"$HOME/.factorio/wayland_fix/libEGL.so.1\" ] && [ -f \"$HOME/user_scripts/apps/factorio/use_wayland/fix_run_on_wayland.py\" ]; then python3 \"$HOME/user_scripts/apps/factorio/use_wayland/fix_run_on_wayland.py\" --check; fi'"]
 
 [env]
 LD_PRELOAD = "$HOME/.factorio/wayland_fix/libEGL.so.1"
