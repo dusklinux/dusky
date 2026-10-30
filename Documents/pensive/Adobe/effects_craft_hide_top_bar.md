@@ -584,20 +584,8 @@ If compiling clean upstream code in the future without cloning the fork, the com
 4. **`crates/ui-egui/src/menus/frontend.rs`** (Dispatch handler & preference saving):
    ```rust
    "view.menuBar" => {
-       let res = toggle(&mut app.session.prefs.appearance.show_menu_bar, &p);
-       #[cfg(not(target_os = "macos"))]
-       {
-           app.ui.show_menu_bar = app.session.prefs.appearance.show_menu_bar;
-       }
-       #[cfg(target_os = "macos")]
-       {
-           if app.session.prefs.appearance.show_menu_bar {
-               app.session.prefs.appearance.in_window_menu_bar_mac = true;
-           }
-           app.ui.show_menu_bar = app.session.prefs.appearance.in_window_menu_bar_mac && app.session.prefs.appearance.show_menu_bar;
-       }
-       app.session.save_prefs();
-       res
+       let value = p.get("value").and_then(Value::as_bool);
+       json!(app.set_menu_bar(value))
    }
    ```
 5. **`crates/ui-egui/src/header.rs`** (Failsafe hamburger button & About logo context menu to restore when hidden):
@@ -626,39 +614,29 @@ If compiling clean upstream code in the future without cloning the fork, the com
        x += 30.0;
    }
    ```
-6. **`crates/ui-egui/src/app/prefs.rs`** (Live preference sync across frames):
+6. **`crates/ui-egui/src/app/prefs.rs`** (Live preference sync & unified menu bar toggle):
    ```rust
-   #[cfg(not(target_os = "macos"))]
-   {
-       self.ui.show_menu_bar = p.appearance.show_menu_bar;
+   self.ui.show_menu_bar = p.appearance.menu_bar_shown();
+
+   pub fn set_menu_bar_on(&mut self, value: Option<bool>, macos: bool) -> bool {
+       let shown = self.session.prefs.appearance.toggle_menu_bar_on(value, macos);
+       self.ui.show_menu_bar = shown;
+       self.session.save_prefs();
+       shown
    }
-   #[cfg(target_os = "macos")]
-   {
-       self.ui.show_menu_bar = p.appearance.in_window_menu_bar_mac && p.appearance.show_menu_bar;
+
+   pub fn set_menu_bar(&mut self, value: Option<bool>) -> bool {
+       self.set_menu_bar_on(value, cfg!(target_os = "macos"))
    }
    ```
 7. **`crates/ui-egui/src/menus/entries.rs`** (Menu checkmark state synchronized with preferences):
    ```rust
-   "view.menuBar" => {
-       #[cfg(target_os = "macos")]
-       {
-           Some(app.session.prefs.appearance.in_window_menu_bar_mac && app.session.prefs.appearance.show_menu_bar)
-       }
-       #[cfg(not(target_os = "macos"))]
-       {
-           Some(app.session.prefs.appearance.show_menu_bar)
-       }
-   }
+   "view.menuBar" => Some(app.session.prefs.appearance.menu_bar_shown()),
    ```
-8. **`crates/ui-egui/src/control.rs`** (Headless IPC `ui.set` layout handler macOS synchronization):
+8. **`crates/ui-egui/src/control.rs`** (Headless IPC `ui.set` layout handler using unified `set_menu_bar`):
    ```rust
    if let Some(b) = p.get("menuBar").and_then(Value::as_bool) {
-       app.ui.show_menu_bar = b;
-       app.session.prefs.appearance.show_menu_bar = b;
-       if b && cfg!(target_os = "macos") {
-           app.session.prefs.appearance.in_window_menu_bar_mac = true;
-       }
-       app.session.save_prefs();
+       app.set_menu_bar(Some(b));
    }
    ```
 
