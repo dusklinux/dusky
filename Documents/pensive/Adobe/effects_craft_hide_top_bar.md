@@ -566,34 +566,88 @@ cargo build --release -p effectcraft --jobs $(nproc)
 ```
 
 ### 3. Surgical Code Modification Reference
-If compiling clean upstream code in the future without cloning the fork, the native Menu Bar toggle requires only 5 surgical insertions:
+If compiling clean upstream code in the future without cloning the fork, the complete Menu Bar implementation consists of:
 
-1. **`crates/engine/src/cmd/frontend.rs`** (Add command ID to `fe!` macro):
+1. **`crates/engine/src/settings/prefs/sections.rs`** (Add persistent preference in `Appearance`):
    ```rust
-   (ViewMenuBar, "view.menuBar", "Toggle Menu Bar", "Toggle Top Menu Bar"),
+   /// Draw the top menu bar (shown by default).
+   show_menu_bar: bool = true,
    ```
-2. **`crates/engine/src/menus.rs`** (Add menu item under `Menu::View`):
+2. **`crates/engine/src/cmd/frontend.rs`** (Add command ID to `fe!` with default shortcut `Cmd+Alt+M`):
+   ```rust
+   fe!("view.menuBar", "Menu Bar", ["View"], Some("Cmd+Alt+M"), "{value?: bool} — toggle or set menu bar visibility", always),
+   ```
+3. **`crates/engine/src/menus.rs`** (Add menu item under `Menu::View`):
    ```rust
    Entry::item("Menu Bar", "view.menuBar"),
    ```
-3. **`crates/ui-egui/src/menus/frontend.rs`** (Dispatch handler):
+4. **`crates/ui-egui/src/menus/frontend.rs`** (Dispatch handler & preference saving):
    ```rust
-   "view.menuBar" => toggle(&mut app.ui.show_menu_bar, &p),
+   "view.menuBar" => {
+       let res = toggle(&mut app.session.prefs.appearance.show_menu_bar, &p);
+       #[cfg(not(target_os = "macos"))]
+       {
+           app.ui.show_menu_bar = app.session.prefs.appearance.show_menu_bar;
+       }
+       #[cfg(target_os = "macos")]
+       {
+           if app.session.prefs.appearance.show_menu_bar {
+               app.session.prefs.appearance.in_window_menu_bar_mac = true;
+           }
+           app.ui.show_menu_bar = app.session.prefs.appearance.in_window_menu_bar_mac && app.session.prefs.appearance.show_menu_bar;
+       }
+       app.session.save_prefs();
+       res
+   }
    ```
-4. **`crates/ui-egui/src/menus/entries.rs`** (Menu checkmark state):
+5. **`crates/ui-egui/src/header.rs`** (Failsafe hamburger button & About logo context menu to restore when hidden):
    ```rust
-   "view.menuBar" => Some(app.ui.show_menu_bar),
+   // Context menu on the EffectCraft logo
+   bresp.context_menu(|ui| {
+       let mut show_mb = app.ui.show_menu_bar;
+       if ui.checkbox(&mut show_mb, tr("Menu Bar")).clicked() {
+           let _ = app.session.execute("view.menuBar", json!({"value": show_mb}));
+           ui.close();
+       }
+   });
+
+   // Failsafe hamburger button shown on Tools bar when menu is hidden
+   if !app.ui.show_menu_bar {
+       let menu_btn = Rect::from_min_size(pos2(x, cy - 13.0), vec2(26.0, 26.0));
+       let label = tr("Show Menu Bar");
+       let tip = match app.session.shortcuts().shortcut_of("view.menuBar", &serde_json::Value::Null) {
+           Some(s) => format!("{label} ({})", crate::menus::shortcut_text(s)),
+           None => label.to_string(),
+       };
+       let menu_resp = widgets::icon_button(ui, menu_btn, Icon::Hamburger, false, &t, egui::Id::unique("hdr-show-menu-bar")).on_hover_text(tip);
+       if menu_resp.clicked() {
+           let _ = app.session.execute("view.menuBar", json!({"value": true}));
+       }
+       x += 30.0;
+   }
    ```
-5. **`crates/ui-egui/src/menus/tests.rs`** (Unit test):
+6. **`crates/ui-egui/src/app/prefs.rs`** (Live preference sync across frames):
    ```rust
-   #[test]
-   fn view_menu_bar_toggles_show_menu_bar() {
-       let mut app = dummy_app();
-       assert!(app.ui.show_menu_bar);
-       menus::handle_command(&mut app, "view.menuBar", &Default::default());
-       assert!(!app.ui.show_menu_bar);
-       menus::handle_command(&mut app, "view.menuBar", &Default::default());
-       assert!(app.ui.show_menu_bar);
+   #[cfg(not(target_os = "macos"))]
+   {
+       self.ui.show_menu_bar = p.appearance.show_menu_bar;
+   }
+   #[cfg(target_os = "macos")]
+   {
+       self.ui.show_menu_bar = p.appearance.in_window_menu_bar_mac && p.appearance.show_menu_bar;
+   }
+   ```
+7. **`crates/ui-egui/src/menus/entries.rs`** (Menu checkmark state synchronized with preferences):
+   ```rust
+   "view.menuBar" => {
+       #[cfg(target_os = "macos")]
+       {
+           Some(app.session.prefs.appearance.in_window_menu_bar_mac && app.session.prefs.appearance.show_menu_bar)
+       }
+       #[cfg(not(target_os = "macos"))]
+       {
+           Some(app.session.prefs.appearance.show_menu_bar)
+       }
    }
    ```
 
