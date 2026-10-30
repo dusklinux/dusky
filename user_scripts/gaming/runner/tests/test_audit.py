@@ -231,6 +231,53 @@ class AuditTests(unittest.TestCase):
             builder.stage_gpu(under_gamescope=False)
             self.assertIs(builder.gpu, nvidia)
 
+    def test_gpus_does_not_invoke_vulkaninfo(self):
+        with patch.object(r, 'run_cmd') as mock_cmd, \
+             patch.object(r, '_enumerate_gpus_raw', return_value=()), \
+             patch.object(r, '_pci_ids_db', return_value={}):
+            r.gpus.cache_clear()
+            _ = r.gpus()
+            mock_cmd.assert_not_called()
+
+    def test_stage_gpu_isolates_integrated_gpu_from_nvidia(self):
+        intel = r.Gpu('card0', '', '', '0000:00:02.0', 0x8086, 1, '', 'i915', True, '', 'Intel')
+        nvidia = r.Gpu('card1', '', '', '0000:01:00.0', 0x10DE, 2, '', 'nvidia', False, '', 'NVIDIA')
+        profile = self.mgr.load('game', overrides={'graphics': {'gpu': 'integrated'}})
+        with patch.object(r, 'gpus', return_value=(intel, nvidia)), \
+             patch.object(r, 'vulkan_icds', return_value=()), \
+             patch.object(r.EnvironmentBuilder, '_find_mesa_egl', return_value='/usr/share/glvnd/egl_vendor.d/50_mesa.json'), \
+             patch.object(r.EnvironmentBuilder, '_find_vaapi_driver', return_value='iHD'):
+            builder = r.EnvironmentBuilder(profile, r.resolve_paths(profile), dry_run=True)
+            builder.stage_gpu(under_gamescope=False)
+            self.assertIs(builder.gpu, intel)
+            self.assertEqual(builder.env.get('__NV_PRIME_RENDER_OFFLOAD'), '0')
+            self.assertEqual(builder.env.get('__GLX_VENDOR_LIBRARY_NAME'), 'mesa')
+            self.assertEqual(builder.env.get('__EGL_VENDOR_LIBRARY_FILENAMES'), '/usr/share/glvnd/egl_vendor.d/50_mesa.json')
+            self.assertEqual(builder.env.get('DISABLE_LAYER_NV_OPTIMUS_1'), '1')
+            self.assertEqual(builder.env.get('DISABLE_LAYER_NV_PRESENT_1'), '1')
+            self.assertEqual(builder.env.get('PROTON_HIDE_NVIDIA_GPU'), '1')
+            self.assertEqual(builder.env.get('LIBVA_DRIVER_NAME'), 'iHD')
+            self.assertNotIn('VDPAU_DRIVER', builder.env)
+
+    def test_stage_wine_nvapi_gated_on_active_nvidia_gpu(self):
+        intel = r.Gpu('card0', '', '', '0000:00:02.0', 0x8086, 1, '', 'i915', True, '', 'Intel')
+        nvidia = r.Gpu('card1', '', '', '0000:01:00.0', 0x10DE, 2, '', 'nvidia', False, '', 'NVIDIA')
+        profile = self.mgr.load('game', overrides={'runtime': {'type': 'wine', 'wine': {'dxvk_nvapi': True}}})
+        with patch.object(r, 'gpus', return_value=(intel, nvidia)), \
+             patch.object(r, 'vulkan_icds', return_value=()), \
+             patch.object(r.WinePrefix, 'provision') as mock_prov, \
+             patch.object(r.WinePrefix, 'set_graphics_driver'):
+            builder = r.EnvironmentBuilder(profile, r.resolve_paths(profile), dry_run=True)
+            builder.gpu = intel
+            builder.env['WAYLAND_DISPLAY'] = 'wayland-1'
+            builder.stage_wine(dry_run=True, under_gamescope=False)
+            self.assertNotIn('DXVK_ENABLE_NVAPI', builder.env)
+            self.assertEqual(builder.env.get('PROTON_HIDE_NVIDIA_GPU'), '1')
+            mock_prov.assert_called_once()
+            _, kwargs = mock_prov.call_args
+            self.assertFalse(kwargs['want_nvapi'])
+            self.assertFalse(kwargs['want_dlss'])
+
     def test_no_scope_wait_is_event_driven(self):
         selector = r.selectors.DefaultSelector()
         original = selector.select

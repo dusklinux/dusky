@@ -37,6 +37,10 @@ SCRIPT_DIR="$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")"
 readonly SCRIPT_DIR
 readonly DEFAULT_MASTER="$SCRIPT_DIR/../master_runner.py"
 
+# Ensure rofi launcher and catalogue process default to integrated graphics (prevent dGPU wake)
+export __NV_PRIME_RENDER_OFFLOAD=0
+export __GLX_VENDOR_LIBRARY_NAME=mesa
+
 # ------------------------------------------------------------------------------
 # Rofi custom modi provider (must run BEFORE locking)
 # Protocol: ROFI_RETV == 0 → initial list, 1 → selection (ROFI_INFO=pid),
@@ -88,34 +92,51 @@ PY
     case "${ROFI_RETV:-0}" in
         0)
             echo -en "\0prompt\x1f🎮 Games\n"
-            echo -en "\0message\x1f<span alpha='70%'>Enter</span> launch  <span alpha='40%'>•</span>  <span alpha='70%'>Alt+m</span> mount  <span alpha='70%'>Alt+u</span> unmount\n"
+            echo -en "\0message\x1f<span alpha='70%'>Enter</span> launch  <span alpha='40%'>•</span>  <span alpha='70%'>Alt+i</span> iGPU  <span alpha='40%'>•</span>  <span alpha='70%'>Alt+m</span> mount  <span alpha='40%'>•</span>  <span alpha='70%'>Alt+u</span> unmount\n"
             echo -en "\0markup-rows\x1ftrue\n"
             echo -en "\0use-hot-keys\x1ftrue\n"
             _python_modi
             ;;
-        1|10|11)
+        1|10|11|12)
             pid="${ROFI_INFO:-}"
             [[ -z "$pid" ]] && exit 0
             action="launch"
+            gpu_override=""
             [[ "${ROFI_RETV}" == "10" ]] && action="mount"
             [[ "${ROFI_RETV}" == "11" ]] && action="unmount"
+            if [[ "${ROFI_RETV}" == "12" ]]; then
+                action="launch"
+                gpu_override="integrated"
+            fi
             # minimal notify + detach (no lock needed for this ephemeral call)
             if command -v notify-send >/dev/null 2>&1; then
                 case "$action" in
-                    launch)  notify-send -a "Game Runner" -i "input-gaming" "Launching $pid" >/dev/null 2>&1 || true ;;
+                    launch)
+                        if [[ -n "$gpu_override" ]]; then
+                            notify-send -a "Game Runner" -i "input-gaming" "Launching $pid (iGPU)" >/dev/null 2>&1 || true
+                        else
+                            notify-send -a "Game Runner" -i "input-gaming" "Launching $pid" >/dev/null 2>&1 || true
+                        fi
+                        ;;
                     mount)   notify-send -a "Game Runner" -i "drive-harddisk" "Mounting $pid" >/dev/null 2>&1 || true ;;
                     unmount) notify-send -a "Game Runner" -i "media-eject" "Unmounting $pid" >/dev/null 2>&1 || true ;;
                 esac
             fi
             case "$action" in
                 launch)
+                    local -a extra_args=()
+                    [[ -n "$gpu_override" ]] && extra_args=(--gpu "$gpu_override")
                     if command -v dusky-run >/dev/null 2>&1; then
-                        dusky-run python3 "$_MASTER_MODI" run "$pid" >/dev/null 2>&1 &
+                        dusky-run python3 "$_MASTER_MODI" run "$pid" "${extra_args[@]}" >/dev/null 2>&1 &
                     elif command -v hyprctl >/dev/null 2>&1 && [[ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]]; then
-                        _cmd=$(printf 'python3 %q run %q' "$_MASTER_MODI" "$pid")
+                        if [[ -n "$gpu_override" ]]; then
+                            _cmd=$(printf 'python3 %q run %q --gpu %q' "$_MASTER_MODI" "$pid" "$gpu_override")
+                        else
+                            _cmd=$(printf 'python3 %q run %q' "$_MASTER_MODI" "$pid")
+                        fi
                         hyprctl dispatch exec -- "$_cmd" >/dev/null 2>&1 &
                     else
-                        nohup python3 "$_MASTER_MODI" run "$pid" >/dev/null 2>&1 &
+                        nohup python3 "$_MASTER_MODI" run "$pid" "${extra_args[@]}" >/dev/null 2>&1 &
                     fi
                     disown 2>/dev/null || true
                     ;;
@@ -310,6 +331,7 @@ OPTIONS:
 
 KEYS (game picker — installed only, searchable):
   Enter              Launch selected game
+  Alt+i              Launch on iGPU only (battery saver)
   Type               Fuzzy filter (fzf, case-insensitive)
   ↑↓ / Tab           Navigate (scrollable, 10 visible)
   Alt+m              Mount game data (DwarFS + overlay)
@@ -561,8 +583,8 @@ for p in json.load(sys.stdin):
         prompt="🎮 Games"
         placeholder="${#pids[@]} installed"
     fi
-    # Minimal mesg: only mount/unmount (Enter/navigate/Esc are obvious, placeholder replaces filter hint)
-    mesg="<span alpha='70%'>Alt+m</span> mount  <span alpha='40%'>•</span>  <span alpha='70%'>Alt+u</span> unmount"
+    # Minimal mesg: only mount/unmount/igpu (Enter/navigate/Esc are obvious, placeholder replaces filter hint)
+    mesg="<span alpha='70%'>Alt+i</span> iGPU  <span alpha='40%'>•</span>  <span alpha='70%'>Alt+m</span> mount  <span alpha='40%'>•</span>  <span alpha='70%'>Alt+u</span> unmount"
     # Placeholder appears ghosted in entry, disappears on typing; list limited to 10 visible, scrollable
     add_theme="entry { placeholder: \"$placeholder\"; } element-text { markup: true; } window { width: 720px; height: 500px; } listview { lines: 10; fixed-height: true; scrollbar: true; }"
 
@@ -570,7 +592,7 @@ for p in json.load(sys.stdin):
         -dmenu -i -p "$prompt" -mesg "$mesg" -markup-rows
         -matching fuzzy -sort -sorting-method fzf -no-custom -format i
         -lines 10
-        -kb-custom-1 "Alt+m" -kb-custom-2 "Alt+u"
+        -kb-custom-1 "Alt+m" -kb-custom-2 "Alt+u" -kb-custom-3 "Alt+i"
         -selected-row "$last_idx"
     )
     if [[ -f "$ROFI_CONFIG" ]]; then
@@ -601,15 +623,17 @@ for p in json.load(sys.stdin):
     local sel_name="${names[sel_idx]}"
     write_memory "last_game" "$sel_pid"
 
-    # Dispatch based on exit code (10/11 for mount/unmount)
+    # Dispatch based on exit code (10/11 for mount/unmount, 12 for iGPU launch)
     case "$exit_code" in
         10)  _do_mount "$sel_pid" "$sel_name" "${icons[sel_idx]}" ;;
         11)  _do_unmount "$sel_pid" "$sel_name" "${icons[sel_idx]}" ;;
+        12)  _do_launch "$sel_pid" "$sel_name" "${icons[sel_idx]}" "${runtimes[sel_idx]}" "integrated" ;;
         0)
             case "$default_action" in
-                mount)   _do_mount "$sel_pid" "$sel_name" "${icons[sel_idx]}" ;;
-                unmount) _do_unmount "$sel_pid" "$sel_name" "${icons[sel_idx]}" ;;
-                *)       _do_launch "$sel_pid" "$sel_name" "${icons[sel_idx]}" "${runtimes[sel_idx]}" ;;
+                mount)        _do_mount "$sel_pid" "$sel_name" "${icons[sel_idx]}" ;;
+                unmount)      _do_unmount "$sel_pid" "$sel_name" "${icons[sel_idx]}" ;;
+                launch_igpu)  _do_launch "$sel_pid" "$sel_name" "${icons[sel_idx]}" "${runtimes[sel_idx]}" "integrated" ;;
+                *)            _do_launch "$sel_pid" "$sel_name" "${icons[sel_idx]}" "${runtimes[sel_idx]}" ;;
             esac ;;
         *) return 1 ;;
     esac
@@ -617,20 +641,30 @@ for p in json.load(sys.stdin):
 }
 
 _do_launch() {
-    local pid="$1" name="$2" icon="$3" runtime="${4:-}"
+    local pid="$1" name="$2" icon="$3" runtime="${4:-}" gpu_override="${5:-}"
     release_lock
-    log_info "Launching $name ($pid)"
-    notify normal "Launching $name" "$pid • $runtime"
+    local gpu_note=""
+    local -a extra_run_args=()
+    if [[ -n "$gpu_override" ]]; then
+        extra_run_args=(--gpu "$gpu_override")
+        gpu_note=" • $gpu_override"
+    fi
+    log_info "Launching $name ($pid)$gpu_note"
+    notify normal "Launching $name" "$pid • $runtime$gpu_note"
     if have_cmd dusky-run; then
-        setsid dusky-run python3 "$MASTER_RUNNER" run "$pid" >/dev/null 2>&1 & disown 2>/dev/null || true
+        setsid dusky-run python3 "$MASTER_RUNNER" run "$pid" "${extra_run_args[@]}" >/dev/null 2>&1 & disown 2>/dev/null || true
     elif have_cmd hyprctl && [[ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]]; then
         local cmd
-        cmd=$(printf 'python3 %q run %q' "$MASTER_RUNNER" "$pid")
-        hyprctl dispatch exec -- "$cmd" >/dev/null 2>&1 || nohup python3 "$MASTER_RUNNER" run "$pid" >/dev/null 2>&1 & disown 2>/dev/null || true
+        if [[ -n "$gpu_override" ]]; then
+            cmd=$(printf 'python3 %q run %q --gpu %q' "$MASTER_RUNNER" "$pid" "$gpu_override")
+        else
+            cmd=$(printf 'python3 %q run %q' "$MASTER_RUNNER" "$pid")
+        fi
+        hyprctl dispatch exec -- "$cmd" >/dev/null 2>&1 || nohup python3 "$MASTER_RUNNER" run "$pid" "${extra_run_args[@]}" >/dev/null 2>&1 & disown 2>/dev/null || true
     else
-        nohup python3 "$MASTER_RUNNER" run "$pid" >/dev/null 2>&1 & disown 2>/dev/null || true
+        nohup python3 "$MASTER_RUNNER" run "$pid" "${extra_run_args[@]}" >/dev/null 2>&1 & disown 2>/dev/null || true
     fi
-    printf ':: launching %s (%s) via %s run %s\n' "$name" "$pid" "$MASTER_RUNNER" "$pid" >&2
+    printf ':: launching %s (%s) via %s run %s%s\n' "$name" "$pid" "$MASTER_RUNNER" "$pid" "$gpu_note" >&2
 }
 
 _do_mount() {
@@ -666,6 +700,7 @@ wizard_main() {
     local choice last_main
     local -a opts=(
         "🎮  Launch Game"
+        "⚡  Launch Game (iGPU)"
         "💾  Mount Game Data"
         "📤  Unmount Game Data"
         "🔍  Toggle Filter (installed / all)"
@@ -681,6 +716,9 @@ wizard_main() {
         case "$choice" in
             "🎮  Launch Game")
                 SHOW_ALL="false" pick_game "false" || true
+                ;;
+            "⚡  Launch Game (iGPU)")
+                SHOW_ALL="false" pick_game "false" "launch_igpu" || true
                 ;;
             "💾  Mount Game Data")
                 pick_game "false" "mount" || true

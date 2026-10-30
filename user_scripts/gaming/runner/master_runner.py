@@ -1424,17 +1424,82 @@ def _enumerate_gpus_raw() -> tuple[Gpu, ...]:
 
 
 _GPU_RAW: tuple[Gpu, ...] | None = None
+VULKAN_DEVICE_CACHE: Final[Path] = CACHE_DIR / "vulkan_devices.json"
 
 
-@cache
-def _vulkan_devices_info() -> dict[tuple[int, int], tuple[str, str]]:
-    """Parse vulkaninfo --summary to map (vendor_id, device_id) -> (deviceName, deviceUUID)."""
+def _atomic_write_cache(target: Path, content: str) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(content)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, target)
+    except Exception:
+        with suppress(OSError):
+            os.unlink(tmp)
+        raise
+
+
+def _read_cached_vulkan_devices() -> dict[tuple[int, int], tuple[str, str]]:
+    if not VULKAN_DEVICE_CACHE.is_file():
+        return {}
+    try:
+        doc = json.loads(VULKAN_DEVICE_CACHE.read_text(encoding="utf-8"))
+        out: dict[tuple[int, int], tuple[str, str]] = {}
+        for k, v in doc.items():
+            if ":" in k and isinstance(v, (list, tuple)) and len(v) >= 2:
+                vid_s, did_s = k.split(":", 1)
+                out[(int(vid_s, 16), int(did_s, 16))] = (str(v[0]), str(v[1]))
+        return out
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_cached_vulkan_device(vid: int, did: int, name: str, uuid: str) -> None:
+    data = _read_cached_vulkan_devices()
+    data[(vid, did)] = (name, uuid)
+    doc = {f"{k[0]:04x}:{k[1]:04x}": [v[0], v[1]] for k, v in sorted(data.items())}
+    with suppress(OSError):
+        _atomic_write_cache(VULKAN_DEVICE_CACHE, json.dumps(doc, indent=2) + "\n")
+
+
+def resolve_gpu_vulkan_info(gpu: Gpu) -> tuple[str, str]:
+    """Resolve Vulkan device name and UUID for a concrete GPU without waking suspended devices.
+
+    First checks persistent on-disk cache. If absent, runs `vulkaninfo --summary`
+    isolated strictly to this GPU's driver ICDs via `VK_DRIVER_FILES`, ensuring
+    non-targeted (e.g. sleeping dGPU) hardware is never accessed.
+    """
+    key = (gpu.vendor_id, gpu.device_id)
+    cached = _read_cached_vulkan_devices()
+    if key in cached:
+        return cached[key]
     if not have("vulkaninfo"):
-        return {}
-    res = run_cmd(["vulkaninfo", "--summary"], timeout=5.0)
+        return ("", "")
+
+    # Restrict loader strictly to this GPU's ICD manifests
+    icds = gpu.icd_files()
+    if not icds:
+        return ("", "")
+
+    env = dict(os.environ)
+    env["VK_DRIVER_FILES"] = icds
+    if gpu.vendor != "nvidia":
+        env["DISABLE_LAYER_NV_OPTIMUS_1"] = "1"
+        env["DISABLE_LAYER_NV_PRESENT_1"] = "1"
+        env["__NV_PRIME_RENDER_OFFLOAD"] = "0"
+        env["__GLX_VENDOR_LIBRARY_NAME"] = "mesa"
+        for cand in ("/usr/share/glvnd/egl_vendor.d/50_mesa.json", "/etc/glvnd/egl_vendor.d/50_mesa.json"):
+            if os.path.isfile(cand):
+                env["__EGL_VENDOR_LIBRARY_FILENAMES"] = cand
+                break
+
+    res = run_cmd(["vulkaninfo", "--summary"], env=env, timeout=4.0)
     if not res.ok:
-        return {}
-    out: dict[tuple[int, int], tuple[str, str]] = {}
+        return ("", "")
+
     cur_vid: int | None = None
     cur_did: int | None = None
     cur_name: str = ""
@@ -1442,8 +1507,8 @@ def _vulkan_devices_info() -> dict[tuple[int, int], tuple[str, str]]:
     for line in res.out.splitlines():
         line = line.strip()
         if line.startswith("GPU") and line.endswith(":"):
-            if cur_vid is not None and cur_did is not None:
-                out[(cur_vid, cur_did)] = (cur_name, cur_uuid)
+            if cur_vid == gpu.vendor_id and cur_did == gpu.device_id and cur_name:
+                break
             cur_vid = cur_did = None
             cur_name = cur_uuid = ""
         elif "vendorID" in line and "=" in line:
@@ -1456,22 +1521,31 @@ def _vulkan_devices_info() -> dict[tuple[int, int], tuple[str, str]]:
             cur_name = line.split("=", 1)[1].strip()
         elif "deviceUUID" in line and "=" in line:
             cur_uuid = line.split("=", 1)[1].strip().replace("-", "")
-    if cur_vid is not None and cur_did is not None:
-        out[(cur_vid, cur_did)] = (cur_name, cur_uuid)
-    return out
+
+    if cur_vid == gpu.vendor_id and cur_did == gpu.device_id and cur_name:
+        _write_cached_vulkan_device(cur_vid, cur_did, cur_name, cur_uuid)
+        return (cur_name, cur_uuid)
+
+    return ("", "")
+
+
+@cache
+def _vulkan_devices_info() -> dict[tuple[int, int], tuple[str, str]]:
+    """Parse cached Vulkan device info or return empty dict (subprocess deprecated to protect dGPU sleep)."""
+    return _read_cached_vulkan_devices()
 
 
 @cache
 def gpus() -> tuple[Gpu, ...]:
-    """Full GPU topology with human-readable model names and Vulkan device info."""
+    """Full GPU topology with human-readable model names (pure sysfs, zero subprocess)."""
     db = _pci_ids_db()
-    vk_info = _vulkan_devices_info()
+    cached_vk = _read_cached_vulkan_devices()
     out: list[Gpu] = []
     for g in _enumerate_gpus_raw():
         model = db.get((g.vendor_id, g.device_id), "")
         if not model:
             model = f"{g.vendor_name} display {g.device_id:04x}"
-        vk_name, vk_uuid = vk_info.get((g.vendor_id, g.device_id), ("", ""))
+        vk_name, vk_uuid = cached_vk.get((g.vendor_id, g.device_id), ("", ""))
         out.append(replace(g, model=model, vulkan_name=vk_name, device_uuid=vk_uuid))
     # Deterministic ordering: boot VGA first, then PCI address.
     out.sort(key=lambda g: (not g.boot_vga, g.pci_addr))
@@ -3593,6 +3667,44 @@ class EnvironmentBuilder:
                 self._set("SDL_GAMECONTROLLERCONFIG_FILE", str(db))
                 return
 
+    @staticmethod
+    def _find_mesa_egl() -> str:
+        candidates = (
+            Path("/usr/share/glvnd/egl_vendor.d/50_mesa.json"),
+            Path("/etc/glvnd/egl_vendor.d/50_mesa.json"),
+        )
+        for c in candidates:
+            if c.is_file():
+                return str(c)
+        d = Path("/usr/share/glvnd/egl_vendor.d")
+        if d.is_dir():
+            for p in sorted(d.glob("*mesa*.json")):
+                if p.is_file():
+                    return str(p)
+        return ""
+
+    @staticmethod
+    def _find_vaapi_driver(vendor: str) -> str:
+        dri_dirs = (Path("/usr/lib/dri"), Path("/usr/lib64/dri"))
+
+        def _has(drv: str) -> bool:
+            return any((d / f"{drv}_drv_video.so").is_file() for d in dri_dirs)
+
+        if vendor == "intel":
+            if _has("iHD"):
+                return "iHD"
+            if _has("i965"):
+                return "i965"
+        elif vendor == "amd":
+            if _has("radeonsi"):
+                return "radeonsi"
+        elif vendor == "nvidia":
+            if _has("nvidia"):
+                return "nvidia"
+            if _has("nouveau"):
+                return "nouveau"
+        return ""
+
     def stage_gpu(self, *, under_gamescope: bool) -> None:
         gfx = self.p.sect("graphics")
         mode = str(gfx.get("gpu", "auto"))
@@ -3637,18 +3749,31 @@ class EnvironmentBuilder:
         if hybrid:
             self._set("MESA_VK_DEVICE_SELECT", gpu.vk_device_select)
             self._set("MESA_VK_DEVICE_SELECT_FORCE_DEFAULT_DEVICE", "1")
-            if gpu.vulkan_name:
-                self._set("DXVK_FILTER_DEVICE_NAME", gpu.vulkan_name)
-                self._set("VKD3D_FILTER_DEVICE_NAME", gpu.vulkan_name)
-            if gpu.device_uuid:
-                self._set("DXVK_FILTER_DEVICE_UUID", gpu.device_uuid)
+            vk_name = gpu.vulkan_name
+            vk_uuid = gpu.device_uuid
+            if not vk_name or not vk_uuid:
+                res_name, res_uuid = resolve_gpu_vulkan_info(gpu)
+                vk_name = vk_name or res_name
+                vk_uuid = vk_uuid or res_uuid
+            if vk_name:
+                self._set("DXVK_FILTER_DEVICE_NAME", vk_name)
+                self._set("VKD3D_FILTER_DEVICE_NAME", vk_name)
+            if vk_uuid:
+                self._set("DXVK_FILTER_DEVICE_UUID", vk_uuid)
 
         # --- vendor specifics ---------------------------------------------
         self._drop(
             "__NV_PRIME_RENDER_OFFLOAD", "__GLX_VENDOR_LIBRARY_NAME",
             "__VK_LAYER_NV_optimus", "DRI_PRIME", "MESA_LOADER_DRIVER_OVERRIDE",
             "AMD_VULKAN_ICD", "__NV_PRIME_RENDER_OFFLOAD_PROVIDER",
+            "__EGL_VENDOR_LIBRARY_FILENAMES", "DISABLE_LAYER_NV_OPTIMUS_1",
+            "DISABLE_LAYER_NV_PRESENT_1", "PROTON_HIDE_NVIDIA_GPU",
+            "LIBVA_DRIVER_NAME", "VDPAU_DRIVER",
         )
+        va_drv = self._find_vaapi_driver(gpu.vendor)
+        if va_drv:
+            self._set("LIBVA_DRIVER_NAME", va_drv)
+        has_nvidia = any(g.is_nvidia for g in devs)
         match gpu.vendor:
             case "nvidia":
                 if hybrid:
@@ -3663,6 +3788,8 @@ class EnvironmentBuilder:
                 self._set("__GL_SHADER_DISK_CACHE", "1")
                 self._set("__GL_SHADER_DISK_CACHE_SKIP_CLEANUP", "1")
                 self._set("NVD_BACKEND", "direct")        # NVDEC without VDPAU
+                if any(Path(p).is_file() for p in ("/usr/lib/vdpau/libvdpau_nvidia.so", "/usr/lib64/vdpau/libvdpau_nvidia.so")):
+                    self._set("VDPAU_DRIVER", "nvidia")
                 if str(gfx.get("vsync", "default")) == "off":
                     self._set("__GL_SYNC_TO_VBLANK", "0")
                 elif str(gfx.get("vsync", "default")) == "on":
@@ -3682,6 +3809,15 @@ class EnvironmentBuilder:
                 perftest = str(self.p.get("graphics.radv_perftest", "") or "")
                 if perftest:
                     self._set("RADV_PERFTEST", perftest)
+                if has_nvidia:
+                    self._set("__NV_PRIME_RENDER_OFFLOAD", "0")
+                    self._set("__GLX_VENDOR_LIBRARY_NAME", "mesa")
+                    self._set("DISABLE_LAYER_NV_OPTIMUS_1", "1")
+                    self._set("DISABLE_LAYER_NV_PRESENT_1", "1")
+                    self._set("PROTON_HIDE_NVIDIA_GPU", "1")
+                    mesa_egl = self._find_mesa_egl()
+                    if mesa_egl:
+                        self._set("__EGL_VENDOR_LIBRARY_FILENAMES", mesa_egl)
             case "intel":
                 # Let Mesa choose its driver for the discovered hardware.
                 self._set("mesa_glthread",
@@ -3689,9 +3825,27 @@ class EnvironmentBuilder:
                 self._set("ANV_ENABLE_PIPELINE_CACHE", "1")
                 if hybrid:
                     self._set("DRI_PRIME", gpu.dri_prime)
+                if has_nvidia:
+                    self._set("__NV_PRIME_RENDER_OFFLOAD", "0")
+                    self._set("__GLX_VENDOR_LIBRARY_NAME", "mesa")
+                    self._set("DISABLE_LAYER_NV_OPTIMUS_1", "1")
+                    self._set("DISABLE_LAYER_NV_PRESENT_1", "1")
+                    self._set("PROTON_HIDE_NVIDIA_GPU", "1")
+                    mesa_egl = self._find_mesa_egl()
+                    if mesa_egl:
+                        self._set("__EGL_VENDOR_LIBRARY_FILENAMES", mesa_egl)
             case _:
                 if hybrid:
                     self._set("DRI_PRIME", gpu.dri_prime)
+                if has_nvidia:
+                    self._set("__NV_PRIME_RENDER_OFFLOAD", "0")
+                    self._set("__GLX_VENDOR_LIBRARY_NAME", "mesa")
+                    self._set("DISABLE_LAYER_NV_OPTIMUS_1", "1")
+                    self._set("DISABLE_LAYER_NV_PRESENT_1", "1")
+                    self._set("PROTON_HIDE_NVIDIA_GPU", "1")
+                    mesa_egl = self._find_mesa_egl()
+                    if mesa_egl:
+                        self._set("__EGL_VENDOR_LIBRARY_FILENAMES", mesa_egl)
 
         if bool(gfx.get("hdr", False)):
             self._set("DXVK_HDR", "1")
@@ -3850,9 +4004,11 @@ class EnvironmentBuilder:
             if cfg_tokens:
                 self._set("VKD3D_CONFIG", ",".join(dict.fromkeys(cfg_tokens)))
         if bool(wcfg.get("dxvk_nvapi", False)):
-            nvidia_present = any(g.is_nvidia for g in gpus())
-            if not nvidia_present:
-                Log.warn("dxvk_nvapi enabled without an NVIDIA GPU -- ignoring")
+            nvidia_active = bool(self.gpu and self.gpu.is_nvidia)
+            if not nvidia_active:
+                Log.debug("dxvk_nvapi requested but active GPU is not NVIDIA -- skipping NVAPI")
+                self._drop("DXVK_ENABLE_NVAPI", "PROTON_ENABLE_NVAPI")
+                self._set("PROTON_HIDE_NVIDIA_GPU", "1")
             else:
                 self._set("DXVK_ENABLE_NVAPI", "1")
                 self._set("PROTON_ENABLE_NVAPI", "1")
@@ -3895,8 +4051,8 @@ class EnvironmentBuilder:
             launch_env=self.env,
             want_dxvk=bool(wcfg.get("dxvk", True)),
             want_vkd3d=bool(wcfg.get("vkd3d", True)),
-            want_nvapi=bool(wcfg.get("dxvk_nvapi", False)),
-            want_dlss=bool(wcfg.get("dxvk_nvapi", False)) and any(g.is_nvidia for g in gpus()),
+            want_nvapi=bool(wcfg.get("dxvk_nvapi", False)) and bool(self.gpu and self.gpu.is_nvidia),
+            want_dlss=bool(wcfg.get("dxvk_nvapi", False)) and bool(self.gpu and self.gpu.is_nvidia),
             force=bool(self.p.get("runtime.wine.reprovision", False)),
             dry_run=dry_run,
         )
