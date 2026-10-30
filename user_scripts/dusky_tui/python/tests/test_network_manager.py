@@ -9,7 +9,7 @@ import tempfile
 import threading
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from python.engines import network_manager as nm, rich_speedtest
@@ -28,6 +28,29 @@ class NetworkManagerTests(unittest.TestCase):
         engine._uplinks_cache = []
         engine._cached_scans = []
         engine.shutdown_event = threading.Event()
+        engine._hidden_ssid = ""
+        engine._hidden_password = ""
+        engine._hidden_security = "Auto"
+        engine._verbose_info = {}
+        engine._tp_state = {}
+        engine._ping_state = {}
+        engine._active_hotspot = None
+        engine._hotspot_clients = 0
+        engine._hotspot_address = "N/A"
+        engine._hotspot_devices_cache = []
+        engine._speedtest_status = "Ready"
+        engine._speedtest_down_val = "--"
+        engine._speedtest_up_val = "--"
+        engine._dns_provider = "DHCP"
+        engine._radio_on = True
+        engine._pinned_bands_by_uuid = {}
+        engine._bands_by_uuid = {}
+        engine._active_wifi = None
+        engine._active_wifi_connections = []
+        engine._saved_wifi = []
+        engine._route_selection = {}
+        engine._devices_cache = []
+        engine._default_routes = {4: "none", 6: "none"}
         return engine
 
     def test_scan_group_retains_devices_bssids_and_mixed_security(self):
@@ -1075,6 +1098,278 @@ class NetworkManagerTests(unittest.TestCase):
                 "/usr/bin/ufw", "route", "allow", "in", "on", "wlan0",
                 "comment", "Dusky hotspot forwarding",
             ])
+
+    def test_hidden_network_validation(self):
+        engine = self.engine()
+        engine._radio_on = False
+        engine._hidden_ssid = "TestHidden"
+        ok, msg, _ = engine.write_value("connect_hidden", "network", "true")
+        self.assertFalse(ok)
+        self.assertIn("Wi-Fi radio is off", msg)
+
+        engine._radio_on = True
+        engine._hidden_ssid = ""
+        ok, msg, _ = engine.write_value("connect_hidden", "network", "true")
+        self.assertFalse(ok)
+        self.assertIn("cannot be empty", msg)
+
+        engine._hidden_ssid = "A" * 33
+        ok, msg, _ = engine.write_value("connect_hidden", "network", "true")
+        self.assertFalse(ok)
+        self.assertIn("1–32 bytes", msg)
+
+        engine._hidden_ssid = "ValidSSID"
+        engine._hidden_security = "WEP"
+        engine._hidden_password = ""
+        ok, msg, _ = engine.write_value("connect_hidden", "network", "true")
+        self.assertFalse(ok)
+        self.assertIn("Password cannot be empty for WEP", msg)
+
+        engine._hidden_security = "WPA/WPA2/WPA3"
+        engine._hidden_password = "short"
+        ok, msg, _ = engine.write_value("connect_hidden", "network", "true")
+        self.assertFalse(ok)
+        self.assertIn("8–63 ASCII characters", msg)
+
+    def test_hidden_network_connect_native_success(self):
+        engine = self.engine()
+        engine._radio_on = True
+        engine._hidden_ssid = "SecretLab"
+        engine._hidden_password = "LabPassword123"
+        engine._hidden_security = "Auto"
+        engine._saved_wifi = []
+        engine._get_wifi_device = lambda: "wlan0"
+
+        with patch.object(engine, "_run_nmcli", return_value=SimpleNamespace(returncode=0, stdout="", stderr="")) as run:
+            ok, msg, _ = engine.write_value("connect_hidden", "network", "true")
+            self.assertTrue(ok)
+            self.assertIn("Connected to hidden network SecretLab", msg)
+            run.assert_called_once()
+            args = run.call_args[0][0]
+            self.assertEqual(args[:6], ["nmcli", "device", "wifi", "connect", "SecretLab", "hidden"])
+            self.assertEqual(args[6:], ["yes", "ifname", "wlan0", "password", "LabPassword123"])
+
+    def test_hidden_network_connect_scan_miss_profile_fallback_success(self):
+        engine = self.engine()
+        engine._radio_on = True
+        engine._hidden_ssid = "StealthAP"
+        engine._hidden_password = "StealthPassword123"
+        engine._hidden_security = "WPA/WPA2/WPA3"
+        engine._saved_wifi = []
+        engine._get_wifi_device = lambda: "wlan0"
+
+        def fake_run(cmd, timeout=None):
+            if "device" in cmd and "connect" in cmd:
+                return SimpleNamespace(returncode=10, stdout="", stderr="Error: No network with SSID 'StealthAP' found.")
+            if "connection" in cmd and "add" in cmd:
+                return SimpleNamespace(returncode=0, stdout="Connection 'StealthAP' successfully added.", stderr="")
+            if "connection" in cmd and "up" in cmd:
+                return SimpleNamespace(returncode=0, stdout="Connection successfully activated.", stderr="")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with patch.object(engine, "_run_nmcli", side_effect=fake_run) as run:
+            ok, msg, _ = engine.write_value("connect_hidden", "network", "true")
+            self.assertTrue(ok)
+            self.assertIn("Connected to hidden network StealthAP", msg)
+            self.assertEqual(run.call_count, 3)
+
+    def test_hidden_network_connect_fallback_failure_cleans_up_profile(self):
+        engine = self.engine()
+        engine._radio_on = True
+        engine._hidden_ssid = "OutOfRange"
+        engine._hidden_password = "SomePassword123"
+        engine._hidden_security = "WPA/WPA2/WPA3"
+        engine._saved_wifi = []
+        engine._get_wifi_device = lambda: "wlan0"
+
+        calls = []
+        def fake_run(cmd, timeout=None):
+            calls.append(cmd)
+            if "device" in cmd and "connect" in cmd:
+                return SimpleNamespace(returncode=10, stdout="", stderr="Error: No network with SSID 'OutOfRange' found.")
+            if "connection" in cmd and "add" in cmd:
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+            if "connection" in cmd and "up" in cmd:
+                return SimpleNamespace(returncode=1, stdout="", stderr="Error: Connection activation failed: (5) IP configuration could not be reserved.")
+            if "connection" in cmd and "delete" in cmd:
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with patch.object(engine, "_run_nmcli", side_effect=fake_run):
+            ok, msg, _ = engine.write_value("connect_hidden", "network", "true")
+            self.assertFalse(ok)
+            self.assertIn("Could not connect to OutOfRange", msg)
+            self.assertTrue(any("delete" in cmd for cmd in calls))
+
+    def test_hidden_network_uses_existing_saved_profile(self):
+        engine = self.engine()
+        engine._radio_on = True
+        engine._hidden_ssid = "SavedHidden"
+        engine._hidden_password = "NewPassword123"
+        engine._hidden_security = "WPA/WPA2/WPA3"
+        target_uuid = "12345678-1234-5678-1234-567812345678"
+        engine._saved_wifi = [{"name": "SavedHiddenProfile", "ssid": "SavedHidden", "uuid": target_uuid, "autoconnect": True}]
+        engine._async_connect_saved = MagicMock(return_value=(True, "Connected to SavedHiddenProfile.", ""))
+
+        with patch.object(engine, "_run_nmcli", return_value=SimpleNamespace(returncode=0, stdout="", stderr="")) as run:
+            ok, msg, _ = engine.write_value("connect_hidden", "network", "true")
+            self.assertTrue(ok)
+            engine._async_connect_saved.assert_called_once_with("SavedHiddenProfile", target_uuid)
+            modify_cmd = run.call_args[0][0]
+            self.assertEqual(modify_cmd[:5], ["nmcli", "connection", "modify", "uuid", target_uuid])
+            self.assertIn("802-11-wireless.hidden", modify_cmd)
+            self.assertIn("802-11-wireless-security.psk", modify_cmd)
+
+    def test_hidden_network_qr_share(self):
+        engine = self.engine()
+        engine._hidden_ssid = "QRHiddenNet"
+        engine._hidden_password = "SecretPassword"
+        engine._hidden_security = "WPA/WPA2/WPA3"
+        with patch.object(engine, "_trigger_qr_viewer", return_value=(True, "Opened QR share.", "")) as qr_mock:
+            ok, msg, _ = engine.write_value("qr_hidden", "network", "true")
+            self.assertTrue(ok)
+            qr_mock.assert_called_once_with("QRHiddenNet", "SecretPassword", "WPA", hidden=True)
+
+    def test_hidden_network_rebuild_preserves_drafts_and_menu_expansion(self):
+        engine = self.engine()
+        engine._radio_on = True
+        engine._hidden_ssid = "DraftSSID"
+        engine._hidden_password = "DraftPassword"
+        engine._hidden_security = "Open"
+        engine._cached_scans = []
+        engine._saved_wifi = []
+        engine._active_wifi = None
+        engine._active_wifi_connections = []
+
+        fake_menu = nm.ConfigItem(
+            label="Hidden Network…", key="hidden_menu", scope="network",
+            type_="menu", default=None, is_parent=True, expanded=True, group="Actions"
+        )
+        def replace_tabs(replacements):
+            fake_app.schema.update(replacements)
+            return True
+
+        fake_app = SimpleNamespace(
+            schema={0: [fake_menu], 1: [], 2: [], 3: [], 4: [], 5: []},
+            tabs=dict(enumerate(("Networks", "Saved", "Status", "Devices", "Speed Test", "Hotspot"))),
+            pending_commits=set(),
+            _replace_dynamic_tabs=replace_tabs,
+            _rebuild_indexes=lambda: None,
+            _refresh_all_ui=lambda: None,
+        )
+        engine.app = fake_app
+        engine._rebuild_schema()
+
+        # Check Tab 0 items
+        t0 = fake_app.schema.get(0, [])
+        menu_item = next((item for item in t0 if item.key == "hidden_menu"), None)
+        self.assertIsNotNone(menu_item)
+        self.assertTrue(menu_item.expanded)
+
+        ssid_item = next((item for item in t0 if item.key == "hidden_ssid"), None)
+        self.assertIsNotNone(ssid_item)
+        self.assertEqual(ssid_item.value, "DraftSSID")
+
+        pw_item = next((item for item in t0 if item.key == "hidden_password"), None)
+        self.assertIsNotNone(pw_item)
+        self.assertEqual(pw_item.value, "DraftPassword")
+
+        sec_item = next((item for item in t0 if item.key == "hidden_security"), None)
+        self.assertIsNotNone(sec_item)
+        self.assertEqual(sec_item.value, "Open")
+
+    def test_hidden_network_connect_wpa3_sae_fallback(self):
+        engine = self.engine()
+        engine._radio_on = True
+        engine._hidden_ssid = "SAEHidden"
+        engine._hidden_password = "SAEPassword123"
+        engine._hidden_security = "WPA3 (SAE)"
+        engine._saved_wifi = []
+        engine._get_wifi_device = lambda: "wlan0"
+
+        captured_add = []
+        def fake_run(cmd, timeout=None):
+            if "device" in cmd and "connect" in cmd:
+                return SimpleNamespace(returncode=10, stdout="", stderr="Error: No network with SSID 'SAEHidden' found.")
+            if "connection" in cmd and "add" in cmd:
+                captured_add.extend(cmd)
+                return SimpleNamespace(returncode=0, stdout="Connection 'SAEHidden' successfully added.", stderr="")
+            if "connection" in cmd and "up" in cmd:
+                return SimpleNamespace(returncode=0, stdout="Connection successfully activated.", stderr="")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with patch.object(engine, "_run_nmcli", side_effect=fake_run):
+            ok, msg, _ = engine.write_value("connect_hidden", "network", "true")
+            self.assertTrue(ok)
+            self.assertIn("Connected to hidden network SAEHidden", msg)
+            self.assertIn("wifi-sec.key-mgmt", captured_add)
+            self.assertEqual(captured_add[captured_add.index("wifi-sec.key-mgmt") + 1], "sae")
+
+    def test_hidden_network_active_connection_synthesized_in_tab0(self):
+        engine = self.engine()
+        engine._radio_on = True
+        engine._cached_scans = []  # Hidden network NOT in beacon scan
+        engine._saved_wifi = [{"name": "HiddenProf", "ssid": "MyHiddenWifi", "uuid": "h-uuid-1", "autoconnect": True}]
+        engine._active_wifi = {"ssid": "MyHiddenWifi", "device": "wlan0"}
+        engine._active_wifi_connections = [{"ssid": "MyHiddenWifi", "name": "HiddenProf", "uuid": "h-uuid-1", "device": "wlan0", "mode": "infra"}]
+        engine._verbose_info = {"iface": "wlan0", "ssid": "MyHiddenWifi", "signal_dbm": "-50"}
+
+        fake_app = SimpleNamespace(
+            schema={0: [], 1: [], 2: [], 3: [], 4: [], 5: []},
+            tabs=dict(enumerate(("Networks", "Saved", "Status", "Devices", "Speed Test", "Hotspot"))),
+            pending_commits=set(),
+            _replace_dynamic_tabs=lambda replacements: fake_app.schema.update(replacements),
+            _rebuild_indexes=lambda: None,
+            _refresh_all_ui=lambda: None,
+        )
+        engine.app = fake_app
+        engine._rebuild_schema()
+
+        t0 = fake_app.schema.get(0, [])
+        net_item = next((item for item in t0 if item.key == "net__MyHiddenWifi"), None)
+        self.assertIsNotNone(net_item)
+        self.assertIn("● Active", net_item.label)
+        self.assertIn("MyHiddenWifi", net_item.label)
+
+        # Check that disconnect and qr actions exist for it
+        dc_item = next((item for item in t0 if item.key == "dc__h-uuid-1"), None)
+        self.assertIsNotNone(dc_item)
+        qr_item = next((item for item in t0 if item.key == "qr_prof__h-uuid-1"), None)
+        self.assertIsNotNone(qr_item)
+
+    def test_hidden_network_uses_existing_saved_profile_without_password(self):
+        engine = self.engine()
+        engine._radio_on = True
+        engine._hidden_ssid = "SavedHiddenNoPass"
+        engine._hidden_password = ""
+        engine._hidden_security = "Auto"
+        target_uuid = "saved-uuid-1234"
+        engine._saved_wifi = [{"name": "SavedProfile", "ssid": "SavedHiddenNoPass", "uuid": target_uuid, "autoconnect": True}]
+        engine._async_connect_saved = MagicMock(return_value=(True, "Connected to SavedProfile.", ""))
+
+        with patch.object(engine, "_run_nmcli", return_value=SimpleNamespace(returncode=0, stdout="", stderr="")) as run:
+            ok, msg, _ = engine.write_value("connect_hidden", "network", "true")
+            self.assertTrue(ok)
+            engine._async_connect_saved.assert_called_once_with("SavedProfile", target_uuid)
+            modify_cmd = run.call_args[0][0]
+            self.assertEqual(modify_cmd[:5], ["nmcli", "connection", "modify", "uuid", target_uuid])
+            self.assertIn("802-11-wireless.hidden", modify_cmd)
+            self.assertNotIn("802-11-wireless-security.psk", modify_cmd)
+
+    def test_hidden_network_qr_share_retrieves_saved_password(self):
+        engine = self.engine()
+        engine._hidden_ssid = "KnownHiddenNet"
+        engine._hidden_password = ""
+        engine._hidden_security = "Auto"
+        target_uuid = "known-uuid-5678"
+        engine._saved_wifi = [{"name": "KnownProf", "ssid": "KnownHiddenNet", "uuid": target_uuid, "autoconnect": True}]
+        engine._get_wifi_credentials = MagicMock(return_value=("KnownHiddenNet", "RetrievedSecret123", "WPA", True))
+
+        with patch.object(engine, "_trigger_qr_viewer", return_value=(True, "Opened QR share.", "")) as qr_mock:
+            ok, msg, _ = engine.write_value("qr_hidden", "network", "true")
+            self.assertTrue(ok)
+            engine._get_wifi_credentials.assert_called_once_with(target_uuid)
+            qr_mock.assert_called_once_with("KnownHiddenNet", "RetrievedSecret123", "WPA", hidden=True)
 
 
 if __name__ == "__main__":

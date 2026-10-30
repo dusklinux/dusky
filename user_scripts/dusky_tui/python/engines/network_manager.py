@@ -754,6 +754,9 @@ class NetworkManagerEngine(BaseEngine):
         self._uplinks_cache: list[dict[str, str]] = []
         self._last_uplink_refresh = 0.0
         self._radio_on = False
+        self._hidden_ssid = ""
+        self._hidden_password = ""
+        self._hidden_security = "Auto"
         self._active_wifi: dict[str, Any] | None = None
         self._active_wifi_connections: list[dict[str, Any]] = []
         self._saved_wifi: list[dict[str, Any]] = []
@@ -883,6 +886,13 @@ class NetworkManagerEngine(BaseEngine):
         state["hotspot/hotspot_password"] = self._hotspot_password
         state["hotspot/hotspot_device"] = self._hotspot_device
 
+        # Hidden network config
+        state["network/hidden_ssid"] = self._hidden_ssid
+        state["network/hidden_password"] = self._hidden_password
+        state["network/hidden_security"] = self._hidden_security
+        state["network/connect_hidden"] = "false"
+        state["network/qr_hidden"] = "false"
+
         hotspot = self._hotspot_profile(active_only=True)
         state["hotspot/hotspot_status_info"] = "Active" if hotspot else "Inactive"
 
@@ -923,7 +933,7 @@ class NetworkManagerEngine(BaseEngine):
     def write_value(self, target_key: str, target_scope: str, new_value: str, item_type: str = "string") -> tuple[bool, str, str]:
         # Resetting a momentary button must not execute its action.
         trigger = (
-            target_key == "rescan"
+            target_key in {"rescan", "connect_hidden", "qr_hidden"}
             or target_scope in {"status_action", "speedtest_action", "clipboard", "route"}
             or (target_scope in {"saved_action", "active_wifi_action"} and not target_key.startswith("band__"))
             or (target_scope == "network" and target_key.startswith(("cn__", "qr_net__")))
@@ -945,7 +955,7 @@ class NetworkManagerEngine(BaseEngine):
 
     def _write_value(self, target_key: str, target_scope: str, new_value: str, item_type: str) -> tuple[bool, str, str]:
         logger.info("write_value: key=%s, scope=%s, val=%s", target_key, target_scope,
-                    "[hidden]" if target_key == "hotspot_password" or target_key.startswith("pw__") else new_value)
+                    "[hidden]" if target_key in {"hotspot_password", "hidden_password"} or target_key.startswith("pw__") else new_value)
 
         # ---- Rescan button ----
         if target_key == "rescan":
@@ -1550,6 +1560,29 @@ class NetworkManagerEngine(BaseEngine):
         return False, f"Unsupported hotspot action: {key}", ""
 
     def _handle_network_action(self, key: str, value: str) -> tuple[bool, str, str]:
+        if key == "hidden_ssid":
+            val = value.strip()
+            if val and (len(val.encode("utf-8")) > 32 or "\0" in val):
+                return False, "SSID must be 1–32 bytes.", ""
+            self._hidden_ssid = val
+            return True, "Hidden SSID updated.", ""
+
+        if key == "hidden_password":
+            self._hidden_password = value
+            return True, "Hidden network password updated.", ""
+
+        if key == "hidden_security":
+            if value not in {"Auto", "WPA/WPA2/WPA3", "WPA3 (SAE)", "Open", "WEP"}:
+                return False, f"Unsupported security type: {value}", ""
+            self._hidden_security = value
+            return True, f"Hidden security set to {value}.", ""
+
+        if key == "connect_hidden":
+            return self._async_connect_hidden()
+
+        if key == "qr_hidden":
+            return self._share_hidden_qr()
+
         if key.startswith("pw__"):
             ssid = key[4:]
             if not value:
@@ -1828,7 +1861,7 @@ class NetworkManagerEngine(BaseEngine):
         active_wifi = next((connection for connection in active_connections or [] if connection.get("device") == iface), active_wifi)
         if iface:
             if enriched.get("iface") != iface:
-                for field in ("ip", "prefix", "freq", "bitrate", "speed", "band", "rx_bytes", "tx_bytes"):
+                for field in ("ip", "prefix", "freq", "bitrate", "speed", "band", "rx_bytes", "tx_bytes", "signal_dbm"):
                     enriched.pop(field, None)
             enriched["iface"] = iface
             enriched["phy_iface"] = iface
@@ -1874,7 +1907,7 @@ class NetworkManagerEngine(BaseEngine):
         # 4. Wi-Fi details fallback if missing
         phy_iface = enriched.get("phy_iface", iface)
         if enriched.get("type") == "wifi" and phy_iface:
-            if not enriched.get("freq") or not enriched.get("ssid"):
+            if not enriched.get("freq") or not enriched.get("ssid") or not enriched.get("signal_dbm"):
                 try:
                     iw_out = self._run_cmd(["iw", "dev", phy_iface, "link"])
                     if iw_out:
@@ -1882,16 +1915,20 @@ class NetworkManagerEngine(BaseEngine):
                             line_str = line.strip()
                             if line_str.startswith("SSID:") and not enriched.get("ssid"):
                                 enriched["ssid"] = decode_iw_ssid(line.lstrip().removeprefix("SSID:").removeprefix(" "))
-                            elif line_str.startswith("freq:"):
+                            elif line_str.startswith("freq:") and not enriched.get("freq"):
                                 freq_val = line_str.split("freq:", 1)[1].strip()
                                 enriched["freq"] = freq_val
                                 b = band_for_freq(freq_val)
                                 if b:
                                     enriched["band"] = b
-                            elif "tx bitrate:" in line_str:
+                            elif "tx bitrate:" in line_str and not enriched.get("bitrate"):
                                 parts = line_str.split("tx bitrate:", 1)[1].strip().split()
                                 if len(parts) >= 2:
                                     enriched["bitrate"] = f"{parts[0]} {parts[1]}"
+                            elif line_str.startswith("signal:") and not enriched.get("signal_dbm"):
+                                m_sig = re.search(r"(-?\d+)", line_str)
+                                if m_sig:
+                                    enriched["signal_dbm"] = m_sig.group(1)
                 except Exception:
                     pass
 
@@ -2143,6 +2180,137 @@ class NetworkManagerEngine(BaseEngine):
         finally:
             self.rescan_event.set()
 
+    def _share_hidden_qr(self) -> tuple[bool, str, str]:
+        ssid = (self._hidden_ssid or "").strip()
+        if not ssid:
+            return False, "Hidden network SSID cannot be empty.", ""
+        password = self._hidden_password or ""
+        sec = self._hidden_security or "Auto"
+
+        matching_saved = [c for c in self._saved_wifi if c.get("ssid") == ssid]
+        if not password and matching_saved:
+            try:
+                _, s_pw, s_sec, _ = self._get_wifi_credentials(matching_saved[0]["uuid"])
+                if s_pw:
+                    password = s_pw
+                if sec == "Auto" and s_sec:
+                    sec = s_sec
+            except Exception:
+                pass
+
+        if "WPA" in sec.upper() or "SAE" in sec.upper() or "PSK" in sec.upper():
+            qr_sec = "WPA"
+        elif "WEP" in sec.upper():
+            qr_sec = "WEP"
+        elif sec == "Auto":
+            qr_sec = "WPA" if password else "Open"
+        else:
+            qr_sec = "Open"
+        return self._trigger_qr_viewer(ssid, password, qr_sec, hidden=True)
+
+    def _async_connect_hidden(self) -> tuple[bool, str, str]:
+        if not self._radio_on:
+            return False, "Wi-Fi radio is off; enable it before connecting.", ""
+        ssid = (self._hidden_ssid or "").strip()
+        if not ssid:
+            return False, "Hidden network SSID cannot be empty.", ""
+        if len(ssid.encode("utf-8")) > 32 or "\0" in ssid:
+            return False, "Hidden network SSID must be 1–32 bytes.", ""
+        password = self._hidden_password or ""
+        sec = self._hidden_security or "Auto"
+
+        # Check if an existing profile with this SSID is already in NetworkManager
+        matching_saved = [c for c in self._saved_wifi if c.get("ssid") == ssid]
+
+        if not matching_saved and sec in {"WEP", "WPA/WPA2/WPA3", "WPA3 (SAE)"} and not password:
+            return False, f"Password cannot be empty for {sec}.", ""
+        if sec in {"WPA/WPA2/WPA3", "WPA3 (SAE)"} and password:
+            is_valid_len = 8 <= len(password) <= 63 or (
+                len(password) == 64 and all(c in "0123456789abcdefABCDEF" for c in password)
+            )
+            if not is_valid_len:
+                return False, f"{sec} password must be 8–63 ASCII characters (or 64 hex digits).", ""
+
+        if matching_saved:
+            target = matching_saved[0]
+            uuid = target["uuid"]
+            modify_cmd = ["nmcli", "connection", "modify", "uuid", uuid, "802-11-wireless.hidden", "yes"]
+            if password and sec != "Open":
+                if sec == "WEP":
+                    modify_cmd.extend(["802-11-wireless-security.wep-key0", password])
+                elif sec == "WPA3 (SAE)":
+                    modify_cmd.extend(["802-11-wireless-security.key-mgmt", "sae", "802-11-wireless-security.psk", password])
+                elif sec == "WPA/WPA2/WPA3":
+                    modify_cmd.extend(["802-11-wireless-security.key-mgmt", "wpa-psk", "802-11-wireless-security.psk", password])
+                else:
+                    modify_cmd.extend(["802-11-wireless-security.psk", password])
+            self._run_nmcli(modify_cmd, timeout=10)
+            ok, msg, err = self._async_connect_saved(target["name"], uuid)
+            if ok:
+                self._hidden_password = ""
+            return ok, msg, err
+
+        # No existing profile: attempt native nmcli device wifi connect first
+        iface = self._get_wifi_device()
+        cmd = ["nmcli", "device", "wifi", "connect", ssid, "hidden", "yes"]
+        if iface:
+            cmd.extend(["ifname", iface])
+        if password and sec != "Open":
+            cmd.extend(["password", password])
+        if sec == "WEP":
+            cmd.extend(["wep-key-type", "key"])
+
+        try:
+            res = self._run_nmcli(cmd, timeout=30)
+            if res.returncode == 0:
+                self._hidden_password = ""
+                return True, f"Connected to hidden network {ssid}.", ""
+
+            stderr_lower = (res.stderr or "").lower()
+            # If the targeted probe scan did not receive a response in time,
+            # fall back to creating an explicit connection profile with 802-11-wireless.hidden=yes.
+            if res.returncode == 10 or "no network with ssid" in stderr_lower or "failed to scan hidden ssid" in stderr_lower or "no access point" in stderr_lower:
+                new_uuid = str(uuid_module.uuid4())
+                add_cmd = [
+                    "nmcli", "connection", "add", "type", "wifi",
+                    "con-name", ssid,
+                    "connection.uuid", new_uuid,
+                    "ifname", iface or "*",
+                    "ssid", ssid,
+                    "802-11-wireless.hidden", "yes",
+                    "connection.autoconnect", "yes",
+                ]
+                if sec == "Open" or (sec == "Auto" and not password):
+                    pass
+                elif sec == "WEP":
+                    add_cmd.extend(["wifi-sec.key-mgmt", "none", "wifi-sec.wep-key0", password])
+                elif sec == "WPA3 (SAE)":
+                    add_cmd.extend(["wifi-sec.key-mgmt", "sae", "wifi-sec.psk", password])
+                else:
+                    add_cmd.extend(["wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password])
+
+                add_res = self._run_nmcli(add_cmd, timeout=10)
+                if add_res.returncode != 0:
+                    return False, f"Could not create profile for {ssid}: {add_res.stderr.strip()}", add_res.stderr
+
+                up_cmd = ["nmcli", "connection", "up", "uuid", new_uuid]
+                if iface:
+                    up_cmd.extend(["ifname", iface])
+                up_res = self._run_nmcli(up_cmd, timeout=25)
+                if up_res.returncode == 0:
+                    self._hidden_password = ""
+                    return True, f"Connected to hidden network {ssid}.", ""
+
+                # Clean up failed profile to avoid leaving broken connection entries
+                self._run_nmcli(["nmcli", "connection", "delete", "uuid", new_uuid], timeout=10)
+                return False, f"Could not connect to {ssid}: {up_res.stderr.strip() or f'exit {up_res.returncode}'}", up_res.stderr
+
+            return False, f"Could not connect to {ssid}: {res.stderr.strip() or f'exit {res.returncode}'}", res.stderr
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return False, f"Could not connect to {ssid}: {command_failure(exc)}", ""
+        finally:
+            self.rescan_event.set()
+
     def _async_connect_saved(self, label: str, uuid: str) -> tuple[bool, str, str]:
         try:
             res = self._run_nmcli(
@@ -2356,6 +2524,42 @@ class NetworkManagerEngine(BaseEngine):
             extended_help="Scan for nearby networks."
         ))
 
+        hidden_parent_uid = "network.hidden_menu"
+        hidden_expanded = hidden_parent_uid in expanded
+        t0.append(self._make_item(
+            label="Hidden Network…", key="hidden_menu", scope="network",
+            type_="menu", default=None, is_parent=True, expanded=hidden_expanded,
+            group="Actions", extended_help="Connect to a hidden Wi-Fi network that does not broadcast its SSID."
+        ))
+        t0.append(self._make_item(
+            label="Hidden SSID", key="hidden_ssid", scope="network",
+            type_="string", default=self._hidden_ssid, parent_ref=hidden_parent_uid,
+            group="Actions", extended_help="SSID of the hidden network."
+        ))
+        t0.append(self._make_item(
+            label="Password", key="hidden_password", scope="network",
+            type_="string", default=self._hidden_password, parent_ref=hidden_parent_uid,
+            group="Actions", extended_help="Password for the hidden network. Leave blank for open networks."
+        ))
+        t0.append(self._make_item(
+            label="Security", key="hidden_security", scope="network",
+            type_="cycle", default=self._hidden_security,
+            options=["Auto", "WPA/WPA2/WPA3", "WPA3 (SAE)", "Open", "WEP"], parent_ref=hidden_parent_uid,
+            group="Actions", extended_help="Security protocol. Auto will probe the access point."
+        ))
+        t0.append(self._make_item(
+            label="Connect", key="connect_hidden", scope="network",
+            type_="bool", default=False, options=["trigger"],
+            parent_ref=hidden_parent_uid, group="Actions",
+            extended_help="Connect to the specified hidden Wi-Fi network."
+        ))
+        t0.append(self._make_item(
+            label="Share QR", key="qr_hidden", scope="network",
+            type_="bool", default=False, options=["trigger"],
+            parent_ref=hidden_parent_uid, group="Actions",
+            extended_help="Show Wi-Fi QR code for the specified hidden network."
+        ))
+
         if not radio:
             t0.append(self._make_item(
                 label="Wi-Fi Off",
@@ -2379,12 +2583,37 @@ class NetworkManagerEngine(BaseEngine):
                     row["match"] = match
                     wifi_rows_data.append(row)
 
+            # Ensure any active Wi-Fi connection (such as a connected hidden network)
+            # is visible in Tab 0 even if absent from broadcast beacon scans.
+            seen_ssids = {r["ssid"] for r in wifi_rows_data}
+            for connection in active_connections:
+                act_ssid = connection.get("ssid")
+                if act_ssid and act_ssid not in seen_ssids:
+                    match = [c for c in saved if c["ssid"] == act_ssid]
+                    sig_dbm = verb.get("signal_dbm", "")
+                    try:
+                        sig_pct = min(100, max(0, 2 * (int(sig_dbm) + 100))) if sig_dbm else 85
+                    except (ValueError, TypeError):
+                        sig_pct = 85
+                    row = wifi_row({
+                        "ssid": act_ssid,
+                        "connected": True,
+                        "known": len(match) > 0,
+                        "signal": sig_pct,
+                        "security": "WPA2",
+                    })
+                    if row:
+                        row["raw_net"] = {"ssid": act_ssid, "signal": sig_pct, "device": connection.get("device")}
+                        row["match"] = match
+                        wifi_rows_data.append(row)
+                        seen_ssids.add(act_ssid)
+
             sorted_rows = sort_wifi_rows(wifi_rows_data)
             if not sorted_rows:
                 t0.append(self._make_item(
                     label="No visible networks; use Rescan", key="empty_scan", scope="network",
                     type_="action", default=":", read_only=True, group="Networks",
-                    extended_help="No access points were returned. Check radio availability or rescan. Hidden-network setup requires a profile editor."
+                    extended_help="No access points were returned. Check radio availability or rescan, or use Hidden Network above."
                 ))
 
             for r in sorted_rows:
@@ -2694,7 +2923,10 @@ class NetworkManagerEngine(BaseEngine):
 
         # Connection status string using connection_icon pure logic
         sig_dbm = verb.get("signal_dbm", "")
-        sig_pct = 70 if sig_dbm else 0
+        try:
+            sig_pct = min(100, max(0, 2 * (int(sig_dbm) + 100))) if sig_dbm else 70
+        except (ValueError, TypeError):
+            sig_pct = 70
         icon_str = connection_icon(conn_type, sig_pct)
         conn_status_label = f"{icon_str} {conn_type.upper()} ({ssid_label})"
 
@@ -2727,7 +2959,10 @@ class NetworkManagerEngine(BaseEngine):
             or getattr(self.app, "_save_auth_pending", None)
             or (hasattr(self.app, "_modal_active") and self.app._modal_active())
         )
-        mutable_keys = {"wifi_radio", "hotspot_device", "hotspot_ssid", "hotspot_password"}
+        mutable_keys = {
+            "wifi_radio", "hotspot_device", "hotspot_ssid", "hotspot_password",
+            "hidden_ssid", "hidden_password", "hidden_security"
+        }
 
         # Update all tabs agnostic of exact tab index
         for tab_items in self.app.schema.values():
@@ -2788,6 +3023,12 @@ class NetworkManagerEngine(BaseEngine):
                     item.value = self._hotspot_ssid
                 elif item.key == "hotspot_password":
                     item.value = self._hotspot_password
+                elif item.key == "hidden_ssid":
+                    item.value = self._hidden_ssid
+                elif item.key == "hidden_password":
+                    item.value = self._hidden_password
+                elif item.key == "hidden_security":
+                    item.value = self._hidden_security
 
         self._clipboard_values = {
             **getattr(self, "_device_clip_values", {}),

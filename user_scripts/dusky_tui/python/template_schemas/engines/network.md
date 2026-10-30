@@ -22,6 +22,12 @@ for writes — target presence only affects `[Missing]` rendering.
 | scope | key | type | semantics |
 |---|---|---|---|
 | `network` | `rescan` | bool trigger | sets rescan event (same as `status_action/rescan`) |
+| `network` | `hidden_menu` | menu parent | expandable folder (`type_="menu"`, `is_parent=True`) for connecting to hidden networks |
+| `network` | `hidden_ssid` | string | in-memory hidden network SSID draft |
+| `network` | `hidden_password` | string | in-memory hidden network password draft (masked in logs) |
+| `network` | `hidden_security` | cycle | security selector (`"Auto"`, `"WPA/WPA2/WPA3"`, `"WPA3 (SAE)"`, `"Open"`, `"WEP"`) |
+| `network` | `connect_hidden` | bool trigger | initiates connection to hidden network via targeted scan and profile fallback |
+| `network` | `qr_hidden` | bool trigger | shares hidden network credentials via interactive QR code with `H:true` |
 | `network` | `net__<ssid>` | menu parent | engine-created per-SSID folder (`type_="menu"`, `is_parent=True`) — never write it |
 | `network` | `cn__<ssid>` | bool trigger | connect: saved profile by name, else open network |
 | `network` | `rc__<ssid>` | bool trigger | reconnect: disconnects and brings connection back up |
