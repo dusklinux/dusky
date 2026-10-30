@@ -155,10 +155,6 @@ CORE_USER_DEFS = {
         "LLM Service (dusky_llm)",
         "Local LLM inference daemon (Ollama / llama.cpp wrapper). Handles prompt completion and embeddings for Dusky AI features.",
     ),
-    "dusky_stt.service": (
-        "STT (Parakeet GPU)",
-        "Speech-to-text daemon (NVIDIA Parakeet 0.6B, on-demand CUDA worker). ON = warm-resident: model preloaded, instant dictation, VRAM held (plugged-in mode). OFF = on-demand: hotkey still works, VRAM held only mid-job, then worker exits and the service stops itself so the dGPU can sleep (battery mode).",
-    ),
     "dusky_firefox_cache.service": (
         "Firefox Profile RAM Sync",
         "Synchronizes Firefox profiles into RAM (tmpfs) to eliminate SSD write amplification from cookie and SQLite churn. Automatically restores to disk on shutdown, with periodic background resyncs.",
@@ -175,9 +171,29 @@ CORE_USER_DEFS = {
         "WirePlumber Audio Session",
         "Session and policy manager for PipeWire. Handles audio streams, hardware device switching, Bluetooth audio endpoints, and volume persistence.",
     ),
+    "pipewire.service": (
+        "PipeWire Core Audio",
+        "Low-level multimedia processing graph and audio routing engine for Wayland and Linux. Toggling or restarting resets the multimedia server.",
+    ),
+    "pipewire-pulse.service": (
+        "PipeWire PulseAudio Server",
+        "PulseAudio compatibility daemon for PipeWire. Emulates the PulseAudio socket server for legacy applications, games, and browser audio.",
+    ),
     "gamemoded.service": (
         "GameMode Optimizer",
         "Feral Interactive GameMode daemon. Temporarily prioritizes CPU frequency governors, I/O scheduling, and GPU performance while gaming.",
+    ),
+    "dusky-band.service": (
+        "Dusky Band Companion",
+        "Xiaomi Mi Smart Band 5 Bluetooth LE companion daemon (dusky-band daemon). Manages continuous BLE telemetry, health metric synchronization, and desktop notification forwarding to your smart band.",
+    ),
+    "dusky_phone_sync_usb.service": (
+        "Phone Sync USB Tunnel",
+        "Spawns a local USB SSH tunnel (/usr/bin/iproxy -s 127.0.0.1 2222:22) for wired Duskie iPhone clipboard synchronization and file transfer over Lightning/Type-C.",
+    ),
+    "slsteam-desktop-guardian.timer": (
+        "Steam Desktop Guardian",
+        "Periodically reconciles Steam desktop launch shortcuts and coverage. Runs 30 seconds after login, then every 5 minutes.",
     ),
 }
 
@@ -323,6 +339,14 @@ CORE_SYSTEM_DEFS = {
         "SuperGFX dGPU Switcher",
         "Dedicated GPU switching daemon for ASUS and hybrid laptops. Allows switching between Integrated, Hybrid, and Dedicated GPU graphics modes.",
     ),
+    "nvidia-powerd.service": (
+        "NVIDIA Dynamic Boost",
+        "NVIDIA Dynamic Boost daemon (/usr/bin/nvidia-powerd). Dynamically balances real-time power budget between the CPU and mobile NVIDIA RTX GPU based on current workloads.",
+    ),
+    "libvirt-guests.service": (
+        "Libvirt Guest Lifecycle",
+        "Automates clean suspension and resumption of running KVM virtual machines during host shutdown and boot.",
+    ),
 }
 
 import concurrent.futures
@@ -354,8 +378,8 @@ CORE_USER_SECTIONS = (
     ("Desktop & Session", (
         "hyprsunset.service", "hypridle.service", "dusky_proximity.service",
         "osd_lock.service", "dusky_polkit.service", "dusky_clipboard.service",
-        "dusky_phone_sync.service",
-        "dusky_vdagent.service", "dusky_oom_shield.service", "wireplumber.service",
+        "dusky_phone_sync.service", "dusky_phone_sync_usb.service",
+        "dusky_vdagent.service", "dusky_oom_shield.service",
     )),
     ("Remote Displays & Streaming", (
         "dusky_vnc_desktop.service", "dusky_vnc_display.service",
@@ -364,10 +388,14 @@ CORE_USER_SECTIONS = (
     ("Panels & Integration", (
         "dusky_network.service",
         "dusky_notif_time.service", "dusky_visualizer.service", "dusky_screentime.service",
-        "gamemoded.service",
+        "dusky-band.service",
+    )),
+    ("Gaming", (
+        "gamemoded.service", "slsteam-desktop-guardian.timer",
     )),
     ("Media & AI", (
-        "dusky_llm.service", "dusky_stt.service",
+        "pipewire.service", "pipewire-pulse.service", "wireplumber.service",
+        "dusky_llm.service",
     )),
     ("Power & Monitoring", (
         "dusky_battery.service", "dusky_ram_monitor.service",
@@ -385,13 +413,16 @@ CORE_SYSTEM_SECTIONS = (
     ("Containers", (
         "docker.service", "waydroid-container.service",
     )),
+    ("Virtualization & VMs", (
+        "libvirt-guests.service",
+    )),
     ("Power & Hardware", (
         "tlp.service", "battery-charge-limit.service", "dusky_cpu.service",
         "dusky_kbd_backlight.service", "ghelper-gpu-boot.service",
         "glance_cpu_pkg_watt.service", "thermald.service", "acpid.service",
-        "asusd.service", "supergfxd.service", "dusky_zram_recompress.timer",
-        "dusky_boot_zram_flush.timer", "dusky_pro_active_zram_swap.timer",
-        "dusky_powertop_autotune.timer",
+        "asusd.service", "supergfxd.service", "nvidia-powerd.service",
+        "dusky_zram_recompress.timer", "dusky_boot_zram_flush.timer",
+        "dusky_pro_active_zram_swap.timer", "dusky_powertop_autotune.timer",
     )),
     ("Input & Session", (
         "numlock_disable.service", "dusky_keylogger.service",
