@@ -35,7 +35,7 @@ mode = "embedded"
 [performance]
 gamemode = true
 mangohud = false
-fps_limit = 60
+fps_limit = 0
 
 [hooks]
 pre_launch = ["bash -c 'if [ ! -f \"$HOME/.factorio/wayland_fix/libEGL.so.1\" ] && [ -f \"$HOME/user_scripts/apps/factorio/use_wayland/fix_run_on_wayland.py\" ]; then python3 \"$HOME/user_scripts/apps/factorio/use_wayland/fix_run_on_wayland.py\" --check; fi'"]
