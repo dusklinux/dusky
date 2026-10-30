@@ -273,7 +273,7 @@ def normalize_lsmod_file_to_db(src: Path, dest: Path) -> int:
         return 0
     return len(names)
 KERNEL_ORG_RELEASES: Final = "https://www.kernel.org/releases.json"
-ARCH_UPSTREAM_CONFIG_URL: Final = "https://gitlab.archlinux.org/archlinux/packaging/packages/linux/-/raw/main/config"
+ARCH_UPSTREAM_CONFIG_URL: Final = "https://gitlab.archlinux.org/archlinux/packaging/packages/linux/-/raw/main/config.x86_64"
 KERNEL_SIGNING_FPRS: Final = frozenset({
     "ABAF11C65A2970B130ABE3C479BE3E4300411886",  # Linus Torvalds
     "647F28654894E3BD457199BE38DBBDC86092693E",  # Greg Kroah-Hartman
@@ -2787,7 +2787,7 @@ def ensure_modprobed_db(p: KernelProfile) -> Path | None:
 
 
 LMC_KEEP_BASE: Final = ("drivers/usb", "drivers/gpu", "drivers/net", "drivers/hid", "drivers/input", "drivers/nvme", "drivers/bluetooth",
-                        "drivers/thunderbolt", "drivers/platform/x86", "drivers/media/usb", "sound", "fs", "net/wireless", "crypto")
+                        "drivers/thunderbolt", "drivers/platform/x86", "drivers/media/usb", "sound", "fs", "net/wireless", "crypto", "drivers/android", "net/netfilter")
 
 
 def _generate_modprobed_db_from_lsmod() -> Path | None:
@@ -3161,8 +3161,16 @@ def _ops_core(mx: Matrix, p: KernelProfile, d: Derived) -> None:
                 "UNIX", "INET", "IPV6", "NETFILTER", "PACKET", "CRYPTO_USER_API_HASH", "CRYPTO_USER_API_SKCIPHER", "CRYPTO_USER_API_RNG", "CRYPTO_USER_API_AEAD",
                 "INTEGRITY"):
         mx.y(sym)
-    for sym in ("BINFMT_MISC", "BLK_DEV_LOOP", "FUSE_FS", "OVERLAY_FS", "DM_CRYPT", "DM_INTEGRITY", "X86_MSR", "X86_CPUID"):
+    for sym in ("BINFMT_MISC", "BLK_DEV_LOOP", "FUSE_FS", "OVERLAY_FS", "DM_CRYPT", "DM_INTEGRITY", "X86_MSR", "X86_CPUID", "VETH", "BRIDGE"):
         mx.m(sym)
+    mx.y("ANDROID_BINDER_IPC", why="Android Binder IPC (Waydroid)")
+    mx.y("ANDROID_BINDERFS", why="Android Binderfs filesystem (Waydroid)")
+    mx.s("ANDROID_BINDER_DEVICES", "binder,hwbinder,vndbinder", why="Binder IPC device nodes")
+    mx.n("ANDROID_BINDER_IPC_RUST", optional=True, why="prefer stable C Binder IPC driver for Waydroid")
+    mx.y("CHECKPOINT_RESTORE", optional=True, why="container checkpoint/restore (LXC)")
+    mx.y("MEMFD_CREATE", optional=True, why="memfd_create (Waydroid/ashmem replacement)")
+    for sym in ("IP_NF_MANGLE", "IP_NF_NAT", "NETFILTER_XT_TARGET_CHECKSUM", "NETFILTER_XT_MATCH_COMMENT", "IP6_NF_MANGLE", "IP6_NF_NAT"):
+        mx.m(sym, optional=True, why="container packet mangling/NAT (Waydroid/LXC)")
     comp = {"zstd": "RD_ZSTD", "xz": "RD_XZ", "lz4": "RD_LZ4", "gzip": "RD_GZIP", "lzma": "RD_LZMA", "bzip2": "RD_BZIP2", "lzo": "RD_LZO"}
     mx.y(comp.get(f.initrd_compression, "RD_ZSTD"), why=f"mkinitcpio COMPRESSION={f.initrd_compression}")
     mx.y("X86_X2APIC", optional=True, why="needs IRQ_REMAP or HYPERVISOR_GUEST")
@@ -3956,6 +3964,8 @@ VERIFY_HINTS: Final[dict[str, str]] = {
     "INIT_STACK_ALL_ZERO": "requires a compiler supporting -ftrivial-auto-var-init=zero",
     "KFENCE_SAMPLE_INTERVAL": "only visible when KFENCE=y",
     "VFIO_PCI_DMABUF": "requires VFIO_PCI_CORE, PCI_P2PDMA (needs ZONE_DEVICE/MEMORY_HOTPLUG), and DMA_SHARED_BUFFER",
+    "ANDROID_BINDER_IPC": "requires MMU and NET",
+    "ANDROID_BINDERFS": "requires ANDROID_BINDER_IPC=y",
 }
 
 

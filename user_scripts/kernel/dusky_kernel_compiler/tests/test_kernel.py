@@ -771,6 +771,18 @@ class AuditTests(unittest.TestCase):
         self.assertEqual(ops['ZRAM_BACKEND_LZ4'], 'n')
         self.assertEqual(ops['ZRAM_BACKEND_ZSTD'], 'y')
 
+    def test_core_matrix_includes_binder_and_veth_for_containers(self):
+        p = profile()
+        ops_dict = {o.symbol: o for o in k.build_config_matrix(p, derived(p)).ops}
+        self.assertEqual(ops_dict['ANDROID_BINDER_IPC'].action, 'y')
+        self.assertEqual(ops_dict['ANDROID_BINDERFS'].action, 'y')
+        self.assertEqual(ops_dict['ANDROID_BINDER_DEVICES'].value, 'binder,hwbinder,vndbinder')
+        self.assertEqual(ops_dict['VETH'].action, 'm')
+        self.assertEqual(ops_dict['BRIDGE'].action, 'm')
+        self.assertEqual(ops_dict['IP_NF_MANGLE'].action, 'm')
+        self.assertEqual(ops_dict['NETFILTER_XT_TARGET_CHECKSUM'].action, 'm')
+        self.assertEqual(ops_dict['MEMFD_CREATE'].action, 'y')
+
     def test_single_numa_node_does_not_compile_numa(self):
         p = profile(); p.set('memory', 'numa', True)
         for nodes, expected in ((1, 'n'), (2, 'y')):
