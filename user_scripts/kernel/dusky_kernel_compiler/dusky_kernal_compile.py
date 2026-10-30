@@ -5094,6 +5094,70 @@ def storage_session(use_ram: bool, tree_name: str):
         RAM_RESERVE_GIB = 0
 
 
+def show_ram_fallback_warning(res: Any, lto: str = "thin") -> None:
+    gib = 1 << 30
+    total_ram = getattr(res, "total_ram", 0) or int(host_facts().mem_gib * gib)
+    needed = getattr(res, "needed", 0) or (22 * gib)
+    reserve = getattr(res, "reserve", 0) or (STORAGE.get("ram_reserve_gib", 0) << 30)
+    reusable = getattr(res, "reusable", 0)
+    available = getattr(res, "available", 0)
+    budget = getattr(res, "budget", 0)
+    if not available and budget:
+        available = max(0, budget + reserve - reusable)
+
+    threshold = max(0, needed + reserve - reusable)
+    deficit = max(0, threshold - available) if available else 0
+    base_gib = 30.0 if lto == "full" else 22.0
+    cache_gib = max(0.0, (needed / gib) - base_gib)
+
+    try:
+        from rich.console import Console
+        from rich.panel import Panel
+        from rich.table import Table
+        from rich.box import ROUNDED
+        from rich.align import Align
+
+        console = Console(width=min(96, max(78, term_width())), highlight=False)
+        table = Table.grid(padding=(0, 2))
+        table.add_column(justify="right", style="bold bright_yellow")
+        table.add_column(justify="left", style="white")
+
+        table.add_row("Host Physical RAM:", f"{total_ram / gib:.1f} GiB")
+        if cache_gib > 0.05:
+            table.add_row("Estimated Workspace Needed:", f"{needed / gib:.1f} GiB [dim]({base_gib:.1f} GiB base + {cache_gib:.1f} GiB caches)[/dim]")
+        else:
+            table.add_row("Estimated Workspace Needed:", f"{needed / gib:.1f} GiB")
+        table.add_row("Safety RAM Reserve:", f"{reserve / gib:.1f} GiB [dim](preserved for OS & applications)[/dim]")
+        table.add_row("Required Available RAM:", f"[bold bright_green]{threshold / gib:.1f} GiB[/bold bright_green] [dim](threshold: needed + reserve)[/dim]")
+        if available:
+            table.add_row("Current Available RAM:", f"{available / gib:.1f} GiB")
+        if deficit > 0:
+            table.add_row("RAM Deficit to Clear:", f"[bold bright_red]{deficit / gib:.1f} GiB[/bold bright_red] [dim](free to enable RAM build)[/dim]")
+
+        panel = Panel(
+            Align.center(table),
+            title="[bold yellow]▲ RAM Build Fallback: Memory Constrained ▲[/bold yellow]",
+            subtitle="[bold red]Falling back to persistent disk will write tens of gigabytes to SSD/NAND[/bold red]",
+            border_style="yellow",
+            box=ROUNDED,
+            padding=(1, 2),
+        )
+
+        with console.capture() as capture:
+            console.print()
+            console.print(panel)
+            console.print()
+        for line in capture.get().splitlines():
+            say(line)
+    except Exception:
+        warn(f"RAM build fallback: {getattr(res, 'detail', str(res))}")
+        warn(f"This system has {total_ram / gib:.1f} GiB physical RAM (workspace requires ~{needed / gib:.1f} GiB), but available memory is currently constrained.")
+        warn(f"Required Available RAM threshold: {threshold / gib:.1f} GiB (needed + {reserve / gib:.1f} GiB reserve).")
+        if deficit > 0:
+            warn(f"RAM deficit to clear: {deficit / gib:.1f} GiB.")
+        warn("Falling back to persistent disk will write tens of gigabytes to SSD/NAND and cause drive wear.")
+
+
 def choose_ram_build(args: argparse.Namespace, lto: str = "thin", tree_name: str = "") -> bool:
     """Prefer RAM automatically when the mount and measured capacity permit it."""
     res = kernel_storage.ram_capacity(STORAGE, lto, tree_name)
@@ -5104,11 +5168,7 @@ def choose_ram_build(args: argparse.Namespace, lto: str = "thin", tree_name: str
 
     phys_ram_sufficient = getattr(res, "phys_ram_sufficient", False)
     if phys_ram_sufficient:
-        warn(f"RAM build fallback: {detail}")
-        total_str = f"{res.total_ram / (1 << 30):.1f} GiB" if getattr(res, "total_ram", 0) else f"{host_facts().mem_gib:.1f} GiB"
-        needed_str = f"{res.needed / (1 << 30):.1f} GiB" if getattr(res, "needed", 0) else "22.0 GiB"
-        warn(f"This system has {total_str} physical RAM (workspace requires ~{needed_str}), but available memory is currently constrained.")
-        warn("Falling back to persistent disk will write tens of gigabytes to SSD/NAND and cause drive wear.")
+        show_ram_fallback_warning(res, lto=lto)
         if getattr(args, "no_prompt", False) or ASSUME_YES:
             note("Continuing on SSD (--no-prompt / --yes).")
             return False

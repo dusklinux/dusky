@@ -547,11 +547,25 @@ class AuditTests(unittest.TestCase):
         args = k.build_parser().parse_args([])
         gib = 1 << 30
         res = k.kernel_storage.RamCapacity(False, 'low available memory', phys_ram_sufficient=True,
-                                           total_ram=64 * gib, needed=22 * gib, budget=12 * gib)
+                                           total_ram=64 * gib, needed=22 * gib, budget=12 * gib,
+                                           available=20 * gib, reserve=8 * gib)
         with patch.object(k.kernel_storage, 'ram_capacity', return_value=res):
             with patch('builtins.input', return_value='n'), patch.object(k, 'interactive', return_value=True):
                 with self.assertRaises(k.AbortError):
                     k.choose_ram_build(args)
+
+    def test_show_ram_fallback_warning_renders_rich_panel(self):
+        gib = 1 << 30
+        res = k.kernel_storage.RamCapacity(False, 'low memory', phys_ram_sufficient=True,
+                                           total_ram=64 * gib, needed=30 * gib, budget=12 * gib,
+                                           available=20 * gib, reserve=8 * gib)
+        with patch.object(k, 'say') as mock_say:
+            k.show_ram_fallback_warning(res, lto='thin')
+            self.assertTrue(mock_say.called)
+            # Ensure lines were emitted
+            captured = "".join(call[0][0] for call in mock_say.call_args_list)
+            self.assertIn("RAM Build Fallback", captured)
+            self.assertIn("64.0 GiB", captured)
 
     def test_ram_choice_proceeds_on_ssd_when_confirmed_or_no_prompt(self):
         args = k.build_parser().parse_args([])

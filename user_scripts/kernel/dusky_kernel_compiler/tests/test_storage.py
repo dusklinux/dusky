@@ -185,6 +185,8 @@ class CapacityTests(unittest.TestCase):
                 self.assertFalse(res_64.ready)
                 self.assertTrue(res_64.phys_ram_sufficient)
                 self.assertEqual(res_64.total_ram, 64 * gib)
+                self.assertEqual(res_64.available, 10 * gib)
+                self.assertEqual(res_64.reserve, 8 * gib)
             with patch.object(Path, 'read_text', return_value=meminfo_16g):
                 res_16 = s.ram_capacity(cfg, 'thin', 'linux')
                 self.assertFalse(res_16.ready)
