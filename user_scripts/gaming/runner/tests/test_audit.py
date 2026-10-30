@@ -1,5 +1,6 @@
 """Focused regressions and protocol checks using disposable files and processes."""
 import array
+import dataclasses
 import importlib.util
 import json
 import os
@@ -277,6 +278,43 @@ class AuditTests(unittest.TestCase):
             _, kwargs = mock_prov.call_args
             self.assertFalse(kwargs['want_nvapi'])
             self.assertFalse(kwargs['want_dlss'])
+
+    def test_case_insensitive_executable_resolution(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            target_dir = root / "Bin" / "X64"
+            target_dir.mkdir(parents=True)
+            target_file = target_dir / "Game.exe"
+            target_file.touch()
+
+            profile = self.mgr.load('game', overrides={'paths': {'executable': 'bin/x64/game.exe'}})
+            paths = dataclasses.replace(r.resolve_paths(profile), game_dir=root)
+            pipe = r.PipelineBuilder(profile, paths, dry_run=False, extra_args=[])
+            resolved = pipe.resolve_executable()
+            self.assertEqual(resolved, target_file)
+
+    def test_wine_batch_script_invoked_via_cmd(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            script_file = root / "installer.bat"
+            script_file.touch()
+
+            profile = self.mgr.load('game', overrides={
+                'runtime': {'type': 'wine'},
+                'paths': {'executable': 'installer.bat', 'arguments': ['/silent']}
+            })
+            paths = dataclasses.replace(r.resolve_paths(profile), game_dir=root)
+            pipe = r.PipelineBuilder(profile, paths, dry_run=True, extra_args=[])
+            argv, _ = pipe.build(under_gamescope=False)
+            self.assertEqual(argv[-5:], ["wine", "cmd", "/c", str(script_file), "/silent"])
+
+    def test_wine_offline_skips_mono_and_gecko(self):
+        profile = self.mgr.load('game', overrides={'runtime': {'type': 'wine'}})
+        builder = r.EnvironmentBuilder(profile, r.resolve_paths(profile), dry_run=True)
+        builder.env['WAYLAND_DISPLAY'] = 'wayland-1'
+        builder.stage_wine(dry_run=True, under_gamescope=False)
+        self.assertEqual(builder.env.get('WINE_SKIP_GECKO_INSTALLATION'), '1')
+        self.assertEqual(builder.env.get('WINE_SKIP_MONO_INSTALLATION'), '1')
 
     def test_no_scope_wait_is_event_driven(self):
         selector = r.selectors.DefaultSelector()

@@ -3020,6 +3020,8 @@ class WinePrefix:
         env["WINEPREFIX"] = str(self.pfx)
         env["WINEARCH"] = self.arch
         env["WINEDEBUG"] = "-all"
+        env.setdefault("WINE_SKIP_GECKO_INSTALLATION", "1")
+        env.setdefault("WINE_SKIP_MONO_INSTALLATION", "1")
         env.pop("DISPLAY", None)
         env.pop("WINEDLLOVERRIDES", None)
         if extra:
@@ -3909,6 +3911,8 @@ class EnvironmentBuilder:
 
         if bool(wcfg.get("large_address_aware", True)):
             self._set("WINE_LARGE_ADDRESS_AWARE", "1")
+        self._set("WINE_SKIP_GECKO_INSTALLATION", "1")
+        self._set("WINE_SKIP_MONO_INSTALLATION", "1")
 
         # ---- synchronisation primitive selection -------------------------
         mode = enum_or(SyncMode, wcfg.get("sync_mode", "auto"), SyncMode.AUTO)
@@ -4653,6 +4657,30 @@ class PipelineBuilder:
         direct = (root / rel) if not os.path.isabs(rel) else Path(rel)
         if direct.is_file():
             return direct
+        # Case-insensitive resolution fallback for Windows/repack path discrepancies
+        if not os.path.isabs(rel) and root.is_dir():
+            target = root
+            matched = True
+            for part in Path(rel).parts:
+                if not target.is_dir():
+                    matched = False
+                    break
+                part_lower = part.lower()
+                found = False
+                try:
+                    for child in target.iterdir():
+                        if child.name.lower() == part_lower:
+                            target = child
+                            found = True
+                            break
+                except OSError:
+                    pass
+                if not found:
+                    matched = False
+                    break
+            if matched and target.is_file():
+                Log.warn(f"executable case mismatch at {rel}; using {target.relative_to(root)}")
+                return target
         # Bounded discovery: repacks nest the binary one or two levels deeper.
         name = os.path.basename(rel)
         for depth in (1, 2, 3):
@@ -4697,14 +4725,29 @@ class PipelineBuilder:
                     launcher = "umu-run"
                 if not self.dry_run and not have(launcher):
                     raise ConfigError(f"[{self.p.pid}] {launcher} is required for {rt}")
-                inner = [launcher, str(exe), *args]
+                suffix = exe.suffix.lower()
+                if suffix in (".bat", ".cmd"):
+                    inner = [launcher, "cmd", "/c", str(exe), *args]
+                elif suffix == ".msi":
+                    inner = [launcher, "msiexec", "/i", str(exe), *args]
+                else:
+                    inner = [launcher, str(exe), *args]
             case "wine":
                 wine = str(self.p.get("runtime.wine.wine_binary") or "wine")
                 base = os.path.basename(wine).lower()
-                if "proton" in base and "umu" not in base:
-                    inner = [wine, "run", str(exe), *args]
+                suffix = exe.suffix.lower()
+                if suffix in (".bat", ".cmd"):
+                    wine_target = ["cmd", "/c", str(exe), *args]
+                elif suffix == ".msi":
+                    wine_target = ["msiexec", "/i", str(exe), *args]
+                elif suffix == ".lnk":
+                    wine_target = ["start", "/unix", str(exe), *args]
                 else:
-                    inner = [wine, str(exe), *args]
+                    wine_target = [str(exe), *args]
+                if "proton" in base and "umu" not in base:
+                    inner = [wine, "run", *wine_target]
+                else:
+                    inner = [wine, *wine_target]
             case other:
                 raise ConfigError(f"[{self.p.pid}] unknown runtime.type {other!r}")
 
