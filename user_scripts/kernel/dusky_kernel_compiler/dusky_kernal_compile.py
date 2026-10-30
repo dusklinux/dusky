@@ -5160,24 +5160,33 @@ def show_ram_fallback_warning(res: Any, lto: str = "thin") -> None:
 
 def choose_ram_build(args: argparse.Namespace, lto: str = "thin", tree_name: str = "") -> bool:
     """Prefer RAM automatically when the mount and measured capacity permit it."""
-    res = kernel_storage.ram_capacity(STORAGE, lto, tree_name)
-    ready, detail = res[0], res[1]
-    if ready:
-        note(detail)
-        return True
+    while True:
+        res = kernel_storage.ram_capacity(STORAGE, lto, tree_name)
+        ready, detail = res[0], res[1]
+        if ready:
+            note(detail)
+            return True
 
-    phys_ram_sufficient = getattr(res, "phys_ram_sufficient", False)
-    if phys_ram_sufficient:
+        phys_ram_sufficient = getattr(res, "phys_ram_sufficient", False)
+        if not phys_ram_sufficient:
+            note(detail)
+            return False
+
         show_ram_fallback_warning(res, lto=lto)
-        if getattr(args, "no_prompt", False) or ASSUME_YES:
+        if getattr(args, "no_prompt", False) or ASSUME_YES or not interactive():
             note("Continuing on SSD (--no-prompt / --yes).")
             return False
-        if not ask_yes("Do you want to continue building on SSD anyway?", default=False):
-            raise AbortError("Build aborted to prevent SSD wear. Free up memory/RAM and run again to build in RAM.")
-        return False
 
-    note(detail)
-    return False
+        while True:
+            action = ask("Retry RAM check, continue on SSD anyway, or abort? [R]etry / [y]es / [n]o", "r").strip().lower()
+            if action in ("r", "retry", ""):
+                info("Re-checking available RAM and storage capacity...")
+                break
+            if action in ("y", "yes"):
+                return False
+            if action in ("n", "no", "q", "quit"):
+                raise AbortError("Build aborted to prevent SSD wear. Free up memory/RAM and run again to build in RAM.")
+            warn(f"Invalid choice '{action}'. Enter 'r' (or press Enter) to retry, 'y' to continue on SSD, or 'n' to abort.")
 
 
 def do_build(args: argparse.Namespace) -> int:

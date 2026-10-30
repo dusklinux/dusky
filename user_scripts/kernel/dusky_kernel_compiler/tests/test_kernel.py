@@ -579,6 +579,20 @@ class AuditTests(unittest.TestCase):
             with patch('builtins.input', side_effect=AssertionError('no prompt')):
                 self.assertFalse(k.choose_ram_build(no_prompt_args))
 
+    def test_ram_choice_retries_on_return_and_succeeds_when_memory_freed(self):
+        args = k.build_parser().parse_args([])
+        gib = 1 << 30
+        res_fail = k.kernel_storage.RamCapacity(False, 'low memory', phys_ram_sufficient=True,
+                                                total_ram=64 * gib, needed=22 * gib, budget=12 * gib,
+                                                available=20 * gib, reserve=8 * gib)
+        res_ok = k.kernel_storage.RamCapacity(True, 'Using RAM workspace /mnt/zram1', phys_ram_sufficient=True,
+                                              total_ram=64 * gib, needed=22 * gib, budget=25 * gib,
+                                              available=35 * gib, reserve=8 * gib)
+        with patch.object(k.kernel_storage, 'ram_capacity', side_effect=[res_fail, res_ok]):
+            # User hits Return (empty string -> default 'r')
+            with patch('builtins.input', side_effect=['']), patch.object(k, 'interactive', return_value=True):
+                self.assertTrue(k.choose_ram_build(args))
+
     def test_checkpoint_runs_after_abort(self):
         k._ABORT.set()
         try:
