@@ -62,7 +62,7 @@ select_image() {
     local directory=$1 kind=$2 candidate input
     local -a matches=()
     local -n selected=$3
-    for candidate in "$directory/$kind.img" "$directory/"*"$kind"*.zip; do
+    for candidate in "$directory/"*"$kind"*.img "$directory/"*"$kind"*.zip; do
         [[ -f "$candidate" ]] && matches+=("$candidate")
     done
     if (( ${#matches[@]} == 1 )); then
@@ -125,7 +125,7 @@ import_images() {
     source_dir=$downloads
     for directory in "$downloads/Waydroid" "$downloads"; do
         [[ -d "$directory" ]] || continue
-        for input in "$directory/system.img" "$directory/"*system*.zip; do
+        for input in "$directory/"*system*.img "$directory/"*system*.zip; do
             if [[ -f "$input" ]]; then
                 source_dir=$directory
                 break 2
@@ -166,7 +166,7 @@ import_images() {
 # Use Waydroid's persistent INI overrides, not its generated base properties.
 # Print whether initialization and a property refresh are needed, respectively.
 configure_waydroid() {
-    python3 - "$WORK_DIR" "$DEST_DIR" <<'PY'
+    /usr/bin/python3 - "$WORK_DIR" "$DEST_DIR" <<'PY'
 import configparser
 import os
 from pathlib import Path
@@ -182,9 +182,11 @@ if path.exists():
 required_keys = ('arch', 'vendor_type', 'binder', 'vndbinder', 'hwbinder',
                  'system_ota', 'vendor_ota')
 lxc_config = work / 'lxc/waydroid/config'
+images_path = cfg.get('waydroid', 'images_path', fallback='').strip()
 needs_init = (
     any(not cfg.get('waydroid', key, fallback='').strip() for key in required_keys)
-    or Path(cfg.get('waydroid', 'images_path', fallback='')).resolve() != images.resolve()
+    or not images_path
+    or Path(images_path).resolve() != images.resolve()
     or not (work / 'rootfs').is_dir()
     or not lxc_config.is_file()
     or lxc_config.stat().st_size == 0
@@ -252,6 +254,7 @@ main() {
     trap 'exit 143' TERM
     trap 'printf "[ERROR] Setup failed at line %s.\n" "$LINENO" >&2' ERR
     export LC_ALL=C
+    export PATH="/usr/bin:/usr/sbin:${PATH:-/usr/local/bin:/usr/bin}"
     umask 022
     exec {setup_lock}>/run/lock/waydroid-setup.lock
     flock --nonblock "$setup_lock" || log_error 'Another Waydroid setup is running.'
@@ -262,8 +265,11 @@ main() {
         grep -qw binder /proc/filesystems || log_error 'The running kernel does not expose BinderFS.'
     fi
     # Waydroid is in Arch extra. Pacman can also use its cache for offline installs.
-    ensure_packages waydroid unzip
+    ensure_packages waydroid unzip python-pyclip
     command -v waydroid >/dev/null || log_error 'Waydroid command missing after package installation.'
+
+    # Ensure Waydroid uses the official system Python 3 interpreter.
+    sed -i '1s|^#!/usr/bin/env.*|#!/usr/bin/python3|' /usr/lib/waydroid/waydroid.py
 
     if images_ready; then
         log_info "Existing image pair found in $DEST_DIR."
