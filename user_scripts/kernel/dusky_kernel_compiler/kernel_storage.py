@@ -69,27 +69,68 @@ def tree_bytes(path: Path) -> int:
     return total
 
 
-def ram_capacity(settings: dict, lto: str, tree_name: str) -> tuple[bool, str]:
-    path = settings['zram_dir']
-    if not ram_mount(path):
-        return False, f'RAM mount unavailable at {path}; using persistent disk'
+class RamCapacity(tuple):
+    """Result of ram_capacity check; behaves as (ready, detail) tuple for compatibility."""
+    ready: bool
+    detail: str
+    phys_ram_sufficient: bool
+    total_ram: int
+    needed: int
+    budget: int
+
+    def __new__(cls, ready: bool, detail: str, *, phys_ram_sufficient: bool = False,
+                total_ram: int = 0, needed: int = 0, budget: int = 0):
+        obj = super().__new__(cls, (ready, detail))
+        obj.ready = ready
+        obj.detail = detail
+        obj.phys_ram_sufficient = phys_ram_sufficient
+        obj.total_ram = total_ram
+        obj.needed = needed
+        obj.budget = budget
+        return obj
+
+
+def ram_capacity(settings: dict, lto: str, tree_name: str) -> RamCapacity:
+    meminfo: dict[str, int] = {}
+    try:
+        for line in Path('/proc/meminfo').read_text(encoding='utf-8', errors='replace').splitlines():
+            parts = line.split()
+            if len(parts) >= 2:
+                meminfo[parts[0].rstrip(':')] = int(parts[1]) * 1024
+    except OSError:
+        pass
+    mem_total = meminfo.get('MemTotal', 0)
+    source_size = tree_bytes(settings['persistent_dir'] / 'src' / tree_name) if tree_name and 'persistent_dir' in settings else 0
+    cache_size = sum(tree_bytes(settings[key]) for key in ('thinlto_dir', 'ccache_dir') if key in settings)
+    needed = max((30 if lto == 'full' else 22) << 30, source_size) + cache_size
+    phys_ram_sufficient = bool(mem_total and mem_total >= needed)
+
+    path = settings.get('zram_dir')
+    if not path or not ram_mount(path):
+        return RamCapacity(False, f'RAM mount unavailable at {path}; using persistent disk',
+                           phys_ram_sufficient=phys_ram_sufficient, total_ram=mem_total, needed=needed, budget=0)
     parent = path
     while not parent.exists():
         parent = parent.parent
-    source_size = tree_bytes(settings['persistent_dir'] / 'src' / tree_name) if tree_name else 0
-    cache_size = sum(tree_bytes(settings[key]) for key in ('thinlto_dir', 'ccache_dir'))
-    needed = max((30 if lto == 'full' else 22) << 30, source_size) + cache_size
     ram = path / hashlib.sha256(str(settings['persistent_dir']).encode()).hexdigest()[:12]
     # Completed work already occupies this mount. It can be reused or discarded
     # by ram_workspace, so do not count it twice when checking the next build.
     reusable = tree_bytes(ram) if not (ram / '.unsaved').exists() else 0
     free = shutil.disk_usage(parent).free
-    available = next(int(line.split()[1]) * 1024 for line in Path('/proc/meminfo').read_text().splitlines()
-                     if line.startswith('MemAvailable:'))
-    budget = min(free + reusable, max(0, available + reusable - (settings['ram_reserve_gib'] << 30)))
+    available = meminfo.get('MemAvailable')
+    if available is None:
+        try:
+            available = next(int(line.split()[1]) * 1024 for line in Path('/proc/meminfo').read_text(encoding='utf-8', errors='replace').splitlines()
+                             if line.startswith('MemAvailable:'))
+        except (OSError, StopIteration):
+            available = 0
+    reserve = settings.get('ram_reserve_gib', 0) << 30
+    budget = min(free + reusable, max(0, available + reusable - reserve))
     if budget < needed:
-        return False, f'RAM capacity {budget / (1 << 30):.1f} GiB < estimated workspace {needed / (1 << 30):.1f} GiB; using persistent disk'
-    return True, f'Using RAM workspace {path} ({budget / (1 << 30):.1f} GiB budget, {needed / (1 << 30):.1f} GiB estimated)'
+        return RamCapacity(False, f'RAM capacity {budget / (1 << 30):.1f} GiB < estimated workspace {needed / (1 << 30):.1f} GiB; using persistent disk',
+                           phys_ram_sufficient=phys_ram_sufficient, total_ram=mem_total, needed=needed, budget=budget)
+    return RamCapacity(True, f'Using RAM workspace {path} ({budget / (1 << 30):.1f} GiB budget, {needed / (1 << 30):.1f} GiB estimated)',
+                       phys_ram_sufficient=phys_ram_sufficient, total_ram=mem_total, needed=needed, budget=budget)
 
 
 def sync_tree(source: Path, dest: Path, run) -> None:

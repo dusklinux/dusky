@@ -5096,9 +5096,28 @@ def storage_session(use_ram: bool, tree_name: str):
 
 def choose_ram_build(args: argparse.Namespace, lto: str = "thin", tree_name: str = "") -> bool:
     """Prefer RAM automatically when the mount and measured capacity permit it."""
-    ready, detail = kernel_storage.ram_capacity(STORAGE, lto, tree_name)
+    res = kernel_storage.ram_capacity(STORAGE, lto, tree_name)
+    ready, detail = res[0], res[1]
+    if ready:
+        note(detail)
+        return True
+
+    phys_ram_sufficient = getattr(res, "phys_ram_sufficient", False)
+    if phys_ram_sufficient:
+        warn(f"RAM build fallback: {detail}")
+        total_str = f"{res.total_ram / (1 << 30):.1f} GiB" if getattr(res, "total_ram", 0) else f"{host_facts().mem_gib:.1f} GiB"
+        needed_str = f"{res.needed / (1 << 30):.1f} GiB" if getattr(res, "needed", 0) else "22.0 GiB"
+        warn(f"This system has {total_str} physical RAM (workspace requires ~{needed_str}), but available memory is currently constrained.")
+        warn("Falling back to persistent disk will write tens of gigabytes to SSD/NAND and cause drive wear.")
+        if getattr(args, "no_prompt", False) or ASSUME_YES:
+            note("Continuing on SSD (--no-prompt / --yes).")
+            return False
+        if not ask_yes("Do you want to continue building on SSD anyway?", default=False):
+            raise AbortError("Build aborted to prevent SSD wear. Free up memory/RAM and run again to build in RAM.")
+        return False
+
     note(detail)
-    return ready
+    return False
 
 
 def do_build(args: argparse.Namespace) -> int:

@@ -543,6 +543,28 @@ class AuditTests(unittest.TestCase):
             with patch.object(k.kernel_storage, 'ram_capacity', return_value=(ready, 'measured')), patch('builtins.input', side_effect=AssertionError('no prompt')):
                 self.assertEqual(k.choose_ram_build(args), ready)
 
+    def test_ram_choice_prompts_and_aborts_on_high_ram_fallback(self):
+        args = k.build_parser().parse_args([])
+        gib = 1 << 30
+        res = k.kernel_storage.RamCapacity(False, 'low available memory', phys_ram_sufficient=True,
+                                           total_ram=64 * gib, needed=22 * gib, budget=12 * gib)
+        with patch.object(k.kernel_storage, 'ram_capacity', return_value=res):
+            with patch('builtins.input', return_value='n'), patch.object(k, 'interactive', return_value=True):
+                with self.assertRaises(k.AbortError):
+                    k.choose_ram_build(args)
+
+    def test_ram_choice_proceeds_on_ssd_when_confirmed_or_no_prompt(self):
+        args = k.build_parser().parse_args([])
+        gib = 1 << 30
+        res = k.kernel_storage.RamCapacity(False, 'low available memory', phys_ram_sufficient=True,
+                                           total_ram=64 * gib, needed=22 * gib, budget=12 * gib)
+        with patch.object(k.kernel_storage, 'ram_capacity', return_value=res):
+            with patch('builtins.input', return_value='y'), patch.object(k, 'interactive', return_value=True):
+                self.assertFalse(k.choose_ram_build(args))
+            no_prompt_args = k.build_parser().parse_args(['--no-prompt'])
+            with patch('builtins.input', side_effect=AssertionError('no prompt')):
+                self.assertFalse(k.choose_ram_build(no_prompt_args))
+
     def test_checkpoint_runs_after_abort(self):
         k._ABORT.set()
         try:

@@ -170,3 +170,23 @@ class CapacityTests(unittest.TestCase):
                      patch.object(s.shutil, 'disk_usage', return_value=SimpleNamespace(free=free*gib)), \
                      patch.object(Path, 'read_text', return_value=f'MemAvailable: {memory * 1048576} kB\n'):
                     self.assertEqual(s.ram_capacity(cfg, 'thin', 'linux')[0], expected)
+
+    def test_ram_capacity_identifies_physical_ram_sufficiency(self):
+        from types import SimpleNamespace
+        cfg = dict(zram_dir=Path('/tmp'), persistent_dir=Path('/disk'),
+                   thinlto_dir=Path('/cache/lto'), ccache_dir=Path('/cache/ccache'), ram_reserve_gib=8)
+        gib = 1 << 30
+        meminfo_64g = f"MemTotal: {64 * 1048576} kB\nMemAvailable: {10 * 1048576} kB\n"
+        meminfo_16g = f"MemTotal: {16 * 1048576} kB\nMemAvailable: {10 * 1048576} kB\n"
+        with patch.object(s, 'ram_mount', return_value=True), patch.object(s, 'tree_bytes', return_value=0), \
+             patch.object(s.shutil, 'disk_usage', return_value=SimpleNamespace(free=10 * gib)):
+            with patch.object(Path, 'read_text', return_value=meminfo_64g):
+                res_64 = s.ram_capacity(cfg, 'thin', 'linux')
+                self.assertFalse(res_64.ready)
+                self.assertTrue(res_64.phys_ram_sufficient)
+                self.assertEqual(res_64.total_ram, 64 * gib)
+            with patch.object(Path, 'read_text', return_value=meminfo_16g):
+                res_16 = s.ram_capacity(cfg, 'thin', 'linux')
+                self.assertFalse(res_16.ready)
+                self.assertFalse(res_16.phys_ram_sufficient)
+                self.assertEqual(res_16.total_ram, 16 * gib)
