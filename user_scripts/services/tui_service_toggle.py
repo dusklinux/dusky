@@ -186,6 +186,10 @@ CORE_SYSTEM_DEFS = {
         "Docker Engine",
         "Runs and manages Docker containers. The switch controls daemon startup enablement and starts or stops the service.",
     ),
+    "waydroid-container.service": (
+        "Waydroid Container",
+        "Android LXC container manager for Waydroid. Starts the container manager, mounts /dev/binderfs, and manages virtual networking. Enable to run at boot, or keep disabled to start on-demand when launching Android apps.",
+    ),
     "vsftpd.service": (
         "FTP Server (vsftpd)",
         "Very Secure FTP Daemon. Manages the FTP server for file transfers. Only enable this if you actively need to host an FTP server.",
@@ -379,7 +383,7 @@ CORE_USER_SECTIONS = (
 
 CORE_SYSTEM_SECTIONS = (
     ("Containers", (
-        "docker.service",
+        "docker.service", "waydroid-container.service",
     )),
     ("Power & Hardware", (
         "tlp.service", "battery-charge-limit.service", "dusky_cpu.service",
