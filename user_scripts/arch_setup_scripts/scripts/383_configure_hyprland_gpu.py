@@ -262,12 +262,9 @@ def gen_lua(primary: Gpu, ordered: List[Gpu], mode: str) -> str:
     vid = primary.vendor_id.lower(); drv = primary.driver.lower(); vlabel = primary.vendor_label.lower()
     match vid:
         case "0x8086" | _ if "intel" in vlabel:
-            L.append("-- Intel")
-            if pr["iHD"]: L.append('hl.env("LIBVA_DRIVER_NAME", "iHD")')
-            elif pr["i965"]: L.append('hl.env("LIBVA_DRIVER_NAME", "i965")')
+            L.append("-- Intel (libva automatically maps i915/xe to iHD per DRM FD)")
         case "0x1002" | _ if "amd" in vlabel or "radeon" in primary.name.lower() or "amd" in primary.name.lower():
-            L.append("-- AMD")
-            if pr["radeonsi"]: L.append('hl.env("LIBVA_DRIVER_NAME", "radeonsi")')
+            L.append("-- AMD (libva automatically maps amdgpu to radeonsi per DRM FD)")
         case "0x10de":
             # Post-boot userspace script: respect live kernel driver first so running Nouveau is never forced into nvidia-drm
             if drv == "nvidia":
@@ -283,16 +280,14 @@ def gen_lua(primary: Gpu, ordered: List[Gpu], mode: str) -> str:
                 L.append("-- NVIDIA Proprietary")
                 L.append('hl.env("GBM_BACKEND", "nvidia-drm")')
                 L.append('hl.env("__GLX_VENDOR_LIBRARY_NAME", "nvidia")')
-                if pr["nvidia"]: L.append('hl.env("LIBVA_DRIVER_NAME", "nvidia")')
+                # Do not export LIBVA_DRIVER_NAME="nvidia" globally:
+                # libva 2.24+ maps nvidia-drm -> nvidia per DRM FD; global export poisons secondary iGPUs
             elif tgt == "nouveau":
                 L.append("-- NVIDIA Nouveau")
                 L.append('hl.env("MESA_LOADER_DRIVER_OVERRIDE", "nouveau")')
-                if pr["nouveau"]: L.append('hl.env("LIBVA_DRIVER_NAME", "nouveau")')
             else:
                 L.append(f"-- NVIDIA unknown driver {drv}")
         case _:
-            if pr["radeonsi"] and "amd" in primary.name.lower():
-                L.append('hl.env("LIBVA_DRIVER_NAME", "radeonsi")')
             L.append(f"-- Generic/VM ({primary.vendor_label}) - by-path only")
     L.append("")
     return "\n".join(L)
