@@ -20,9 +20,9 @@ Usage: dusky_glance_daemon.sh MODE [arguments]
   --gpu-power|--gpu-usage|--gpu-mem cardN intel|amd|nvidia
   --hud [cardN intel|amd|nvidia]
   --stop | --stop-all         Stop every active Dusky Glance instance
-  Other modes: --clock --clock-short --stopwatch --cpu-power --cpu --ram
-  --ram-available --ram-free --ram-temp --zram --temp --battery --battery-percent --battery-watts
-  --battery-time --disk --network* --uptime --workspace
+  Other modes: --clock --clock-short --stopwatch --cpu-power --cpu --cpu-freq --ram
+  --ram-available --ram-free --ram-dirty --ram-temp --zram --temp --load --battery
+  --battery-percent --battery-watts --battery-time --disk --network* --uptime --workspace
 USAGE
     exit 2
 }
@@ -51,8 +51,9 @@ validate_gpu() {
 case "$MODE" in
     --stop|--stop-all)
         (( $# == 1 )) || usage ;;
-    --clock|--clock-short|--stopwatch|--cpu-power|--cpu|--ram|\
-    --ram-available|--ram-avail|--ram-free|\
+    --clock|--clock-short|--stopwatch|--cpu-power|--cpu|--cpu-freq|--cpu-frequency|--ram|\
+    --ram-available|--ram-avail|--ram-free|--ram-dirty|--dirty|\
+    --load|--loadavg|--load-avg|\
     --ram-temp|--zram|--temp|--battery|--battery-percent|--battery-watts|\
     --battery-time|--disk|--network|--network-down|--network-download|\
     --network-up|--network-upload|--network-combined|--network-speed|\
@@ -195,6 +196,9 @@ if [[ "$MODE" == --stop || "$MODE" == --stop-all ]]; then
 fi
 
 case "$MODE" in
+    --cpu-frequency) set -- --cpu-freq ;;
+    --loadavg|--load-avg) set -- --load ;;
+    --dirty) set -- --ram-dirty ;;
     --ram-avail) set -- --ram-available ;;
     --network-download) set -- --network-down ;;
     --network-upload) set -- --network-up ;;
@@ -697,6 +701,12 @@ CPU_PREV_IDLE=-1 CPU_PREV_TOTAL=-1
 CPU_POWER_PATH="" CPU_POWER_LAST=-5
 CPU_POWER_WARNED=0
 CPU_TEMP_PATH="" CPU_TEMP_LAST=-5
+CPU_FREQ_FILES=() CPU_FREQ_LAST=-10
+discover_cpu_freq_files() {
+    CPU_FREQ_FILES=(/sys/devices/system/cpu/cpufreq/policy*/scaling_cur_freq)
+    [[ -e "${CPU_FREQ_FILES[0]:-}" ]] || CPU_FREQ_FILES=(/sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq)
+    [[ -e "${CPU_FREQ_FILES[0]:-}" ]] || CPU_FREQ_FILES=()
+}
 cpu_usage_once() {
     local -n _dest=$1
     local _tag _user _nice _system _idle _iowait _irq _softirq _steal
@@ -722,6 +732,41 @@ cpu_usage_once() {
         CPU_PREV_IDLE=$_idle_all CPU_PREV_TOTAL=$_total
     else
         CPU_PREV_IDLE=-1 CPU_PREV_TOTAL=-1
+    fi
+    return 0
+}
+cpu_freq_once() {
+    local -n _dest=$1
+    local max_khz=0 khz f hundredths dec
+    _dest=N/A
+    if (( ${#CPU_FREQ_FILES[@]} == 0 || SECONDS - CPU_FREQ_LAST >= 10 )); then
+        CPU_FREQ_LAST=$SECONDS
+        discover_cpu_freq_files
+    fi
+    if (( ${#CPU_FREQ_FILES[@]} > 0 )); then
+        for f in "${CPU_FREQ_FILES[@]}"; do
+            if { IFS= read -r khz < "$f"; } 2>/dev/null &&
+               [[ "$khz" =~ ^[0-9]+$ ]] && (( khz > max_khz )); then
+                max_khz=$khz
+            fi
+        done
+    else
+        local key val mhz
+        while read -r key val _; do
+            if [[ "$key" == "cpu" && "$val" == "MHz" ]]; then
+                read -r _ mhz _ <<< "$val"
+                mhz="${mhz%%.*}"
+                if [[ "$mhz" =~ ^[0-9]+$ ]] && (( mhz * 1000 > max_khz )); then
+                    max_khz=$((mhz * 1000))
+                fi
+            fi
+        done < /proc/cpuinfo 2>/dev/null || true
+    fi
+    if (( max_khz > 0 && max_khz <= 20000000 )); then
+        hundredths=$(((max_khz + 5000) / 10000))
+        dec=$((hundredths % 100))
+        (( dec < 10 )) && dec="0$dec"
+        _dest="$((hundredths / 100)).$dec"
     fi
     return 0
 }
@@ -834,6 +879,39 @@ ram_free_once() {
     if [[ "$free" =~ ^[0-9]+$ ]] &&
        { [[ -z "$total" ]] || (( total <= 0 || free <= total )); }; then
         _dest="$((free / 1024))"
+    fi
+    return 0
+}
+ram_dirty_once() {
+    local -n _dest=$1
+    local key val dirty="" writeback="" total_dirty
+    _dest=N/A
+    if ! {
+        while read -r key val _; do
+            case "$key" in
+                Dirty:) dirty=$val ;;
+                Writeback:) writeback=$val; break ;;
+            esac
+        done < /proc/meminfo
+    } 2>/dev/null; then
+        return 0
+    fi
+    if [[ "$dirty" =~ ^[0-9]+$ ]]; then
+        total_dirty=$dirty
+        if [[ "$writeback" =~ ^[0-9]+$ ]]; then
+            total_dirty=$((dirty + writeback))
+        fi
+        _dest="$((total_dirty / 1024))"
+    fi
+    return 0
+}
+load_once() {
+    local -n _dest=$1
+    local l1 l5 l15 _
+    _dest=N/A
+    if { read -r l1 l5 l15 _ < /proc/loadavg; } 2>/dev/null &&
+       [[ "$l1" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+        _dest="$l1"
     fi
     return 0
 }
@@ -1296,6 +1374,13 @@ case "$MODE" in
             wait_tick
         done ;;
 
+    --cpu-freq)
+        while true; do
+            cpu_freq_once reading
+            send_osd "$reading"
+            wait_tick
+        done ;;
+
     --ram)
         while true; do
             ram_once reading
@@ -1313,6 +1398,13 @@ case "$MODE" in
     --ram-free)
         while true; do
             ram_free_once reading
+            send_osd "$reading"
+            wait_tick
+        done ;;
+
+    --ram-dirty)
+        while true; do
+            ram_dirty_once reading
             send_osd "$reading"
             wait_tick
         done ;;
@@ -1665,6 +1757,13 @@ case "$MODE" in
         timeout --kill-after=1s 3s systemctl --user start dusky_network.service >/dev/null 2>&1 || true
         while true; do
             reading=$("$NETWORK_BIN" osd "$network_mode") || reading=N/A
+            send_osd "$reading"
+            wait_tick
+        done ;;
+
+    --load)
+        while true; do
+            load_once reading
             send_osd "$reading"
             wait_tick
         done ;;

@@ -145,6 +145,11 @@ AUTOSTART_DEFAULTS: dict[str, dict[str, Any]] = {
         "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --cpu-power")',
         "default": False
     },
+    "autostart/glance_cpu_freq": {
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--cpu-freq(?:["\'\s]|$)""",
+        "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --cpu-freq")',
+        "default": False
+    },
     "autostart/glance_ram": {
         "pattern": r"""dusky_glance\.sh[\\"']*\s+--ram(?:["\'\s]|$)""",
         "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --ram")',
@@ -158,6 +163,11 @@ AUTOSTART_DEFAULTS: dict[str, dict[str, Any]] = {
     "autostart/glance_ram_free": {
         "pattern": r"""dusky_glance\.sh[\\"']*\s+--ram-free(?:["\'\s]|$)""",
         "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --ram-free")',
+        "default": False
+    },
+    "autostart/glance_ram_dirty": {
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--ram-dirty(?:["\'\s]|$)""",
+        "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --ram-dirty")',
         "default": False
     },
     "autostart/glance_ram_temp": {
@@ -263,6 +273,11 @@ AUTOSTART_DEFAULTS: dict[str, dict[str, Any]] = {
     "autostart/glance_uptime": {
         "pattern": r"""dusky_glance\.sh[\\"']*\s+--uptime""",
         "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --uptime")',
+        "default": False
+    },
+    "autostart/glance_load": {
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--load(?:["\'\s]|$)""",
+        "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --load")',
         "default": False
     },
     "autostart/glance_workspace": {

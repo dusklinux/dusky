@@ -299,6 +299,16 @@ SCHEMA = {
             extended_help="**CPU Power Glance Autostart**\n\nLaunches CPU power consumption overlay at startup."
         ),
         ConfigItem(
+            label="CPU Frequency",
+            key="glance_cpu_freq",
+            scope="autostart",
+            type_="bool",
+            default=False,
+            parent_ref="menu_dusky_glance",
+            group="Dashboards",
+            extended_help="**CPU Frequency Glance Autostart**\n\nLaunches CPU core frequency overlay at startup."
+        ),
+        ConfigItem(
             label="Memory (RAM)",
             key="glance_ram",
             scope="autostart",
@@ -327,6 +337,16 @@ SCHEMA = {
             parent_ref="menu_dusky_glance",
             group="Dashboards",
             extended_help="**RAM Free Glance Autostart**\n\nLaunches unallocated memory overlay at startup."
+        ),
+        ConfigItem(
+            label="RAM Dirty Cache",
+            key="glance_ram_dirty",
+            scope="autostart",
+            type_="bool",
+            default=False,
+            parent_ref="menu_dusky_glance",
+            group="Dashboards",
+            extended_help="**RAM Dirty Cache Glance Autostart**\n\nLaunches memory dirty writeback cache overlay at startup."
         ),
         ConfigItem(
             label="RAM Temperature",
@@ -537,6 +557,16 @@ SCHEMA = {
             parent_ref="menu_dusky_glance",
             group="Dashboards",
             extended_help="**Uptime Glance Autostart**\n\nLaunches system uptime overlay at startup."
+        ),
+        ConfigItem(
+            label="System Load",
+            key="glance_load",
+            scope="autostart",
+            type_="bool",
+            default=False,
+            parent_ref="menu_dusky_glance",
+            group="Dashboards",
+            extended_help="**System Load Glance Autostart**\n\nLaunches system load average overlay at startup."
         ),
         ConfigItem(
             label="Workspace Overview",
