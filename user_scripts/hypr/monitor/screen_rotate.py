@@ -111,7 +111,7 @@ def _short(text: str, limit: int) -> str:
         return flat
     return flat[: max(0, limit - 1)].rstrip() + "…"
 
-def notify(title: str, body: str, urgency: str = "low", icon: str = "object-rotate-right", ms: int = 1800) -> None:
+def notify(title: str, body: str = "", urgency: str = "low", icon: str = "object-rotate-right", ms: int = 1800) -> None:
     if shutil.which("notify-send") is None:
         return
     title = _short(title, 24)
@@ -270,10 +270,10 @@ def ipc_eval(lua_chunk: str, spec_str: str | None = None) -> tuple[bool, str]:
                 timeout=5.0,
                 check=False,
             )
-            if proc.returncode == 0:
-                return True, (proc.stdout or "").strip() or "ok"
-            reply = (proc.stderr or proc.stdout or "").strip()
-            return False, f"keyword fallback failed: {reply}"
+            reply = (proc.stdout or "").strip()
+            if proc.returncode == 0 and reply.lower() == "ok":
+                return True, reply
+            return False, f"keyword fallback failed: {reply or proc.stderr.strip()}"
         except (OSError, subprocess.TimeoutExpired) as exc:
             return False, f"keyword fallback exception: {exc}"
 
@@ -285,7 +285,12 @@ def list_monitors(soft: bool = False) -> list[dict[str, Any]]:
         if soft:
             return []
         raise HyprError("hyprctl returned no active monitors.")
-    return payload
+    real = [m for m in payload if str(m.get("name", "")).strip().upper() != "FALLBACK"]
+    if not real:
+        if soft:
+            return []
+        raise HyprError("hyprctl returned no active physical monitors (compositor in synthetic fallback state).")
+    return real
 
 def pick_monitor(monitors: list[dict[str, Any]], target: str | None) -> dict[str, Any]:
     if not monitors:
@@ -293,7 +298,10 @@ def pick_monitor(monitors: list[dict[str, Any]], target: str | None) -> dict[str
     if target:
         found = next((m for m in monitors if m.get("name") == target), None)
         if found is None:
-            available = ", ".join(str(m.get("name")) for m in monitors)
+            clean = target[5:].strip() if target.startswith("desc:") else target
+            found = next((m for m in monitors if clean.lower() in str(m.get("description", "")).lower()), None)
+        if found is None:
+            available = ", ".join(f"{m.get('name')} ({m.get('description', '')})" for m in monitors)
             raise HyprError(f"Monitor '{target}' not found. Available: {available}")
         return found
     return next((m for m in monitors if m.get("focused") is True), monitors[0])
@@ -361,7 +369,7 @@ def resolve_mode_string(mon: dict[str, Any]) -> str:
 # 5. Lua Configuration Tokenizer & Rewriter
 # ---------------------------------------------------------------------------
 def lua_str(s: str) -> str:
-    return '"' + s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n") + '"'
+    return json.dumps(str(s))
 
 def lua_string_value(raw: str) -> str | None:
     raw = raw.strip()
@@ -496,7 +504,8 @@ def find_monitor_blocks(t: str) -> list[MonitorBlock]:
                 i += 1
             if i < n and t[i] == ")":
                 i += 1
-                blocks.append(MonitorBlock(start, open_brace, close_brace, i, fields))
+                if close_brace >= 0:
+                    blocks.append(MonitorBlock(start, open_brace, close_brace, i, fields))
             continue
         i += 1
     return blocks
@@ -532,12 +541,16 @@ def set_field(t: str, b: MonitorBlock, key: str, literal: str) -> tuple[str, int
     f = b.get(key)
     if f is not None:
         return t[:f.value_start] + literal + t[f.value_end:], len(literal) - (f.value_end - f.value_start)
-    insert_at = b.close_brace
-    prefix = ""
-    if insert_at > b.open_brace + 1 and t[insert_at - 1] not in ",\n \t":
-        prefix = ","
-    insertion = f"{prefix}\n    {key:<10}= {literal},"
-    return t[:insert_at] + insertion + t[insert_at:], len(insertion)
+    delta = 0
+    if b.fields and not b.fields[-1].trailing_sep:
+        last_val_end = b.fields[-1].value_end
+        t = t[:last_val_end] + "," + t[last_val_end:]
+        delta += 1
+        insert_at = b.close_brace + 1
+    else:
+        insert_at = b.close_brace
+    insertion = f"    {key:<10}= {literal},\n"
+    return t[:insert_at] + insertion + t[insert_at:], len(insertion) + delta
 
 def update_matching_blocks(t: str, mon: dict[str, Any], key: str, literal: str) -> tuple[str, int]:
     blocks = [b for b in find_monitor_blocks(t) if block_targets(t, b, mon)]
@@ -553,7 +566,7 @@ def update_matching_blocks(t: str, mon: dict[str, Any], key: str, literal: str) 
         delta += d
     return t, len(blocks)
 
-def block_to_eval(t: str, b: MonitorBlock | None, output_name: str, overrides: dict[str, str]) -> str:
+def block_to_eval(t: str, b: MonitorBlock | None, output_name: str, overrides: dict[str, str], default_mode: str = "", default_pos: str = "") -> str:
     parts: list[str] = []
     seen: set[str] = set()
     if b is not None:
@@ -565,7 +578,16 @@ def block_to_eval(t: str, b: MonitorBlock | None, output_name: str, overrides: d
     if "output" not in seen:
         parts.insert(0, f"output = {lua_str(output_name)}")
         seen.add("output")
-    parts.extend(f"{k} = {v}" for k, v in overrides.items() if k not in seen)
+    for k, v in overrides.items():
+        if k not in seen:
+            parts.append(f"{k} = {v}")
+            seen.add(k)
+    if "mode" not in seen and default_mode:
+        parts.append(f"mode = {lua_str(default_mode)}")
+        seen.add("mode")
+    if "position" not in seen and default_pos:
+        parts.append(f"position = {lua_str(default_pos)}")
+        seen.add("position")
     return "hl.monitor({ " + ", ".join(parts) + " })"
 
 def append_block(t: str, fields: dict[str, str]) -> str:
@@ -710,7 +732,7 @@ def run() -> int:
     overrides = {"scale": scale_literal, "transform": str(target_transform)}
     if base is None:
         overrides |= {"mode": lua_str(mode_str), "position": lua_str(f"{x}x{y}")}
-    eval_chunk = block_to_eval(original, base, name, overrides)
+    eval_chunk = block_to_eval(original, base, name, overrides, default_mode=mode_str, default_pos=f"{x}x{y}")
     spec_str = f"{name},{mode_str},{x}x{y},{scale_literal},transform,{target_transform}"
 
     # 2) Prepare updated configuration text (if --persist)
@@ -739,6 +761,11 @@ def run() -> int:
             print("-- File diff: (none — ephemeral rotation by default; pass --persist to write)")
         return 0
 
+    # Wake monitor if sleeping (borrowed from hyprmoncfg enable_wake)
+    if not mon.get("dpmsStatus", True):
+        log_info(f"{name}: waking monitor from DPMS sleep")
+        ipc_eval(f"hl.dsp.dpms({{ action = \"enable\", monitor = {lua_str(name)} }})")
+
     # 3) Apply live over IPC
     ok, reply = ipc_eval(eval_chunk, spec_str)
     if not ok:
@@ -746,7 +773,8 @@ def run() -> int:
 
     # 4) Verify against live compositor state
     def is_applied(m: dict[str, Any]) -> bool:
-        return (int(m.get("transform", -1)) & 7) == target_transform
+        val = m.get("transform")
+        return val is not None and (int(val) & 7) == target_transform
 
     verified = wait_for_monitor(name, is_applied)
     if verified is None or not is_applied(verified):
