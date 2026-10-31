@@ -97,8 +97,6 @@ The notification timestamp daemon runs independently.
   The night-light scale is
   0–100 without a percent sign: 0 disables the filter; 100 is warmest (1000 K).
   The three rails share the same width and a compact three-digit value column.
-  Slider icons and numbers have a soft glyph-edge halo whose strength increases
-  linearly from no glow at 0 to a moderate glow at 100, reacting during dragging.
   The clock, date, weather, and power button have a subtle fixed glow. Gaussian
   masks give text and icons a continuous falloff without displaced glyph copies.
   The renderer caches shaped text masks and filtered SVGs; each halo needs one

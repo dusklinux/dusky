@@ -1171,7 +1171,6 @@ impl TrayApp {
         // Leave explicit clearance around both endpoint handles, independently
         // of the neighboring icon and value cells.
         let s = container(s).padding([0, 3]).width(Length::Fill);
-        let glow = sys::clamp(value, 0.0, 100.0) / 100.0;
         let name = match kind {
             SliderKind::Volume => "Volume",
             SliderKind::Brightness => "Brightness",
@@ -1183,7 +1182,7 @@ impl TrayApp {
             .color(slider_label_color(Self::mix(tint, theme.fg, 0.18), value))
             .width(28)
             .align_x(Horizontal::Right);
-        let icon = crate::appearance::glow(Self::icon_label(glyph, 18.0, Some(label_tint)), glow);
+        let icon = Self::icon_label(glyph, 18.0, Some(label_tint));
         let icon = if kind == SliderKind::Volume {
             Self::hint(
                 mouse_area(
@@ -1200,7 +1199,7 @@ impl TrayApp {
             Self::hint(icon, name.into(), theme)
         };
         container(
-            row![icon, s, crate::appearance::glow(val.into(), glow)]
+            row![icon, s, val]
                 .spacing(12)
                 .align_y(Vertical::Center),
         )
