@@ -29,7 +29,6 @@
 .config/mako/config
 .config/matugen/templates/
 .config/matugen/generated_fresh/
-.config/mpv/mpv.conf
 .config/opencode/opencode.json
 .config/obs-studio/user.ini
 .config/pacman/makepkg.conf
