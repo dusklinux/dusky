@@ -154,6 +154,60 @@ def is_internal_connector(name: str) -> bool:
     return low.startswith(("edp", "lvds", "dsi"))
 
 
+def normalize_vrr(raw: Any) -> str:
+    """Normalizes compositor VRR mode into standard string ('0'=off, '1'=on, '2'=fullscreen-only)."""
+    if isinstance(raw, bool):
+        return "1" if raw else "0"
+    if isinstance(raw, (int, float)):
+        val = int(raw)
+        return str(val) if val in (0, 1, 2) else "0"
+    s = str(raw).strip().lower()
+    if s == "true":
+        return "1"
+    if s in ("false", "off", ""):
+        return "0"
+    return s if s in ("0", "1", "2") else "0"
+
+
+def monitor_health(m: dict[str, Any]) -> str:
+    """Assesses live monitor hardware health and power state."""
+    name = m.get("name", "")
+    if name.upper() == "FALLBACK":
+        return "synthetic"
+    if m.get("disabled", False):
+        return "off"
+    if not m.get("dpmsStatus", True):
+        return "sleeping"
+    if int(m.get("width", 0)) <= 0 or int(m.get("height", 0)) <= 0:
+        return "no_signal"
+    return "usable"
+
+
+def wake_displays(outputs: list[str] | None = None) -> bool:
+    """
+    Wakes displays from DPMS sleep in Hyprland 0.55+ (evaluating Lua dispatcher with fallback).
+    Guarantees that enabling a previously disabled/sleeping monitor immediately powers on the panel.
+    """
+    try:
+        if outputs:
+            for out in outputs:
+                clean = out.strip().removeprefix("desc:")
+                if not clean:
+                    continue
+                cmd = f'hl.dsp.dpms({{ action = "enable", monitor = {json.dumps(clean)} }})'
+                res = subprocess.run(["hyprctl", "dispatch", cmd], capture_output=True, text=True, timeout=1)
+                if res.returncode != 0:
+                    subprocess.run(["hyprctl", "dispatch", "dpms", "on", clean], capture_output=True, timeout=1)
+        else:
+            cmd = 'hl.dsp.dpms({ action = "enable" })'
+            res = subprocess.run(["hyprctl", "dispatch", cmd], capture_output=True, text=True, timeout=1)
+            if res.returncode != 0:
+                subprocess.run(["hyprctl", "dispatch", "dpms", "on"], capture_output=True, timeout=1)
+        return True
+    except Exception:
+        return False
+
+
 def calculate_ppi(width: int, height: int, physical_w_mm: int, physical_h_mm: int) -> tuple[float, float]:
     """Calculates display PPI and diagonal size in inches from physical EDID dimensions."""
     if physical_w_mm <= 0 or physical_h_mm <= 0 or width <= 0 or height <= 0:
@@ -282,6 +336,10 @@ class MonitorLuaEngine(HyprlandLuaEngine):
         except Exception:
             live_monitors = []
 
+        # Filter out Hyprland synthetic FALLBACK placeholder heads
+        live_monitors = [m for m in live_monitors if m.get("name", "").strip().upper() != "FALLBACK"]
+        name_by_id = {str(m.get("id")): m.get("name") for m in live_monitors if "id" in m and "name" in m}
+
         normalized_state: dict[str, Any] = {}
         available_monitor_names: list[str] = []
 
@@ -303,6 +361,18 @@ class MonitorLuaEngine(HyprlandLuaEngine):
             ppi, diag_in = calculate_ppi(phys_w, phys_h, pw_mm, ph_mm)
             detected_bpc = detect_bitdepth(m.get("currentFormat", ""))
 
+            # Normalize mirror targets (translates 'none' -> '' and monitor ID -> connector name)
+            raw_mirror = str(m.get("mirrorOf", "")).strip()
+            live_mirror = "" if raw_mirror.lower() in ("", "none") else name_by_id.get(raw_mirror, raw_mirror)
+
+            # Hardware capability inspection and health state
+            hw_details = m.get("hardwareDetails", {})
+            vrr_capable = bool(hw_details.get("vrrCapable", False))
+            hdr_capable = bool(hw_details.get("hdr", False))
+            bt2020_capable = bool(hw_details.get("bt2020", False))
+            dpms_status = bool(m.get("dpmsStatus", True))
+            live_vrr = normalize_vrr(m.get("vrr", 0))
+
             self._monitor_metadata[name] = {
                 "make": m.get("make", ""),
                 "model": m.get("model", ""),
@@ -312,7 +382,13 @@ class MonitorLuaEngine(HyprlandLuaEngine):
                 "diagonal_inches": diag_in,
                 "bitdepth": detected_bpc,
                 "refresh_rate": float(m.get("refreshRate", 60.0)),
-                "current_mode": f"{phys_w}x{phys_h}@{float(m.get('refreshRate', 60.0)):.2f}"
+                "current_mode": f"{phys_w}x{phys_h}@{float(m.get('refreshRate', 60.0)):.2f}",
+                "vrr_capable": vrr_capable,
+                "hdr_capable": hdr_capable,
+                "bt2020_capable": bt2020_capable,
+                "dpms_status": dpms_status,
+                "mirror_of": live_mirror,
+                "health": monitor_health(m)
             }
 
             ui_scope = f"monitor/{name}"
@@ -353,17 +429,17 @@ class MonitorLuaEngine(HyprlandLuaEngine):
                 "position": "auto",
                 "scale": clean_cur_scale,
                 "transform": str(m.get("transform", 0)),
-                "vrr": str(m.get("vrr", 0)),
+                "vrr": live_vrr,
                 "bitdepth": str(detected_bpc),
                 "cm": m.get("colorManagementPreset", "auto") or "auto",
                 "sdr_eotf": "default",
                 "sdrbrightness": str(m.get("sdrBrightness", 1.0)),
                 "sdrsaturation": str(m.get("sdrSaturation", 1.0)),
-                "mirror": "",
+                "mirror": live_mirror,
                 "icc": "",
                 "reserved_area": 0,
-                "supports_wide_color": "0",
-                "supports_hdr": "0",
+                "supports_wide_color": "1" if bt2020_capable else "0",
+                "supports_hdr": "1" if hdr_capable else "0",
                 "sdr_min_luminance": 0.2,
                 "sdr_max_luminance": 80,
                 "min_luminance": -1.0,
@@ -547,4 +623,13 @@ class MonitorLuaEngine(HyprlandLuaEngine):
             except (OSError, UnicodeError) as exc:
                 context = ' (Lua changes already saved)' if translated else ''
                 return False, f'Primary monitor save failed{context}: {exc}', ''
+
+        # Ensure any newly enabled monitors are powered on from DPMS sleep
+        enabled_monitors = [
+            scope.removeprefix('monitor/') for key, scope, value, _ in changes
+            if scope.startswith('monitor/') and key == 'enabled' and boolean(value)
+        ]
+        if enabled_monitors:
+            wake_displays(enabled_monitors)
+
         return True, 'Monitor configuration saved.', ''

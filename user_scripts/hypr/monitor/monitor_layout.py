@@ -45,22 +45,29 @@ def toggle_flip(current: int) -> int:
     return current ^ 4
 
 
-def get_scale_ladder(w: int, h: int) -> list[float]:
+def get_scale_ladder(w: int, h: int, current_scale: float | None = None) -> list[float]:
     """
     Calculates sharp scale ladder for a given mode on Hyprland's 1/120 quantum grid.
-    Enforces minimum usable logical boundaries (640x360).
+    Preserves active current_scale and enforces minimum usable logical boundaries (640x360).
     """
     MIN_LOGICAL_LONG = 640
     MIN_LOGICAL_SHORT = 360
     long_, short = max(w, h), min(w, h)
 
     g = math.gcd(120 * w, 120 * h)
-    scales: list[float] = []
+    scales_set: set[float] = set()
     for n in range(60, 481):  # 0.50x to 4.00x
         if g % n == 0:
             s = round(n / 120.0, 5)
             if (long_ / s) >= MIN_LOGICAL_LONG and (short / s) >= MIN_LOGICAL_SHORT:
-                scales.append(s)
+                scales_set.add(s)
+
+    if current_scale and current_scale > 0:
+        cs = round(current_scale, 5)
+        if (long_ / cs) >= MIN_LOGICAL_LONG and (short / cs) >= MIN_LOGICAL_SHORT:
+            scales_set.add(cs)
+
+    scales = sorted(list(scales_set))
     return scales if scales else [1.0]
 
 
@@ -97,6 +104,125 @@ class MonitorCanvasItem:
         s = self.scale if self.scale > 0 else 1.0
         n = max(1, round(s * 120))
         return max(1, int(round((eff_h * 120) / n)))
+
+
+def spans_overlap(a1: int, a2: int, b1: int, b2: int) -> bool:
+    """Returns True if 1D intervals [a1, a2] and [b1, b2] overlap."""
+    return a1 < b2 and a2 > b1
+
+
+def monitors_overlap(m1: MonitorCanvasItem, m2: MonitorCanvasItem) -> bool:
+    """Returns True if two active monitors' logical bounding boxes intersect."""
+    if m1.disabled or m2.disabled:
+        return False
+    w1, h1 = m1.logical_width, m1.logical_height
+    w2, h2 = m2.logical_width, m2.logical_height
+    return spans_overlap(m1.x, m1.x + w1, m2.x, m2.x + w2) and \
+           spans_overlap(m1.y, m1.y + h1, m2.y, m2.y + h2)
+
+
+def has_overlaps(monitors: list[MonitorCanvasItem]) -> bool:
+    """Reports if any active monitors in the layout overlap each other."""
+    active = [m for m in monitors if not m.disabled]
+    for i in range(len(active)):
+        for j in range(i + 1, len(active)):
+            if monitors_overlap(active[i], active[j]):
+                return True
+    return False
+
+
+def output_overlaps_any(monitors: list[MonitorCanvasItem], selected_idx: int, x: int, y: int) -> bool:
+    """Tests if placing selected monitor at (x, y) collides with any other active display."""
+    if selected_idx < 0 or selected_idx >= len(monitors):
+        return False
+    sel = monitors[selected_idx]
+    w, h = sel.logical_width, sel.logical_height
+    for idx, other in enumerate(monitors):
+        if idx == selected_idx or other.disabled:
+            continue
+        ow, oh = other.logical_width, other.logical_height
+        if spans_overlap(x, x + w, other.x, other.x + ow) and \
+           spans_overlap(y, y + h, other.y, other.y + oh):
+            return True
+    return False
+
+
+def place_outside_overlaps(monitors: list[MonitorCanvasItem], selected_idx: int) -> bool:
+    """
+    Moves an overlapping display to the nearest clear outside edge.
+    Evaluates candidates on adjoining clear borders and picks the one with minimum Euclidean distance.
+    """
+    if selected_idx < 0 or selected_idx >= len(monitors):
+        return False
+    sel = monitors[selected_idx]
+    if sel.disabled or not output_overlaps_any(monitors, selected_idx, sel.x, sel.y):
+        return False
+
+    w, h = sel.logical_width, sel.logical_height
+    candidates: list[tuple[int, int, int]] = []
+
+    def add_candidate(cx: int, cy: int) -> None:
+        if not output_overlaps_any(monitors, selected_idx, cx, cy):
+            dx = cx - sel.x
+            dy = cy - sel.y
+            candidates.append((cx, cy, dx * dx + dy * dy))
+
+    for idx, other in enumerate(monitors):
+        if idx == selected_idx or other.disabled:
+            continue
+        ow, oh = other.logical_width, other.logical_height
+        # Flush outside edges along current coordinate
+        add_candidate(other.x - w, sel.y)
+        add_candidate(other.x + ow, sel.y)
+        add_candidate(sel.x, other.y - h)
+        add_candidate(sel.x, other.y + oh)
+        # Flush corners / aligned edges
+        add_candidate(other.x - w, other.y)
+        add_candidate(other.x + ow, other.y)
+        add_candidate(other.x, other.y - h)
+        add_candidate(other.x, other.y + oh)
+        add_candidate(other.x + ow - w, other.y - h)
+        add_candidate(other.x + ow - w, other.y + oh)
+
+    if not candidates:
+        return False
+
+    best_x, best_y, _ = min(candidates, key=lambda c: c[2])
+    sel.x = best_x
+    sel.y = best_y
+    return True
+
+
+def resolve_layout_overlaps(monitors: list[MonitorCanvasItem], selected_idx: int = 0) -> bool:
+    """Resolves collisions across all active displays in the arrangement."""
+    moved = place_outside_overlaps(monitors, selected_idx)
+    for idx in range(len(monitors)):
+        if idx != selected_idx:
+            if place_outside_overlaps(monitors, idx):
+                moved = True
+    return moved
+
+
+def wake_displays(outputs: list[str] | None = None) -> bool:
+    """Wakes displays from DPMS sleep in Hyprland 0.55+ (evaluating Lua dispatcher with fallback)."""
+    try:
+        if outputs:
+            for out in outputs:
+                clean = out.strip().removeprefix("desc:")
+                if not clean:
+                    continue
+                cmd = f'hl.dsp.dpms({{ action = "enable", monitor = {json.dumps(clean)} }})'
+                res = subprocess.run(["hyprctl", "dispatch", cmd], capture_output=True, text=True, timeout=1)
+                if res.returncode != 0:
+                    subprocess.run(["hyprctl", "dispatch", "dpms", "on", clean], capture_output=True, timeout=1)
+        else:
+            cmd = 'hl.dsp.dpms({ action = "enable" })'
+            res = subprocess.run(["hyprctl", "dispatch", cmd], capture_output=True, text=True, timeout=1)
+            if res.returncode != 0:
+                subprocess.run(["hyprctl", "dispatch", "dpms", "on"], capture_output=True, timeout=1)
+        return True
+    except Exception:
+        return False
 
 
 class MonitorLayoutCanvas:
@@ -144,6 +270,9 @@ class MonitorLayoutCanvas:
             data = []
             self.status_message = f"Failed to query hyprctl: {e}"
             self.status_is_error = True
+
+        # Filter out Hyprland synthetic FALLBACK placeholder heads
+        data = [m for m in data if m.get("name", "").strip().upper() != "FALLBACK"]
 
         self.monitors = []
         for idx, m in enumerate(data):
@@ -240,7 +369,7 @@ class MonitorLayoutCanvas:
         if not self.monitors:
             return
         cur = self.monitors[self.selected_idx]
-        ladder = get_scale_ladder(cur.width, cur.height)
+        ladder = get_scale_ladder(cur.width, cur.height, cur.scale)
         if not ladder:
             return
 
@@ -315,12 +444,14 @@ class MonitorLayoutCanvas:
             self.status_message = f"Aligned bottom edge of {cur.name} with {peer.name}."
 
         if (cur.x, cur.y) != old_pos:
+            # Clear any collateral collision against other displays
+            place_outside_overlaps(self.monitors, self.selected_idx)
             self.has_unsaved_changes = True
             if self.live_preview:
                 self._dispatch_live_preview()
 
     def _move_selected(self, dx: int, dy: int) -> None:
-        """Moves the selected monitor and automatically magnetic-snaps near adjacent edges."""
+        """Moves the selected monitor with span-checked magnetic snapping and collision detection."""
         if not self.monitors:
             return
         cur = self.monitors[self.selected_idx]
@@ -329,43 +460,78 @@ class MonitorLayoutCanvas:
 
         peers = [m for idx, m in enumerate(self.monitors) if idx != self.selected_idx and not m.disabled]
 
+        # Calculate candidate snaps along X
+        cand_x = [0]  # Snap to origin
         for p in peers:
-            if abs(new_x - (p.x + p.logical_width)) < self.SNAP_THRESHOLD:
-                new_x = p.x + p.logical_width
-            elif abs((new_x + cur.logical_width) - p.x) < self.SNAP_THRESHOLD:
-                new_x = p.x - cur.logical_width
+            # Flush snap only if Y spans overlap
+            if spans_overlap(new_y, new_y + cur.logical_height, p.y, p.y + p.logical_height):
+                cand_x.append(p.x + p.logical_width)   # Flush right of peer
+                cand_x.append(p.x - cur.logical_width)  # Flush left of peer
+            # Alignment snap
+            cand_x.append(p.x)                         # Flush left edges
+            cand_x.append(p.x + p.logical_width - cur.logical_width) # Flush right edges
 
-            if abs(new_y - (p.y + p.logical_height)) < self.SNAP_THRESHOLD:
-                new_y = p.y + p.logical_height
-            elif abs((new_y + cur.logical_height) - p.y) < self.SNAP_THRESHOLD:
-                new_y = p.y - cur.logical_height
+        valid_x = [pos for pos in cand_x if abs(new_x - pos) <= self.SNAP_THRESHOLD]
+        if valid_x:
+            new_x = min(valid_x, key=lambda pos: abs(new_x - pos))
 
-            if abs(new_y - p.y) < self.SNAP_THRESHOLD:
-                new_y = p.y
-            elif abs((new_y + cur.logical_height) - (p.y + p.logical_height)) < self.SNAP_THRESHOLD:
-                new_y = p.y + p.logical_height - cur.logical_height
+        # Calculate candidate snaps along Y
+        cand_y = [0]  # Snap to origin
+        for p in peers:
+            # Flush snap only if X spans overlap
+            if spans_overlap(new_x, new_x + cur.logical_width, p.x, p.x + p.logical_width):
+                cand_y.append(p.y + p.logical_height)   # Flush below peer
+                cand_y.append(p.y - cur.logical_height)  # Flush above peer
+            # Alignment snap
+            cand_y.append(p.y)                         # Flush top edges
+            cand_y.append(p.y + p.logical_height - cur.logical_height) # Flush bottom edges
 
-            if abs(new_x - p.x) < self.SNAP_THRESHOLD:
-                new_x = p.x
-            elif abs((new_x + cur.logical_width) - (p.x + p.logical_width)) < self.SNAP_THRESHOLD:
-                new_x = p.x + p.logical_width - cur.logical_width
+        valid_y = [pos for pos in cand_y if abs(new_y - pos) <= self.SNAP_THRESHOLD]
+        if valid_y:
+            new_y = min(valid_y, key=lambda pos: abs(new_y - pos))
 
         cur.x = new_x
         cur.y = new_y
         self.has_unsaved_changes = True
-        self.status_message = f"Moved {cur.name} to ({cur.x}, {cur.y})."
+
+        if output_overlaps_any(self.monitors, self.selected_idx, cur.x, cur.y):
+            self.status_message = f"Moved {cur.name} to ({cur.x}, {cur.y}) [COLLISION DETECTED - Press 'O' to resolve]."
+        else:
+            self.status_message = f"Moved {cur.name} to ({cur.x}, {cur.y})."
 
         if self.live_preview:
             self._dispatch_live_preview()
 
     def _dispatch_live_preview(self) -> None:
-        """Applies monitor placements live via hyprctl keyword dispatch."""
+        """Applies monitor placements live via Hyprland Lua eval (with batch keyword fallback)."""
+        lua_calls = []
+        batch_cmds = []
         for m in self.monitors:
             if m.disabled:
-                continue
-            scale_str = f"{m.scale:.5f}".rstrip("0").rstrip(".") if m.scale % 1 != 0 else str(int(m.scale))
-            arg = f"{m.name},{m.current_mode},{m.x}x{m.y},{scale_str},transform,{m.transform}"
-            subprocess.run(["hyprctl", "keyword", "monitor", arg], capture_output=True, timeout=1)
+                lua_calls.append(f'hl.monitor({{ output = {json.dumps(m.name)}, disabled = true }})')
+                batch_cmds.append(f"keyword monitor {m.name},disable")
+            else:
+                scale_str = f"{m.scale:.5f}".rstrip("0").rstrip(".") if m.scale % 1 != 0 else str(int(m.scale))
+                lua_calls.append(f'hl.monitor({{ output = {json.dumps(m.name)}, mode = {json.dumps(m.current_mode)}, position = "{m.x}x{m.y}", scale = {scale_str}, transform = {m.transform}, disabled = false }})')
+                batch_cmds.append(f"keyword monitor {m.name},{m.current_mode},{m.x}x{m.y},{scale_str},transform,{m.transform}")
+
+        if not lua_calls:
+            return
+
+        # Attempt atomic single-eval via Hyprland 0.55+ Lua interface
+        try:
+            eval_code = " ".join(lua_calls)
+            res = subprocess.run(["hyprctl", "eval", eval_code], capture_output=True, text=True, timeout=1)
+            if res.returncode == 0 and "ok" in res.stdout:
+                return
+        except Exception:
+            pass
+
+        # Fallback to batch keyword execution
+        try:
+            subprocess.run(["hyprctl", "--batch", " ; ".join(batch_cmds)], capture_output=True, timeout=1)
+        except Exception:
+            pass
 
     def _revert_live(self) -> None:
         """Restores monitors to their initial positions, scales, and transforms upon cancel."""
@@ -377,7 +543,11 @@ class MonitorLayoutCanvas:
         self._dispatch_live_preview()
 
     def save_and_apply(self) -> bool:
-        """Writes coordinates, scales, and transforms to monitors.lua and dispatches reload."""
+        """Writes coordinates, scales, and transforms to monitors.lua and dispatches reload and DPMS wake."""
+        if has_overlaps(self.monitors):
+            resolve_layout_overlaps(self.monitors, self.selected_idx)
+            self.status_message = "Automatically resolved collisions before saving."
+
         self._normalize_origin()
 
         if MonitorLuaEngine:
@@ -397,9 +567,12 @@ class MonitorLayoutCanvas:
                 self.status_is_error = True
                 return False
 
-        # Live dispatch
+        # Live dispatch and reload
         self._dispatch_live_preview()
         subprocess.run(["hyprctl", "reload"], capture_output=True, timeout=2)
+
+        # Wake active displays from DPMS sleep
+        wake_displays([m.name for m in self.monitors if not m.disabled])
 
         self.has_unsaved_changes = False
         self.saved_successfully = True
@@ -519,6 +692,16 @@ class MonitorLayoutCanvas:
             elif key == ord('0'):
                 self._normalize_origin()
 
+            # Overlap resolution (flush to outside edges)
+            elif key in (ord('o'), ord('O')):
+                if resolve_layout_overlaps(self.monitors, self.selected_idx):
+                    self.has_unsaved_changes = True
+                    self.status_message = "Resolved display overlaps to clear outside edges."
+                    if self.live_preview:
+                        self._dispatch_live_preview()
+                else:
+                    self.status_message = "Layout is already collision-free."
+
             # Live preview toggle
             elif key in (ord('p'), ord('P')):
                 self.live_preview = not self.live_preview
@@ -631,7 +814,11 @@ class MonitorLayoutCanvas:
 
             screen_boxes[idx] = (box_x, box_y, box_w, box_h)
             is_sel = (idx == self.selected_idx)
-            self._render_monitor_box(win, box_x, box_y, box_w, box_h, m, is_sel)
+            is_colliding = any(
+                idx != other_idx and monitors_overlap(m, other)
+                for other_idx, other in enumerate(self.monitors)
+            )
+            self._render_monitor_box(win, box_x, box_y, box_w, box_h, m, is_sel, is_colliding)
 
         return screen_boxes
 
@@ -643,13 +830,18 @@ class MonitorLayoutCanvas:
         w: int,
         h: int,
         m: MonitorCanvasItem,
-        is_selected: bool
+        is_selected: bool,
+        is_colliding: bool = False
     ) -> None:
         """Renders an individual display box with borders and information."""
-        color = curses.color_pair(1 if is_selected else 2)
-        style = curses.A_BOLD if is_selected else curses.A_NORMAL
+        if is_colliding:
+            color = curses.color_pair(5)  # Error / Red
+            style = curses.A_BOLD
+        else:
+            color = curses.color_pair(1 if is_selected else 2)
+            style = curses.A_BOLD if is_selected else curses.A_NORMAL
 
-        tl, tr, bl, br, hl, vl = ("╔", "╗", "╚", "╝", "═", "║") if is_selected else ("┌", "┐", "└", "┘", "─", "│")
+        tl, tr, bl, br, hl, vl = ("╔", "╗", "╚", "╝", "═", "║") if (is_selected or is_colliding) else ("┌", "┐", "└", "┘", "─", "│")
 
         try:
             win.addstr(y, x, tl + hl * (w - 2) + tr, color | style)
@@ -663,21 +855,25 @@ class MonitorLayoutCanvas:
 
         try:
             name_str = f" {m.name} "
+            if is_colliding:
+                name_str += "![OVERLAP] "
             rot_tag = f"({(m.transform & 3)*90}°)" if m.transform != 0 else ""
             if rot_tag:
                 name_str += rot_tag
-            if is_selected:
+            if is_colliding:
+                win.addstr(y, x + max(1, (w - len(name_str)) // 2), name_str, curses.color_pair(5) | curses.A_BOLD)
+            elif is_selected:
                 win.addstr(y, x + max(1, (w - len(name_str)) // 2), name_str, curses.color_pair(6) | curses.A_BOLD)
             else:
                 win.addstr(y, x + max(1, (w - len(name_str)) // 2), name_str, curses.color_pair(2) | curses.A_BOLD)
 
             line1 = f"{m.width}x{m.height} @{m.scale:g}x"
             if h >= 4 and len(line1) <= w - 2:
-                win.addstr(y + 1, x + max(1, (w - len(line1)) // 2), line1, curses.color_pair(7 if is_selected else 2))
+                win.addstr(y + 1, x + max(1, (w - len(line1)) // 2), line1, curses.color_pair(5 if is_colliding else (7 if is_selected else 2)))
 
             line2 = f"Pos: {m.x}, {m.y}"
             if h >= 5 and len(line2) <= w - 2:
-                win.addstr(y + 2, x + max(1, (w - len(line2)) // 2), line2, curses.color_pair(1 if is_selected else 2) | curses.A_BOLD)
+                win.addstr(y + 2, x + max(1, (w - len(line2)) // 2), line2, curses.color_pair(5 if is_colliding else (1 if is_selected else 2)) | curses.A_BOLD)
 
             if h >= 6:
                 line3 = f"({m.logical_width}x{m.logical_height}L)"
@@ -689,9 +885,12 @@ class MonitorLayoutCanvas:
 
     def _draw_status(self, win: curses.window, top: int, width: int) -> None:
         """Renders the dynamic info and error notification bar."""
-        color = curses.color_pair(5 if self.status_is_error else (4 if self.has_unsaved_changes else 3))
-        prefix = " ● " if not self.has_unsaved_changes else " ✦ "
+        colliding = has_overlaps(self.monitors)
+        color = curses.color_pair(5 if (self.status_is_error or colliding) else (4 if self.has_unsaved_changes else 3))
+        prefix = " ● " if (not self.has_unsaved_changes and not colliding) else " ✦ "
         msg = f"{prefix}{self.status_message}"
+        if colliding and "COLLISION" not in self.status_message and "OVERLAP" not in self.status_message:
+            msg += " [OVERLAP DETECTED - Press 'O' to resolve]"
         try:
             win.addstr(top, 1, msg[:width - 2], color | curses.A_BOLD)
             cur = self.monitors[self.selected_idx] if self.monitors else None
@@ -708,7 +907,7 @@ class MonitorLayoutCanvas:
         try:
             win.addstr(top, 1, sep, curses.color_pair(2) | curses.A_DIM)
             shortcuts_1 = " [Tab] Cycle  [Arrows/hjkl] Move  [Shift+Arrows] 120px  [R] Rotate 90°  [F] Flip  [+/-] Scale "
-            shortcuts_2 = " [[] Snap Left  []] Snap Right  [{] Snap Above  [}] Snap Below  [C] Center  [0] Origin  [Enter/S] Save  [Q] Exit "
+            shortcuts_2 = " [[] Snap Left  []] Snap Right  [{] Snap Above  [}] Snap Below  [C] Center  [O] Resolve  [0] Origin  [Enter/S] Save  [Q] Exit "
             win.addstr(top + 1, 1, shortcuts_1[:width - 2], curses.color_pair(1))
             win.addstr(top + 2, 1, shortcuts_2[:width - 2], curses.color_pair(2))
         except curses.error:

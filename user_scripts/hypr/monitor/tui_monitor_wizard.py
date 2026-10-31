@@ -54,9 +54,10 @@ CM_PROFILES = ["auto", "srgb", "dcip3", "dp3", "adobe", "wide", "edid", "hdr", "
 SDR_EOTFS = ["default", "srgb", "gamma22"]
 
 
-def _calculate_valid_scales(native_w: int, native_h: int) -> tuple[list[str], list[str]]:
+def _calculate_valid_scales(native_w: int, native_h: int, current_scale: float = 1.0) -> tuple[list[str], list[str]]:
     """
     Generates scale choices strictly adhering to Hyprland's 1/120 quantum grid.
+    Always includes the active current_scale (even if non-sharp) to prevent rewriting or locking out current config.
     Includes exact resulting logical dimensions and enforces minimum logical bounds (640x360).
     """
     MIN_LOGICAL_LONG = 640
@@ -66,7 +67,11 @@ def _calculate_valid_scales(native_w: int, native_h: int) -> tuple[list[str], li
     presets = preset_choices(native_w, native_h)
     all_sharp = grid_scales(native_w, native_h, min_scale=0.5, max_scale=3.5)
 
-    combined = sorted(list(set(presets + all_sharp)))
+    combined_set = set(presets + all_sharp)
+    if current_scale and current_scale > 0:
+        combined_set.add(round(current_scale, 5))
+
+    combined = sorted(list(combined_set))
     # Enforce ergonomic usability boundaries
     combined = [s for s in combined if (long_ / s >= MIN_LOGICAL_LONG and short / s >= MIN_LOGICAL_SHORT)]
     if not combined:
@@ -83,6 +88,8 @@ def _calculate_valid_scales(native_w: int, native_h: int) -> tuple[list[str], li
         res_info = f"{lw}x{lh} logical"
         if s in presets:
             hints.append(f"{res_info} (Recommended)")
+        elif abs(s - current_scale) < 1e-4:
+            hints.append(f"{res_info} (Current)")
         else:
             hints.append(f"{res_info} (Sharp)")
 
@@ -101,6 +108,10 @@ def generate_schema() -> tuple[list[str], dict[int, list[ConfigItem]]]:
         monitors = json.loads(raw)
     except Exception:
         monitors = []
+
+    # Filter out synthetic FALLBACK placeholder head created during dock/power transitions
+    monitors = [m for m in monitors if m.get("name", "").strip().upper() != "FALLBACK"]
+    name_by_id = {str(m.get("id")): m.get("name") for m in monitors if "id" in m and "name" in m}
 
     tabs = []
     schema = {}
@@ -143,6 +154,33 @@ def generate_schema() -> tuple[list[str], dict[int, list[ConfigItem]]]:
         detected_bpc = detect_bitdepth(m.get("currentFormat", ""))
         scope_str = f"monitor/{name}"
 
+        # Resolve mirror targets from raw mirrorOf
+        raw_mirror = str(m.get("mirrorOf", "")).strip()
+        mirror_target = "" if raw_mirror.lower() in ("", "none") else name_by_id.get(raw_mirror, raw_mirror)
+        if mirror_target not in available_outputs or mirror_target == name:
+            mirror_target = ""
+
+        # Normalize VRR mode into 0/1/2 string
+        raw_vrr = m.get("vrr", 0)
+        if isinstance(raw_vrr, bool):
+            vrr_default = "1" if raw_vrr else "0"
+        elif isinstance(raw_vrr, (int, float)):
+            vrr_default = str(int(raw_vrr)) if int(raw_vrr) in (0, 1, 2) else "0"
+        else:
+            s_vrr = str(raw_vrr).strip().lower()
+            vrr_default = "1" if s_vrr == "true" else ("0" if s_vrr in ("false", "") else s_vrr)
+        if vrr_default not in ("0", "1", "2"):
+            vrr_default = "0"
+
+        # Hardware capabilities and health status inspection
+        hw_details = m.get("hardwareDetails", {})
+        vrr_cap = bool(hw_details.get("vrrCapable", False))
+        hdr_cap = bool(hw_details.get("hdr", False))
+        bt2020_cap = bool(hw_details.get("bt2020", False))
+        dpms_on = bool(m.get("dpmsStatus", True))
+        is_dis = bool(m.get("disabled", False))
+        health_lbl = "Usable (Active)" if (dpms_on and not is_dis) else ("Sleeping (DPMS Off)" if not dpms_on else "Disabled")
+
         # Modes & refresh rate
         avail_modes_raw = m.get("availableModes", [])
         clean_modes = [mode.replace("Hz", "").replace("hz", "").strip() for mode in avail_modes_raw]
@@ -169,8 +207,9 @@ def generate_schema() -> tuple[list[str], dict[int, list[ConfigItem]]]:
             ident_options.append(f"desc:{desc}")
             ident_hints.append("Hardware Safe ID (EDID Description)")
 
-        # Scales (1/120 fractional grid)
-        scale_options, scale_hints = _calculate_valid_scales(native_w, native_h)
+        # Scales (1/120 fractional grid + active scale preservation)
+        cur_scale_float = float(m.get("scale", 1.0))
+        scale_options, scale_hints = _calculate_valid_scales(native_w, native_h, cur_scale_float)
 
         # Positions (Dynamic relative placement + standard auto)
         rel_opts = relative_positions.get(name, [])
@@ -193,6 +232,8 @@ def generate_schema() -> tuple[list[str], dict[int, list[ConfigItem]]]:
             f"- Serial: {serial if serial else 'N/A'}\n"
             f"- Description: {desc}\n"
             f"- Dimensions: {pw_mm}mm × {ph_mm}mm (~{diag_in}\" diag, {ppi} PPI)\n"
+            f"- Capabilities: VRR: {'Supported' if vrr_cap else 'No'} | HDR: {'Supported' if hdr_cap else 'No'} | Wide Color: {'Supported' if bt2020_cap else 'No'}\n"
+            f"- Power / State: {health_lbl}\n"
             f"- Buffer Format: {m.get('currentFormat', 'Unknown')} ({detected_bpc}-bit)\n"
             f"- Active Mode: {native_w}x{native_h} @ {base_refresh}Hz\n"
         )
@@ -251,14 +292,14 @@ def generate_schema() -> tuple[list[str], dict[int, list[ConfigItem]]]:
                 extended_help="Custom reserved margin (in pixels) unoccupied by tiled windows on all edges."
             ),
             ConfigItem(
-                label="Mirror Output", key="mirror", scope=scope_str, type_="picker", default="",
+                label="Mirror Output", key="mirror", scope=scope_str, type_="picker", default=mirror_target,
                 options=[""] + [out for out in available_outputs if out != name],
                 hints=["None (Independent Screen)"] + [f"Clone {out}" for out in available_outputs if out != name],
                 group="Layout & Transforms",
                 extended_help="Mirrors another display pixel-for-pixel."
             ),
             ConfigItem(
-                label="VRR", key="vrr", scope=scope_str, type_="cycle", default="0",
+                label="VRR", key="vrr", scope=scope_str, type_="cycle", default=vrr_default,
                 options=["0", "1", "2"], hints=["Off", "Always On", "Fullscreen Only"], group="Advanced Display",
                 extended_help="Configures per-display Variable Refresh Rate (VRR / FreeSync / G-Sync)."
             ),
@@ -495,18 +536,24 @@ def generate_schema() -> tuple[list[str], dict[int, list[ConfigItem]]]:
         clamshell_payload = {}
         for im in internal_outputs:
             clamshell_payload[f"monitor/{im}.enabled"] = False
+            clamshell_payload[f"monitor/{im}.mirror"] = ""
         for em in external_outputs:
             clamshell_payload[f"monitor/{em}.enabled"] = True
+
+        # Distribute workspaces 1..10 sequentially across all connected external outputs
+        num_ext = len(external_outputs)
         for w_i in range(1, 11):
-            clamshell_payload[f"workspace_rule/{w_i}.monitor"] = external_outputs[0]
-            clamshell_payload[f"workspace_rule/{w_i}.default"] = (w_i == 1)
+            target_ext_idx = min(num_ext - 1, (w_i - 1) * num_ext // 10)
+            target_ext = external_outputs[target_ext_idx]
+            clamshell_payload[f"workspace_rule/{w_i}.monitor"] = target_ext
+            clamshell_payload[f"workspace_rule/{w_i}.default"] = (w_i == 1 or (num_ext > 1 and w_i == ((10 // num_ext) + 1)))
 
         preset_items.append(
             ConfigItem(
                 label="Clamshell (External Only)", key="preset_clamshell", scope="DEFAULT", type_="preset",
                 default=None, group="Display Profiles",
                 preset_payload=clamshell_payload,
-                extended_help="Clamshell mode: disables internal laptop screen and routes all workspaces to external monitor."
+                extended_help=f"Clamshell mode: disables internal laptop screen and distributes workspaces across {num_ext} external display{'s' if num_ext > 1 else ''}."
             )
         )
 
