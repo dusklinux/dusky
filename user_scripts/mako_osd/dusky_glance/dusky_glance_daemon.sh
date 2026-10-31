@@ -21,7 +21,7 @@ Usage: dusky_glance_daemon.sh MODE [arguments]
   --hud [cardN intel|amd|nvidia]
   --stop | --stop-all         Stop every active Dusky Glance instance
   Other modes: --clock --clock-short --stopwatch --cpu-power --cpu --ram
-  --ram-temp --zram --temp --battery --battery-percent --battery-watts
+  --ram-available --ram-free --ram-temp --zram --temp --battery --battery-percent --battery-watts
   --battery-time --disk --network* --uptime --workspace
 USAGE
     exit 2
@@ -52,6 +52,7 @@ case "$MODE" in
     --stop|--stop-all)
         (( $# == 1 )) || usage ;;
     --clock|--clock-short|--stopwatch|--cpu-power|--cpu|--ram|\
+    --ram-available|--ram-avail|--ram-free|\
     --ram-temp|--zram|--temp|--battery|--battery-percent|--battery-watts|\
     --battery-time|--disk|--network|--network-down|--network-download|\
     --network-up|--network-upload|--network-combined|--network-speed|\
@@ -194,6 +195,7 @@ if [[ "$MODE" == --stop || "$MODE" == --stop-all ]]; then
 fi
 
 case "$MODE" in
+    --ram-avail) set -- --ram-available ;;
     --network-download) set -- --network-down ;;
     --network-upload) set -- --network-up ;;
     --network-speed|--network-rate) set -- --network-combined ;;
@@ -766,18 +768,72 @@ cpu_temp_once() {
 }
 ram_once() {
     local -n _dest=$1
-    local key val total="" avail=""
+    local key val total="" avail="" free="" cached=""
     _dest=N/A
-    while read -r key val _; do
-        case "$key" in
-            MemTotal:) total=$val ;;
-            MemAvailable:) avail=$val ;;
-        esac
-        [[ -n "$total" && -n "$avail" ]] && break
-    done < /proc/meminfo
+    if ! {
+        while read -r key val _; do
+            case "$key" in
+                MemTotal:) total=$val ;;
+                MemAvailable:) avail=$val ;;
+                MemFree:) free=$val ;;
+                Cached:) cached=$val ;;
+            esac
+            [[ -n "$total" && -n "$avail" ]] && break
+        done < /proc/meminfo
+    } 2>/dev/null; then
+        return 0
+    fi
+    if [[ -z "$avail" && "$free" =~ ^[0-9]+$ && "$cached" =~ ^[0-9]+$ ]]; then
+        avail=$((free + cached))
+    fi
     if [[ "$total" =~ ^[0-9]+$ && "$avail" =~ ^[0-9]+$ ]] &&
        (( total > 0 && avail <= total )); then
         _dest="$(((total - avail) / 1024))"
+    fi
+    return 0
+}
+ram_available_once() {
+    local -n _dest=$1
+    local key val total="" avail="" free="" cached=""
+    _dest=N/A
+    if ! {
+        while read -r key val _; do
+            case "$key" in
+                MemTotal:) total=$val ;;
+                MemAvailable:) avail=$val; break ;;
+                MemFree:) free=$val ;;
+                Cached:) cached=$val ;;
+            esac
+        done < /proc/meminfo
+    } 2>/dev/null; then
+        return 0
+    fi
+    if [[ -z "$avail" && "$free" =~ ^[0-9]+$ && "$cached" =~ ^[0-9]+$ ]]; then
+        avail=$((free + cached))
+    fi
+    if [[ "$avail" =~ ^[0-9]+$ ]] &&
+       { [[ -z "$total" ]] || (( total <= 0 || avail <= total )); }; then
+        _dest="$((avail / 1024))"
+    fi
+    return 0
+}
+ram_free_once() {
+    local -n _dest=$1
+    local key val total="" free=""
+    _dest=N/A
+    if ! {
+        while read -r key val _; do
+            case "$key" in
+                MemTotal:) total=$val ;;
+                MemFree:) free=$val; break ;;
+            esac
+        done < /proc/meminfo
+    } 2>/dev/null; then
+        return 0
+    fi
+    if [[ "$free" =~ ^[0-9]+$ ]] &&
+       { [[ -z "$total" ]] || (( total <= 0 || free <= total )); }; then
+        _dest="$((free / 1024))"
     fi
     return 0
 }
@@ -1243,6 +1299,20 @@ case "$MODE" in
     --ram)
         while true; do
             ram_once reading
+            send_osd "$reading"
+            wait_tick
+        done ;;
+
+    --ram-available)
+        while true; do
+            ram_available_once reading
+            send_osd "$reading"
+            wait_tick
+        done ;;
+
+    --ram-free)
+        while true; do
+            ram_free_once reading
             send_osd "$reading"
             wait_tick
         done ;;

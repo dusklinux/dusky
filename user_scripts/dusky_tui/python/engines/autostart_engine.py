@@ -150,6 +150,16 @@ AUTOSTART_DEFAULTS: dict[str, dict[str, Any]] = {
         "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --ram")',
         "default": False
     },
+    "autostart/glance_ram_available": {
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--ram-available(?:["\'\s]|$)""",
+        "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --ram-available")',
+        "default": False
+    },
+    "autostart/glance_ram_free": {
+        "pattern": r"""dusky_glance\.sh[\\"']*\s+--ram-free(?:["\'\s]|$)""",
+        "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --ram-free")',
+        "default": False
+    },
     "autostart/glance_ram_temp": {
         "pattern": r"""dusky_glance\.sh[\\"']*\s+--ram-temp""",
         "canonical": 'hl.exec_cmd("~/user_scripts/rofi/dusky_glance.sh --ram-temp")',

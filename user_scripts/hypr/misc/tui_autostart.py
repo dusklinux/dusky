@@ -309,6 +309,26 @@ SCHEMA = {
             extended_help="**RAM Glance Autostart**\n\nLaunches RAM usage overlay at startup."
         ),
         ConfigItem(
+            label="RAM Available (Headroom)",
+            key="glance_ram_available",
+            scope="autostart",
+            type_="bool",
+            default=False,
+            parent_ref="menu_dusky_glance",
+            group="Dashboards",
+            extended_help="**RAM Available Glance Autostart**\n\nLaunches available memory headroom overlay at startup."
+        ),
+        ConfigItem(
+            label="RAM Free (Unallocated)",
+            key="glance_ram_free",
+            scope="autostart",
+            type_="bool",
+            default=False,
+            parent_ref="menu_dusky_glance",
+            group="Dashboards",
+            extended_help="**RAM Free Glance Autostart**\n\nLaunches unallocated memory overlay at startup."
+        ),
+        ConfigItem(
             label="RAM Temperature",
             key="glance_ram_temp",
             scope="autostart",

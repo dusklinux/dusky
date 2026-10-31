@@ -89,6 +89,8 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     printf "  \e[32m--cpu-power\e[0m                Show live CPU Package Power (Watts)\n"
     printf "  \e[32m--cpu\e[0m                      Show live CPU usage\n"
     printf "  \e[32m--ram\e[0m                      Show live RAM usage\n"
+    printf "  \e[32m--ram-available\e[0m            Show live available RAM (headroom)\n"
+    printf "  \e[32m--ram-free\e[0m                 Show live free RAM (unallocated)\n"
     printf "  \e[32m--temp\e[0m                     Show CPU temperature\n"
     printf "  \e[32m--battery\e[0m                  Show battery status/power\n"
     printf "  \e[32m--disk\e[0m                     Show root disk usage\n"
@@ -912,13 +914,28 @@ while true; do
 
         '󰘚  Memory (RAM)')
             while true; do
-                m_opts=("󰘚  System RAM Usage" "󰘚  RAM Temperature" "󰘚  ZRAM Usage" "  Back")
+                m_opts=(
+                    "󰘚  System RAM Usage"
+                    "󰘚  RAM Available (Headroom)"
+                    "󰘚  RAM Free (Unallocated)"
+                    "󰘚  RAM Temperature"
+                    "󰘚  ZRAM Usage"
+                    "  Back"
+                )
                 mchoice=$(printf '%s\n' "${m_opts[@]}" | "${ROFI_SUB[@]}" -p "Memory") || break
                 [[ "$mchoice" == "  Back" ]] && break
 
                 if [[ "$mchoice" == *"System RAM"* ]]; then
                     save_recent "RAM Usage" "--ram"
                     "$DAEMON_SCRIPT" --ram & disown
+                    exit 0
+                elif [[ "$mchoice" == *"Available"* ]]; then
+                    save_recent "RAM Available" "--ram-available"
+                    "$DAEMON_SCRIPT" --ram-available & disown
+                    exit 0
+                elif [[ "$mchoice" == *"Free"* ]]; then
+                    save_recent "RAM Free" "--ram-free"
+                    "$DAEMON_SCRIPT" --ram-free & disown
                     exit 0
                 elif [[ "$mchoice" == *"Temperature"* ]]; then
                     save_recent "RAM Temp" "--ram-temp"
