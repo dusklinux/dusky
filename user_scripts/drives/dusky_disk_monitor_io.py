@@ -246,9 +246,8 @@ class SmartInfo:
 class SysStatParser:
     @staticmethod
     def get_block_stats(device: str) -> BlockStats | None:
-        path = Path(f"/sys/block/{device}/stat")
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(f"/sys/block/{device}/stat", "r", encoding="utf-8") as f:
                 fields = f.read().split()
             if len(fields) < 17:
                 return None
@@ -453,13 +452,18 @@ class SysStatParser:
     @staticmethod
     def get_ram_buffers() -> tuple[float, float]:
         dirty = writeback = 0.0
+        found = 0
         try:
             with open("/proc/meminfo", "r", encoding="utf-8") as f:
                 for line in f:
                     if line.startswith("Dirty:"):
                         dirty = float(line.split()[1]) / 1024.0
+                        found += 1
                     elif line.startswith("Writeback:"):
                         writeback = float(line.split()[1]) / 1024.0
+                        found += 1
+                    if found == 2:
+                        break
         except (OSError, IndexError, ValueError):
             pass
         return dirty, writeback
@@ -468,9 +472,9 @@ class SysStatParser:
     def is_zram_active(dev_name: str) -> bool:
         """Verifies that a ZRAM device is actively engaged in swap or mounted to a filesystem."""
         try:
-            sz_p = Path(f"/sys/block/{dev_name}/size")
-            if int(sz_p.read_text()) == 0:
-                return False
+            with open(f"/sys/block/{dev_name}/size", "r", encoding="utf-8") as f:
+                if int(f.read().strip()) == 0:
+                    return False
             with open("/proc/swaps", "r", encoding="utf-8") as f:
                 if any(line.split(maxsplit=1)[0] == f"/dev/{dev_name}"
                        for line in f if line.strip()):
