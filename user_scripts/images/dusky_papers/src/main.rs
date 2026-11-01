@@ -13,6 +13,10 @@ mod ui;
 
 use config::Config;
 use std::env;
+use std::io::Write;
+use std::os::unix::net::{UnixListener, UnixStream};
+use std::path::PathBuf;
+use std::time::Duration;
 use ui::DuskyPapersApp;
 
 // Bound background task threads instead of creating one for every CPU.
@@ -213,6 +217,30 @@ impl SingleInstanceGuard {
             Err(error) => Err(format!("Could not lock {}: {error}", path.display())),
         }
     }
+}
+
+struct SocketGuard(PathBuf);
+
+impl Drop for SocketGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+fn instance_socket_path() -> PathBuf {
+    if let Ok(runtime_dir) = env::var("XDG_RUNTIME_DIR") {
+        PathBuf::from(runtime_dir).join("dusky-papers.sock")
+    } else {
+        PathBuf::from("/tmp/dusky-papers.sock")
+    }
+}
+
+fn spawn_ipc_watcher(listener: UnixListener) {
+    std::thread::spawn(move || {
+        if let Ok((_stream, _)) = listener.accept() {
+            std::process::exit(0);
+        }
+    });
 }
 
 fn read_card_vendor_driver(card_name: &str) -> Option<(String, String, String)> {
@@ -451,6 +479,14 @@ fn main() -> iced_exwlshell::Result {
         std::process::exit(2);
     }
 
+    // Single-instance zero-latency toggle: if already running, signal it to dismiss and exit immediately.
+    let sock_path = instance_socket_path();
+    if let Ok(mut stream) = UnixStream::connect(&sock_path) {
+        let _ = stream.set_write_timeout(Some(Duration::from_millis(50)));
+        let _ = stream.write_all(b"dismiss\n");
+        return Ok(());
+    }
+
     // Single-instance guard prevents duplicate instances and CPU thrashing
     let _guard = match SingleInstanceGuard::acquire() {
         Ok(Some(g)) => g,
@@ -459,6 +495,18 @@ fn main() -> iced_exwlshell::Result {
         Err(error) => {
             eprintln!("Could not start Dusky Papers: {error}");
             std::process::exit(1);
+        }
+    };
+
+    let _ = std::fs::remove_file(&sock_path);
+    let _socket_guard = match UnixListener::bind(&sock_path) {
+        Ok(listener) => {
+            spawn_ipc_watcher(listener);
+            Some(SocketGuard(sock_path))
+        }
+        Err(error) => {
+            eprintln!("Warning: could not bind dusky-papers toggle socket: {error}");
+            None
         }
     };
 
