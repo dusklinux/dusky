@@ -7,6 +7,7 @@ return {
 		integrations = { lspconfig = false }, -- Preserve Dusky root selection and large-file exclusion.
 		library = {
 			{ path = "${3rd}/luv/library", words = { "vim%.uv" } },
+			{ path = "/usr/share/hypr/stubs", words = { "hl%." } },
 		},
 	},
 }

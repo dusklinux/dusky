@@ -65,7 +65,17 @@ return {
 					settings = {
 						Lua = {
 							diagnostics = {
-								globals = { "vim" },
+								globals = {
+									"vim",
+									"hl",
+									"dusky_scripts",
+									"HOME",
+									"terminal",
+									"fileManager",
+									"menu",
+									"browser",
+									"textEditor",
+								},
 							},
 							workspace = {
 								checkThirdParty = false,
