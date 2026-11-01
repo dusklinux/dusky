@@ -126,6 +126,8 @@ pub struct Client {
     pub workspace: WorkspaceRef,
     #[serde(default)]
     pub floating: bool,
+    #[serde(default)]
+    pub pinned: bool,
     #[serde(rename = "focusHistoryID", default)]
     pub focus_history_id: i32,
     #[serde(default)]
@@ -224,6 +226,13 @@ impl Monitor {
         } else {
             None
         }
+    }
+
+    /// Returns the special workspace key if one is currently open on this monitor,
+    /// otherwise returns the monitor's active normal workspace key.
+    pub fn effective_active_key(&self) -> WorkspaceKey {
+        self.active_special_key()
+            .unwrap_or_else(|| self.active_workspace.key())
     }
 }
 
@@ -365,7 +374,7 @@ pub fn fetch_snapshot() -> Result<OverviewSnapshot, HyprError> {
 
     let active_ws_key = primary_monitor
         .as_ref()
-        .and_then(|m| m.active_special_key().or_else(|| Some(m.active_workspace.key())));
+        .map(Monitor::effective_active_key);
 
     let mut open_specials = Vec::new();
     for mon in &monitors {
@@ -378,16 +387,38 @@ pub fn fetch_snapshot() -> Result<OverviewSnapshot, HyprError> {
     }
     let _ = OPEN_SPECIAL_WORKSPACES.set(open_specials);
 
-    // Keep only mapped, non-hidden windows with valid positive geometry.
+    // Keep only mapped, non-hidden, non-pinned workspace windows with valid positive geometry.
+    // Pinned windows (e.g. Picture-in-Picture overlays and dusky-snap-pick) float across all workspaces
+    // and otherwise collide with the bottom-right workspace badge on Workspace 1.
     let valid_clients: Vec<Client> = all_clients
         .into_iter()
-        .filter(|c| c.mapped && !c.hidden && c.size[0] > 0 && c.size[1] > 0)
+        .filter(|c| {
+            c.mapped
+                && !c.hidden
+                && !c.pinned
+                && c.class != "dusky-snap-pick"
+                && c.size[0] > 0
+                && c.size[1] > 0
+        })
         .collect();
 
-    let focused_address = valid_clients
-        .iter()
-        .find(|c| c.focus_history_id == 0)
-        .map(|c| c.address.clone());
+    // Prefer the most recently focused window on the currently active workspace (e.g. open special workspace)
+    // before falling back to global focusHistoryID == 0.
+    let focused_address = active_ws_key
+        .as_ref()
+        .and_then(|active_key| {
+            valid_clients
+                .iter()
+                .filter(|c| &c.workspace.key() == active_key)
+                .min_by_key(|c| c.focus_history_id)
+                .map(|c| c.address.clone())
+        })
+        .or_else(|| {
+            valid_clients
+                .iter()
+                .find(|c| c.focus_history_id == 0)
+                .map(|c| c.address.clone())
+        });
 
     let mut grouped: BTreeMap<WorkspaceKey, Vec<Client>> = BTreeMap::new();
     for client in valid_clients {
@@ -413,12 +444,16 @@ pub fn fetch_snapshot() -> Result<OverviewSnapshot, HyprError> {
     let mut views = Vec::with_capacity(grouped.len());
 
     for (key, mut ws_clients) in grouped {
+        // A workspace is active ONLY if it is the top-most visible workspace on a monitor
+        // (i.e. if a special workspace is open on that monitor, the underlying normal workspace is not active).
         let is_active = active_ws_key.as_ref() == Some(&key)
-            || monitors.iter().any(|m| {
-                m.active_workspace.key() == key || m.active_special_key().as_ref() == Some(&key)
-            });
+            || monitors.iter().any(|m| m.effective_active_key() == key);
 
-        if ws_clients.is_empty() && !is_active {
+        let is_monitor_underlay = monitors
+            .iter()
+            .any(|m| m.active_workspace.key() == key);
+
+        if ws_clients.is_empty() && !is_active && !is_monitor_underlay {
             continue;
         }
 

@@ -290,8 +290,12 @@ impl OverviewApp {
     }
 
     fn initial_selection(snapshot: &OverviewSnapshot) -> SelectionTarget {
+        // 1. Prioritize the focused window if it resides on an active visible workspace.
         if let Some(ref focused_addr) = snapshot.focused_address {
             for (ws_idx, ws) in snapshot.workspaces.iter().enumerate() {
+                if !ws.is_active {
+                    continue;
+                }
                 for (win_idx, client) in ws.clients.iter().enumerate() {
                     if &client.address == focused_addr {
                         return SelectionTarget::Window { ws_idx, win_idx };
@@ -300,12 +304,24 @@ impl OverviewApp {
             }
         }
 
+        // 2. Otherwise select the active visible workspace (or its top-most window).
         if let Some(ws_idx) = snapshot.workspaces.iter().position(|w| w.is_active) {
             if !snapshot.workspaces[ws_idx].clients.is_empty() {
                 let win_idx = snapshot.workspaces[ws_idx].clients.len() - 1;
                 return SelectionTarget::Window { ws_idx, win_idx };
             }
             return SelectionTarget::Workspace(ws_idx);
+        }
+
+        // 3. Fallback: match focused_address on any workspace, or default to Workspace(0).
+        if let Some(ref focused_addr) = snapshot.focused_address {
+            for (ws_idx, ws) in snapshot.workspaces.iter().enumerate() {
+                for (win_idx, client) in ws.clients.iter().enumerate() {
+                    if &client.address == focused_addr {
+                        return SelectionTarget::Window { ws_idx, win_idx };
+                    }
+                }
+            }
         }
 
         SelectionTarget::Workspace(0)
@@ -938,6 +954,17 @@ impl OverviewApp {
             y = (preview_h - inset - h).max(inset);
         }
 
+        // If a small floating window sits in the bottom-right badge zone, nudge it above the badge pill
+        // so the badge never covers its label or turns its border into a halo around the badge.
+        if client.floating
+            && w <= 96.0
+            && h <= 48.0
+            && x + w > preview_w - 48.0
+            && y + h > preview_h - 34.0
+        {
+            y = (preview_h - 34.0 - h).max(inset);
+        }
+
         let class_label = if client.class.is_empty() {
             "Window"
         } else {
@@ -1046,7 +1073,7 @@ impl OverviewApp {
                     border: Border {
                         color: border_color,
                         width: border_width,
-                        radius: 6.0.into(),
+                        radius: 8.5.into(),
                     },
                     shadow: Shadow::default(),
                     ..Default::default()
