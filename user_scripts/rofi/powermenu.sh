@@ -20,7 +20,7 @@ readonly LOCK_FILE="${XDG_RUNTIME_DIR}/rofi-power.lock"
 readonly ACTION_DELAY='0.05'
 readonly SESSION_SCRIPT="$HOME/user_scripts/wlogout/dusky_session.sh"
 
-readonly THEME='window { width: 340px; padding: 16px; } mainbox { spacing: 12px; } inputbar { padding: 10px 12px; } listview { lines: 6; fixed-height: false; dynamic: true; spacing: 6px; } element { padding: 8px 12px; } entry { placeholder: "Filter…"; }'
+readonly THEME='window { width: 340px; padding: 16px; } mainbox { spacing: 12px; } inputbar { padding: 10px 12px; } listview { lines: 7; fixed-height: false; dynamic: true; spacing: 6px; } element { padding: 8px 12px; } entry { placeholder: "Filter…"; }'
 
 exec {lock_fd}> "${LOCK_FILE}"
 flock -n "${lock_fd}" || exit 0
@@ -34,6 +34,7 @@ declare -Ar ICONS=(
     [shutdown]=""
     [reboot]=""
     [suspend]=""
+    [hibernate]=""
     [soft_reboot]=""
     [logout]=""
     [lock]=""
@@ -45,6 +46,7 @@ declare -Ar LABELS=(
     [lock]="Lock"
     [logout]="Logout"
     [suspend]="Suspend"
+    [hibernate]="Hibernate"
     [reboot]="Reboot"
     [soft_reboot]="Soft Reboot"
     [shutdown]="Shutdown"
@@ -54,6 +56,7 @@ declare -Ar KEYWORDS=(
     [shutdown]="power off halt"
     [reboot]="restart"
     [suspend]="sleep"
+    [hibernate]="sleep disk freeze"
     [soft_reboot]="restart soft reload"
     [logout]="log out exit quit"
     [lock]="lock screen secure"
@@ -63,6 +66,7 @@ declare -ar ORDER=(
     shutdown
     reboot
     suspend
+    hibernate
     lock
     logout
     soft_reboot
@@ -71,6 +75,7 @@ declare -ar ORDER=(
 declare -Ar CONFIRM=(
     [shutdown]=1
     [reboot]=1
+    [hibernate]=1
     [logout]=1
     [soft_reboot]=1
 )
@@ -144,6 +149,10 @@ execute() {
         suspend)
             sleep "${ACTION_DELAY}"
             exec systemctl suspend
+            ;;
+        hibernate)
+            sleep "${ACTION_DELAY}"
+            exec systemctl hibernate
             ;;
         reboot)
             sleep "${ACTION_DELAY}"
