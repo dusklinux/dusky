@@ -1848,7 +1848,8 @@ hl.layer_rule({
     match = { namespace = "dusky_overview" },
     blur = true,
     xray = false,
-    ignore_alpha = 0.0
+    ignore_alpha = 0.0,
+    no_anim = true
 })
 
 -- SMART GAPS (Disabled / Examples)

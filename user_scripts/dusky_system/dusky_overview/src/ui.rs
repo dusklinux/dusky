@@ -218,6 +218,80 @@ pub fn spawn_ipc_watchers(listener: UnixListener) {
     });
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct SpringAnimation {
+    pub target: f32,
+    pub velocity: f32,
+    pub last_tick: Instant,
+    pub omega: f32, // Natural frequency (rad/s)
+    pub zeta: f32,  // Damping ratio (1.0 = critically damped)
+}
+
+impl SpringAnimation {
+    pub fn new(initial_target: f32, omega: f32, zeta: f32, now: Instant) -> Self {
+        Self {
+            target: initial_target,
+            velocity: 0.0,
+            last_tick: now,
+            omega,
+            zeta,
+        }
+    }
+
+    #[inline]
+    pub fn set_target(&mut self, target: f32, now: Instant) {
+        if (self.target - target).abs() > 0.0001 {
+            if self.velocity == 0.0 {
+                self.last_tick = now;
+            }
+            self.target = target;
+        }
+    }
+
+    pub fn tick(&mut self, pos: &mut f32, now: Instant) -> bool {
+        let raw_dt = now.saturating_duration_since(self.last_tick).as_secs_f32();
+        self.last_tick = now;
+        let dt = raw_dt.clamp(0.0, 0.050);
+        if dt == 0.0 {
+            return (*pos - self.target).abs() > 0.0005 || self.velocity.abs() > 0.005;
+        }
+        const SUBSTEPS: usize = 4;
+        let sub_dt = dt / (SUBSTEPS as f32);
+        for _ in 0..SUBSTEPS {
+            let displacement = *pos - self.target;
+            let spring_force = -self.omega * self.omega * displacement;
+            let damping_force = -2.0 * self.zeta * self.omega * self.velocity;
+            let accel = spring_force + damping_force;
+            self.velocity += accel * sub_dt;
+            *pos += self.velocity * sub_dt;
+        }
+        let remaining = (self.target - *pos).abs();
+        if remaining <= 0.0005 && self.velocity.abs() <= 0.005 {
+            *pos = self.target;
+            self.velocity = 0.0;
+            false
+        } else {
+            true
+        }
+    }
+}
+
+#[inline]
+fn lerp(a: f32, b: f32, t: f32) -> f32 {
+    a + (b - a) * t.clamp(0.0, 1.0)
+}
+
+#[inline]
+fn lerp_color(a: Color, b: Color, t: f32) -> Color {
+    let t = t.clamp(0.0, 1.0);
+    Color {
+        r: a.r + (b.r - a.r) * t,
+        g: a.g + (b.g - a.g) * t,
+        b: a.b + (b.b - a.b) * t,
+        a: a.a + (b.a - a.a) * t,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SelectionTarget {
     Workspace(usize),
@@ -226,6 +300,7 @@ pub enum SelectionTarget {
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    AnimationFrame(Instant),
     ActivateWindow {
         workspace: WorkspaceKey,
         address: String,
@@ -250,6 +325,11 @@ pub struct OverviewApp {
     selected: SelectionTarget,
     palette: ThemePalette,
     custom_theme: Theme,
+    entrance_pos: f32,
+    entrance_spring: SpringAnimation,
+    card_select_positions: Vec<f32>,
+    card_animations: Vec<SpringAnimation>,
+    animating: bool,
 }
 
 impl OverviewApp {
@@ -266,12 +346,31 @@ impl OverviewApp {
                 danger: palette.tertiary,
             },
         );
+        let now = Instant::now();
+        let ws_count = snapshot.workspaces.len();
+        let initial_ws_idx = match selected {
+            SelectionTarget::Workspace(idx) => idx,
+            SelectionTarget::Window { ws_idx, .. } => ws_idx,
+        };
+        let mut card_select_positions = Vec::with_capacity(ws_count);
+        let mut card_animations = Vec::with_capacity(ws_count);
+        for idx in 0..ws_count {
+            let initial = if idx == initial_ws_idx { 1.0 } else { 0.0 };
+            card_select_positions.push(initial);
+            card_animations.push(SpringAnimation::new(initial, 38.0, 1.0, now));
+        }
+        let entrance_spring = SpringAnimation::new(1.0, 32.0, 1.0, now);
         (
             Self {
                 snapshot,
                 selected,
                 palette,
                 custom_theme,
+                entrance_pos: 0.0,
+                entrance_spring,
+                card_select_positions,
+                card_animations,
+                animating: true,
             },
             Task::none(),
         )
@@ -365,8 +464,30 @@ impl OverviewApp {
         }
     }
 
+    fn sync_selection_springs(&mut self) {
+        let now = Instant::now();
+        let cur_ws = self.current_ws_index();
+        for (idx, anim) in self.card_animations.iter_mut().enumerate() {
+            let target = if idx == cur_ws { 1.0 } else { 0.0 };
+            anim.set_target(target, now);
+        }
+        self.animating = true;
+    }
+
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::AnimationFrame(now) => {
+                let mut still_moving = self.entrance_spring.tick(&mut self.entrance_pos, now);
+                for (i, anim) in self.card_animations.iter_mut().enumerate() {
+                    if let Some(pos) = self.card_select_positions.get_mut(i) {
+                        if anim.tick(pos, now) {
+                            still_moving = true;
+                        }
+                    }
+                }
+                self.animating = still_moving;
+                Task::none()
+            }
             Message::ActivateWindow {
                 workspace,
                 address,
@@ -415,6 +536,7 @@ impl OverviewApp {
                 } else if let Some(first) = targets.first() {
                     self.selected = first.clone();
                 }
+                self.sync_selection_springs();
                 Task::none()
             }
             Message::SelectPrevItem => {
@@ -425,6 +547,7 @@ impl OverviewApp {
                 } else if let Some(first) = targets.first() {
                     self.selected = first.clone();
                 }
+                self.sync_selection_springs();
                 Task::none()
             }
             Message::SelectNextWorkspace => {
@@ -433,6 +556,7 @@ impl OverviewApp {
                     let next_ws = (self.current_ws_index() + 1) % count;
                     self.select_workspace_by_index(next_ws);
                 }
+                self.sync_selection_springs();
                 Task::none()
             }
             Message::SelectPrevWorkspace => {
@@ -442,6 +566,7 @@ impl OverviewApp {
                     let prev_ws = if cur == 0 { count - 1 } else { cur - 1 };
                     self.select_workspace_by_index(prev_ws);
                 }
+                self.sync_selection_springs();
                 Task::none()
             }
             Message::SelectNextWindowInWorkspace => {
@@ -468,6 +593,7 @@ impl OverviewApp {
                         }
                     }
                 }
+                self.sync_selection_springs();
                 Task::none()
             }
             Message::SelectPrevWindowInWorkspace => {
@@ -497,6 +623,7 @@ impl OverviewApp {
                         }
                     }
                 }
+                self.sync_selection_springs();
                 Task::none()
             }
             Message::QuickWorkspace(id) => {
@@ -599,18 +726,28 @@ impl OverviewApp {
 
         let ipc_sub = Subscription::run(external_signal_stream);
 
-        Subscription::batch([keyboard_sub, ipc_sub])
+        if self.animating {
+            Subscription::batch([
+                keyboard_sub,
+                ipc_sub,
+                iced::window::frames().map(Message::AnimationFrame),
+            ])
+        } else {
+            Subscription::batch([keyboard_sub, ipc_sub])
+        }
     }
 
     pub fn view(&self) -> Element<'_, Message> {
         let p = self.palette;
+        let entrance = self.entrance_pos.clamp(0.0, 1.0);
+        let entrance_offset = (14.0 * (1.0 - entrance)).round();
 
         let backdrop = button(Space::new().width(Length::Fill).height(Length::Fill))
             .width(Length::Fill)
             .height(Length::Fill)
             .on_press(Message::Dismiss)
             .style(move |_theme: &Theme, _status: button::Status| button::Style {
-                background: Some(Background::Color(with_alpha(p.bg, 0.58))),
+                background: Some(Background::Color(with_alpha(p.bg, 0.58 * entrance))),
                 text_color: p.fg,
                 border: Border::default(),
                 shadow: Shadow::default(),
@@ -657,7 +794,12 @@ impl OverviewApp {
         let centered_grid = container(cards_grid)
             .width(Length::Fill)
             .center_x(Length::Fill)
-            .padding([32, 40]);
+            .padding(iced::Padding {
+                top: 32.0 + entrance_offset,
+                right: 40.0,
+                bottom: (32.0 - entrance_offset).max(8.0),
+                left: 40.0,
+            });
 
         let scroll_view = scrollable(centered_grid)
             .width(Length::Fill)
@@ -726,6 +868,13 @@ impl OverviewApp {
         let is_special = ws.is_special;
         let is_active = ws.is_active;
 
+        let sel_progress = self
+            .card_select_positions
+            .get(ws_idx)
+            .copied()
+            .unwrap_or(if is_highlighted { 1.0 } else { 0.0 });
+        let entrance = self.entrance_pos.clamp(0.0, 1.0);
+
         let empty_label: Element<'a, Message> = if ws.clients.is_empty() {
             container(
                 text("Empty")
@@ -755,43 +904,43 @@ impl OverviewApp {
                 } else if hovered {
                     mix_color(p.bg, p.accent, 0.12)
                 } else {
-                    mix_color(p.bg, p.muted, 0.14)
+                    let unselected_bg = mix_color(p.bg, p.muted, 0.14);
+                    let selected_bg = mix_color(p.bg, p.accent, 0.16);
+                    lerp_color(unselected_bg, selected_bg, sel_progress)
                 };
 
-                let (border_color, border_width) = if is_special {
-                    if is_highlighted || hovered {
-                        (p.tertiary, 2.5)
-                    } else {
-                        (with_alpha(p.tertiary, 0.78), 2.0)
-                    }
-                } else if is_highlighted {
-                    (p.accent, 2.5)
-                } else if hovered {
-                    (with_alpha(p.accent, 0.85), 2.0)
+                let target_border_color = if is_special {
+                    p.tertiary
+                } else {
+                    p.accent
+                };
+                let rest_border_color = if is_special {
+                    with_alpha(p.tertiary, 0.78)
                 } else if is_active {
-                    (with_alpha(p.secondary, 0.75), 1.8)
+                    with_alpha(p.secondary, 0.75)
                 } else {
-                    (with_alpha(p.muted, 0.55), 1.0)
+                    with_alpha(p.muted, 0.55)
                 };
 
-                let shadow = if is_special {
-                    Shadow {
-                        color: with_alpha(p.tertiary, if is_highlighted { 0.38 } else { 0.22 }),
-                        offset: Vector::new(0.0, 4.0),
-                        blur_radius: 18.0,
-                    }
-                } else if is_highlighted {
-                    Shadow {
-                        color: with_alpha(p.accent, 0.28),
-                        offset: Vector::new(0.0, 4.0),
-                        blur_radius: 14.0,
-                    }
+                let (border_color, border_width) = if hovered {
+                    (if is_special { p.tertiary } else { with_alpha(p.accent, 0.90) }, 2.4)
                 } else {
-                    Shadow::default()
+                    let col = lerp_color(rest_border_color, target_border_color, sel_progress);
+                    let width = lerp(if is_active { 1.8 } else { 1.0 }, 2.5, sel_progress);
+                    (col, width)
+                };
+
+                let shadow = Shadow {
+                    color: with_alpha(
+                        target_border_color,
+                        (if is_special { 0.38 } else { 0.28 }) * sel_progress * entrance,
+                    ),
+                    offset: Vector::new(0.0, 4.0 * sel_progress),
+                    blur_radius: 16.0 * sel_progress,
                 };
 
                 button::Style {
-                    background: Some(Background::Color(with_alpha(base_bg, 0.96))),
+                    background: Some(Background::Color(with_alpha(base_bg, 0.96 * entrance))),
                     text_color: p.fg,
                     border: Border {
                         color: border_color,
@@ -908,7 +1057,15 @@ impl OverviewApp {
 
         card_layers.push(badge_overlay.into());
 
-        stack(card_layers).into()
+        let card_stack: Element<'a, Message> = stack(card_layers).into();
+        let lift_y = (3.5 * sel_progress).round();
+        column![
+            Space::new().height(Length::Fixed((4.0 - lift_y).max(0.0))),
+            card_stack,
+            Space::new().height(Length::Fixed(lift_y)),
+        ]
+        .width(Length::Fixed(preview_w))
+        .into()
     }
 
     fn render_window_miniature<'a>(
