@@ -56,6 +56,23 @@
       ],
       "js": ["content_isolated.js"],
       "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "*://*.meta.ai/*",
+        "*://meta.ai/*",
+        "*://*.chatgpt.com/*",
+        "*://chatgpt.com/*",
+        "*://*.openai.com/*",
+        "*://chat.openai.com/*",
+        "*://*.claude.ai/*",
+        "*://claude.ai/*",
+        "*://*.google.com/*",
+        "*://gemini.google.com/*"
+      ],
+      "js": ["content_main.js"],
+      "world": "MAIN",
+      "run_at": "document_start"
     }
   ],
   "action": {

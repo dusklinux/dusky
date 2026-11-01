@@ -28,10 +28,20 @@
 
   // --- Messaging ---
   function emit(payload) {
-    globalThis.postMessage(
-      { __bridge: BRIDGE, direction: "MAIN_TO_BG", payload },
-      "*"
-    );
+    // 1. Direct WebExtension API (isolated content script realm — bypasses page CSP)
+    try {
+      if (typeof browser !== "undefined" && browser.runtime?.sendMessage) {
+        browser.runtime.sendMessage(payload).catch(() => {});
+      }
+    } catch (e) {}
+
+    // 2. PostMessage bridge (MAIN page realm fallback)
+    try {
+      globalThis.postMessage(
+        { __bridge: BRIDGE, direction: "MAIN_TO_BG", payload },
+        "*"
+      );
+    } catch (e) {}
   }
 
   // ============================================================
@@ -89,10 +99,10 @@
 
   function readResponseText(el) {
     if (!el) return "";
-    const body = el.querySelector?.("message-content") ||
-                 el.querySelector?.(".markdown") ||
-                 el.querySelector?.(".font-claude-message") ||
+    const body = el.querySelector?.(".markdown") ||
                  el.querySelector?.(".prose") ||
+                 el.querySelector?.("message-content") ||
+                 el.querySelector?.(".font-claude-message") ||
                  el;
     const txt = body.innerText || body.textContent || "";
     return txt.replace(/\r\n/g, "\n").trim();
@@ -385,9 +395,21 @@
 
   function chatgptSetInput(editor, text) {
     if (!editor || !isEditableNode(editor)) return false;
-    selectAndFocus(editor);
 
-    // 1. Try paste event with DataTransfer (primary path for Lexical)
+    // 1. Focus editor and establish selection inside the paragraph
+    try { editor.focus({ preventScroll: true }); } catch {}
+    try {
+      const p = editor.querySelector("p") || editor;
+      const sel = window.getSelection();
+      if (sel) {
+        const range = document.createRange();
+        range.selectNodeContents(p);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    } catch {}
+
+    // 2. DataTransfer paste event (primary path for Meta's Lexical framework)
     try {
       const dt = new DataTransfer();
       dt.setData("text/plain", text);
@@ -400,109 +422,89 @@
       editor.dispatchEvent(pasteEv);
     } catch (e) {}
 
-    // 2. Try beforeinput with insertText and insertFromPaste
-    if (!editor.textContent || !editor.textContent.includes(text)) {
-      try {
-        const dt = new DataTransfer();
-        dt.setData("text/plain", text);
-        const ev = new InputEvent("beforeinput", {
-          bubbles: true,
-          cancelable: true,
-          composed: true,
-          inputType: "insertFromPaste",
-          dataTransfer: dt,
-        });
-        editor.dispatchEvent(ev);
-      } catch (e) {}
-    }
+    // 3. Selection + execCommand insertText fallback
+    try {
+      document.execCommand("selectAll", false, null);
+      document.execCommand("insertText", false, text);
+    } catch (e) {}
 
-    if (!editor.textContent || !editor.textContent.includes(text)) {
-      try {
-        editor.dispatchEvent(new InputEvent("beforeinput", {
-          bubbles: true,
-          cancelable: true,
-          composed: true,
-          inputType: "insertText",
-          data: text,
-        }));
-      } catch (e) {}
-    }
-
-    // 3. Try document.execCommand
-    if (!editor.textContent || !editor.textContent.includes(text)) {
-      try { document.execCommand("selectAll", false, null); } catch {}
-      try { document.execCommand("insertText", false, text); } catch {}
-    }
-
-    // 4. Fallback: manual paragraph if empty
-    if (!editor.textContent || !editor.textContent.includes(text)) {
-      try {
-        while (editor.firstChild) editor.removeChild(editor.firstChild);
-        const p = document.createElement("p");
-        p.textContent = text;
-        editor.appendChild(p);
-      } catch {}
-    }
-
-    // 5. Fire standard input events
+    // 4. InputEvent dispatch to trigger React/Lexical listeners
+    try {
+      editor.dispatchEvent(new InputEvent("input", {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        inputType: "insertText",
+        data: text,
+      }));
+    } catch (e) {}
     try { editor.dispatchEvent(new Event("input", { bubbles: true, composed: true })); } catch {}
     try { editor.dispatchEvent(new Event("change", { bubbles: true, composed: true })); } catch {}
 
-    // Force enable send buttons
-    const btn = getSendButton();
-    if (btn) {
-      btn.removeAttribute("disabled");
-      btn.disabled = false;
-      btn.removeAttribute("aria-disabled");
-    }
+    // 5. Ensure editor retains focus for OS-level hardware Return
+    try { editor.focus({ preventScroll: true }); } catch {}
 
     return true;
   }
 
   async function chatgptClickSend() {
     const editor = getEditor();
+    if (editor) {
+      try { editor.focus({ preventScroll: true }); } catch {}
+    }
 
-    // 1. Wait for send button to be enabled by React
-    for (let i = 0; i < 15; i++) {
+    // 1. Wait for send button to be enabled by Lexical / React reconciliation
+    for (let i = 0; i < 20; i++) {
       const btn = getSendButton();
       if (btn && !btn.disabled && btn.getAttribute("aria-disabled") !== "true") {
         btn.click();
         console.log("[LocalAI MAIN] ChatGPT: send button clicked");
+        if (editor) {
+          try { editor.focus({ preventScroll: true }); } catch {}
+        }
         return true;
       }
       await new Promise(r => setTimeout(r, 100));
     }
 
-    // 2. Direct Enter keydown dispatch on editor
+    // 2. Keep editor focused so daemon hardware Return (wtype Return at T+1.5s) will submit
     if (editor) {
-      selectAndFocus(editor);
-      try {
-        editor.dispatchEvent(new KeyboardEvent("keydown", {
-          key: "Enter",
-          code: "Enter",
-          keyCode: 13,
-          which: 13,
-          bubbles: true,
-          cancelable: true,
-          composed: true,
-        }));
-        console.log("[LocalAI MAIN] ChatGPT: dispatched Enter on editor");
-        return true;
-      } catch (e) {}
+      try { editor.focus({ preventScroll: true }); } catch {}
+      console.log("[LocalAI MAIN] ChatGPT: send button not visible yet — editor focused for wtype Return");
+    }
+    return true;
+  }
+
+  function getChatGPTResponseContainers() {
+    // 1. Direct assistant role query
+    const assistantRoles = Array.from(document.querySelectorAll('[data-message-author-role="assistant"]'));
+    if (assistantRoles.length > 0) return assistantRoles;
+
+    // 2. Markdown / Prose body elements (the canonical AI output containers on ChatGPT)
+    const markdowns = Array.from(document.querySelectorAll('div.markdown, div.prose'));
+    if (markdowns.length > 0) return markdowns;
+
+    // 3. Articles (filtered to assistant only)
+    const articles = Array.from(document.querySelectorAll('article'));
+    if (articles.length > 0) {
+      const assistants = articles.filter(art => {
+        if (art.querySelector('[data-message-author-role="user"]')) return false;
+        if (art.getAttribute("data-message-author-role") === "user") return false;
+        if (art.querySelector('button[aria-label*="Edit"]')) return false;
+        if (art.querySelector('[data-message-author-role="assistant"]')) return true;
+        if (art.getAttribute("data-message-author-role") === "assistant") return true;
+        if (art.querySelector('button[aria-label*="Good response"], button[aria-label*="Bad response"], button[aria-label*="Read aloud"]')) return true;
+        if (art.querySelector('.markdown, .prose')) return true;
+        return false;
+      });
+      if (assistants.length > 0) return assistants;
     }
 
-    // 3. Fallback click
-    const btn = getSendButton();
-    if (btn) {
-      try {
-        btn.removeAttribute("disabled");
-        btn.disabled = false;
-        btn.removeAttribute("aria-disabled");
-        btn.click();
-      } catch {}
-      return true;
-    }
-    return false;
+    // 4. Any agent turn or message turn
+    const turns = Array.from(document.querySelectorAll('[data-testid*="conversation-turn"], div[class*="agent-turn"]'));
+    if (turns.length > 0) return turns;
+
+    return [];
   }
 
   // ============================================================
@@ -531,9 +533,10 @@
   defineSite("chatgpt.com", {
     name: "ChatGPT",
     editorSelector: '#prompt-textarea, div[data-lexical-editor="true"], div[contenteditable="true"]',
-    sendButtonSelector: 'button[data-testid="send-button"], button[aria-label*="Send prompt"], button[aria-label*="Send message"], button[aria-label*="Send"]',
-    stopButtonSelector: 'button[data-testid="stop-button"], button[aria-label*="Stop generating"], button[aria-label*="Stop"]',
-    responseContainerSelector: 'article[data-testid*="conversation-turn"], div[data-message-author-role="assistant"], div[class*="agent-turn"]',
+    sendButtonSelector: 'button[data-testid*="send"], button[aria-label*="Send prompt"], button[aria-label*="Send message"], button[aria-label*="Send"]',
+    stopButtonSelector: 'button[data-testid*="stop"], button[aria-label*="Stop generating"], button[aria-label*="Stop"]',
+    responseContainerSelector: 'div.markdown, div.prose, [data-message-author-role="assistant"]',
+    getContainers: getChatGPTResponseContainers,
     thinkingSelector: '.result-thinking, [data-testid="thinking-animation"], [data-testid="thought"], [data-testid="reasoning-expander"]',
     setInput: chatgptSetInput,
     clickSend: chatgptClickSend,
@@ -546,9 +549,9 @@
   defineSite("chat.openai.com", {
     name: "ChatGPT (Legacy)",
     editorSelector: '#prompt-textarea, div[data-lexical-editor="true"], div[contenteditable="true"]',
-    sendButtonSelector: 'button[data-testid="send-button"], button[aria-label*="Send prompt"], button[aria-label*="Send message"], button[aria-label*="Send"]',
-    stopButtonSelector: 'button[data-testid="stop-button"], button[aria-label*="Stop generating"], button[aria-label*="Stop"]',
-    responseContainerSelector: 'article[data-testid*="conversation-turn"], div[data-message-author-role="assistant"], div[class*="agent-turn"]',
+    sendButtonSelector: 'button[data-testid*="send"], button[aria-label*="Send prompt"], button[aria-label*="Send message"], button[aria-label*="Send"]',
+    stopButtonSelector: 'button[data-testid*="stop"], button[aria-label*="Stop generating"], button[aria-label*="Stop"]',
+    getContainers: getChatGPTResponseContainers,
     thinkingSelector: '.result-thinking, [data-testid="thinking-animation"], [data-testid="thought"], [data-testid="reasoning-expander"]',
     setInput: chatgptSetInput,
     clickSend: chatgptClickSend,
@@ -659,6 +662,10 @@
 
   function getResponseContainers() {
     const site = getSiteConfig();
+    if (site.getContainers) {
+      const res = site.getContainers();
+      if (res && res.length > 0) return res;
+    }
     if (site.responseContainerSelector) {
       const result = Array.from(document.querySelectorAll(site.responseContainerSelector));
       if (result.length > 0) return result;
@@ -688,13 +695,17 @@
     // 1. Custom override
     if (site.isThinking) return site.isThinking();
 
-    // 2. CSS selector check
+    // 2. CSS selector check — scope to active response container to avoid false positives from past chat turns
     if (site.thinkingSelector) {
-      for (const sel of site.thinkingSelector.split(",")) {
-        const s = sel.trim();
-        if (!s) continue;
-        const el = document.querySelector(s);
-        if (el && isVisible(el)) return true;
+      const containers = getResponseContainers();
+      const activeEl = (containers.length > baselineCount) ? containers[containers.length - 1] : targetElement;
+      if (activeEl) {
+        for (const sel of site.thinkingSelector.split(",")) {
+          const s = sel.trim();
+          if (!s) continue;
+          const el = activeEl.querySelector(s);
+          if (el && isVisible(el)) return true;
+        }
       }
     }
 
@@ -710,7 +721,7 @@
         if (containers.length > baselineCount) {
           const last = containers[containers.length - 1];
           const text = readResponseText(last);
-          if (!text || text.length < 3) return true;
+          if (!text || text.trim().length === 0) return true;
         } else if (containers.length === baselineCount) {
           // No new response container yet but stop button is visible = thinking
           return true;
@@ -826,19 +837,17 @@
 
       if (currentContainers.length > baselineCount) {
         const latest = currentContainers[currentContainers.length - 1];
-        const latestContent = latest.querySelector("message-content") || latest;
+        const latestContent = latest.querySelector("message-content") ||
+                              latest.querySelector(".markdown") ||
+                              latest.querySelector(".prose") ||
+                              latest;
         if (targetElement !== latestContent) {
           targetElement = latestContent;
           lastObservedText = "";
         }
       } else if (!targetElement || !document.contains(targetElement)) {
-        if (currentContainers.length > 0) {
-          const last = currentContainers[currentContainers.length - 1];
-          targetElement = last.querySelector("message-content") || last;
-          lastObservedText = readResponseText(targetElement);
-        } else {
-          return;
-        }
+        // No new response container yet for this query — wait for it
+        return;
       }
 
       const full = readResponseText(targetElement);
@@ -1010,6 +1019,27 @@
         return;
       }
 
+      // Check if response has arrived in DOM even if observer tick missed it
+      const currentContainers = getResponseContainers();
+      if (currentContainers.length > baselineCount) {
+        const latest = currentContainers[currentContainers.length - 1];
+        const text = readResponseText(latest);
+        if (text && text.length > 0) {
+          hasStartedStreaming = true;
+          lastFullText = text;
+          if (!isGenerating()) {
+            emit({ type: "STREAM_CHUNK", text: text, full: text, requestId: currentRequestId });
+            emitFinal("completed-fast");
+            return;
+          }
+        }
+      }
+
+      if (hasStartedStreaming && lastFullText && !isGenerating()) {
+        emitFinal("idle");
+        return;
+      }
+
       // Not thinking, not generating — count quiet seconds
       quietSeconds++;
       if (quietSeconds > 15) {
@@ -1051,25 +1081,71 @@
   };
 
   // ============================================================
-  //  MESSAGE LISTENER
+  //  MESSAGE LISTENER (Universal: WebExtension & postMessage)
   // ============================================================
 
+  const handleIncomingMessage = (msg) => {
+    if (!msg || typeof msg !== "object") return;
+    const site = getSiteConfig();
+    console.log("[LocalAI MAIN]", site.name || "Unknown", "- Received:", msg.type, msg.query?.substring(0, 30));
+    if (msg.type === "RUN_QUERY") handleQuery(msg);
+    if (msg.type === "DOM_STATUS") {
+      const ed = getEditor();
+      const btn = getSendButton();
+      emit({
+        type: "DOM_STATUS_REPLY",
+        editor: ed ? {
+          tag: ed.tagName,
+          id: ed.id,
+          text: ed.textContent,
+          innerHTML: ed.innerHTML.slice(0, 300),
+          isFocused: document.activeElement === ed
+        } : null,
+        sendButton: btn ? {
+          tag: btn.tagName,
+          testid: btn.getAttribute("data-testid"),
+          disabled: btn.disabled,
+          ariaDisabled: btn.getAttribute("aria-disabled"),
+          text: btn.textContent.trim(),
+          innerHTML: btn.innerHTML.slice(0, 300)
+        } : null,
+        containers: getResponseContainers().length,
+        url: window.location.href
+      });
+    }
+  };
+
+  // 1. Direct WebExtension runtime listener (isolated content script realm)
+  const onRuntimeMessage = (msg) => {
+    if (msg?.type === "RUN_QUERY" || msg?.type === "DOM_STATUS") {
+      handleIncomingMessage(msg);
+      return Promise.resolve({ status: "handled" });
+    }
+  };
+  try {
+    if (typeof browser !== "undefined" && browser.runtime?.onMessage) {
+      browser.runtime.onMessage.addListener(onRuntimeMessage);
+    }
+  } catch (e) {}
+
+  // 2. PostMessage bridge (MAIN page realm fallback)
   const onPageMessage = (e) => {
     const data = e?.data;
     if (!data || data.__bridge !== BRIDGE) return;
     if (data.direction !== "BG_TO_MAIN") return;
-    const msg = data.payload;
-    const site = getSiteConfig();
-    console.log("[LocalAI MAIN]", site.name || "Unknown", "- Received:", msg?.type, msg?.query?.substring(0, 30));
-    if (msg?.type === "RUN_QUERY") handleQuery(msg);
+    handleIncomingMessage(data.payload);
   };
-
   globalThis.addEventListener("message", onPageMessage);
 
   globalThis.__LOCAL_AI_BRIDGE_MAIN_CLEANUP__ = () => {
     stopObserver();
     clearTimeout(queryTimeoutTimer);
     clearInterval(focusKeepaliveTimer);
+    try {
+      if (typeof browser !== "undefined" && browser.runtime?.onMessage) {
+        browser.runtime.onMessage.removeListener(onRuntimeMessage);
+      }
+    } catch (e) {}
     try { globalThis.removeEventListener("message", onPageMessage); } catch (e) {}
   };
 

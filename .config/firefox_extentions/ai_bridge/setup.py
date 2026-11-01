@@ -75,6 +75,36 @@ def build_package() -> Path:
     return out_zip
 
 
+def reload_extension() -> bool:
+    """Send reload signal to connected Firefox extension over WebSocket."""
+    import json
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(2.0)
+            s.connect((HOST, PORT))
+            s.sendall(
+                b"GET / HTTP/1.1\r\n"
+                b"Host: 127.0.0.1:8765\r\n"
+                b"Upgrade: websocket\r\n"
+                b"Connection: Upgrade\r\n"
+                b"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+                b"Sec-WebSocket-Version: 13\r\n\r\n"
+            )
+            s.recv(1024)
+            for mtype in ("RELOAD_EXTENSION", "REINJECT_SCRIPTS"):
+                data = json.dumps({"type": mtype}).encode("utf-8")
+                mask = b"\x12\x34\x56\x78"
+                masked = bytes(b ^ mask[i % 4] for i, b in enumerate(data))
+                head = bytes([0x81, 0x80 | len(data)])
+                s.sendall(head + mask + masked)
+                time.sleep(0.3)
+            print("   sent RELOAD_EXTENSION and REINJECT_SCRIPTS to browser extension")
+            return True
+    except Exception as e:
+        print(f"   could not reload extension: {e}")
+        return False
+
+
 def check_status() -> int:
     print("== Local AI Web Bridge Diagnostic ==")
     print(f"Python: {sys.version.split()[0]} ({sys.executable})")
@@ -134,8 +164,9 @@ def install() -> int:
     print("   systemctl --user daemon-reload OK")
 
     # 3. Enable and restart service
-    subprocess.run(["systemctl", "--user", "enable", "--now", SERVICE_NAME], check=True)
-    print(f"   enabled and started {SERVICE_NAME}")
+    subprocess.run(["systemctl", "--user", "enable", SERVICE_NAME], check=True)
+    subprocess.run(["systemctl", "--user", "restart", SERVICE_NAME], check=True)
+    print(f"   enabled and restarted {SERVICE_NAME}")
 
     # 4. Wait for port to open
     print("   waiting for daemon port...", end="", flush=True)
@@ -156,6 +187,7 @@ def install() -> int:
         return 1
 
     build_package()
+    reload_extension()
     print("\nLocal AI Web Bridge is installed, enabled, and running!")
     print("To test queries: ask \"hi\" or python3 bridge.py \"hi\"")
     return 0
@@ -182,6 +214,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Local AI Web Bridge Installer")
     parser.add_argument("--check", action="store_true", help="Check status only")
     parser.add_argument("--build", action="store_true", help="Build zip package")
+    parser.add_argument("--reload", action="store_true", help="Send reload signal to extension")
     parser.add_argument("--remove", action="store_true", help="Remove systemd service")
     args = parser.parse_args()
 
@@ -190,6 +223,8 @@ def main() -> int:
     if args.build:
         build_package()
         return 0
+    if args.reload:
+        return 0 if reload_extension() else 1
     if args.remove:
         return remove()
 

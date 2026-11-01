@@ -118,11 +118,37 @@ class WSConnection:
 # of whether the caller is bridge.py CLI, a benchmark script, or the SDK.
 import time as _time
 
-LAST_NON_FIREFOX_TARGET = {"address": None, "workspace_id": None}
+LAST_NON_FIREFOX_TARGET = {"address": None, "workspace_id": None, "special_ws": None}
+
+def _hypr_focus_window(addr):
+    if not addr:
+        return
+    # In Hyprland-git, hl.dsp.focus requires an HL.Window userdata object
+    lua_code = f'''
+for _, w in ipairs(hl.get_windows()) do
+    if w.address == "{addr}" then
+        hl.dispatch(hl.dsp.focus({{ window = w }}))
+        break
+    end
+end
+'''
+    subprocess.run(["hyprctl", "eval", lua_code], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2)
 
 def get_active_window():
-    """Retrieve active window/workspace, automatically caching non-Firefox originating context across rapid queries."""
+    """Retrieve active window/workspace/special_workspace, caching non-Firefox originating context."""
     try:
+        special_ws = None
+        mon_res = subprocess.run(
+            ["hyprctl", "monitors", "-j"],
+            capture_output=True, text=True, timeout=2,
+        )
+        if mon_res.returncode == 0 and mon_res.stdout.strip():
+            for m in json.loads(mon_res.stdout):
+                sp_name = (m.get("specialWorkspace") or {}).get("name", "")
+                if sp_name.startswith("special:"):
+                    special_ws = sp_name.split("special:", 1)[1]
+                    break
+
         active_res = subprocess.run(
             ["hyprctl", "activewindow", "-j"],
             capture_output=True, text=True, timeout=2,
@@ -131,18 +157,32 @@ def get_active_window():
             win = json.loads(active_res.stdout)
             cls = (win.get("class") or "").lower()
             addr = win.get("address")
-            ws_id = win.get("workspace", {}).get("id")
+            ws_info = win.get("workspace", {}) or {}
+            ws_id = ws_info.get("id")
+            ws_name = ws_info.get("name", "")
+            if not special_ws and ws_name.startswith("special:"):
+                special_ws = ws_name.split("special:", 1)[1]
+
             if addr and "firefox" not in cls:
                 LAST_NON_FIREFOX_TARGET["address"] = addr
                 LAST_NON_FIREFOX_TARGET["workspace_id"] = ws_id
-                return addr, ws_id
+                LAST_NON_FIREFOX_TARGET["special_ws"] = special_ws
+                return addr, ws_id, special_ws
             elif LAST_NON_FIREFOX_TARGET["address"]:
-                return LAST_NON_FIREFOX_TARGET["address"], LAST_NON_FIREFOX_TARGET["workspace_id"]
+                return (
+                    LAST_NON_FIREFOX_TARGET["address"],
+                    LAST_NON_FIREFOX_TARGET["workspace_id"],
+                    LAST_NON_FIREFOX_TARGET["special_ws"],
+                )
             else:
-                return addr, ws_id
+                return addr, ws_id, special_ws
     except Exception:
         pass
-    return LAST_NON_FIREFOX_TARGET["address"], LAST_NON_FIREFOX_TARGET["workspace_id"]
+    return (
+        LAST_NON_FIREFOX_TARGET["address"],
+        LAST_NON_FIREFOX_TARGET["workspace_id"],
+        LAST_NON_FIREFOX_TARGET["special_ws"],
+    )
 
 def _get_firefox_target():
     try:
@@ -187,21 +227,14 @@ def _focus_window(target):
             )
         except Exception:
             pass
-        subprocess.run(
-            ["hyprctl", "dispatch", f'hl.dsp.focus({{ workspace = "{ws_id}" }})'],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2,
-        )
     if addr:
-        subprocess.run(
-            ["hyprctl", "dispatch", f'hl.dsp.focus({{ window = "address:{addr}" }})'],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2,
-        )
+        _hypr_focus_window(addr)
 
-def _do_os_return(prev_addr=None, prev_ws_id=None):
-    """Focus Firefox AI tab, send hardware Return for Gemini, and restore previous window/workspace focus."""
+def _do_os_return(prev_addr=None, prev_ws_id=None, prev_special=None):
+    """Focus Firefox AI tab, send hardware Return for submission, and restore previous window/workspace focus."""
     try:
         if not prev_addr:
-            prev_addr, prev_ws_id = get_active_window()
+            prev_addr, prev_ws_id, prev_special = get_active_window()
 
         target = _get_firefox_target()
         if not target:
@@ -228,8 +261,13 @@ def _do_os_return(prev_addr=None, prev_ws_id=None):
         # 3. Restore focus back to starting window & workspace!
         if prev_addr and prev_addr.lower() != addr.lower():
             _time.sleep(0.5)  # Let wtype Return register before switching away
-            print(f"[Daemon] Restoring focus: ws={prev_ws_id} addr={prev_addr}", flush=True)
-            if prev_ws_id is not None and prev_ws_id > 0:
+            print(f"[Daemon] Restoring focus: ws={prev_ws_id} sp={prev_special} addr={prev_addr}", flush=True)
+            if prev_special:
+                subprocess.run(
+                    ["hyprctl", "dispatch", f'hl.dsp.workspace.toggle_special("{prev_special}")'],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2,
+                )
+            elif prev_ws_id is not None and prev_ws_id > 0:
                 rel_ws = ((prev_ws_id - 1) % 10) + 1
                 try:
                     subprocess.run(
@@ -238,18 +276,8 @@ def _do_os_return(prev_addr=None, prev_ws_id=None):
                     )
                 except Exception:
                     pass
-                subprocess.run(
-                    ["hyprctl", "dispatch", f'hl.dsp.focus({{ workspace = "{prev_ws_id}" }})'],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2,
-                )
-            r = subprocess.run(
-                ["hyprctl", "dispatch", f'hl.dsp.focus({{ window = "address:{prev_addr}" }})'],
-                capture_output=True, text=True, timeout=2,
-            )
-            if r.returncode != 0:
-                print(f"[Daemon] Focus restore failed: {r.stderr.strip()}", flush=True)
-            else:
-                print(f"[Daemon] Focus restored OK", flush=True)
+            _hypr_focus_window(prev_addr)
+            print(f"[Daemon] Focus restored OK", flush=True)
         else:
             print(f"[Daemon] Skipping focus restore: prev_addr={prev_addr} ff_addr={addr} same={prev_addr and prev_addr.lower() == addr.lower()}", flush=True)
     except Exception as e:
@@ -257,7 +285,7 @@ def _do_os_return(prev_addr=None, prev_ws_id=None):
 
 _pending_os_return = {"task": None, "timer": None}  # Debounce state
 
-def _schedule_os_return(prev_addr=None, prev_ws_id=None):
+def _schedule_os_return(prev_addr=None, prev_ws_id=None, prev_special=None):
     """Schedule hardware Return keypress & focus restoration 1.5s after query dispatch.
     
     Debounced: if called again before the previous schedule fires, the old one
@@ -276,7 +304,7 @@ def _schedule_os_return(prev_addr=None, prev_ws_id=None):
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
-        t = threading.Timer(1.5, _do_os_return, args=(prev_addr, prev_ws_id))
+        t = threading.Timer(1.5, _do_os_return, args=(prev_addr, prev_ws_id, prev_special))
         t.daemon = True
         t.start()
         _pending_os_return["timer"] = t
@@ -284,7 +312,7 @@ def _schedule_os_return(prev_addr=None, prev_ws_id=None):
 
     async def _run():
         await asyncio.sleep(1.5)
-        await asyncio.to_thread(_do_os_return, prev_addr, prev_ws_id)
+        await asyncio.to_thread(_do_os_return, prev_addr, prev_ws_id, prev_special)
 
     task = loop.create_task(_run())
     _pending_os_return["task"] = task
@@ -345,6 +373,7 @@ async def handle_client(reader, writer):
             except Exception: continue
 
             msg_type = data.get("type")
+            print(f"[Daemon] MSG: {msg_type} from ws={id(ws)} clients={len(CONNECTED_CLIENTS)}", flush=True)
             req_id = data.get("requestId")
 
             if msg_type in ("PING", "HEARTBEAT"):
@@ -363,26 +392,24 @@ async def handle_client(reader, writer):
 
             if msg_type == "TAB_INFO":
                 info_req = data.get("requestId")
-                is_gem = data.get("isGemini", False)
-                prev_info = PENDING_QUERY_TARGETS.pop(info_req, (None, None))
-                if is_gem:
-                    print(f"[Daemon] Gemini target confirmed for {info_req} — scheduling _do_os_return in 1.5s", flush=True)
-                    _schedule_os_return(prev_info[0], prev_info[1])
-                else:
-                    print(f"[Daemon] Non-Gemini target ({data.get('url', '')}) — skipping hardware Return (JS click sufficient)", flush=True)
+                target_url = data.get("url", "")
+                prev_info = PENDING_QUERY_TARGETS.pop(info_req, (None, None, None))
+                print(f"[Daemon] AI target confirmed ({target_url or 'active tab'}) for {info_req} — scheduling _do_os_return in 1.5s", flush=True)
+                _schedule_os_return(prev_info[0], prev_info[1], prev_info[2])
                 continue
 
             # Capture caller's active window/workspace IMMEDIATELY at T=0.0s and ensure Firefox has Wayland focus for typing
             prev_addr = None
             prev_ws_id = None
+            prev_special = None
             if msg_type == "RUN_QUERY":
-                prev_addr, prev_ws_id = get_active_window()
+                prev_addr, prev_ws_id, prev_special = get_active_window()
                 ff_target = _get_firefox_target()
                 if ff_target:
                     _focus_window(ff_target)
                     await asyncio.sleep(0.3)
                 if req_id:
-                    PENDING_QUERY_TARGETS[req_id] = (prev_addr, prev_ws_id)
+                    PENDING_QUERY_TARGETS[req_id] = (prev_addr, prev_ws_id, prev_special)
 
             # Broadcast all messages to all other connected clients
             dead = set()
@@ -431,21 +458,16 @@ async def handle_client(reader, writer):
                         except Exception:
                             pass
 
-                # Gemini fallback check in case TAB_INFO is delayed or not received
-                async def _gemini_fallback_check(r_id, p_addr, p_ws):
+                # Fallback check in case TAB_INFO is delayed or not received
+                async def _ai_fallback_check(r_id, p_addr, p_ws, p_sp):
                     await asyncio.sleep(1.6)
                     if r_id in PENDING_QUERY_TARGETS:
                         PENDING_QUERY_TARGETS.pop(r_id, None)
-                        try:
-                            res = subprocess.run(["hyprctl", "activewindow", "-j"], capture_output=True, text=True, timeout=1)
-                            if res.returncode == 0 and "gemini" in res.stdout.lower():
-                                print(f"[Daemon] Fallback: active window is Gemini — scheduling _do_os_return", flush=True)
-                                _schedule_os_return(p_addr, p_ws)
-                        except Exception:
-                            pass
+                        print(f"[Daemon] Fallback: scheduling _do_os_return for {r_id}", flush=True)
+                        _schedule_os_return(p_addr, p_ws, p_sp)
 
                 if broadcast_count > 0 and req_id:
-                    asyncio.create_task(_gemini_fallback_check(req_id, prev_addr, prev_ws_id))
+                    asyncio.create_task(_ai_fallback_check(req_id, prev_addr, prev_ws_id, prev_special))
 
     except Exception as e:
         print(f"[Daemon] client handler error: {e!r}", flush=True)

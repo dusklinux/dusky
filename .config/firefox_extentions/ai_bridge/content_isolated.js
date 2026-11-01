@@ -21,7 +21,7 @@
 
   // Forward BG -> MAIN
   const onBgMessage = (msg) => {
-    if (msg?.type === "RUN_QUERY") {
+    if (msg?.type === "RUN_QUERY" || msg?.type === "DOM_STATUS") {
       window.postMessage(
         {__bridge: BRIDGE, direction: "BG_TO_MAIN", payload: msg},
         "*"

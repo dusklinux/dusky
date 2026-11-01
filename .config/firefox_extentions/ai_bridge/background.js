@@ -116,7 +116,38 @@ function connectWS(force = false){
     }
 
     if(msg.type === "PING" || msg.type === "HEARTBEAT"){
-      try{ ws.send(JSON.stringify({type: "PONG"})); }catch{}
+      try{ ws.send(JSON.stringify({type: "PONG", v: "build_2026_test_v1"})); }catch{}
+      return;
+    }
+
+    if(msg.type === "REINJECT_SCRIPTS"){
+      await ensureContentScriptsInAllAiTabs();
+      try{ ws.send(JSON.stringify({type: "REINJECT_ACK"})); }catch{}
+      return;
+    }
+
+    if(msg.type === "RELOAD_TAB"){
+      const targetId = await findTargetTab(msg.tabId);
+      if(targetId){
+        try{
+          await browser.tabs.reload(targetId);
+          ws?.send(JSON.stringify({type: "RELOAD_TAB_ACK", tabId: targetId}));
+        }catch(e){
+          ws?.send(JSON.stringify({type: "RELOAD_TAB_ERR", error: String(e)}));
+        }
+      }
+      return;
+    }
+
+    if(msg.type === "DOM_STATUS"){
+      const targetId = await findTargetTab(msg.tabId);
+      if(!targetId){
+        ws?.send(JSON.stringify({type: "DOM_STATUS_REPLY", error: "findTargetTab returned null"}));
+        return;
+      }
+      browser.tabs.sendMessage(targetId, msg).catch((e) => {
+        ws?.send(JSON.stringify({type: "DOM_STATUS_REPLY", error: "sendMessage to tab " + targetId + " failed: " + e.message}));
+      });
       return;
     }
 
@@ -203,7 +234,14 @@ async function sendMessageWithTimeout(tabId, msg, timeoutMs = 2000){
               files: ["content_main.js"],
               world: "MAIN"
             });
-          } catch(err){}
+          } catch(err){
+            try {
+              await browser.scripting.executeScript({
+                target: {tabId: targetId},
+                files: ["content_main.js"]
+              });
+            } catch(e) {}
+          }
 
           await new Promise(r => setTimeout(r, 400));
 
@@ -323,22 +361,67 @@ async function ensureContentScriptsInAllAiTabs() {
             target: { tabId: tab.id },
             files: ["content_isolated.js"]
           });
-          knownAiTabs.add(tab.id);
         } catch (e) {}
+        try {
+          await browser.scripting.executeScript({
+            target: { tabId: tab.id },
+            files: ["content_main.js"],
+            world: "MAIN"
+          });
+        } catch (e) {
+          try {
+            await browser.scripting.executeScript({
+              target: { tabId: tab.id },
+              files: ["content_main.js"]
+            });
+          } catch (e2) {}
+        }
+        knownAiTabs.add(tab.id);
       }
     }
   } catch (e) {}
 }
 
-// --- activeTabId Lock Priority Tab Targeting ---
+// --- Active Window / Tab Priority Tab Targeting ---
 async function findTargetTab(preferredId){
+  // 1. Explicit preferred tab requested by caller
   if(preferredId){
     try{
       const tab = await browser.tabs.get(preferredId);
-      if(tab && isAiUrl(tab.url)) return preferredId;
+      if(tab && isAiUrl(tab.url)) {
+        activeTabId = preferredId;
+        return preferredId;
+      }
     }catch{}
   }
 
+  // 2. Active tab in the focused / active window (USER IS CURRENTLY LOOKING AT THIS)
+  try{
+    const focusedTabs = await browser.tabs.query({ active: true, lastFocusedWindow: true });
+    for(const tab of focusedTabs){
+      if(tab?.id && isAiUrl(tab.url)){
+        activeTabId = tab.id;
+        knownAiTabs.add(tab.id);
+        try{ await browser.storage.session.set({activeTabId: tab.id}); }catch{}
+        return tab.id;
+      }
+    }
+  }catch{}
+
+  // 3. Active tab in any open window
+  try{
+    const activeTabs = await browser.tabs.query({ active: true });
+    for(const tab of activeTabs){
+      if(tab?.id && isAiUrl(tab.url)){
+        activeTabId = tab.id;
+        knownAiTabs.add(tab.id);
+        try{ await browser.storage.session.set({activeTabId: tab.id}); }catch{}
+        return tab.id;
+      }
+    }
+  }catch{}
+
+  // 4. Previously locked / active AI tab
   if(activeTabId){
     try{
       const tab = await browser.tabs.get(activeTabId);
@@ -349,6 +432,7 @@ async function findTargetTab(preferredId){
     }
   }
 
+  // 5. Any known AI tab
   for(const tabId of knownAiTabs){
     try{
       const tab = await browser.tabs.get(tabId);
@@ -362,6 +446,7 @@ async function findTargetTab(preferredId){
     }
   }
 
+  // 6. Fallback: search all tabs
   try{
     const allTabs = await browser.tabs.query({});
     const aiTabs = allTabs.filter(tab => isAiUrl(tab.url));
@@ -369,7 +454,7 @@ async function findTargetTab(preferredId){
       const activeAi = aiTabs.find(t => t.active) || aiTabs[0];
       activeTabId = activeAi.id;
       knownAiTabs.add(activeAi.id);
-      try{ await browser.storage.session.set({activeTabId}); }catch{}
+      try{ await browser.storage.session.set({activeTabId: activeAi.id}); }catch{}
       return activeAi.id;
     }
   }catch(e){}
