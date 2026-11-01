@@ -213,7 +213,16 @@ ui.vars.addEventListener("click", () => run(async () => {
   say("Collecting every CSS custom property…", "busy");
   const dump = await pg({ type: "dumpVariables" });
   if (!dump?.ok) throw new Error(dump?.error ?? "Variable dump failed");
-  const blob = new Blob([dump.text], { type: "text/markdown;charset=utf-8" });
+  let text = dump.chunk ?? "";
+  while (!dump.done) {
+    const next = await pg({ type: "dumpVariablesChunk", id: dump.id, offset: text.length });
+    if (!next?.ok) throw new Error(next?.error ?? "Variable dump could not be completed");
+    if (!next.chunk) throw new Error("The variable report ended unexpectedly");
+    text += next.chunk;
+    dump.done = next.done;
+    if (text.length > next.total) throw new Error("The variable report was inconsistent");
+  }
+  const blob = new Blob([text], { type: "text/markdown;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -222,9 +231,10 @@ ui.vars.addEventListener("click", () => run(async () => {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 30_000);
-  await navigator.clipboard.writeText(dump.text).catch(() => {});
-  say(`Exported ${dump.count} variables (${dump.definitions} definitions)` +
-    `${dump.truncated ? " — truncated" : ""} — downloaded and copied`, "ok");
+  const copied = await navigator.clipboard.writeText(text).then(() => true, () => false);
+  say(`Exported ${dump.count} variables (${dump.definitions} definitions, ` +
+    `${Math.ceil(text.length / 1024)} KiB) — downloaded${copied ? " and copied" : ""}` +
+    `${dump.truncated ? " — truncated" : ""}`, "ok");
 }));
 
 /* ── Picker ───────────────────────────────────────────────────────────── */

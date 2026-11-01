@@ -474,6 +474,8 @@
 
   let customPropIndex = null;
   let indexWatermark = -1;
+  let variableDumpCache = null;
+  let variableDumpSeq = 0;
 
   function expandNesting(selector, outer) {
     let result = "", quote = "", nested = false;
@@ -770,14 +772,27 @@
    * It exports every custom property the page exposes, where it is defined,
    * and how often it is referenced, so the whole token system can be
    * inspected or handed to an editor/AI without copying a whole DOM dump. */
+  const DUMP_CHUNK = 512 * 1024;
+  const chunkAt = (text, offset) => {
+    let end = Math.min(offset + DUMP_CHUNK, text.length);
+    /* Never split a surrogate pair across two message payloads. */
+    if (end < text.length && /[\uD800-\uDBFF]/.test(text[end - 1]) &&
+        /[\uDC00-\uDFFF]/.test(text[end])) end--;
+    return text.slice(offset, end);
+  };
+
   function dumpVariables() {
     dropIndex();
     const definitions = new Map();  /* name → [{value, selector, condition, kind}] */
+    const seenDefinitions = new Set();
     const usage = new Map();        /* name → var() reference count */
     const addDefinition = (name, value, selector, condition = "", kind = "rule") => {
       if (!name.startsWith("--")) return;
       const text = String(value ?? "").trim();
       if (!text) return;
+      const key = `${name}\u001f${text}\u001f${selector || ""}\u001f${condition}\u001f${kind}`;
+      if (seenDefinitions.has(key)) return;
+      seenDefinitions.add(key);
       const list = definitions.get(name) ?? [];
       list.push({ value: text, selector: selector || "", condition, kind });
       definitions.set(name, list);
@@ -789,6 +804,10 @@
           parts.unshift(`@media ${parent.conditionText}`);
         } else if (parent instanceof CSSSupportsRule && parent.conditionText) {
           parts.unshift(`@supports ${parent.conditionText}`);
+        } else if (parent instanceof CSSLayerBlockRule && parent.name) {
+          parts.unshift(`@layer ${parent.name}`);
+        } else if (parent instanceof CSSContainerRule && parent.conditionText) {
+          parts.unshift(`@container ${parent.conditionText}`);
         }
       }
       return parts.join(" ");
@@ -797,30 +816,54 @@
       for (const ref of varRefs(value)) usage.set(ref, (usage.get(ref) ?? 0) + 1);
     };
 
+    /* Every open shadow root, including roots nested inside other shadows. */
+    const shadowRoots = [];
+    const addShadowRoot = (root) => {
+      if (!root || shadowRoots.includes(root)) return;
+      shadowRoots.push(root);
+      for (const el of root.querySelectorAll("*")) addShadowRoot(el.shadowRoot);
+    };
+    for (const el of document.querySelectorAll("*")) addShadowRoot(el.shadowRoot);
+
     let sheets = 0;
-    for (const sheet of [...document.styleSheets, ...document.adoptedStyleSheets]) {
-      if (sheet === SHEET) continue;                /* the picker's own preview */
-      sheets++;
-      try {
-        walkRules(sheet.cssRules, (rule) => {
-          const selector = ruleSelector(rule);
-          const condition = conditionOf(rule);
-          for (const name of rule.style) {
-            const value = rule.style.getPropertyValue(name);
-            if (name.startsWith("--")) addDefinition(name, value, selector, condition);
-            if (value) countRefs(value);
-          }
-        });
-      } catch { /* cross-origin or opaque sheet */ }
+    let shadowSheets = 0;
+    const addSheets = (list, shadow = false) => {
+      for (const sheet of list) {
+        if (sheet === SHEET) continue;              /* the picker's own preview */
+        if (shadow) shadowSheets++;
+        else sheets++;
+        try {
+          walkRules(sheet.cssRules, (rule) => {
+            const rawSelector = ruleSelector(rule);
+            const selector = shadow ? `shadow ${rawSelector}` : rawSelector;
+            const condition = conditionOf(rule);
+            for (const name of rule.style) {
+              const value = rule.style.getPropertyValue(name);
+              if (name.startsWith("--")) addDefinition(name, value, selector, condition);
+              if (value) countRefs(value);
+            }
+          });
+        } catch { /* cross-origin or opaque sheet */ }
+      }
+    };
+    addSheets([...document.styleSheets, ...document.adoptedStyleSheets]);
+    for (const root of shadowRoots) {
+      addSheets([...root.styleSheets, ...(root.adoptedStyleSheets ?? [])], true);
     }
 
     /* Custom properties written directly on elements (often by scripts). */
-    for (const el of document.querySelectorAll("[style]")) {
-      const selector = `inline <${el.localName}>`;
-      for (const name of el.style) {
-        if (name.startsWith("--")) addDefinition(name, el.style.getPropertyValue(name), selector, "", "inline");
+    const collectInline = (root, scope = "") => {
+      for (const el of root.querySelectorAll("[style]")) {
+        const selector = `inline <${el.localName}>${scope}`;
+        for (const name of el.style) {
+          const value = el.style.getPropertyValue(name);
+          if (name.startsWith("--")) addDefinition(name, value, selector, "", "inline");
+          if (value) countRefs(value);
+        }
       }
-    }
+    };
+    collectInline(document);
+    for (const root of shadowRoots) collectInline(root, " (shadow DOM)");
 
     /* Computed values also cover cross-origin sheets and script-set tokens. */
     const computed = new Map();  /* name → {root?, body?, shadow?} */
@@ -839,11 +882,6 @@
     collectComputed(document.documentElement, "root");
     collectComputed(document.body, "body");
 
-    const shadowRoots = [];
-    for (const el of document.querySelectorAll("*")) {
-      const root = el.shadowRoot;
-      if (root && !shadowRoots.includes(root)) shadowRoots.push(root);
-    }
     for (const root of shadowRoots) {
       for (const el of root.querySelectorAll("*")) {
         const cs = getComputedStyle(el);
@@ -885,6 +923,7 @@
       `- Exported: ${new Date().toISOString()}`,
       `- Variables: ${names.length}`,
       `- Accessible stylesheets: ${sheets}`,
+      `- Shadow-root stylesheets: ${shadowSheets}`,
       `- Open shadow roots: ${shadowRoots.length}`,
       "",
       "Cross-origin stylesheets cannot be enumerated; their values are represented by computed values below.",
@@ -924,18 +963,43 @@
     }
     lines.push("", `- Definitions: ${definitionCount}`, "");
 
-    let text = lines.join("\n");
-    const truncated = text.length > 700_000;
-    if (truncated) text = `${text.slice(0, 700_000)}\n\n<!-- output truncated -->\n`;
+    const text = lines.join("\n");
+    const id = `dump-${Date.now().toString(36)}-${++variableDumpSeq}`;
+    const filename = `${(location.hostname || "page").replace(/^www\./, "").replace(/[^\w.-]+/g, "_")}.variables.md`;
+    variableDumpCache = { id, text, total: text.length, filename };
+    const chunk = chunkAt(text, 0);
     return {
       ok: true,
+      id,
       count: names.length,
       definitions: definitionCount,
       sheets,
+      shadowSheets,
       shadowRoots: shadowRoots.length,
-      truncated,
-      filename: `${(location.hostname || "page").replace(/[^\w.-]+/g, "_")}.variables.md`,
-      text,
+      total: text.length,
+      chunk,
+      done: chunk.length >= text.length,
+      filename,
+    };
+  }
+
+  function dumpVariablesChunk(msg) {
+    const cache = variableDumpCache;
+    if (!cache || cache.id !== msg.id) {
+      return { ok: false, error: "The variable report expired — run Export variables again." };
+    }
+    const offset = Number.isInteger(msg.offset) ? msg.offset : -1;
+    if (offset < 0 || offset > cache.total) {
+      return { ok: false, error: `Invalid variable report offset: ${msg.offset}` };
+    }
+    const chunk = chunkAt(cache.text, offset);
+    return {
+      ok: true,
+      id: cache.id,
+      offset,
+      chunk,
+      total: cache.total,
+      done: offset + chunk.length >= cache.total,
     };
   }
 
@@ -2751,6 +2815,9 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
         catch (e) { return Promise.resolve({ ok: false, error: `Scan failed: ${e?.message ?? e}` }); }
       case "dumpVariables":
         try { return Promise.resolve(dumpVariables()); }
+        catch (e) { return Promise.resolve({ ok: false, error: `Variable dump failed: ${e?.message ?? e}` }); }
+      case "dumpVariablesChunk":
+        try { return Promise.resolve(dumpVariablesChunk(msg)); }
         catch (e) { return Promise.resolve({ ok: false, error: `Variable dump failed: ${e?.message ?? e}` }); }
       case "picker":
         return setActive(msg.enable).then(() => ({ ok: true, active: S.active }));
