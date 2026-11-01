@@ -765,6 +765,180 @@
     };
   }
 
+  /* ══ VARIABLE DUMP (read-only export for manual theming) ═══════════════
+   * Unlike scan(), this does not try to map colours to the Matugen palette.
+   * It exports every custom property the page exposes, where it is defined,
+   * and how often it is referenced, so the whole token system can be
+   * inspected or handed to an editor/AI without copying a whole DOM dump. */
+  function dumpVariables() {
+    dropIndex();
+    const definitions = new Map();  /* name → [{value, selector, condition, kind}] */
+    const usage = new Map();        /* name → var() reference count */
+    const addDefinition = (name, value, selector, condition = "", kind = "rule") => {
+      if (!name.startsWith("--")) return;
+      const text = String(value ?? "").trim();
+      if (!text) return;
+      const list = definitions.get(name) ?? [];
+      list.push({ value: text, selector: selector || "", condition, kind });
+      definitions.set(name, list);
+    };
+    const conditionOf = (rule) => {
+      const parts = [];
+      for (let parent = rule.parentRule; parent; parent = parent.parentRule) {
+        if (parent instanceof CSSMediaRule && parent.conditionText) {
+          parts.unshift(`@media ${parent.conditionText}`);
+        } else if (parent instanceof CSSSupportsRule && parent.conditionText) {
+          parts.unshift(`@supports ${parent.conditionText}`);
+        }
+      }
+      return parts.join(" ");
+    };
+    const countRefs = (value) => {
+      for (const ref of varRefs(value)) usage.set(ref, (usage.get(ref) ?? 0) + 1);
+    };
+
+    let sheets = 0;
+    for (const sheet of [...document.styleSheets, ...document.adoptedStyleSheets]) {
+      if (sheet === SHEET) continue;                /* the picker's own preview */
+      sheets++;
+      try {
+        walkRules(sheet.cssRules, (rule) => {
+          const selector = ruleSelector(rule);
+          const condition = conditionOf(rule);
+          for (const name of rule.style) {
+            const value = rule.style.getPropertyValue(name);
+            if (name.startsWith("--")) addDefinition(name, value, selector, condition);
+            if (value) countRefs(value);
+          }
+        });
+      } catch { /* cross-origin or opaque sheet */ }
+    }
+
+    /* Custom properties written directly on elements (often by scripts). */
+    for (const el of document.querySelectorAll("[style]")) {
+      const selector = `inline <${el.localName}>`;
+      for (const name of el.style) {
+        if (name.startsWith("--")) addDefinition(name, el.style.getPropertyValue(name), selector, "", "inline");
+      }
+    }
+
+    /* Computed values also cover cross-origin sheets and script-set tokens. */
+    const computed = new Map();  /* name → {root?, body?, shadow?} */
+    const collectComputed = (el, key) => {
+      if (!el) return;
+      const cs = getComputedStyle(el);
+      for (const name of cs) {
+        if (!name.startsWith("--")) continue;
+        const value = cs.getPropertyValue(name).trim();
+        if (!value) continue;
+        const entry = computed.get(name) ?? {};
+        entry[key] = value;
+        computed.set(name, entry);
+      }
+    };
+    collectComputed(document.documentElement, "root");
+    collectComputed(document.body, "body");
+
+    const shadowRoots = [];
+    for (const el of document.querySelectorAll("*")) {
+      const root = el.shadowRoot;
+      if (root && !shadowRoots.includes(root)) shadowRoots.push(root);
+    }
+    for (const root of shadowRoots) {
+      for (const el of root.querySelectorAll("*")) {
+        const cs = getComputedStyle(el);
+        for (const name of cs) {
+          if (!name.startsWith("--")) continue;
+          const value = cs.getPropertyValue(name).trim();
+          if (!value) continue;
+          const entry = computed.get(name) ?? {};
+          entry.shadow ??= value;
+          computed.set(name, entry);
+        }
+      }
+    }
+    for (const values of computed.values()) {
+      for (const value of Object.values(values)) countRefs(value);
+    }
+
+    const names = [...new Set([...definitions.keys(), ...computed.keys()])]
+      .sort((a, b) => a.localeCompare(b));
+    const prefixOf = (name) => {
+      const cut = name.lastIndexOf("--");
+      if (cut > 2) return name.slice(0, cut + 2);
+      const parts = name.slice(2).split("-");
+      return `--${parts.slice(0, 2).join("-")}`;
+    };
+    const prefixCounts = new Map();
+    for (const name of names) {
+      const prefix = prefixOf(name);
+      prefixCounts.set(prefix, (prefixCounts.get(prefix) ?? 0) + 1);
+    }
+    const prefixes = [...prefixCounts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    const code = (value) => "`" + String(value)
+      .replaceAll("`", "\\`").replaceAll("|", "\\|").replaceAll(/\r?\n/g, " ") + "`";
+
+    const lines = [
+      `# CSS custom properties — ${location.hostname || location.href}`,
+      "",
+      `- URL: ${location.href}`,
+      `- Exported: ${new Date().toISOString()}`,
+      `- Variables: ${names.length}`,
+      `- Accessible stylesheets: ${sheets}`,
+      `- Open shadow roots: ${shadowRoots.length}`,
+      "",
+      "Cross-origin stylesheets cannot be enumerated; their values are represented by computed values below.",
+      "",
+      "## Prefixes",
+      "",
+      "| Prefix | Variables |",
+      "| --- | ---: |",
+    ];
+    for (const [prefix, count] of prefixes) lines.push(`| ${code(prefix)} | ${count} |`);
+    lines.push(
+      "",
+      "## Computed values",
+      "",
+      "| Variable | Value | Scope | Uses |",
+      "| --- | --- | --- | ---: |",
+    );
+    for (const name of names) {
+      const c = computed.get(name);
+      const value = c?.root || c?.body || c?.shadow || definitions.get(name)?.[0]?.value || "";
+      const scope = c?.root ? ":root" : c?.body ? "body" : c?.shadow ? "shadow DOM" : "definition";
+      lines.push(`| ${code(name)} | ${value ? code(value) : ""} | ${scope} | ${usage.get(name) ?? 0} |`);
+    }
+
+    lines.push("", "## Definitions", "", "| Variable | Value | Selector | Condition |", "| --- | --- | --- | --- |");
+    let definitionCount = 0;
+    for (const name of names) {
+      for (const def of definitions.get(name) ?? []) {
+        definitionCount++;
+        lines.push(`| ${code(name)} | ${code(def.value)} | ${code(def.selector)} | ${code(def.condition)} |`);
+      }
+      for (const [key, label] of [["root", ":root"], ["body", "body"], ["shadow", "shadow DOM"]]) {
+        const value = computed.get(name)?.[key];
+        if (!value) continue;
+        lines.push(`| ${code(name)} | ${code(value)} | ${code(`${label} (computed)`)} | ${code("")} |`);
+      }
+    }
+    lines.push("", `- Definitions: ${definitionCount}`, "");
+
+    let text = lines.join("\n");
+    const truncated = text.length > 700_000;
+    if (truncated) text = `${text.slice(0, 700_000)}\n\n<!-- output truncated -->\n`;
+    return {
+      ok: true,
+      count: names.length,
+      definitions: definitionCount,
+      sheets,
+      shadowRoots: shadowRoots.length,
+      truncated,
+      filename: `${(location.hostname || "page").replace(/[^\w.-]+/g, "_")}.variables.md`,
+      text,
+    };
+  }
+
   /* ══ VISUAL PICKER ══════════════════════════════════════════════════ */
   const LIMITS = { RULES: 600, DECL: 4096, SEL: 512, BODY: 512 * 1024 };
 
@@ -2575,6 +2749,9 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
       case "scan":
         try { return Promise.resolve(scan()); }
         catch (e) { return Promise.resolve({ ok: false, error: `Scan failed: ${e?.message ?? e}` }); }
+      case "dumpVariables":
+        try { return Promise.resolve(dumpVariables()); }
+        catch (e) { return Promise.resolve({ ok: false, error: `Variable dump failed: ${e?.message ?? e}` }); }
       case "picker":
         return setActive(msg.enable).then(() => ({ ok: true, active: S.active }));
       case "reset":

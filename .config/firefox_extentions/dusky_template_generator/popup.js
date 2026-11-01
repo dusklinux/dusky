@@ -26,10 +26,10 @@ theme.apply(document.documentElement);
 const $ = (id) => document.getElementById(id);
 const ui = {
   domain: $("domain"), css: $("css"), path: $("path"), status: $("status"),
-  auto: $("auto"), pick: $("pick"), save: $("save"),
+  auto: $("auto"), pick: $("pick"), save: $("save"), vars: $("vars"),
   copy: $("copy"), reload: $("reload"), del: $("delete"),
 };
-const BUTTONS = [ui.auto, ui.pick, ui.save, ui.copy, ui.reload, ui.del];
+const BUTTONS = [ui.auto, ui.pick, ui.save, ui.vars, ui.copy, ui.reload, ui.del];
 const ORIGIN = crypto.randomUUID();
 
 const view = {
@@ -206,6 +206,25 @@ ui.auto.addEventListener("click", () => run(async () => {
   await spliceRegion("auto", scan.body);
   const how = scan.kind === "structural" ? "structural theme" : `${scan.mapped} of ${scan.found} tokens`;
   say(`Mapped ${how} → saved ${fileName()}${scan.palette ? "" : "  (palette variables not visible on this page)"}`, "ok");
+}));
+
+/* ── Export every CSS variable ───────────────────────────────────────── */
+ui.vars.addEventListener("click", () => run(async () => {
+  say("Collecting every CSS custom property…", "busy");
+  const dump = await pg({ type: "dumpVariables" });
+  if (!dump?.ok) throw new Error(dump?.error ?? "Variable dump failed");
+  const blob = new Blob([dump.text], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = dump.filename || "css-variables.md";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
+  await navigator.clipboard.writeText(dump.text).catch(() => {});
+  say(`Exported ${dump.count} variables (${dump.definitions} definitions)` +
+    `${dump.truncated ? " — truncated" : ""} — downloaded and copied`, "ok");
 }));
 
 /* ── Picker ───────────────────────────────────────────────────────────── */
