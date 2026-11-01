@@ -754,10 +754,10 @@
   defineSite("gemini.google.com", {
     name: "Gemini",
     editorSelector: 'rich-textarea .ql-editor, rich-textarea [contenteditable], rich-textarea p',
-    sendButtonSelector: 'button.send-button, button[aria-label*="Send prompt"], button[aria-label*="Send message"], button[aria-label*="Send"]',
-    stopButtonSelector: 'button.stop-button, .send-button-container button[aria-label*="Stop"], rich-textarea ~ * button[aria-label*="Stop"]',
+    sendButtonSelector: 'button.send-button, button[aria-label*="Send prompt" i], button[aria-label*="Send message" i], button[aria-label*="Send" i]',
+    stopButtonSelector: 'button.stop-button, .send-button-container button[aria-label*="Stop" i], rich-textarea ~ * button[aria-label*="Stop" i], button[aria-label*="Stop response" i], button[aria-label*="Stop generating" i]',
     responseContainerSelector: "model-response",
-    thinkingSelector: '.thinking-indicator, [aria-label*="Thinking"]',
+    thinkingSelector: '.thinking-indicator, [aria-label*="Thinking" i], [aria-label*="thought" i], thought-container, expandable-thought, .thought, [role="progressbar"], .loading-dots',
     getEditor: geminiGetEditor,
     setInput: geminiSetInput,
     clickSend: geminiClickSend,
@@ -909,13 +909,10 @@
       }
     }
     const universalStops = [
-      'button[data-testid="stop-button"]',
-      'button[data-testid*="stop"]',
-      'button[aria-label*="Stop generating"]',
-      'button[aria-label*="Stop streaming"]',
-      'button[aria-label*="Stop response"]',
-      'button[aria-label="Stop"]',
+      'button[data-testid*="stop" i]',
+      'button[aria-label*="stop" i]',
       "button.stop-button",
+      ".send-button-container button[aria-label*='stop' i]",
     ];
     for (const sel of universalStops) {
       const btn = document.querySelector(sel);
@@ -1019,14 +1016,14 @@
     const activeEl = findActiveResponseContainer(containers) || targetElement;
 
     if (site.thinkingSelector) {
-      const searchRoot = activeEl?.closest?.("article") || activeEl || null;
+      const searchRoot = activeEl?.closest?.("article") || activeEl || document.body;
       if (searchRoot) {
         for (const sel of site.thinkingSelector.split(",")) {
           const s = sel.trim();
           if (!s) continue;
           const el = searchRoot.querySelector(s);
           if (el && isVisible(el)) {
-            const answerText = readResponseText(activeEl);
+            const answerText = activeEl ? readResponseText(activeEl) : "";
             if (!answerText) return true;
           }
         }
@@ -1174,9 +1171,14 @@
       if (typeof evaluateTokenSaverTrip === "function") {
         const tripResult = evaluateTokenSaverTrip(full);
         if (tripResult?.tripped) {
-          clickStopButton();
-          setTimeout(clickStopButton, 60);
-          setTimeout(clickStopButton, 180);
+          const guardedStop = () => {
+            if (isGenerating()) {
+              clickStopButton();
+            }
+          };
+          guardedStop();
+          setTimeout(guardedStop, 60);
+          setTimeout(guardedStop, 180);
           const clean = tripResult.cleanText ?? full;
           if (clean && clean !== lastObservedText && clean.startsWith(lastObservedText)) {
             const finalDelta = clean.slice(lastObservedText.length);
@@ -1287,6 +1289,16 @@
       if (rich?.shadowRoot) {
         const sInput = rich.shadowRoot.querySelector('input[type="file"]');
         if (sInput) return sInput;
+      }
+      const existing = document.querySelector('input[type="file"]');
+      if (existing) return existing;
+      const addBtn = document.querySelector(
+        'button[aria-label*="Add files" i], button[aria-label*="Upload files" i], button[aria-label*="Upload" i], button.upload-button, button[data-testid*="upload"]'
+      );
+      if (addBtn && isVisible(addBtn)) {
+        addBtn.click();
+        const popupInput = document.querySelector('input[type="file"]');
+        if (popupInput) return popupInput;
       }
       return document.querySelector('input[type="file"]');
     }
@@ -1676,10 +1688,10 @@
       }
 
       quietSeconds++;
-      if (quietSeconds > 15) {
+      if (quietSeconds > 90) {
         emit({
           type: "ERROR",
-          error: "Timeout waiting for AI response to start",
+          error: "Timeout waiting for AI response to start (90s)",
           requestId: currentRequestId,
         });
         currentRequestId = null;

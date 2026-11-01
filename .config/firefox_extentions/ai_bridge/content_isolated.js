@@ -12,6 +12,12 @@
 
   // Forward BG -> MAIN strictly via window.postMessage
   const onBgMessage = (msg) => {
+    if (msg?.type === "PING_READY") {
+      const hasEditor = Boolean(
+        document.querySelector('rich-textarea, div#prompt-textarea, div[contenteditable="true"], div.ql-editor')
+      );
+      return Promise.resolve({ status: "ready", editorHydrated: hasEditor });
+    }
     if (msg && RELAY_TYPES.has(msg.type)) {
       window.postMessage(
         { __bridge: BRIDGE, direction: "BG_TO_MAIN", payload: msg },

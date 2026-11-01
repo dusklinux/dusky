@@ -475,7 +475,13 @@ async function wakeTabIfNeeded(tabId) {
       if (!tab.discarded && tab.status === "complete") break;
     }
     await injectScriptsIntoTab(tabId);
-    await new Promise((r) => setTimeout(r, 300));
+    for (let attempt = 0; attempt < 15; attempt++) {
+      try {
+        const res = await browser.tabs.sendMessage(tabId, { type: "PING_READY" });
+        if (res?.editorHydrated) break;
+      } catch (_) {}
+      await new Promise((r) => setTimeout(r, 120));
+    }
   }
   return tab;
 }
