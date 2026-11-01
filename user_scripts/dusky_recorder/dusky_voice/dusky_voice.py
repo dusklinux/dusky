@@ -1152,9 +1152,9 @@ class LiveVuMeter(Static):
         width = max(14, self.size.width - 24)
         tc = getattr(self.app, "theme_colors", DEFAULT_THEME)
 
-        # Calibrated dB scale header
+        # Calibrated dB scale header with high-contrast legibility
         scale = Text()
-        scale.append("     -60dB      -36dB    -18dB   -12dB   -6dB  -3dB  0dB", style=f"dim {tc['muted']}")
+        scale.append("     -60dB      -36dB    -18dB   -12dB   -6dB  -3dB  0dB", style=f"bold {tc['accent']}")
 
         lines = [scale]
         is_mono = len(self.channel_peaks) == 1
@@ -1166,7 +1166,7 @@ class LiveVuMeter(Static):
             filled = int(frac * width)
 
             line = Text()
-            line.append(label, style=f"bold {tc['accent']}")
+            line.append(label, style=f"bold {tc['fg']}")
 
             green_len = int(width * 0.70)
             yellow_len = int(width * 0.88)
@@ -1179,13 +1179,13 @@ class LiveVuMeter(Static):
                     else:
                         line.append("━", style=f"bold {tc['error']}")
                 else:
-                    line.append("─", style=f"dim {tc['muted']}")
+                    line.append("─", style=tc["muted"])
             line.append("╴ ", style=tc["muted"])
 
             if peak_db <= -60.0:
-                line.append("-∞ dB", style=f"dim {tc['muted']}")
+                line.append("-∞ dB", style=f"bold {tc['warning']}")
             else:
-                style = f"bold {tc['error']}" if peak_db > -3.0 else tc["fg"]
+                style = f"bold {tc['error']}" if peak_db > -3.0 else f"bold {tc['fg']}"
                 line.append(f"{peak_db:5.1f} dB", style=style)
             if peak_db >= -0.5:
                 line.append(" [CLIP]", style=f"bold {tc['error']} on {tc['bg']}")
@@ -1361,7 +1361,7 @@ class DigitalTimerDisplay(Static):
 
         tc = getattr(self.app, "theme_colors", DEFAULT_THEME)
         text = Text()
-        text.append("TIMECODE  ", style=f"dim {tc['muted']}")
+        text.append("TIMECODE  ", style=f"bold {tc['accent']}")
         text.append(clock_str, style=f"bold {tc['fg']}")
 
         if self.max_limit > 0:
@@ -1455,39 +1455,21 @@ class DuskyVoiceApp(App[None]):
         padding: 0 1;
     }
 
-    /* Top HUD Header */
+    /* Consolidated Top HUD Header & Tabs Bar */
     #hud-header {
         width: 100%;
         height: 1;
         margin-bottom: 1;
         background: transparent;
         padding: 0 1;
+        align: center middle;
     }
 
     #hud-app-name {
         width: auto;
         color: $primary;
         text-style: bold;
-    }
-
-    #hud-status-badge {
-        width: 1fr;
-        content-align: center middle;
-        text-style: bold;
-    }
-
-    #hud-stats {
-        width: auto;
-        color: $foreground 60%;
-        text-style: dim;
-    }
-
-    /* Tab Bar (ui.py pattern) */
-    #tab-bar {
-        width: 100%;
-        height: 1;
-        margin-bottom: 1;
-        background: transparent;
+        margin-right: 2;
     }
 
     #tabs-container {
@@ -1496,6 +1478,30 @@ class DuskyVoiceApp(App[None]):
         overflow-x: auto;
         scrollbar-size: 0 0;
         align: center middle;
+    }
+
+    #hud-telemetry {
+        width: auto;
+        height: 1;
+        align: right middle;
+        margin-left: 2;
+    }
+
+    #hud-status-badge {
+        width: auto;
+        text-style: bold;
+    }
+
+    #hud-status-sep {
+        width: auto;
+        color: $secondary;
+        margin: 0 1;
+    }
+
+    #hud-stats {
+        width: auto;
+        color: $foreground 80%;
+        text-style: bold;
     }
 
     Tabs {
@@ -1614,25 +1620,37 @@ class DuskyVoiceApp(App[None]):
     }
 
     #studio_controls {
-        height: 3;
+        height: auto;
         align: center middle;
         margin-top: 1;
+        margin-bottom: 0;
     }
 
     .studio_btn {
         margin: 0 1;
         min-width: 18;
         height: 3;
-        border: solid $secondary 40%;
+        border: solid $secondary 50%;
         background: $surface;
         color: $foreground;
         text-style: bold;
+        outline: none;
+        box-sizing: border-box;
+    }
+
+    .studio_btn:focus {
+        border: solid $primary;
+        background: $primary 20%;
+        color: $foreground;
+        text-style: bold;
+        outline: none;
     }
 
     .studio_btn:hover {
         border: solid $primary;
         background: $primary 25%;
         color: $foreground;
+        outline: none;
     }
 
     #btn_record.-recording {
@@ -1640,6 +1658,7 @@ class DuskyVoiceApp(App[None]):
         color: $background;
         text-style: bold;
         border: solid $error;
+        outline: none;
     }
 
     #settings_card {
@@ -1662,17 +1681,47 @@ class DuskyVoiceApp(App[None]):
     }
 
     Select {
+        width: 100%;
+        height: auto;
+        margin-bottom: 1;
+        border: none;
+        background: transparent;
+        box-sizing: border-box;
+    }
+
+    Select > SelectCurrent {
+        height: 3;
         border: none;
         border-bottom: solid $primary 60%;
         background: $primary 10%;
         color: $foreground;
-        height: 3;
-        margin-bottom: 1;
+        padding: 0 1;
+        box-sizing: border-box;
     }
 
-    Select:focus {
-        border: none;
+    Select:hover > SelectCurrent {
+        background: $primary 18%;
+        border-bottom: solid $primary 80%;
+    }
+
+    Select:focus > SelectCurrent,
+    Select.-expanded > SelectCurrent {
         border-bottom: solid $primary;
+        background: $primary 25%;
+        color: $foreground;
+    }
+
+    SelectOverlay {
+        border: solid $primary;
+        background: $surface;
+        color: $foreground;
+        max-height: 12;
+    }
+
+    SelectOverlay > .option-list--option-highlighted {
+        background: $primary 30%;
+        color: $foreground;
+        text-style: bold;
     }
 
     Input {
@@ -1692,11 +1741,13 @@ class DuskyVoiceApp(App[None]):
 
     #lbl_target_preview {
         height: 3;
-        content-align: center middle;
+        content-align: left middle;
+        padding: 0 1;
         color: $primary;
-        text-style: dim;
         background: $primary 10%;
         border-bottom: solid $primary 60%;
+        overflow-x: hidden;
+        text-overflow: ellipsis;
     }
 
     /* Library Styling */
@@ -2000,10 +2051,6 @@ class DuskyVoiceApp(App[None]):
             box.border_title = " 󰍬  DUSKY VOICE MEMOS "
             with Horizontal(id="hud-header"):
                 yield Label("󰍬  DUSKY VOICE", id="hud-app-name")
-                yield Label("● STANDBY", id="hud-status-badge")
-                yield Label("0 memos • 0.0 KB", id="hud-stats")
-
-            with Horizontal(id="tab-bar"):
                 with Horizontal(id="tabs-container"):
                     yield Tabs(
                         Tab("󰍬  Studio Recorder", id="tab_studio"),
@@ -2011,6 +2058,10 @@ class DuskyVoiceApp(App[None]):
                         Tab("󰋋  Audio Devices", id="tab_devices"),
                         id="app_tabs",
                     )
+                with Horizontal(id="hud-telemetry"):
+                    yield Label("● STANDBY", id="hud-status-badge")
+                    yield Label("•", id="hud-status-sep")
+                    yield Label("0 memos • 0.0 KB", id="hud-stats")
 
             with Container(id="content-area"):
                 # Pane 1: Studio Recorder
@@ -2316,41 +2367,42 @@ class DuskyVoiceApp(App[None]):
         self._safe_dispatch(self._update_ui_state, state)
 
     def _update_ui_state(self, state: RecordState) -> None:
-        self._update_banner()
-        btn_rec = self.query_one("#btn_record", Button)
-        btn_pause = self.query_one("#btn_pause", Button)
-        btn_cancel = self.query_one("#btn_cancel", Button)
+        with self.batch_update():
+            self._update_banner()
+            btn_rec = self.query_one("#btn_record", Button)
+            btn_pause = self.query_one("#btn_pause", Button)
+            btn_cancel = self.query_one("#btn_cancel", Button)
 
-        if state == RecordState.RECORDING:
-            btn_rec.label = "  Stop & Save"
-            btn_rec.remove_class("-recording")
-            btn_rec.add_class("-recording")
-            btn_pause.disabled = False
-            btn_pause.label = "󰏤  Pause"
-            btn_cancel.disabled = False
-            self.set_status("Recording in progress...", "error")
-        elif state == RecordState.PAUSED:
-            btn_rec.label = "  Stop & Save"
-            btn_rec.remove_class("-recording")
-            btn_rec.add_class("-recording")
-            btn_pause.disabled = False
-            btn_pause.label = "  Resume"
-            btn_cancel.disabled = False
-            self.set_status("Recording paused", "warning")
-        elif state == RecordState.COUNTDOWN:
-            btn_rec.label = "󰅖  Cancel Delay"
-            btn_rec.remove_class("-recording")
-            btn_pause.disabled = True
-            btn_cancel.disabled = False
-            self.set_status(f"Pre-roll delay: {self.countdown_remaining}s", "warning")
-        else:  # IDLE or FINALIZING
-            btn_rec.label = "󰐽  Record"
-            btn_rec.remove_class("-recording")
-            btn_pause.disabled = True
-            btn_pause.label = "󰏤  Pause"
-            btn_cancel.disabled = True
-            self.query_one("#oscilloscope", RollingOscilloscope).clear()
-            self.set_status("Ready", "info")
+            if state == RecordState.RECORDING:
+                btn_rec.label = "  Stop & Save"
+                btn_rec.remove_class("-recording")
+                btn_rec.add_class("-recording")
+                btn_pause.disabled = False
+                btn_pause.label = "󰏤  Pause"
+                btn_cancel.disabled = False
+                self.set_status("Recording in progress...", "error")
+            elif state == RecordState.PAUSED:
+                btn_rec.label = "  Stop & Save"
+                btn_rec.remove_class("-recording")
+                btn_rec.add_class("-recording")
+                btn_pause.disabled = False
+                btn_pause.label = "  Resume"
+                btn_cancel.disabled = False
+                self.set_status("Recording paused", "warning")
+            elif state == RecordState.COUNTDOWN:
+                btn_rec.label = "󰅖  Cancel Delay"
+                btn_rec.remove_class("-recording")
+                btn_pause.disabled = True
+                btn_cancel.disabled = False
+                self.set_status(f"Pre-roll delay: {self.countdown_remaining}s", "warning")
+            else:  # IDLE or FINALIZING
+                btn_rec.label = "󰐽  Record"
+                btn_rec.remove_class("-recording")
+                btn_pause.disabled = True
+                btn_pause.label = "󰏤  Pause"
+                btn_cancel.disabled = True
+                self.query_one("#oscilloscope", RollingOscilloscope).clear()
+                self.set_status("Ready", "info")
 
     def _update_banner(self) -> None:
         banner = self.query_one("#banner_box", NoticeBox)
@@ -2410,7 +2462,7 @@ class DuskyVoiceApp(App[None]):
                 dur = self.player.duration_sec
                 badge.update(Text(f" PLAYING  {int(pos)//60:02d}:{int(pos)%60:02d} / {int(dur)//60:02d}:{int(dur)%60:02d}", style=f"bold {tc['success']}"))
             else:
-                badge.update(Text("● STANDBY", style=f"dim {tc['accent']}"))
+                badge.update(Text("● STANDBY", style=f"bold {tc['accent']}"))
 
             stats = self.query_one("#hud-stats", Label)
             total_size_kb = sum(m.size_bytes for m in self.memos) / 1024
@@ -2418,7 +2470,7 @@ class DuskyVoiceApp(App[None]):
                 size_str = f"{total_size_kb / 1024:.1f} MB"
             else:
                 size_str = f"{total_size_kb:.1f} KB"
-            stats.update(Text(f"{len(self.memos)} memos • {size_str}", style=f"dim {tc['muted']}"))
+            stats.update(Text(f"{len(self.memos)} memos • {size_str}", style=f"bold {tc['fg']}"))
         except Exception:
             pass
 
