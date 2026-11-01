@@ -1,7 +1,12 @@
 @-moz-document domain("gemini.google.com") {
 
     :root,
-    body {
+    body,
+    .theme-host,
+    .theme-host.dark-theme,
+    .theme-host.light-theme,
+    .dark-theme,
+    .light-theme {
         color-scheme: dark !important;
 
         --gem-sys-color--primary: var(--primary) !important;
@@ -60,6 +65,395 @@
         --mat-list-list-item-label-text-color: var(--on_surface) !important;
         --mat-dialog-subhead-color: var(--on_surface) !important;
         --mat-dialog-supporting-text-color: var(--on_surface) !important;
+
+        /* ── Gemini tokens that were still falling back to Google's palette ── */
+        --gem-sys-color--surface-dim: var(--surface_dim) !important;
+        --gem-sys-color--surface-variant: var(--surface_variant) !important;
+        --gem-sys-color--on-surface-low: var(--on_surface_variant) !important;
+        --gem-sys-color--outline-low: var(--outline_variant) !important;
+        --gem-sys-color--inverse-surface: var(--inverse_surface) !important;
+        --gem-sys-color--inverse-on-surface: var(--inverse_on_surface) !important;
+        --gem-sys-color--inverse-primary: var(--inverse_primary) !important;
+        --gem-sys-color--scrim: var(--scrim) !important;
+        --gem-sys-color--shadow: var(--shadow) !important;
+
+        --gem-sys-color--primary-fixed: var(--primary_fixed) !important;
+        --gem-sys-color--primary-fixed-dim: var(--primary_fixed_dim) !important;
+        --gem-sys-color--on-primary-fixed: var(--on_primary_fixed) !important;
+        --gem-sys-color--on-primary-fixed-variant: var(--on_primary_fixed_variant) !important;
+        --gem-sys-color--secondary-fixed: var(--secondary_fixed) !important;
+        --gem-sys-color--secondary-fixed-dim: var(--secondary_fixed_dim) !important;
+        --gem-sys-color--on-secondary-fixed: var(--on_secondary_fixed) !important;
+        --gem-sys-color--on-secondary-fixed-variant: var(--on_secondary_fixed_variant) !important;
+        --gem-sys-color--tertiary-container: var(--tertiary_container) !important;
+        --gem-sys-color--on-tertiary-container: var(--on_tertiary_container) !important;
+        --gem-sys-color--tertiary-fixed: var(--tertiary_fixed) !important;
+        --gem-sys-color--tertiary-fixed-dim: var(--tertiary_fixed_dim) !important;
+        --gem-sys-color--on-tertiary-fixed: var(--on_tertiary_fixed) !important;
+        --gem-sys-color--on-tertiary-fixed-variant: var(--on_tertiary_fixed_variant) !important;
+        --gem-sys-color--error-container: var(--error_container) !important;
+        --gem-sys-color--on-error-container: var(--on_error_container) !important;
+
+        --gem-sys-color--primary-emphasis-1: var(--primary_container) !important;
+        --gem-sys-color--primary-emphasis-2: var(--primary) !important;
+        --gem-sys-color--on-primary-emphasis-1: var(--on_primary_container) !important;
+        --gem-sys-color--primary-container-emphasis-1: var(--primary_container) !important;
+        --gem-sys-color--primary-container-emphasis-2: var(--tertiary_container) !important;
+        --gem-sys-color--on-primary-container-emphasis-1: var(--on_primary_container) !important;
+        --gem-sys-color--secondary-emphasis-1: var(--secondary_container) !important;
+        --gem-sys-color--secondary-emphasis-2: var(--secondary) !important;
+        --gem-sys-color--secondary-container-emphasis-1: var(--secondary_container) !important;
+        --gem-sys-color--secondary-container-emphasis-2: var(--tertiary_container) !important;
+        --gem-sys-color--tertiary-emphasis-1: var(--tertiary_container) !important;
+        --gem-sys-color--tertiary-emphasis-2: var(--tertiary) !important;
+        --gem-sys-color--tertiary-container-emphasis-1: var(--tertiary_container) !important;
+        --gem-sys-color--tertiary-container-emphasis-2: var(--primary_container) !important;
+
+        /* ── Luminous tokens used directly by the newer controls ── */
+        --lumi-sys-color--on-surface: var(--on_surface) !important;
+        --lumi-sys-color--on-surface-variant: var(--on_surface_variant) !important;
+        --lumi-sys-color--on-surface-low: var(--outline_variant) !important;
+        --lumi-sys-color--surface-background: var(--surface) !important;
+        --lumi-sys-color--surface-accent: var(--primary_container) !important;
+        --lumi-sys-color--surface-container-lowest: var(--surface_container_lowest) !important;
+        --lumi-sys-color--surface-container-highest: var(--surface_container_highest) !important;
+        --lumi-sys-color--primary: var(--primary) !important;
+        --lumi-sys-color--on-primary: var(--on_primary) !important;
+        --lumi-sys-color--primary-container: var(--primary_container) !important;
+        --lumi-sys-color--on-primary-container: var(--on_primary_container) !important;
+        --lumi-sys-color--secondary: var(--secondary) !important;
+        --lumi-sys-color--on-secondary: var(--on_secondary) !important;
+        --lumi-sys-color--secondary-container: var(--secondary_container) !important;
+        --lumi-sys-color--on-secondary-container: var(--on_secondary_container) !important;
+        --lumi-sys-color--outline: var(--outline) !important;
+        --lumi-sys-color--outline-variant: var(--outline_variant) !important;
+        --lumi-sys-color--error: var(--error) !important;
+        --lumi-sys-color--error-container: var(--error_container) !important;
+        --lumi-sys-color--on-error-container: var(--on_error_container) !important;
+        --lumi-sys-color--positive: var(--tertiary) !important;
+        --lumi-sys-color--positive-container: var(--tertiary_container) !important;
+        --lumi-sys-color--on-positive-container: var(--on_tertiary_container) !important;
+        --lumi-sys-color--white: var(--on_surface) !important;
+        --lumi-sys-color--black: var(--surface) !important;
+        --lumi-sys-color--code-background: var(--surface_container_high) !important;
+        --lumi-sys-color--code-blue-text: var(--primary) !important;
+        --lumi-sys-color--code-green-text: var(--secondary) !important;
+        --lumi-sys-color--code-grey-text: var(--on_surface_variant) !important;
+        --lumi-sys-color--code-pink-text: var(--tertiary) !important;
+        --lumi-sys-color--code-primary-text: var(--on_surface) !important;
+        --lumi-sys-color--code-purple-text: var(--tertiary) !important;
+        --lumi-sys-color--code-red-text: var(--error) !important;
+        --lumi-sys-color--code-yellow-text: var(--tertiary) !important;
+        --lumi-sys-color-states--hover-on-surface: color-mix(in srgb, var(--on_surface) 8%, transparent) !important;
+        --lumi-sys-color-states--focus-on-surface: color-mix(in srgb, var(--on_surface) 8%, transparent) !important;
+        --lumi-sys-color-states--pressed-on-surface: color-mix(in srgb, var(--on_surface) 12%, transparent) !important;
+        --lumi-sys-color-states--disabled-on-surface: color-mix(in srgb, var(--on_surface) 12%, transparent) !important;
+        --lumi-sys-color-states--disabled-label-on-surface: color-mix(in srgb, var(--on_surface) 38%, transparent) !important;
+
+        /* ── Bard tokens used by buttons, chips, menus and the input area ── */
+        --bard-color-form-field-outline: var(--outline) !important;
+        --bard-color-form-field-outline-active: var(--primary) !important;
+        --bard-color-form-field-outline-hover: var(--on_surface) !important;
+        --bard-color-footer-background: var(--surface_container) !important;
+        --bard-color-draft-chip-background: var(--surface_container_high) !important;
+        --bard-color-input-area-buttons-hover-background: var(--surface_container_high) !important;
+        --bard-color-input-companion-button-active-background: var(--surface_container_highest) !important;
+        --bard-color-input-companion-button-hover-background: var(--surface_container_high) !important;
+        --bard-color-new-conversation-button: var(--surface_container_high) !important;
+        --bard-color-on-new-conversation-button: var(--on_surface) !important;
+        --bard-color-onhover-conversation-metadata-button-v2: var(--surface_container_high) !important;
+        --bard-color-bot-power-up-button-background: var(--surface_container_high) !important;
+        --bard-color-custom-primary-container: var(--surface_container) !important;
+        --bard-color-zero-state-card-selected: var(--primary_container) !important;
+        --bard-color-mode-switcher-container: var(--surface_container_high) !important;
+        --bard-color-mode-switcher-slider: var(--surface_container_highest) !important;
+        --bard-color-share-social-media-icon-background: var(--surface_container_high) !important;
+        --bard-color-share-social-media-icon-focus: var(--surface) !important;
+        --bard-color-icon-container-background: var(--surface_container) !important;
+        --bard-color-bot-logo-bg-default: var(--surface_container) !important;
+        --bard-color-bot-logo-border-default: var(--outline) !important;
+        --bard-color-bot-logo-text-default: var(--on_surface_variant) !important;
+        --bard-color-sidenav-tile-background-aurora: var(--surface_container) !important;
+        --bard-color-sidenav-tile-text-aurora: var(--on_surface_variant) !important;
+        --bard-color-surface-dim-tmp: var(--surface_dim) !important;
+        --bard-color-surface-tint: var(--primary) !important;
+        --bard-color-get-app-banner-background: var(--primary_container) !important;
+        --bard-color-get-app-banner-text: var(--on_primary_container) !important;
+        --bard-color-get-app-mobile-dialog-background: var(--surface_container) !important;
+        --bard-color-get-app-mobile-dialog-text: var(--on_surface) !important;
+        --bard-color-get-app-mobile-dialog-disclaimer: var(--on_surface_variant) !important;
+        --bard-color-imagen-selection-dialog-background: var(--surface_container) !important;
+        --bard-color-lightbox-background: var(--surface) !important;
+        --bard-color-lightbox-input-background: var(--surface_container) !important;
+        --bard-color-lightbox-input-hover-background: var(--surface_container_high) !important;
+        --bard-color-lightbox-input-button: var(--surface_container_high) !important;
+        --bard-color-lightbox-input-placeholder-text: var(--on_surface_variant) !important;
+        --bard-color-lightbox-editing-text: var(--on_surface) !important;
+        --bard-color-lightbox-editing-tool-text: var(--on_surface) !important;
+        --bard-color-lightbox-editing-tool-inactive-text: var(--on_surface_variant) !important;
+        --bard-color-lightbox-editing-tool-selected-text: var(--on_surface) !important;
+        --bard-color-lightbox-editing-tool-button-background: var(--surface_container_high) !important;
+        --bard-color-lightbox-editing-tool-button-active-background: var(--surface_container_highest) !important;
+        --bard-color-lightbox-editing-tool-button-border: var(--outline_variant) !important;
+        --bard-color-lightbox-top-action-menu-background: var(--surface_container) !important;
+        --bard-color-lightbox-top-action-menu-hover-background: var(--surface_container_high) !important;
+        --bard-color-lightbox-top-action-menu-active-background: var(--surface_container_highest) !important;
+        --bard-color-lightbox-top-action-menu-border: var(--outline_variant) !important;
+        --bard-color-lightbox-top-action-menu-item: var(--on_surface) !important;
+        --bard-color-tool-fuse-background-left: var(--surface_container) !important;
+        --bard-color-tool-fuse-background-middle: var(--surface_container_high) !important;
+        --bard-color-tool-fuse-background-right: var(--surface_container) !important;
+        --bard-color-tool-fuse-foreground-left: var(--outline) !important;
+        --bard-color-tool-fuse-foreground-middle: var(--outline) !important;
+        --bard-color-tool-fuse-foreground-right: var(--outline) !important;
+        --bard-color-progress-not-started: var(--surface_dim) !important;
+        --bard-color-progress-not-started-text: var(--on_surface) !important;
+        --bard-color-progress-on-track: var(--primary) !important;
+        --bard-color-progress-on-track-text: var(--on_primary) !important;
+        --bard-color-progress-still-working: var(--tertiary) !important;
+        --bard-color-progress-still-working-text: var(--on_tertiary) !important;
+        --bard-color-share-title-card-border: var(--outline) !important;
+        --bard-color-share-selected-title-card-border: var(--primary) !important;
+        --bard-color-gallery-separator-line: var(--outline_variant) !important;
+        --bard-color-icon-separator: var(--outline_variant) !important;
+        --bard-color-gallery-image-card-text: var(--on_surface) !important;
+        --bard-color-image-lightbox-text: var(--on_surface_variant) !important;
+        --bard-color-sos-footer: var(--on_surface_variant) !important;
+        --bard-color-sentence-prefix-color: var(--on_surface) !important;
+        --bard-color-sentence-words-color: var(--on_surface_variant) !important;
+        --bard-color-on-tonal-container: var(--on_primary_container) !important;
+        --bard-color-share-link: var(--primary) !important;
+        --bard-color-chrome-experiment-badge: var(--primary) !important;
+        --bard-color-strong-focus-indicator: var(--primary) !important;
+        --bard-color-inverse-strong-focus-indicator: var(--on_primary) !important;
+        --bard-color-status-needs-attention: var(--tertiary) !important;
+        --bard-color-planner-status-indicator-bar-error: var(--error) !important;
+        --bard-color-planner-status-indicator-bar-update: var(--primary) !important;
+        --bard-color-planner-status-indicator-bar-warning: var(--tertiary) !important;
+        --bard-color-remy-surface: var(--surface) !important;
+        --bard-color-remy-surface-accent: var(--tertiary_container) !important;
+        --bard-color-skeleton-loader-background-1: var(--surface_container) !important;
+        --bard-color-skeleton-loader-background-2: var(--surface_container_high) !important;
+        --bard-color-skeleton-loader-background-3: var(--primary_container) !important;
+        --bard-color-skeleton-loader-background-alt-1: var(--surface_container) !important;
+        --bard-color-skeleton-loader-background-alt-2: var(--tertiary_container) !important;
+        --bard-color-skeleton-loader-background-alt-3: var(--tertiary) !important;
+        --bard-color-skeleton-loader-background-grayscale-1: var(--surface_container_low) !important;
+        --bard-color-skeleton-loader-background-grayscale-2: var(--surface_container) !important;
+        --bard-color-skeleton-loader-background-grayscale-3: var(--surface_container_high) !important;
+        --bard-color-imagen-loading-gradient-step-1: var(--surface) !important;
+        --bard-color-imagen-loading-gradient-step-2: var(--surface_container) !important;
+        --bard-color-imagen-loading-gradient-step-3: var(--surface_container_high) !important;
+        --bard-color-lumi-learning-green-surface: var(--tertiary_container) !important;
+        --bard-color-lumi-learning-green-surface-alt: var(--tertiary_container) !important;
+        --bard-color-lumi-learning-green-icon: var(--tertiary) !important;
+        --bard-color-lumi-learning-red-surface: var(--error_container) !important;
+        --bard-color-lumi-learning-red-icon: var(--error) !important;
+        --bard-color-lumi-question-incorrect-icon: var(--error) !important;
+        --bard-color-lumi-quiz-score-correct: var(--primary) !important;
+        --bard-color-lumi-quiz-score-incorrect: var(--error) !important;
+        --bard-color-lumi-learning-surface-dim: color-mix(in srgb, var(--on_surface) 8%, transparent) !important;
+
+        /* ── Material controls (menus, selects, inputs, toggles, dialogs) ── */
+        --mat-sys-background: var(--surface) !important;
+        --mat-sys-on-background: var(--on_surface) !important;
+        --mat-sys-on-surface: var(--on_surface) !important;
+        --mat-sys-secondary: var(--secondary) !important;
+        --mat-sys-shadow: var(--shadow) !important;
+        --mat-divider-color: var(--outline_variant) !important;
+        --mat-ripple-color: color-mix(in srgb, var(--on_surface) 12%, transparent) !important;
+
+        --mat-menu-container-color: var(--surface_container) !important;
+        --mat-menu-item-icon-color: var(--on_surface_variant) !important;
+        --mat-menu-item-hover-state-layer-color: color-mix(in srgb, var(--on_surface) 8%, transparent) !important;
+        --mat-menu-item-focus-state-layer-color: color-mix(in srgb, var(--on_surface) 12%, transparent) !important;
+        --mat-menu-divider-color: var(--outline_variant) !important;
+
+        --mat-dialog-container-color: var(--surface_container) !important;
+
+        --mat-tooltip-container-color: var(--surface_container_highest) !important;
+        --mat-tooltip-supporting-text-color: var(--on_surface) !important;
+
+        --mat-select-panel-background-color: var(--surface_container) !important;
+        --mat-select-disabled-trigger-text-color: color-mix(in srgb, var(--on_surface) 38%, transparent) !important;
+        --mat-select-placeholder-text-color: var(--on_surface_variant) !important;
+        --mat-select-enabled-arrow-color: var(--on_surface_variant) !important;
+        --mat-select-focused-arrow-color: var(--primary) !important;
+        --mat-select-invalid-arrow-color: var(--error) !important;
+        --mat-option-label-text-color: var(--on_surface) !important;
+        --mat-option-selected-state-label-text-color: var(--on_primary_container) !important;
+        --mat-option-selected-state-layer-color: var(--primary_container) !important;
+        --mat-option-hover-state-layer-color: color-mix(in srgb, var(--on_surface) 8%, transparent) !important;
+        --mat-option-focus-state-layer-color: color-mix(in srgb, var(--on_surface) 12%, transparent) !important;
+        --mat-optgroup-label-text-color: var(--on_surface_variant) !important;
+
+        --mat-form-field-outlined-outline-color: var(--outline) !important;
+        --mat-form-field-outlined-hover-outline-color: var(--on_surface_variant) !important;
+        --mat-form-field-outlined-focus-outline-color: var(--primary) !important;
+        --mat-form-field-outlined-label-text-color: var(--on_surface_variant) !important;
+        --mat-form-field-outlined-hover-label-text-color: var(--on_surface) !important;
+        --mat-form-field-outlined-focus-label-text-color: var(--primary) !important;
+        --mat-form-field-outlined-input-text-placeholder-color: var(--on_surface_variant) !important;
+        --mat-form-field-outlined-caret-color: var(--primary) !important;
+        --mat-form-field-filled-container-color: var(--surface_container) !important;
+        --mat-form-field-filled-label-text-color: var(--on_surface_variant) !important;
+        --mat-form-field-filled-hover-label-text-color: var(--on_surface) !important;
+        --mat-form-field-filled-focus-label-text-color: var(--primary) !important;
+        --mat-form-field-filled-input-text-placeholder-color: var(--on_surface_variant) !important;
+        --mat-form-field-filled-caret-color: var(--primary) !important;
+        --mat-form-field-filled-active-indicator-color: var(--outline) !important;
+        --mat-form-field-filled-hover-active-indicator-color: var(--on_surface_variant) !important;
+        --mat-form-field-filled-focus-active-indicator-color: var(--primary) !important;
+        --mat-form-field-error-text-color: var(--error) !important;
+        --mat-form-field-error-focus-trailing-icon-color: var(--error) !important;
+        --mat-form-field-error-hover-trailing-icon-color: var(--error) !important;
+        --mat-form-field-leading-icon-color: var(--on_surface_variant) !important;
+        --mat-form-field-trailing-icon-color: var(--on_surface_variant) !important;
+
+        --mat-button-filled-container-color: var(--primary) !important;
+        --mat-button-filled-label-text-color: var(--on_primary) !important;
+        --mat-button-filled-state-layer-color: var(--on_primary) !important;
+        --mat-button-filled-ripple-color: var(--on_primary) !important;
+        --mat-button-text-label-text-color: var(--primary) !important;
+        --mat-button-text-state-layer-color: var(--primary) !important;
+        --mat-button-text-ripple-color: var(--primary) !important;
+        --mat-button-outlined-label-text-color: var(--primary) !important;
+        --mat-button-outlined-outline-color: var(--outline) !important;
+        --mat-button-outlined-state-layer-color: var(--primary) !important;
+        --mat-button-outlined-ripple-color: var(--primary) !important;
+        --mat-button-tonal-container-color: var(--primary_container) !important;
+        --mat-button-tonal-label-text-color: var(--on_primary_container) !important;
+        --mat-button-tonal-state-layer-color: var(--on_primary_container) !important;
+        --mat-button-protected-container-color: var(--surface_container_high) !important;
+        --mat-button-protected-label-text-color: var(--on_surface) !important;
+        --mat-button-protected-state-layer-color: var(--on_surface) !important;
+        --mat-button-toggle-background-color: var(--surface_container) !important;
+        --mat-button-toggle-text-color: var(--on_surface) !important;
+        --mat-button-toggle-selected-state-background-color: var(--primary_container) !important;
+        --mat-button-toggle-selected-state-text-color: var(--on_primary_container) !important;
+        --mat-button-toggle-divider-color: var(--outline_variant) !important;
+
+        --mat-icon-button-icon-color: var(--on_surface) !important;
+        --mat-icon-button-state-layer-color: var(--on_surface) !important;
+        --mat-icon-button-ripple-color: var(--on_surface) !important;
+        --mat-icon-button-disabled-icon-color: color-mix(in srgb, var(--on_surface) 38%, transparent) !important;
+
+        --mat-chip-elevated-container-color: var(--surface_container_high) !important;
+        --mat-chip-label-text-color: var(--on_surface) !important;
+        --mat-chip-outline-color: var(--outline_variant) !important;
+        --mat-chip-hover-state-layer-color: color-mix(in srgb, var(--on_surface) 8%, transparent) !important;
+        --mat-chip-focus-state-layer-color: color-mix(in srgb, var(--on_surface) 12%, transparent) !important;
+        --mat-chip-elevated-selected-container-color: var(--secondary_container) !important;
+        --mat-chip-selected-label-text-color: var(--on_secondary_container) !important;
+        --mat-chip-with-icon-icon-color: var(--on_surface_variant) !important;
+        --mat-chip-with-icon-selected-icon-color: var(--on_secondary_container) !important;
+
+        --mat-list-list-item-supporting-text-color: var(--on_surface_variant) !important;
+        --mat-list-list-item-leading-icon-color: var(--on_surface_variant) !important;
+        --mat-list-list-item-trailing-icon-color: var(--on_surface_variant) !important;
+        --mat-list-list-item-container-color: transparent !important;
+        --mat-list-list-item-hover-state-layer-color: color-mix(in srgb, var(--on_surface) 8%, transparent) !important;
+        --mat-list-list-item-focus-state-layer-color: color-mix(in srgb, var(--on_surface) 12%, transparent) !important;
+        --mat-list-active-indicator-color: var(--secondary_container) !important;
+
+        --mat-card-elevated-container-color: var(--surface_container) !important;
+        --mat-card-filled-container-color: var(--surface_container_high) !important;
+        --mat-card-outlined-container-color: var(--surface) !important;
+        --mat-card-outlined-outline-color: var(--outline_variant) !important;
+        --mat-card-subtitle-text-color: var(--on_surface_variant) !important;
+
+        --mat-tab-active-label-text-color: var(--primary) !important;
+        --mat-tab-active-indicator-color: var(--primary) !important;
+        --mat-tab-active-focus-label-text-color: var(--primary) !important;
+        --mat-tab-active-hover-label-text-color: var(--primary) !important;
+        --mat-tab-inactive-label-text-color: var(--on_surface_variant) !important;
+        --mat-tab-inactive-focus-label-text-color: var(--on_surface) !important;
+        --mat-tab-inactive-hover-label-text-color: var(--on_surface) !important;
+        --mat-tab-divider-color: var(--outline_variant) !important;
+
+        --mat-slide-toggle-label-text-color: var(--on_surface) !important;
+        --mat-slide-toggle-selected-track-color: var(--primary) !important;
+        --mat-slide-toggle-selected-handle-color: var(--on_primary) !important;
+        --mat-slide-toggle-selected-hover-track-color: var(--primary) !important;
+        --mat-slide-toggle-selected-focus-track-color: var(--primary) !important;
+        --mat-slide-toggle-selected-pressed-track-color: var(--primary) !important;
+        --mat-slide-toggle-unselected-track-color: var(--surface_container_highest) !important;
+        --mat-slide-toggle-unselected-handle-color: var(--outline) !important;
+        --mat-slide-toggle-unselected-hover-track-color: var(--surface_container_highest) !important;
+        --mat-slide-toggle-unselected-focus-track-color: var(--surface_container_highest) !important;
+        --mat-slide-toggle-unselected-pressed-track-color: var(--surface_container_highest) !important;
+        --mat-slide-toggle-unselected-icon-color: var(--surface) !important;
+        --mat-slide-toggle-selected-icon-color: var(--on_primary) !important;
+
+        --mat-checkbox-label-text-color: var(--on_surface) !important;
+        --mat-checkbox-selected-icon-color: var(--primary) !important;
+        --mat-checkbox-selected-checkmark-color: var(--on_primary) !important;
+        --mat-checkbox-selected-hover-icon-color: var(--primary) !important;
+        --mat-checkbox-selected-focus-icon-color: var(--primary) !important;
+        --mat-checkbox-selected-pressed-icon-color: var(--primary) !important;
+        --mat-checkbox-unselected-icon-color: var(--outline) !important;
+        --mat-checkbox-unselected-hover-icon-color: var(--on_surface) !important;
+        --mat-checkbox-unselected-focus-icon-color: var(--on_surface) !important;
+
+        --mat-radio-label-text-color: var(--on_surface) !important;
+        --mat-radio-selected-icon-color: var(--primary) !important;
+        --mat-radio-selected-hover-icon-color: var(--primary) !important;
+        --mat-radio-selected-focus-icon-color: var(--primary) !important;
+        --mat-radio-selected-pressed-icon-color: var(--primary) !important;
+        --mat-radio-unselected-icon-color: var(--outline) !important;
+        --mat-radio-unselected-hover-icon-color: var(--on_surface) !important;
+        --mat-radio-unselected-focus-icon-color: var(--on_surface) !important;
+
+        --mat-slider-active-track-color: var(--primary) !important;
+        --mat-slider-inactive-track-color: var(--surface_container_highest) !important;
+        --mat-slider-handle-color: var(--primary) !important;
+        --mat-slider-hover-handle-color: var(--primary) !important;
+        --mat-slider-focus-handle-color: var(--primary) !important;
+        --mat-slider-label-container-color: var(--surface_container_highest) !important;
+        --mat-slider-label-label-text-color: var(--on_surface) !important;
+        --mat-slider-with-tick-marks-active-container-color: var(--on_primary) !important;
+        --mat-slider-with-tick-marks-inactive-container-color: var(--on_surface_variant) !important;
+
+        --mat-progress-bar-active-indicator-color: var(--primary) !important;
+        --mat-progress-bar-track-color: var(--surface_container_highest) !important;
+        --mat-progress-spinner-active-indicator-color: var(--primary) !important;
+
+        --mat-snack-bar-container-color: var(--surface_container_highest) !important;
+        --mat-snack-bar-supporting-text-color: var(--on_surface) !important;
+        --mat-snack-bar-button-color: var(--primary) !important;
+
+        --mat-bottom-sheet-container-background-color: var(--surface_container) !important;
+        --mat-bottom-sheet-container-text-color: var(--on_surface) !important;
+
+        --mat-sidenav-container-background-color: var(--surface_container) !important;
+        --mat-sidenav-container-text-color: var(--on_surface) !important;
+        --mat-sidenav-content-background-color: var(--surface) !important;
+        --mat-sidenav-content-text-color: var(--on_surface) !important;
+        --mat-sidenav-container-divider-color: var(--outline_variant) !important;
+        --mat-sidenav-scrim-color: color-mix(in srgb, var(--scrim) 40%, transparent) !important;
+
+        --mat-expansion-container-background-color: var(--surface_container) !important;
+        --mat-expansion-container-text-color: var(--on_surface) !important;
+        --mat-expansion-header-text-color: var(--on_surface) !important;
+        --mat-expansion-header-description-color: var(--on_surface_variant) !important;
+        --mat-expansion-header-indicator-color: var(--on_surface_variant) !important;
+        --mat-expansion-actions-divider-color: var(--outline_variant) !important;
+
+        --mat-fab-container-color: var(--primary_container) !important;
+        --mat-fab-foreground-color: var(--on_primary_container) !important;
+        --mat-fab-state-layer-color: var(--on_primary_container) !important;
+        --mat-fab-small-container-color: var(--primary_container) !important;
+        --mat-fab-small-foreground-color: var(--on_primary_container) !important;
+
+        --mat-datepicker-calendar-container-background-color: var(--surface_container) !important;
+        --mat-datepicker-calendar-container-text-color: var(--on_surface) !important;
+        --mat-datepicker-calendar-date-text-color: var(--on_surface) !important;
+        --mat-datepicker-calendar-date-selected-state-background-color: var(--primary) !important;
+        --mat-datepicker-calendar-date-selected-state-text-color: var(--on_primary) !important;
+        --mat-datepicker-calendar-date-today-outline-color: var(--primary) !important;
+        --mat-datepicker-calendar-header-text-color: var(--on_surface_variant) !important;
+        --mat-datepicker-calendar-header-divider-color: var(--outline_variant) !important;
+        --mat-datepicker-calendar-navigation-button-icon-color: var(--on_surface) !important;
     }
 
     body,
