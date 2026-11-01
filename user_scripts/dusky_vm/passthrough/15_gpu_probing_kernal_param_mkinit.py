@@ -24,6 +24,7 @@ Hard rules encoded here
 """
 
 import argparse
+import functools
 import json
 import os
 import re
@@ -38,7 +39,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Never
 
-MIN_PY: tuple[int, int, int] = (3, 14, 7)
+MIN_PY: tuple[int, int, int] = (3, 15, 0)
 STATE_DIR = Path("/var/lib/arsonix")
 STATE_FILE = STATE_DIR / "state.json"
 STATE_SCHEMA = 2
@@ -59,6 +60,8 @@ VOLATILE_TOKENS = {
 }
 VOLATILE_PREFIXES = ("BOOT_IMAGE=", "initrd=", "cryptdevice_UNUSED=")
 
+PCI_IDS_PATHS = (Path("/usr/share/hwdata/pci.ids"), Path("/usr/share/misc/pci.ids"))
+
 CLASS_NAMES = {
     "0300": "VGA controller", "0301": "XGA controller", "0302": "3D controller",
     "0380": "Display controller", "0403": "HD Audio", "0c03": "USB controller",
@@ -68,10 +71,14 @@ CLASS_NAMES = {
 GPU_CLASSES = {"0300", "0301", "0302", "0380"}
 
 VENDOR_DRIVERS = {
-    "10de": ["nouveau", "nvidia", "nvidia_drm", "nvidia_modeset", "nvidia_uvm", "nvidia_peermem"],
+    "10de": [
+        "nouveau", "nvidia", "nvidia_drm", "nvidia_modeset", "nvidia_uvm",
+        "nvidia_peermem", "nova", "nova_core", "nova_drm",
+    ],
     "1002": ["amdgpu", "radeon"],
     "1022": ["amdgpu"],
     "8086": ["i915", "xe"],
+    "1af4": ["virtio_gpu"],
 }
 # Shared host infrastructure: reroute with softdep, never blacklist.
 NEVER_BLACKLIST = {
@@ -93,6 +100,10 @@ def elevate() -> None:
     sudo = shutil.which("sudo")
     if sudo is None:
         _hard_exit("'sudo' is not in PATH. Re-run this script as root.")
+    if not sys.stdin.isatty() and not os.environ.get("SUDO_ASKPASS"):
+        res = subprocess.run([sudo, "-n", "true"], capture_output=True)
+        if res.returncode != 0:
+            _hard_exit("Root privileges required, but terminal is non-interactive and passwordless sudo is not configured. Re-run with sudo.")
     try:
         script = Path(sys.argv[0]).resolve(strict=True)
     except OSError as exc:
@@ -106,8 +117,7 @@ def elevate() -> None:
 
 
 if sys.version_info[:3] < MIN_PY:
-    _hard_exit("Python 3.14.7+ required.")
-elevate()
+    _hard_exit("Python 3.15.0+ required.")
 
 try:
     from rich.console import Console
@@ -255,6 +265,42 @@ def _read(path: Path) -> str:
         return ""
 
 
+@functools.cache
+def lookup_pci_ids(vendor_hex: str, device_hex: str) -> str | None:
+    """Fallback parser for /usr/share/hwdata/pci.ids when lspci is unavailable."""
+    v_clean = vendor_hex.lower().removeprefix("0x")
+    d_clean = device_hex.lower().removeprefix("0x")
+    if not (len(v_clean) == 4 and len(d_clean) == 4):
+        return None
+    for ids_path in PCI_IDS_PATHS:
+        if not ids_path.exists():
+            continue
+        try:
+            in_vendor = False
+            v_name, d_name = "", ""
+            with open(ids_path, encoding="utf-8", errors="replace") as f:
+                for raw_line in f:
+                    if not raw_line or raw_line.startswith("#"):
+                        continue
+                    if not raw_line.startswith("\t"):
+                        if in_vendor:
+                            break
+                        if raw_line[:4].lower() == v_clean:
+                            in_vendor = True
+                            v_name = raw_line[4:].strip()
+                    elif in_vendor and raw_line.startswith("\t") and not raw_line.startswith("\t\t"):
+                        stripped = raw_line[1:]
+                        if stripped[:4].lower() == d_clean:
+                            d_name = stripped[4:].strip()
+                            break
+            if v_name and d_name:
+                return f"{v_name} {d_name}"
+            return d_name or v_name or None
+        except OSError:
+            pass
+    return None
+
+
 def lspci_labels() -> dict[str, str]:
     """Vendor/device marketing strings, keyed by full domain address."""
     if shutil.which("lspci") is None:
@@ -284,6 +330,13 @@ def enumerate_pci() -> list[PciDevice]:
         driver = driver_link.resolve().name if driver_link.is_symlink() else None
         group_link = node / "iommu_group"
         group = group_link.resolve().name if group_link.is_symlink() else None
+        label = labels.get(node.name)
+        if not label:
+            label_file = node / "label"
+            if label_file.exists():
+                label = _read(label_file)
+            if not label:
+                label = lookup_pci_ids(vendor, device) or "unknown device"
         devices.append(
             PciDevice(
                 addr=node.name,
@@ -293,7 +346,7 @@ def enumerate_pci() -> list[PciDevice]:
                 driver=driver,
                 iommu_group=group,
                 boot_vga=_read(node / "boot_vga") == "1",
-                label=labels.get(node.name, "unknown device"),
+                label=label,
             )
         )
     return devices
@@ -309,7 +362,7 @@ def iommu_active() -> bool:
 
 
 def cpu_vendor() -> str:
-    text = Path("/proc/cpuinfo").read_text(encoding="utf-8")
+    text = _read(Path("/proc/cpuinfo"))
     if "GenuineIntel" in text:
         return "intel"
     if "AuthenticAMD" in text:
@@ -635,10 +688,10 @@ def patch_type1(entry: BootEntry, desired: dict[str, str], vendor: str) -> None:
     if entry.path is None or entry.path.suffix != ".conf":
         bail(f"Type #1 entry '{entry.ident}' has no writable .conf snippet.")
     content = entry.path.read_text(encoding="utf-8")
-    match = re.search(r"^(options[ \t]+)(.*)$", content, re.MULTILINE)
+    match = re.search(r"^[ \t]*options[ \t]+(.*)$", content, re.MULTILINE)
     if match:
-        merged = merge_cmdline(match.group(2), desired, vendor)
-        new_content = content[: match.start()] + match.group(1) + merged + content[match.end():]
+        merged = merge_cmdline(match.group(1), desired, vendor)
+        new_content = content[: match.start()] + f"options {merged}" + content[match.end():]
     else:
         merged = merge_cmdline("", desired, vendor)
         new_content = content.rstrip("\n") + f"\noptions {merged}\n"
@@ -761,24 +814,11 @@ def patch_hooks(path: Path) -> None:
 
 
 def write_modules_dropin(main_conf: Path) -> None:
-    wanted = ["vfio_pci", "vfio", "vfio_iommu_type1"]
-    existing: list[str] = []
-    if main_conf.is_file():
-        found = find_array(main_conf.read_text(encoding="utf-8"), "MODULES")
-        if found:
-            try:
-                existing = shlex.split(found[2], comments=True)
-            except ValueError:
-                existing = []
-    missing = [m for m in wanted if m not in existing]
-    if not missing:
-        console.print("[bold green]  ok[/bold green] vfio modules already in the main MODULES array.")
-        MKINITCPIO_DROPIN.unlink(missing_ok=True)
-        return
     payload = (
         "# Managed by Arsonix (Phase 3). VFIO must exist in early userspace so the\n"
         "# stub driver can claim the GPU before any DRM driver probes it.\n"
-        f"MODULES+=({' '.join(missing)})\n"
+        'MODULES=(vfio_pci vfio vfio_iommu_type1 "${MODULES[@]}")\n'
+        'if [[ ! " ${HOOKS[*]} " == *" modconf "* ]]; then HOOKS+=(modconf); fi\n'
     )
     if atomic_write(MKINITCPIO_DROPIN, payload):
         console.print(f"[green]  ~[/green] {MKINITCPIO_DROPIN}")
@@ -929,6 +969,9 @@ def main() -> None:
     parser.add_argument("--no-rebuild", action="store_true", help="skip initramfs regeneration")
     args = parser.parse_args()
     DRY_RUN = args.dry_run
+
+    if not DRY_RUN:
+        elevate()
 
     console.clear()
     console.print(

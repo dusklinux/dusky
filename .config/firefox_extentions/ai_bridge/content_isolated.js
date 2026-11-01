@@ -4,35 +4,27 @@
   }
 
   const BRIDGE = "__LOCAL_AI_BRIDGE__";
-
-  // Inject content_main.js into page MAIN world dynamically for Firefox MV3 compatibility
-  try {
-    const s = document.createElement("script");
-    s.src = browser.runtime.getURL("content_main.js") + "?t=" + Date.now();
-    s.onload = function() { this.remove(); };
-    (document.head || document.documentElement).appendChild(s);
-  } catch(e) {
-    console.error("[LocalAI ISOLATED] Failed to inject content_main.js:", e);
-  }
+  const RELAY_TYPES = new Set(["RUN_QUERY", "STOP_QUERY", "DOM_STATUS"]);
 
   try {
-    browser.runtime.sendMessage({type: "TAB_REGISTER", url: window.location.href}).catch(() => {});
-  } catch(e){}
+    browser.runtime.sendMessage({ type: "TAB_REGISTER", url: window.location.href }).catch(() => {});
+  } catch (e) {}
 
-  // Forward BG -> MAIN
+  // Forward BG -> MAIN strictly via window.postMessage
   const onBgMessage = (msg) => {
-    if (msg?.type === "RUN_QUERY" || msg?.type === "DOM_STATUS") {
+    if (msg && RELAY_TYPES.has(msg.type)) {
       window.postMessage(
-        {__bridge: BRIDGE, direction: "BG_TO_MAIN", payload: msg},
+        { __bridge: BRIDGE, direction: "BG_TO_MAIN", payload: msg },
         "*"
       );
-      return Promise.resolve({status: "received"});
+      return Promise.resolve({ status: "received" });
     }
   };
-  try { browser.runtime.onMessage.addListener(onBgMessage); } catch(e) {}
+  try { browser.runtime.onMessage.addListener(onBgMessage); } catch (e) {}
 
   // Forward MAIN -> BG
   const onWinMessage = (e) => {
+    if (e.source !== window) return;
     const data = e?.data;
     if (!data || data.__bridge !== BRIDGE) return;
     if (data.direction !== "MAIN_TO_BG") return;

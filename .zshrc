@@ -182,16 +182,22 @@ alias vid='noglob _vid'
 
 # Local AI Web Bridge Shortcut
 _ask_func() {
-    local prompt=""
+    local bridge_py="$HOME/.config/firefox_extentions/ai_bridge/bridge.py"
     if [ $# -eq 0 ]; then
-        read -r "prompt?Prompt: "
-        if [ -z "$prompt" ]; then
-            return 0
+        if [ ! -t 0 ]; then
+            local piped_input
+            piped_input="$(cat)"
+            [ -z "$piped_input" ] && return 0
+            python3 "$bridge_py" "$piped_input"
+        else
+            local prompt=""
+            read -r "prompt?Prompt: "
+            [ -z "$prompt" ] && return 0
+            python3 "$bridge_py" "$prompt"
         fi
     else
-        prompt="$*"
+        python3 "$bridge_py" "$@"
     fi
-    python3 "$HOME/.config/firefox_extentions/ai_bridge/bridge.py" "$prompt"
 }
 alias ask='noglob _ask_func'
 

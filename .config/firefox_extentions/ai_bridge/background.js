@@ -1,5 +1,5 @@
-// background.js - Firefox 153 MV3 - ESM - Event Page
-// Robust bridge with activeTabId Lock, Auto-Healing, & Universal Support
+// background.js - Firefox 159 MV3 - ESM - Event Page
+// Robust bridge with activeTabId Lock, Non-Destructive Keep-Alive, & Universal Support
 
 const WS_URL = "ws://127.0.0.1:8765";
 const AI_URL_PATTERNS = ["chatgpt.com", "chat.openai.com", "claude.ai", "meta.ai", "gemini.google.com"];
@@ -8,6 +8,8 @@ let ws = null;
 let isConnecting = false;
 let activeTabId = null;
 let heartbeatInterval = null;
+let reconnectTimer = null;
+const knownAiTabs = new Set();
 
 function log(...args){ console.log("[LocalAI BG]", ...args); }
 
@@ -25,7 +27,81 @@ async function setStatus(connected, extra=""){
   }catch(e){}
 }
 
-let reconnectTimer = null;
+function scheduleReconnect(){
+  if(reconnectTimer) clearTimeout(reconnectTimer);
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connectWS(false);
+  }, 2500);
+}
+
+function isAiUrl(url){
+  return !!(url && AI_URL_PATTERNS.some(p => url.includes(p)));
+}
+
+async function sendMessageWithTimeout(tabId, msg, timeoutMs = 2500){
+  return new Promise(async (resolve, reject) => {
+    let done = false;
+    const timer = setTimeout(() => {
+      if(!done){
+        done = true;
+        reject(new Error("Tab message timeout after " + timeoutMs + "ms"));
+      }
+    }, timeoutMs);
+
+    try {
+      await browser.tabs.sendMessage(tabId, msg);
+      if(!done){
+        done = true;
+        clearTimeout(timer);
+        resolve(true);
+      }
+    } catch(err) {
+      if(!done){
+        done = true;
+        clearTimeout(timer);
+        reject(err);
+      }
+    }
+  });
+}
+
+async function injectScriptsIntoTab(tabId) {
+  try {
+    await browser.scripting.executeScript({
+      target: { tabId },
+      files: ["content_isolated.js"],
+    });
+  } catch (e) {}
+  try {
+    await browser.scripting.executeScript({
+      target: { tabId },
+      files: ["content_main.js"],
+      world: "MAIN",
+    });
+  } catch (e) {
+    log("MAIN world executeScript error on tab", tabId, e);
+  }
+}
+
+async function ensureContentScriptsInAllAiTabs() {
+  try {
+    const tabs = await browser.tabs.query({});
+    for (const tab of tabs) {
+      if (tab.id && isAiUrl(tab.url)) {
+        // Ping tab first: only inject if content script is not already responding
+        try {
+          await sendMessageWithTimeout(tab.id, { type: "DOM_STATUS" }, 600);
+          knownAiTabs.add(tab.id);
+          continue;
+        } catch {
+          await injectScriptsIntoTab(tab.id);
+          knownAiTabs.add(tab.id);
+        }
+      }
+    }
+  } catch (e) {}
+}
 
 // --- WebSocket Connection ---
 function connectWS(force = false){
@@ -68,6 +144,7 @@ function connectWS(force = false){
       if(ws && ws.readyState === WebSocket.OPEN){
         try{ ws.send(JSON.stringify({type: "HEARTBEAT"})); }catch{}
       }
+      try{ browser.storage.session?.get("activeTabId"); }catch{}
     }, 20000);
   };
 
@@ -95,8 +172,62 @@ function connectWS(force = false){
               disabled: b.disabled,
               vis: b.offsetParent !== null
             })).filter(b => b.vis && (b.testid?.includes('send') || b.label?.toLowerCase().includes('send') || b.testid?.includes('stop') || b.label?.toLowerCase().includes('stop')));
+            const arts = Array.from(document.querySelectorAll('article, [data-testid*="turn"], [data-message-author-role]')).slice(-6).map(a => ({
+              tag: a.tagName,
+              testid: a.getAttribute('data-testid'),
+              role: a.getAttribute('data-message-author-role'),
+              className: a.className.slice(0, 60),
+              text: a.textContent.slice(0, 100)
+            }));
+            const mds = Array.from(document.querySelectorAll('.markdown, .prose')).slice(-4).map(m => ({
+              tag: m.tagName,
+              className: m.className.slice(0, 60),
+              text: m.textContent.slice(0, 100)
+            }));
+            const mainEl = document.querySelector('main');
+            const mainChildren = mainEl ? Array.from(mainEl.children).map(c => ({
+              tag: c.tagName,
+              className: c.className.slice(0, 60),
+              id: c.id,
+              text: c.textContent.slice(0, 100)
+            })) : [];
+            const bodyClasses = document.body.className;
+            const title = document.title;
+            const wsContent = document.querySelector('[class*="WorkspaceContent"]');
+            const turnNodes = wsContent ? Array.from(wsContent.querySelectorAll('div, section, article')).filter(n => {
+              const txt = n.textContent;
+              return (txt.includes('ChatGPT said:') || txt.includes('You said:') || n.getAttribute('data-message-author-role'));
+            }).slice(0, 10).map(n => ({
+              tag: n.tagName,
+              className: n.className.slice(0, 60),
+              testid: n.getAttribute('data-testid'),
+              role: n.getAttribute('data-message-author-role'),
+              text: n.textContent.slice(0, 80)
+            })) : [];
+            const assistantLeaves = Array.from(document.querySelectorAll('*')).filter(n => {
+              const h = n.querySelector('h6, h5, h4, span, div');
+              return (n.textContent.startsWith('ChatGPT said:') || (h && h.textContent.includes('ChatGPT said:'))) && n.children.length < 15;
+            }).slice(0, 3).map(n => ({
+              tag: n.tagName,
+              className: n.className.slice(0, 60),
+              attributes: Array.from(n.attributes).map(a => `${a.name}="${a.value}"`).join(' '),
+              innerTags: Array.from(n.children).map(c => c.tagName + '.' + c.className.slice(0, 30)),
+              text: n.textContent.slice(0, 120)
+            }));
+            const ws = document.querySelector('.Workspace-IfYAxV, [class*="Workspace-"]');
+            const messages = ws ? Array.from(ws.querySelectorAll('*')).filter(el => {
+              const t = el.textContent || '';
+              return (t.includes('ChatGPT said:') || t.includes('UWSM')) && el.children.length > 0 && el.children.length < 5;
+            }).slice(-5).map(el => ({
+              tag: el.tagName,
+              className: el.className.slice(0, 50),
+              attributes: Array.from(el.attributes).map(a => `${a.name}="${a.value}"`).join(' '),
+              text: el.textContent.slice(0, 100)
+            })) : [];
             return {
               url: window.location.href,
+              wsFound: !!ws,
+              messages: messages,
               editor: ed ? {
                 tag: ed.tagName,
                 id: ed.id,
@@ -104,7 +235,9 @@ function connectWS(force = false){
                 text: ed.textContent,
                 lexical: ed.getAttribute('data-lexical-editor')
               } : null,
-              buttons: btns
+              buttons: btns,
+              articles: arts,
+              markdowns: mds
             };
           }
         });
@@ -116,7 +249,7 @@ function connectWS(force = false){
     }
 
     if(msg.type === "PING" || msg.type === "HEARTBEAT"){
-      try{ ws.send(JSON.stringify({type: "PONG", v: "build_2026_test_v1"})); }catch{}
+      try{ ws.send(JSON.stringify({type: "PONG", v: "build_2026_test_v2"})); }catch{}
       return;
     }
 
@@ -140,71 +273,75 @@ function connectWS(force = false){
     }
 
     if(msg.type === "DOM_STATUS"){
-      const targetId = await findTargetTab(msg.tabId);
+      const targetId = await findTargetTab(msg.tabId, msg.model);
       if(!targetId){
         ws?.send(JSON.stringify({type: "DOM_STATUS_REPLY", error: "findTargetTab returned null"}));
         return;
       }
-      browser.tabs.sendMessage(targetId, msg).catch((e) => {
-        ws?.send(JSON.stringify({type: "DOM_STATUS_REPLY", error: "sendMessage to tab " + targetId + " failed: " + e.message}));
-      });
+      try {
+        await wakeTabIfNeeded(targetId);
+        await sendMessageWithTimeout(targetId, msg, 2000);
+      } catch (e) {
+        try {
+          await injectScriptsIntoTab(targetId);
+          await new Promise(r => setTimeout(r, 250));
+          await browser.tabs.sendMessage(targetId, msg);
+        } catch (err) {
+          ws?.send(JSON.stringify({type: "DOM_STATUS_REPLY", error: "sendMessage to tab " + targetId + " failed: " + err.message}));
+        }
+      }
       return;
     }
 
     if(msg.type === "DIAGNOSE_TABS"){
       try{
         const all = await browser.tabs.query({});
-        const tabList = all.map(t => ({id: t.id, url: t.url, active: t.active, title: t.title}));
-        ws?.send(JSON.stringify({type: "DIAGNOSE_REPLY", tabs: tabList}));
+        const tabList = all.map(t => ({
+          id: t.id,
+          url: t.url,
+          active: t.active,
+          discarded: Boolean(t.discarded),
+          lastAccessed: t.lastAccessed || 0,
+          windowId: t.windowId,
+          title: t.title
+        }));
+        ws?.send(JSON.stringify({type: "DIAGNOSE_REPLY", activeTabId, tabs: tabList}));
       }catch(e){
         ws?.send(JSON.stringify({type: "DIAGNOSE_REPLY", error: String(e)}));
       }
       return;
     }
 
-async function sendMessageWithTimeout(tabId, msg, timeoutMs = 2000){
-  return new Promise(async (resolve, reject) => {
-    let done = false;
-    const timer = setTimeout(() => {
-      if(!done){
-        done = true;
-        reject(new Error("Tab message timeout after " + timeoutMs + "ms"));
+    if(msg.type === "STOP_QUERY") {
+      const targetId = await findTargetTab(msg.tabId || activeTabId, msg.model);
+      if(targetId) {
+        browser.tabs.sendMessage(targetId, msg).catch(() => {});
       }
-    }, timeoutMs);
-
-    try {
-      await browser.tabs.sendMessage(tabId, msg);
-      if(!done){
-        done = true;
-        clearTimeout(timer);
-        resolve(true);
-      }
-    } catch(err) {
-      if(!done){
-        done = true;
-        clearTimeout(timer);
-        reject(err);
-      }
+      return;
     }
-  });
-}
 
-    if(msg.type === "RUN_QUERY" && msg.query){
-      const targetId = await findTargetTab(msg.tabId);
+    if(msg.type === "RUN_QUERY" && (msg.query || (msg.files && msg.files.length > 0))){
+      const targetId = await findTargetTab(msg.tabId, msg.model);
       if(!targetId){
-        ws?.send(JSON.stringify({type:"ERROR", error:"No AI tab found. Open chatgpt.com/claude.ai/gemini.google.com", requestId: msg.requestId}));
+        const modelHint = msg.model ? ` matching model '${msg.model}'` : "";
+        ws?.send(JSON.stringify({type:"ERROR", error:`No AI tab found${modelHint}. Open chatgpt.com/claude.ai/gemini.google.com`, requestId: msg.requestId}));
         return;
       }
 
       let isGemini = false;
       let targetUrl = "";
       try{
-        const tab = await browser.tabs.get(targetId);
-        targetUrl = tab.url || "";
+        const tab = await wakeTabIfNeeded(targetId);
+        targetUrl = tab?.url || "";
         isGemini = targetUrl.includes("gemini.google.com");
-        if(tab.windowId) await browser.windows.update(tab.windowId, {focused: true});
-        await browser.tabs.update(targetId, {active: true});
-      }catch(e){ log("Focus error (non-fatal):", e); }
+        // Activate the tab inside its Firefox window without stealing Wayland OS focus unless Gemini
+        if (!tab?.active) {
+          await browser.tabs.update(targetId, {active: true});
+        }
+        if (isGemini && tab?.windowId) {
+          await browser.windows.update(tab.windowId, {focused: true});
+        }
+      }catch(e){ log("Tab activation warning (non-fatal):", e); }
 
       try {
         ws?.send(JSON.stringify({
@@ -222,28 +359,8 @@ async function sendMessageWithTimeout(tabId, msg, timeoutMs = 2000){
       }catch(e){
         log("Tab message failed/timed out, attempting auto-heal:", targetId, e.message);
         try {
-          try {
-            await browser.scripting.executeScript({
-              target: {tabId: targetId},
-              files: ["content_isolated.js"]
-            });
-          } catch(err){}
-          try {
-            await browser.scripting.executeScript({
-              target: {tabId: targetId},
-              files: ["content_main.js"],
-              world: "MAIN"
-            });
-          } catch(err){
-            try {
-              await browser.scripting.executeScript({
-                target: {tabId: targetId},
-                files: ["content_main.js"]
-              });
-            } catch(e) {}
-          }
-
-          await new Promise(r => setTimeout(r, 400));
+          await injectScriptsIntoTab(targetId);
+          await new Promise(r => setTimeout(r, 350));
 
           try {
             await sendMessageWithTimeout(targetId, msg, 2500);
@@ -253,7 +370,6 @@ async function sendMessageWithTimeout(tabId, msg, timeoutMs = 2000){
             log("sendMessage still failed, reloading tab:", targetId, retryErr.message);
           }
 
-          // Last resort: reload tab
           await browser.tabs.reload(targetId);
           let settled = false;
           const cleanup = () => {
@@ -266,17 +382,12 @@ async function sendMessageWithTimeout(tabId, msg, timeoutMs = 2000){
             if(tId === targetId && changeInfo.status === "complete"){
               cleanup();
               setTimeout(async () => {
-                try {
-                  await browser.scripting.executeScript({ target: {tabId: targetId}, files: ["content_isolated.js"] });
-                } catch(e2) {}
-                try {
-                  await browser.scripting.executeScript({ target: {tabId: targetId}, files: ["content_main.js"], world: "MAIN" });
-                } catch(e2) {}
-                await new Promise(r => setTimeout(r, 600));
+                await injectScriptsIntoTab(targetId);
+                await new Promise(r => setTimeout(r, 500));
                 browser.tabs.sendMessage(targetId, msg).catch((err) => {
                   ws?.send(JSON.stringify({type:"ERROR", error:"Tab message failed after reload: " + err.message, requestId: msg.requestId}));
                 });
-              }, 1500);
+              }, 1200);
             }
           };
           const failSafe = setTimeout(() => {
@@ -323,21 +434,12 @@ async function sendMessageWithTimeout(tabId, msg, timeoutMs = 2000){
   };
 }
 
-function scheduleReconnect(){
-  if(reconnectTimer) clearTimeout(reconnectTimer);
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null;
-    connectWS(false);
-  }, 2500);
-}
-
-// --- Firefox MV3 Alarms Keep-Alive & Auto-Heal ---
+// --- Firefox MV3 Alarms Keep-Alive (Non-Destructive: NEVER re-inject over live tabs) ---
 browser.alarms?.onAlarm?.addListener((alarm) => {
   if (alarm.name === "keepAlive") {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       connectWS(false);
     }
-    ensureContentScriptsInAllAiTabs();
   }
 });
 
@@ -345,124 +447,97 @@ try {
   browser.alarms?.create("keepAlive", { periodInMinutes: 1 });
 } catch (e) {}
 
-const knownAiTabs = new Set();
+// --- Model Mapping & Tab Wakeup ---
+const MODEL_HOST_MAP = {
+  chatgpt: ["chatgpt.com", "chat.openai.com"],
+  gpt: ["chatgpt.com", "chat.openai.com"],
+  gemini: ["gemini.google.com"],
+  claude: ["claude.ai"],
+  meta: ["meta.ai"],
+};
 
-function isAiUrl(url){
-  return !!(url && AI_URL_PATTERNS.some(p => url.includes(p)));
+function matchesModel(url, modelFilter) {
+  if (!isAiUrl(url)) return false;
+  if (!modelFilter) return true;
+  const key = String(modelFilter).toLowerCase().trim();
+  const patterns = MODEL_HOST_MAP[key] || [key];
+  return patterns.some((p) => url.toLowerCase().includes(p));
 }
 
-async function ensureContentScriptsInAllAiTabs() {
-  try {
-    const tabs = await browser.tabs.query({});
-    for (const tab of tabs) {
-      if (tab.id && isAiUrl(tab.url)) {
-        try {
-          await browser.scripting.executeScript({
-            target: { tabId: tab.id },
-            files: ["content_isolated.js"]
-          });
-        } catch (e) {}
-        try {
-          await browser.scripting.executeScript({
-            target: { tabId: tab.id },
-            files: ["content_main.js"],
-            world: "MAIN"
-          });
-        } catch (e) {
-          try {
-            await browser.scripting.executeScript({
-              target: { tabId: tab.id },
-              files: ["content_main.js"]
-            });
-          } catch (e2) {}
-        }
-        knownAiTabs.add(tab.id);
-      }
+async function wakeTabIfNeeded(tabId) {
+  let tab = await browser.tabs.get(tabId);
+  if (tab.discarded) {
+    log("Waking discarded AI tab:", tabId, tab.url);
+    await browser.tabs.update(tabId, { active: true });
+    for (let i = 0; i < 30; i++) {
+      await new Promise((r) => setTimeout(r, 200));
+      tab = await browser.tabs.get(tabId);
+      if (!tab.discarded && tab.status === "complete") break;
     }
-  } catch (e) {}
+    await injectScriptsIntoTab(tabId);
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  return tab;
 }
 
 // --- Active Window / Tab Priority Tab Targeting ---
-async function findTargetTab(preferredId){
-  // 1. Explicit preferred tab requested by caller
-  if(preferredId){
-    try{
+async function findTargetTab(preferredId, modelFilter = null) {
+  // 1. Explicit tabId override
+  if (preferredId) {
+    try {
       const tab = await browser.tabs.get(preferredId);
-      if(tab && isAiUrl(tab.url)) {
+      if (tab && matchesModel(tab.url, modelFilter)) {
         activeTabId = preferredId;
         return preferredId;
       }
-    }catch{}
+    } catch {}
   }
 
-  // 2. Active tab in the focused / active window (USER IS CURRENTLY LOOKING AT THIS)
-  try{
+  // 2. Active tab in lastFocusedWindow matching modelFilter
+  try {
     const focusedTabs = await browser.tabs.query({ active: true, lastFocusedWindow: true });
-    for(const tab of focusedTabs){
-      if(tab?.id && isAiUrl(tab.url)){
+    for (const tab of focusedTabs) {
+      if (tab?.id && matchesModel(tab.url, modelFilter)) {
         activeTabId = tab.id;
         knownAiTabs.add(tab.id);
-        try{ await browser.storage.session.set({activeTabId: tab.id}); }catch{}
+        try { await browser.storage.session.set({ activeTabId: tab.id }); } catch {}
         return tab.id;
       }
     }
-  }catch{}
+  } catch {}
 
-  // 3. Active tab in any open window
-  try{
-    const activeTabs = await browser.tabs.query({ active: true });
-    for(const tab of activeTabs){
-      if(tab?.id && isAiUrl(tab.url)){
-        activeTabId = tab.id;
-        knownAiTabs.add(tab.id);
-        try{ await browser.storage.session.set({activeTabId: tab.id}); }catch{}
-        return tab.id;
-      }
-    }
-  }catch{}
-
-  // 4. Previously locked / active AI tab
-  if(activeTabId){
-    try{
+  // 3. Previously tracked activeTabId (if still valid and matches modelFilter)
+  if (activeTabId) {
+    try {
       const tab = await browser.tabs.get(activeTabId);
-      if(tab && isAiUrl(tab.url)) return activeTabId;
-      activeTabId = null;
-    }catch{
-      activeTabId = null;
-    }
-  }
-
-  // 5. Any known AI tab
-  for(const tabId of knownAiTabs){
-    try{
-      const tab = await browser.tabs.get(tabId);
-      if(tab && isAiUrl(tab.url)){
-        activeTabId = tabId;
-        return tabId;
+      if (tab && matchesModel(tab.url, modelFilter)) {
+        return activeTabId;
       }
-      knownAiTabs.delete(tabId);
-    }catch{
-      knownAiTabs.delete(tabId);
+    } catch {
+      activeTabId = null;
     }
   }
 
-  // 6. Fallback: search all tabs
-  try{
+  // 4. All AI tabs matching modelFilter, prioritizing active tabs and most recent lastAccessed timestamp
+  try {
     const allTabs = await browser.tabs.query({});
-    const aiTabs = allTabs.filter(tab => isAiUrl(tab.url));
-    if(aiTabs.length > 0){
-      const activeAi = aiTabs.find(t => t.active) || aiTabs[0];
-      activeTabId = activeAi.id;
-      knownAiTabs.add(activeAi.id);
-      try{ await browser.storage.session.set({activeTabId: activeAi.id}); }catch{}
-      return activeAi.id;
+    const candidates = allTabs.filter((t) => t?.id && matchesModel(t.url, modelFilter));
+    if (candidates.length > 0) {
+      candidates.sort((a, b) => {
+        if (Boolean(a.active) !== Boolean(b.active)) return a.active ? -1 : 1;
+        return (b.lastAccessed || 0) - (a.lastAccessed || 0);
+      });
+      const chosen = candidates[0];
+      activeTabId = chosen.id;
+      knownAiTabs.add(chosen.id);
+      try { await browser.storage.session.set({ activeTabId: chosen.id }); } catch {}
+      return chosen.id;
     }
-  }catch(e){}
+  } catch (e) {}
 
   return null;
 }
 
-// Track active tab with strict URL validation & session persistence
 browser.tabs.onActivated?.addListener(async ({tabId})=>{
   try{
     const tab = await browser.tabs.get(tabId);
@@ -492,7 +567,6 @@ browser.tabs.onRemoved?.addListener((tabId)=>{
   if(activeTabId === tabId) activeTabId = null;
 });
 
-// Forward content script messages -> WS & Lock activeTabId
 browser.runtime.onMessage.addListener((msg, sender)=>{
   if(!msg?.type) return;
   if(sender?.tab?.id && isAiUrl(sender.tab.url)){

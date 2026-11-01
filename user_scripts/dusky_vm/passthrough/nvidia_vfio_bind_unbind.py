@@ -177,11 +177,17 @@ def check_groups(claim, *, require):
 def active_guest_claims(claim):
     if not common.shutil.which('virsh'):
         return
-    names = checked(['virsh', '-c', 'qemu:///system', 'list', '--name']).splitlines()
+    try:
+        names = checked(['virsh', '-c', 'qemu:///system', 'list', '--name']).splitlines()
+    except RuntimeError:
+        return
     for name in names:
         if not name.strip():
             continue
-        root = ET.fromstring(checked(['virsh', '-c', 'qemu:///system', 'dumpxml', name]))
+        try:
+            root = ET.fromstring(checked(['virsh', '-c', 'qemu:///system', 'dumpxml', name]))
+        except (RuntimeError, ET.ParseError):
+            continue
         for address in root.findall('./devices/hostdev/source/address'):
             if address.get('domain') is None:
                 continue
@@ -370,7 +376,15 @@ def files_match(files):
             if payload is None:
                 path.lstat()
                 return False
-            if path.read_text(encoding='utf-8') != payload:
+            current = path.read_text(encoding='utf-8')
+            if current != payload:
+                # For bootloader entries, non-options fields (e.g. version after kernel update)
+                # can change without drifting the managed VFIO kernel options.
+                if name.endswith('.conf') and ('/entries/' in name or '\noptions ' in payload or payload.startswith('options ')):
+                    curr_opts = ' '.join(re.findall(r'^[ \t]*options[ \t]+(.*)$', current, re.MULTILINE))
+                    target_opts = ' '.join(re.findall(r'^[ \t]*options[ \t]+(.*)$', payload, re.MULTILINE))
+                    if parameters(curr_opts) == parameters(target_opts):
+                        continue
                 return False
         except FileNotFoundError:
             if payload is not None:

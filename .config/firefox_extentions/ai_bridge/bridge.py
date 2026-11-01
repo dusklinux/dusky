@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
-"""
-Local AI Web Bridge Daemon & CLI Client - Zero External Dependencies (Standard Library Only)
-Bridges terminal commands to open web AI tabs (ChatGPT, Claude, Gemini, Meta AI) in Firefox.
-"""
+# Local AI Web Bridge Daemon & CLI Client - Zero External Dependencies (Standard Library Only)
+# Bridges terminal commands to open web AI tabs (ChatGPT, Claude, Gemini, Meta AI) in Firefox.
 
 import sys
 import os
@@ -16,6 +14,9 @@ import uuid
 import struct
 import subprocess
 import threading
+import argparse
+import mimetypes
+from pathlib import Path
 
 HOST = "127.0.0.1"
 PORT = 8765
@@ -53,78 +54,104 @@ class WSConnection:
         await self.writer.drain()
 
     async def recv(self):
-        try:
-            head = await self.reader.readexactly(2)
-        except Exception:
-            return None
+        fragments = bytearray()
+        while True:
+            try:
+                head = await self.reader.readexactly(2)
+            except Exception:
+                return None
 
-        b1, b2 = head[0], head[1]
-        opcode = b1 & 0x0F
-        masked = bool(b2 & 0x80)
-        payload_len = b2 & 0x7F
+            b1, b2 = head[0], head[1]
+            fin = bool(b1 & 0x80)
+            opcode = b1 & 0x0F
+            masked = bool(b2 & 0x80)
+            payload_len = b2 & 0x7F
 
-        if payload_len == 126:
-            data = await self.reader.readexactly(2)
-            payload_len = struct.unpack("!H", data)[0]
-        elif payload_len == 127:
-            data = await self.reader.readexactly(8)
-            payload_len = struct.unpack("!Q", data)[0]
+            if payload_len == 126:
+                data = await self.reader.readexactly(2)
+                payload_len = struct.unpack("!H", data)[0]
+            elif payload_len == 127:
+                data = await self.reader.readexactly(8)
+                payload_len = struct.unpack("!Q", data)[0]
 
-        masks = await self.reader.readexactly(4) if masked else None
-        raw = await self.reader.readexactly(payload_len)
+            masks = await self.reader.readexactly(4) if masked else None
+            raw = await self.reader.readexactly(payload_len)
 
-        if masked:
-            raw = bytes(b ^ masks[i % 4] for i, b in enumerate(raw))
+            if masked:
+                raw = bytes(b ^ masks[i % 4] for i, b in enumerate(raw))
 
-        # Close frame (0x8)
-        if opcode == 0x8:
-            return None
+            # Close frame (0x8)
+            if opcode == 0x8:
+                return None
 
-        # Ping frame (0x9) -> Send Pong (0x8A)
-        if opcode == 0x9:
-            frame = bytearray([0x8A])
-            n = len(raw)
-            if n <= 125:
-                frame.append(n)
-            elif n <= 65535:
-                frame.append(126)
-                frame.extend(struct.pack("!H", n))
-            else:
-                frame.append(127)
-                frame.extend(struct.pack("!Q", n))
-            frame.extend(raw)
-            self.writer.write(frame)
-            await self.writer.drain()
-            return await self.recv()
+            # Ping frame (0x9) -> Send Pong (0x8A) and continue loop
+            if opcode == 0x9:
+                frame = bytearray([0x8A])
+                n = len(raw)
+                if n <= 125:
+                    frame.append(n)
+                elif n <= 65535:
+                    frame.append(126)
+                    frame.extend(struct.pack("!H", n))
+                else:
+                    frame.append(127)
+                    frame.extend(struct.pack("!Q", n))
+                frame.extend(raw)
+                self.writer.write(frame)
+                await self.writer.drain()
+                continue
 
-        # Pong frame (0xA)
-        if opcode == 0xA:
-            return await self.recv()
+            # Pong frame (0xA)
+            if opcode == 0xA:
+                continue
 
-        # Only process text/continuation frames
-        if opcode not in (0x1, 0x0):
-            return await self.recv()
-
-        return raw.decode("utf-8", errors="replace")
+            if opcode in (0x1, 0x2, 0x0):
+                fragments.extend(raw)
+                if fin:
+                    return fragments.decode("utf-8", errors="replace")
 
     def close(self):
         try: self.writer.close()
-        except: pass
+        except Exception: pass
 
 # --- Hardware Keypress Submission (daemon-level) ---
-# Gemini ignores synthetic JS clicks (isTrusted:false). The ONLY reliable
-# way to submit a typed prompt is via an OS-level hardware keypress.
-# This function is called by the daemon for EVERY RUN_QUERY, regardless
-# of whether the caller is bridge.py CLI, a benchmark script, or the SDK.
-import time as _time
-
 LAST_NON_FIREFOX_TARGET = {"address": None, "workspace_id": None, "special_ws": None}
+SUBMISSION_EVENTS = {}  # requestId -> asyncio.Event
+
+def _ensure_wayland_hypr_env():
+    """Ensure WAYLAND_DISPLAY and HYPRLAND_INSTANCE_SIGNATURE are populated under systemd --user."""
+    uid = os.getuid()
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{uid}"
+    os.environ.setdefault("XDG_RUNTIME_DIR", runtime_dir)
+
+    if not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        hypr_dir = Path(runtime_dir) / "hypr"
+        if hypr_dir.is_dir():
+            candidates = sorted(
+                [d for d in hypr_dir.iterdir() if d.is_dir() and (d / ".socket.sock").exists()],
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            if candidates:
+                os.environ["HYPRLAND_INSTANCE_SIGNATURE"] = candidates[0].name
+
+    if not os.environ.get("WAYLAND_DISPLAY"):
+        for sock_path in sorted(Path(runtime_dir).glob("wayland-*")):
+            if not sock_path.name.endswith(".lock"):
+                os.environ["WAYLAND_DISPLAY"] = sock_path.name
+                break
 
 def _hypr_focus_window(addr):
     if not addr:
         return
-    # In Hyprland-git, hl.dsp.focus requires an HL.Window userdata object
-    lua_code = f'''
+    _ensure_wayland_hypr_env()
+    # Try native Hyprland dispatcher first, then fallback to Lua hl.dispatch
+    res = subprocess.run(
+        ["hyprctl", "dispatch", "focuswindow", f"address:{addr}"],
+         capture_output=True, text=True, timeout=2,
+    )
+    if res.returncode != 0 or "ok" not in (res.stdout or "").lower():
+        lua_code = f'''
 for _, w in ipairs(hl.get_windows()) do
     if w.address == "{addr}" then
         hl.dispatch(hl.dsp.focus({{ window = w }}))
@@ -132,10 +159,11 @@ for _, w in ipairs(hl.get_windows()) do
     end
 end
 '''
-    subprocess.run(["hyprctl", "eval", lua_code], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2)
+        subprocess.run(["hyprctl", "eval", lua_code], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2)
 
 def get_active_window():
     """Retrieve active window/workspace/special_workspace, caching non-Firefox originating context."""
+    _ensure_wayland_hypr_env()
     try:
         special_ws = None
         mon_res = subprocess.run(
@@ -185,6 +213,7 @@ def get_active_window():
     )
 
 def _get_firefox_target():
+    _ensure_wayland_hypr_env()
     try:
         res = subprocess.run(
             ["hyprctl", "clients", "-j"],
@@ -208,6 +237,26 @@ def _get_firefox_target():
     except Exception:
         return None
 
+def _wait_for_firefox_focus(expected_addr, max_wait=0.8):
+    """Poll hyprctl activewindow until Firefox holds Wayland keyboard focus."""
+    deadline = _time.time() + max_wait
+    while _time.time() < deadline:
+        try:
+            res = subprocess.run(
+                ["hyprctl", "activewindow", "-j"],
+                capture_output=True, text=True, timeout=1,
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                win = json.loads(res.stdout)
+                cls = (win.get("class") or "").lower()
+                addr = (win.get("address") or "").lower()
+                if "firefox" in cls or (expected_addr and addr == expected_addr.lower()):
+                    return True
+        except Exception:
+            pass
+        _time.sleep(0.04)
+    return False
+
 def _focus_window(target):
     if not target:
         return
@@ -230,106 +279,72 @@ def _focus_window(target):
     if addr:
         _hypr_focus_window(addr)
 
-def _do_os_return(prev_addr=None, prev_ws_id=None, prev_special=None):
-    """Focus Firefox AI tab, send hardware Return for submission, and restore previous window/workspace focus."""
+async def _do_os_return_async(req_id=None, prev_addr=None, prev_ws_id=None, prev_special=None):
+    """Focus Firefox AI tab, verify Wayland focus, send wtype Return, wait for submission confirmation, then restore focus."""
     try:
         if not prev_addr:
-            prev_addr, prev_ws_id, prev_special = get_active_window()
+            prev_addr, prev_ws_id, prev_special = await asyncio.to_thread(get_active_window)
 
-        target = _get_firefox_target()
+        target = await asyncio.to_thread(_get_firefox_target)
         if not target:
             return
 
         addr = target["address"]
-        ws_info = target.get("workspace", {}) or {}
-        ws_id = ws_info.get("id")
         multi_mon_ws = os.environ.get(
             "AI_BRIDGE_MULTI_MON_WS",
             os.path.expanduser("~/user_scripts/hypr/multi_monitor_workspace.sh"),
         )
 
-        _focus_window(target)
+        await asyncio.to_thread(_focus_window, target)
+        await asyncio.to_thread(_wait_for_firefox_focus, addr, 0.8)
+        await asyncio.sleep(0.18)
 
-        _time.sleep(0.6)  # Let Firefox fully accept focus before keypress
-        # Plain Return only — Ctrl+Return inserts a newline in Gemini's
-        # rich-textarea, which prevents the subsequent Return from submitting.
-        subprocess.run(
+        _ensure_wayland_hypr_env()
+        await asyncio.to_thread(
+            subprocess.run,
             ["wtype", "-k", "Return"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2,
         )
 
-        # 3. Restore focus back to starting window & workspace!
+        # Wait deterministically for SUBMISSION_CONFIRMED / STREAM_CHUNK / THINKING (up to 0.9s)
+        ev = SUBMISSION_EVENTS.get(req_id) if req_id else None
+        if ev is not None:
+            try:
+                await asyncio.wait_for(ev.wait(), timeout=0.9)
+            except asyncio.TimeoutError:
+                pass
+        else:
+            await asyncio.sleep(0.45)
+
         if prev_addr and prev_addr.lower() != addr.lower():
-            _time.sleep(0.5)  # Let wtype Return register before switching away
             print(f"[Daemon] Restoring focus: ws={prev_ws_id} sp={prev_special} addr={prev_addr}", flush=True)
-            if prev_special:
-                subprocess.run(
-                    ["hyprctl", "dispatch", f'hl.dsp.workspace.toggle_special("{prev_special}")'],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2,
-                )
-            elif prev_ws_id is not None and prev_ws_id > 0:
-                rel_ws = ((prev_ws_id - 1) % 10) + 1
-                try:
+            def _restore():
+                if prev_special:
                     subprocess.run(
-                        [multi_mon_ws, "workspace", str(rel_ws)],
+                        ["hyprctl", "dispatch", f'hl.dsp.workspace.toggle_special("{prev_special}")'],
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2,
                     )
-                except Exception:
-                    pass
-            _hypr_focus_window(prev_addr)
-            print(f"[Daemon] Focus restored OK", flush=True)
+                elif prev_ws_id is not None and prev_ws_id > 0:
+                    rel_ws = ((prev_ws_id - 1) % 10) + 1
+                    try:
+                        subprocess.run(
+                            [multi_mon_ws, "workspace", str(rel_ws)],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2,
+                        )
+                    except Exception:
+                        pass
+                _hypr_focus_window(prev_addr)
+            await asyncio.to_thread(_restore)
+            print("[Daemon] Focus restored OK", flush=True)
         else:
-            print(f"[Daemon] Skipping focus restore: prev_addr={prev_addr} ff_addr={addr} same={prev_addr and prev_addr.lower() == addr.lower()}", flush=True)
+            print(f"[Daemon] Skipping focus restore: prev_addr={prev_addr} ff_addr={addr}", flush=True)
     except Exception as e:
-        print(f"[Daemon] _do_os_return error: {e!r}", flush=True)
-
-_pending_os_return = {"task": None, "timer": None}  # Debounce state
-
-def _schedule_os_return(prev_addr=None, prev_ws_id=None, prev_special=None):
-    """Schedule hardware Return keypress & focus restoration 1.5s after query dispatch.
-    
-    Debounced: if called again before the previous schedule fires, the old one
-    is cancelled. This prevents multiple wtype Return keystrokes from rapid queries.
-    """
-    # Cancel any pending schedule
-    if _pending_os_return["timer"] is not None:
-        _pending_os_return["timer"].cancel()
-        _pending_os_return["timer"] = None
-        print("[Daemon] Cancelled pending _do_os_return (debounce)", flush=True)
-    if _pending_os_return["task"] is not None:
-        _pending_os_return["task"].cancel()
-        _pending_os_return["task"] = None
-        print("[Daemon] Cancelled pending _do_os_return task (debounce)", flush=True)
-
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        t = threading.Timer(1.5, _do_os_return, args=(prev_addr, prev_ws_id, prev_special))
-        t.daemon = True
-        t.start()
-        _pending_os_return["timer"] = t
-        return
-
-    async def _run():
-        await asyncio.sleep(1.5)
-        await asyncio.to_thread(_do_os_return, prev_addr, prev_ws_id, prev_special)
-
-    task = loop.create_task(_run())
-    _pending_os_return["task"] = task
-
-    def _consume(done):
-        if _pending_os_return["task"] is done:
-            _pending_os_return["task"] = None
-        if done.cancelled():
-            return
-        exc = done.exception()
-        if exc is not None:
-            print(f"[Daemon] _do_os_return task error: {exc!r}", flush=True)
-
-    task.add_done_callback(_consume)
+        print(f"[Daemon] _do_os_return_async error: {e!r}", flush=True)
+    finally:
+        if req_id:
+            SUBMISSION_EVENTS.pop(req_id, None)
 
 async def handle_client(reader, writer):
-    # Perform HTTP WebSocket Handshake
     headers = ""
     while "\r\n\r\n" not in headers:
         line = await reader.readline()
@@ -347,7 +362,7 @@ async def handle_client(reader, writer):
         writer.write(resp.encode('utf-8'))
         await writer.drain()
         try: writer.close()
-        except: pass
+        except Exception: pass
         return
 
     resp_key = make_ws_response_key(sec_key)
@@ -368,20 +383,19 @@ async def handle_client(reader, writer):
         while True:
             msg = await ws.recv()
             if msg is None: break
-            
+
             try: data = json.loads(msg)
             except Exception: continue
 
             msg_type = data.get("type")
-            print(f"[Daemon] MSG: {msg_type} from ws={id(ws)} clients={len(CONNECTED_CLIENTS)}", flush=True)
             req_id = data.get("requestId")
+            print(f"[Daemon] MSG: {msg_type} from ws={id(ws)} clients={len(CONNECTED_CLIENTS)}", flush=True)
 
             if msg_type in ("PING", "HEARTBEAT"):
                 await ws.send(json.dumps({"type": "PONG"}))
                 continue
 
             if msg_type == "DIAGNOSE_TABS":
-                # Forward to background.js and relay response
                 dead = set()
                 for c in CONNECTED_CLIENTS:
                     if c != ws:
@@ -393,25 +407,33 @@ async def handle_client(reader, writer):
             if msg_type == "TAB_INFO":
                 info_req = data.get("requestId")
                 target_url = data.get("url", "")
-                prev_info = PENDING_QUERY_TARGETS.pop(info_req, (None, None, None))
-                print(f"[Daemon] AI target confirmed ({target_url or 'active tab'}) for {info_req} — scheduling _do_os_return in 1.5s", flush=True)
-                _schedule_os_return(prev_info[0], prev_info[1], prev_info[2])
+                print(f"[Daemon] Target tab confirmed ({target_url}) for {info_req} — waiting for JS submission or NEED_OS_RETURN", flush=True)
                 continue
 
-            # Capture caller's active window/workspace IMMEDIATELY at T=0.0s and ensure Firefox has Wayland focus for typing
-            prev_addr = None
-            prev_ws_id = None
-            prev_special = None
+            if msg_type == "NEED_OS_RETURN":
+                prev_info = PENDING_QUERY_TARGETS.pop(req_id, (None, None, None))
+                print(f"[Daemon] NEED_OS_RETURN requested by tab for {req_id} — executing _do_os_return_async now", flush=True)
+                asyncio.create_task(_do_os_return_async(req_id, prev_info[0], prev_info[1], prev_info[2]))
+                continue
+
+            if msg_type in ("SUBMISSION_CONFIRMED", "THINKING", "STREAM_CHUNK", "FINAL", "STOP_QUERY"):
+                if req_id:
+                    PENDING_QUERY_TARGETS.pop(req_id, None)
+                    ev = SUBMISSION_EVENTS.get(req_id)
+                    if ev is not None:
+                        ev.set()
+                if msg_type == "SUBMISSION_CONFIRMED":
+                    continue
+
+            # Record caller's active window/workspace at T=0.0s asynchronously off the event loop
+            prev_addr, prev_ws_id, prev_special = None, None, None
             if msg_type == "RUN_QUERY":
-                prev_addr, prev_ws_id, prev_special = get_active_window()
-                ff_target = _get_firefox_target()
-                if ff_target:
-                    _focus_window(ff_target)
-                    await asyncio.sleep(0.3)
+                prev_addr, prev_ws_id, prev_special = await asyncio.to_thread(get_active_window)
                 if req_id:
                     PENDING_QUERY_TARGETS[req_id] = (prev_addr, prev_ws_id, prev_special)
+                    SUBMISSION_EVENTS[req_id] = asyncio.Event()
 
-            # Broadcast all messages to all other connected clients
+            # Broadcast message to all other connected clients
             dead = set()
             broadcast_count = 0
             for c in CONNECTED_CLIENTS:
@@ -419,18 +441,17 @@ async def handle_client(reader, writer):
                     try:
                         await c.send(msg)
                         broadcast_count += 1
-                    except Exception: dead.add(c)
+                    except Exception:
+                        dead.add(c)
             CONNECTED_CLIENTS.difference_update(dead)
 
             if msg_type == "RUN_QUERY":
                 query_preview = data.get("query", "")[:60]
                 print(f"[Daemon] RUN_QUERY broadcast to {broadcast_count} client(s): '{query_preview}...'", flush=True)
 
-                # If no extension clients received the query, wait for one to connect
-                # (handles race after daemon restart — extension reconnects in ~2.5s)
                 if broadcast_count == 0:
                     print("[Daemon] No extension clients — waiting up to 8s for reconnect...", flush=True)
-                    for _retry in range(16):  # 16 x 0.5s = 8s max
+                    for _retry in range(16):
                         await asyncio.sleep(0.5)
                         others = [c for c in CONNECTED_CLIENTS if c != ws]
                         if others:
@@ -448,26 +469,16 @@ async def handle_client(reader, writer):
                                 break
                     if broadcast_count == 0:
                         print("[Daemon] WARNING: No extension clients after 8s — query lost!", flush=True)
-                        # Notify the CLI client that the query couldn't be delivered
                         try:
                             await ws.send(json.dumps({
                                 "type": "ERROR",
                                 "error": "No browser extension connected — is Firefox running with the extension loaded?",
-                                "requestId": data.get("requestId"),
+                                "requestId": req_id,
                             }))
                         except Exception:
                             pass
 
-                # Fallback check in case TAB_INFO is delayed or not received
-                async def _ai_fallback_check(r_id, p_addr, p_ws, p_sp):
-                    await asyncio.sleep(1.6)
-                    if r_id in PENDING_QUERY_TARGETS:
-                        PENDING_QUERY_TARGETS.pop(r_id, None)
-                        print(f"[Daemon] Fallback: scheduling _do_os_return for {r_id}", flush=True)
-                        _schedule_os_return(p_addr, p_ws, p_sp)
-
-                if broadcast_count > 0 and req_id:
-                    asyncio.create_task(_ai_fallback_check(req_id, prev_addr, prev_ws_id, prev_special))
+                # Note: Hardware Return is now driven deterministically by NEED_OS_RETURN from content_main.js
 
     except Exception as e:
         print(f"[Daemon] client handler error: {e!r}", flush=True)
@@ -479,23 +490,18 @@ async def handle_client(reader, writer):
 SERVICE_NAME = "localai_bridge.service"
 
 async def start_daemon():
-    # Stop any stale daemon holding the port — systemd-aware
     try:
         test_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         test_sock.settimeout(0.5)
         test_sock.connect((HOST, PORT))
         test_sock.close()
-        # Port is occupied — figure out who owns it and stop them properly
         print(f"[Daemon] Port {PORT} in use — stopping stale daemon...", flush=True)
 
-        # Check if the systemd user service is running
         svc_check = subprocess.run(
             ["systemctl", "--user", "is-active", SERVICE_NAME],
             capture_output=True, text=True, timeout=3,
         )
         if svc_check.stdout.strip() == "active":
-            # Systemd owns it — must use systemctl to stop (Restart=always
-            # would just respawn a PID-killed process)
             print(f"[Daemon] Stopping {SERVICE_NAME} via systemctl", flush=True)
             subprocess.run(
                 ["systemctl", "--user", "stop", SERVICE_NAME],
@@ -503,7 +509,6 @@ async def start_daemon():
             )
             _time.sleep(0.3)
         else:
-            # Not systemd-managed — kill the PID directly
             import re as _re
             res = subprocess.run(
                 ["ss", "-tlnp", f"sport = :{PORT}"],
@@ -516,10 +521,10 @@ async def start_daemon():
                         old_pid = int(m.group(1))
                         if old_pid != os.getpid():
                             print(f"[Daemon] Killing stale PID {old_pid}", flush=True)
-                            os.kill(old_pid, 15)  # SIGTERM
+                            os.kill(old_pid, 15)
                             _time.sleep(0.5)
     except (ConnectionRefusedError, OSError):
-        pass  # Port is free
+        pass
 
     print(f"[Daemon] Starting Local AI WebSocket Daemon on {HOST}:{PORT} (Standard Library)")
     server = await asyncio.start_server(
@@ -552,73 +557,91 @@ def is_port_open(host=HOST, port=PORT, timeout=0.3):
         return False
 
 def ensure_daemon():
-    """Ensure the bridge daemon is running, auto-starting via systemctl or background process."""
-    if is_port_open(HOST, PORT):
+    if is_port_open():
         return True
 
-    # 1. Try systemd user service first
     try:
-        r = subprocess.run(
-            ["systemctl", "--user", "is-active", SERVICE_NAME],
-            capture_output=True, text=True, timeout=2,
+        subprocess.run(
+            ["systemctl", "--user", "restart", SERVICE_NAME],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3,
         )
-        if r.stdout.strip() != "active":
-            print(f"[bridge] Starting {SERVICE_NAME}...", file=sys.stderr)
-            subprocess.run(
-                ["systemctl", "--user", "start", SERVICE_NAME],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5,
-            )
+        for _ in range(15):
+            _time.sleep(0.2)
+            if is_port_open():
+                return True
     except Exception:
         pass
 
-    # Wait up to 3s for systemd to bring it up
-    t_end = _time.time() + 3.0
-    while _time.time() < t_end:
-        if is_port_open(HOST, PORT):
-            return True
+    import subprocess as _sp
+    cmd = [sys.executable, os.path.abspath(__file__), "--daemon"]
+    _sp.Popen(cmd, stdout=_sp.DEVNULL, stderr=_sp.DEVNULL, start_new_session=True)
+    for _ in range(20):
         _time.sleep(0.1)
-
-    # 2. Fallback: launch daemon directly in background
-    print("[bridge] Spawning daemon process in background...", file=sys.stderr)
-    try:
-        subprocess.Popen(
-            [sys.executable, os.path.abspath(__file__), "--daemon"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-    except Exception as e:
-        print(f"[bridge] Failed to spawn daemon: {e}", file=sys.stderr)
-        return False
-
-    t_end = _time.time() + 3.5
-    while _time.time() < t_end:
-        if is_port_open(HOST, PORT):
+        if is_port_open():
             return True
-        _time.sleep(0.1)
-
     return False
 
-def send_query_cli(query_text, stream=True, idle_timeout=10.0, hard_timeout=1800.0):
-    """Send one prompt and wait for FINAL (or idle/hard timeout fallback).
+def _ws_send_masked_json(sock, obj):
+    payload = json.dumps(obj).encode("utf-8")
+    mask = os.urandom(4)
+    masked = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+    header = bytearray([0x81])
+    n = len(payload)
+    if n <= 125:
+        header.append(0x80 | n)
+    elif n <= 65535:
+        header.append(0x80 | 126)
+        header.extend(struct.pack("!H", n))
+    else:
+        header.append(0x80 | 127)
+        header.extend(struct.pack("!Q", n))
+    sock.sendall(header + mask + masked)
 
-    idle_timeout: seconds without STREAM_CHUNK after first token before treating
-                  the last full text as complete (guards against missing FINAL).
-    hard_timeout: absolute max wait from query send.
-    """
+def prepare_file_attachments(file_paths):
+    attachments = []
+    for raw_path in file_paths or []:
+        p = Path(raw_path).expanduser().resolve()
+        if not p.is_file():
+            print(f"[Error] Attachment file not found: {raw_path}", file=sys.stderr)
+            sys.exit(1)
+        mime, _ = mimetypes.guess_type(str(p))
+        if not mime:
+            if p.suffix.lower() in (".py", ".rs", ".c", ".cpp", ".h", ".js", ".ts", ".tsx", ".jsx", ".sh", ".md", ".json", ".toml", ".yaml", ".yml", ".ini", ".conf", ".lua"):
+                mime = "text/plain"
+            else:
+                mime = "application/octet-stream"
+        data_b64 = base64.b64encode(p.read_bytes()).decode("ascii")
+        attachments.append({
+            "name": p.name,
+            "mime": mime,
+            "data": data_b64,
+        })
+    return attachments
+
+def send_query_cli(
+    query_text,
+    files=None,
+    stream=True,
+    idle_timeout=10.0,
+    hard_timeout=1800.0,
+    trip_enabled=True,
+    trip_threshold=5,
+    trip_leading=False,
+    model=None,
+):
     if not is_port_open(HOST, PORT):
         if not ensure_daemon():
             print(f"[Error] Local AI Bridge daemon on {HOST}:{PORT} could not be started.", file=sys.stderr)
-            print("Run 'python3 bridge.py --daemon' or 'systemctl --user start localai_bridge.service'.", file=sys.stderr)
             sys.exit(1)
 
     s = socket.socket()
-    s.settimeout(1.0)  # allow periodic idle checks
+    s.settimeout(1.0)
     try:
         s.connect((HOST, PORT))
     except (ConnectionRefusedError, OSError) as e:
         print(f"[Error] Failed to connect to Local AI Bridge on {HOST}:{PORT}: {e}", file=sys.stderr)
         sys.exit(1)
+
     sec_key = base64.b64encode(os.urandom(16)).decode("utf-8")
     handshake = (
         f"GET / HTTP/1.1\r\n"
@@ -630,7 +653,6 @@ def send_query_cli(query_text, stream=True, idle_timeout=10.0, hard_timeout=1800
     )
     s.sendall(handshake.encode("utf-8"))
 
-    # Read full HTTP response headers (do not assume one recv is enough).
     resp = b""
     while b"\r\n\r\n" not in resp:
         try:
@@ -645,32 +667,28 @@ def send_query_cli(query_text, stream=True, idle_timeout=10.0, hard_timeout=1800
 
     if b"101" not in resp.split(b"\r\n", 1)[0]:
         print("[Error] WebSocket handshake failed:", resp[:200], file=sys.stderr)
-        try:
-            s.close()
-        except Exception:
-            pass
+        try: s.close()
+        except Exception: pass
         sys.exit(1)
 
+    header_end = resp.find(b"\r\n\r\n") + 4
+    rx_buf = bytearray(resp[header_end:])
+
     req_id = str(uuid.uuid4())
-    payload = json.dumps(
-        {"type": "RUN_QUERY", "query": query_text, "requestId": req_id}
-    ).encode("utf-8")
-
-    mask = os.urandom(4)
-    masked = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
-    header = bytearray([0x81])
-    n = len(payload)
-    if n <= 125:
-        header.append(0x80 | n)
-    elif n <= 65535:
-        header.append(0x80 | 126)
-        header.extend(struct.pack("!H", n))
-    else:
-        header.append(0x80 | 127)
-        header.extend(struct.pack("!Q", n))
-    s.sendall(header + mask + masked)
-
-    # Hardware Return is scheduled by the daemon for ALL RUN_QUERY messages.
+    _ws_send_masked_json(
+        s,
+        {
+            "type": "RUN_QUERY",
+            "query": query_text,
+            "files": files or [],
+            "model": model,
+            "requestId": req_id,
+            "tripEnabled": trip_enabled,
+            "tripThreshold": trip_threshold,
+            "tripLeading": trip_leading,
+            "tripTrailing": trip_enabled,
+        },
+    )
 
     full_text = ""
     emitted = ""
@@ -679,12 +697,9 @@ def send_query_cli(query_text, stream=True, idle_timeout=10.0, hard_timeout=1800
     thinking_shown = False
 
     def emit_remainder(text):
-        """Print only the unseen suffix; handle non-prefix rewrites without tautologies."""
         nonlocal emitted
         if not stream or not text:
             return
-
-        # 1. Exact string prefix check (fast path)
         if text.startswith(emitted):
             delta = text[len(emitted):]
             if delta:
@@ -692,11 +707,9 @@ def send_query_cli(query_text, stream=True, idle_timeout=10.0, hard_timeout=1800
             emitted = text
             return
 
-        # 2. Whitespace-insensitive prefix check (handles DOM re-renders where newlines/spaces change)
         norm_emitted = "".join(emitted.split())
         norm_text = "".join(text.split())
         if norm_text.startswith(norm_emitted):
-            # Same content, DOM just adjusted spacing — find where actual new content begins
             e_idx = 0
             t_idx = 0
             while e_idx < len(emitted) and t_idx < len(text):
@@ -710,12 +723,10 @@ def send_query_cli(query_text, stream=True, idle_timeout=10.0, hard_timeout=1800
                 else:
                     break
             if t_idx < len(text):
-                delta = text[t_idx:]
-                safe_write(delta)
+                safe_write(text[t_idx:])
             emitted = text
             return
 
-        # 3. True full rewrite mid-stream: mark a break then print.
         safe_write(("\n" if emitted else "") + text)
         emitted = text
 
@@ -734,132 +745,163 @@ def send_query_cli(query_text, stream=True, idle_timeout=10.0, hard_timeout=1800
             pass
         return text or ""
 
-    def recv_exact(count):
-        buf = bytearray()
-        while len(buf) < count:
+    def fill_rx_buf(min_bytes):
+        while len(rx_buf) < min_bytes:
             try:
-                part = s.recv(count - len(buf))
+                part = s.recv(max(4096, min_bytes - len(rx_buf)))
             except socket.timeout:
-                return None  # signal caller to run idle/hard timeout checks
+                return False
             if not part:
-                return b""
-            buf.extend(part)
-        return buf.take_bytes() if hasattr(buf, "take_bytes") else bytes(buf)
+                return None
+            rx_buf.extend(part)
+        return True
 
-    while True:
-        now = _time.time()
-        if now - started > hard_timeout:
-            if full_text:
-                return finish(full_text, f"hard timeout after {hard_timeout:.0f}s — returning partial")
-            print(f"\n[Error] Timed out after {hard_timeout:.0f}s with no response", file=sys.stderr)
-            try:
-                s.close()
-            except Exception:
-                pass
-            sys.exit(1)
+    def try_read_ws_frame():
+        status = fill_rx_buf(2)
+        if not status:
+            return status
 
-        if last_chunk_at is not None and full_text and (now - last_chunk_at) >= idle_timeout:
-            return finish(full_text, f"idle timeout ({idle_timeout:.0f}s) — treating as FINAL")
-
-        head = recv_exact(2)
-        if head is None:
-            continue
-        if head == b"" or len(head) < 2:
-            break
-
-        opcode = head[0] & 0x0F
-        masked = bool(head[1] & 0x80)
-        l = head[1] & 0x7F
+        b1, b2 = rx_buf[0], rx_buf[1]
+        opcode = b1 & 0x0F
+        masked = bool(b2 & 0x80)
+        l = b2 & 0x7F
+        offset = 2
 
         if l == 126:
-            raw = recv_exact(2)
-            if raw is None:
-                continue
-            if len(raw) < 2:
-                break
-            l = struct.unpack("!H", raw)[0]
+            status = fill_rx_buf(offset + 2)
+            if not status:
+                return status
+            l = struct.unpack("!H", rx_buf[offset : offset + 2])[0]
+            offset += 2
         elif l == 127:
-            raw = recv_exact(8)
-            if raw is None:
-                continue
-            if len(raw) < 8:
-                break
-            l = struct.unpack("!Q", raw)[0]
+            status = fill_rx_buf(offset + 8)
+            if not status:
+                return status
+            l = struct.unpack("!Q", rx_buf[offset : offset + 8])[0]
+            offset += 8
 
+        mask_keys = None
         if masked:
-            mask_keys = recv_exact(4)
-            if mask_keys is None:
-                continue
-            if len(mask_keys) < 4:
-                break
-        else:
-            mask_keys = None
+            status = fill_rx_buf(offset + 4)
+            if not status:
+                return status
+            mask_keys = bytes(rx_buf[offset : offset + 4])
+            offset += 4
 
-        p = recv_exact(l)
-        if p is None:
-            continue
-        if len(p) < l:
-            break
+        status = fill_rx_buf(offset + l)
+        if not status:
+            return status
+
+        payload = bytes(rx_buf[offset : offset + l])
+        del rx_buf[: offset + l]
 
         if mask_keys is not None:
-            p = bytes(b ^ mask_keys[i % 4] for i, b in enumerate(p))
+            payload = bytes(b ^ mask_keys[i % 4] for i, b in enumerate(payload))
 
-        # Close / ping / pong / non-text
-        if opcode == 0x8:
-            break
-        if opcode in (0x9, 0xA):
-            continue
-        if opcode != 0x1:
-            continue
+        fin = bool(b1 & 0x80)
+        return (fin, opcode, payload)
 
-        try:
-            data = json.loads(p.decode("utf-8"))
-        except Exception:
-            continue
-
-        if data.get("requestId") != req_id:
-            continue
-
-        mtype = data.get("type")
-        if mtype == "STREAM_CHUNK":
-            chunk = data.get("text", "")
-            new_full = data.get("full")
-            if new_full:
-                full_text = new_full
-            elif chunk:
-                full_text = full_text + chunk
-
-            if stream:
-                if new_full is not None:
-                    emit_remainder(full_text)
-                elif chunk:
-                    safe_write(chunk)
-                    emitted += chunk
-
-            last_chunk_at = _time.time()
-        elif mtype == "THINKING":
-            # AI is thinking (reasoning model) — reset idle timer, keep waiting
-            last_chunk_at = _time.time()
-            if not thinking_shown:
-                print("[Thinking...]", file=sys.stderr, flush=True)
-                thinking_shown = True
-        elif mtype == "FINAL":
-            full = data.get("full", full_text) or full_text
-            reason = data.get("reason", "")
-            if reason == "interrupted":
-                finish(full, note=None)
-                print("[Interrupted by new query]", file=sys.stderr, flush=True)
+    frag_buf = bytearray()
+    try:
+        while True:
+            now = _time.time()
+            if now - started > hard_timeout:
+                if full_text:
+                    return finish(full_text, f"hard timeout after {hard_timeout:.0f}s — returning partial")
+                print(f"\n[Error] Timed out after {hard_timeout:.0f}s with no response", file=sys.stderr)
                 try: s.close()
                 except Exception: pass
-                sys.exit(2)
-            return finish(full)
-        elif mtype == "ERROR":
-            print(f"\n[Error] {data.get('error')}", file=sys.stderr)
+                sys.exit(1)
+
+            if last_chunk_at is not None and full_text and (now - last_chunk_at) >= idle_timeout:
+                return finish(full_text, f"idle timeout ({idle_timeout:.0f}s) — treating as FINAL")
+
+            frame_res = try_read_ws_frame()
+            if frame_res is False:
+                continue
+            if frame_res is None:
+                break
+
+            fin, opcode, p = frame_res
+            if opcode == 0x8:
+                break
+            if opcode == 0x9:
+                # Respond to Ping with masked Pong
+                mask = os.urandom(4)
+                masked_pong = bytes(b ^ mask[i % 4] for i, b in enumerate(p[:125]))
+                s.sendall(bytes([0x8A, 0x80 | len(masked_pong)]) + mask + masked_pong)
+                continue
+            if opcode == 0xA:
+                continue
+            if opcode in (0x1, 0x2, 0x0):
+                frag_buf.extend(p)
+                if not fin:
+                    continue
+                p = bytes(frag_buf)
+                frag_buf.clear()
+            else:
+                continue
+
             try:
-                s.close()
+                data = json.loads(p.decode("utf-8"))
             except Exception:
-                pass
-            sys.exit(1)
+                continue
+
+            if data.get("requestId") != req_id:
+                continue
+
+            mtype = data.get("type")
+            if mtype == "STREAM_CHUNK":
+                chunk = data.get("text", "")
+                new_full = data.get("full")
+                if new_full:
+                    full_text = new_full
+                elif chunk:
+                    full_text = full_text + chunk
+
+                if stream:
+                    if new_full is not None:
+                        emit_remainder(full_text)
+                    elif chunk:
+                        safe_write(chunk)
+                        emitted += chunk
+
+                last_chunk_at = _time.time()
+            elif mtype == "THINKING":
+                last_chunk_at = _time.time()
+                if not thinking_shown:
+                    print("[Thinking...]", file=sys.stderr, flush=True)
+                    thinking_shown = True
+            elif mtype == "FINAL":
+                full = data.get("full", full_text) or full_text
+                reason = data.get("reason", "")
+                if reason == "interrupted":
+                    finish(full, note=None)
+                    print("[Interrupted by new query]", file=sys.stderr, flush=True)
+                    sys.exit(2)
+                if reason == "token-saver-trip":
+                    return finish(full, note="Token-Saver tripped: halted server generation automatically")
+                if reason == "user-stopped":
+                    return finish(full, note="Generation stopped by user")
+                return finish(full)
+            elif mtype == "ERROR":
+                print(f"\n[Error] {data.get('error')}", file=sys.stderr)
+                try: s.close()
+                except Exception: pass
+                sys.exit(1)
+
+    except KeyboardInterrupt:
+        print("\n[bridge] Ctrl+C detected — sending STOP_QUERY to halt browser token generation...", file=sys.stderr, flush=True)
+        try:
+            _ws_send_masked_json(s, {"type": "STOP_QUERY", "requestId": req_id})
+            _time.sleep(0.25)
+        except Exception:
+            pass
+        try:
+            s.close()
+        except Exception:
+            pass
+        sys.exit(130)
 
     if full_text:
         return finish(full_text, "connection closed — returning partial")
@@ -867,13 +909,31 @@ def send_query_cli(query_text, stream=True, idle_timeout=10.0, hard_timeout=1800
     sys.exit(1)
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        if sys.argv[1] == "--daemon":
-            asyncio.run(start_daemon())
-        else:
-            query = " ".join(sys.argv[1:])
-            send_query_cli(query)
+    parser = argparse.ArgumentParser(description="Local AI Web Bridge Daemon & CLI")
+    parser.add_argument("--daemon", action="store_true", help="Run WebSocket bridge daemon")
+    parser.add_argument("-m", "--model", type=str, default=None, help="Target AI model tab (chatgpt, gemini, claude, meta)")
+    parser.add_argument("-f", "--file", action="append", default=[], help="Attach file(s) to the prompt")
+    parser.add_argument("-i", "--image", action="append", default=[], help="Attach image(s) to the prompt")
+    parser.add_argument("--no-trip", action="store_true", help="Disable Token-Saver automatic sequence trip")
+    parser.add_argument("--trip-leading", action="store_true", help="Trip and stop immediately on leading 1..500 countdowns")
+    parser.add_argument("--trip-threshold", type=int, default=5, help="Sequential integer count to trigger trip (default: 5)")
+    parser.add_argument("query", nargs="*", help="Prompt query string")
+    args = parser.parse_args()
+
+    if args.daemon:
+        asyncio.run(start_daemon())
     else:
-        print("Usage:")
-        print("  python3 bridge.py --daemon            # Run server daemon")
-        print("  python3 bridge.py \"<your prompt>\"    # Send prompt CLI query")
+        all_files = (args.file or []) + (args.image or [])
+        query_str = " ".join(args.query).strip()
+        if not query_str and not all_files:
+            parser.print_help()
+            sys.exit(1)
+        attachments = prepare_file_attachments(all_files)
+        send_query_cli(
+            query_str,
+            files=attachments,
+            trip_enabled=not args.no_trip,
+            trip_threshold=args.trip_threshold,
+            trip_leading=args.trip_leading,
+            model=args.model,
+        )
