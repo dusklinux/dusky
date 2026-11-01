@@ -16,6 +16,8 @@ use iced::{
 };
 use std::{
     fs::File,
+    io::{Read, Write},
+    os::unix::net::{UnixListener, UnixStream},
     path::PathBuf,
     sync::{
         Arc,
@@ -241,7 +243,8 @@ fn float_rules(picker: Option<&Monitor>) -> Result<()> {
 }
 static CANCEL: AtomicBool = AtomicBool::new(false);
 static SIGNAL_FD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
-extern "C" fn cancel_signal(_: i32) {
+
+pub fn trigger_cancel() {
     CANCEL.store(true, Ordering::Relaxed);
     let fd = SIGNAL_FD.load(Ordering::Relaxed);
     if fd >= 0 {
@@ -250,49 +253,93 @@ extern "C" fn cancel_signal(_: i32) {
         }
     }
 }
-fn instance(o: &Options) -> Result<Option<File>> {
+
+pub struct SocketGuard(PathBuf);
+impl Drop for SocketGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+pub struct InstanceGuard {
+    pub _lock: Option<File>,
+    pub _socket: Option<SocketGuard>,
+}
+
+fn instance(o: &Options) -> Result<Option<InstanceGuard>> {
     if o.preview.is_some() {
         return Ok(None);
     }
     let root = output::runtime()?;
+    let sock_path = root.join("overlay.sock");
+
+    // Zero-latency IPC toggle check via tmpfs Unix domain socket
+    if let Ok(mut stream) = UnixStream::connect(&sock_path) {
+        let _ = stream.set_write_timeout(Some(Duration::from_millis(50)));
+        let _ = stream.write_all(b"dismiss\n");
+        if o.file.is_none() && !o.clipboard {
+            return Err("Overlay dismissed".into());
+        }
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let mut buf = [0u8; 1];
+        let _ = stream.set_read_timeout(Some(Duration::from_millis(50)));
+        while Instant::now() < deadline {
+            match stream.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     let lock = std::fs::OpenOptions::new()
         .create(true)
         .truncate(false)
         .write(true)
         .open(root.join("overlay.lock"))?;
-    let contended = match lock.try_lock() {
-        Ok(()) => false,
-        Err(std::fs::TryLockError::WouldBlock) => true,
+    match lock.try_lock() {
+        Ok(()) => {}
+        Err(std::fs::TryLockError::WouldBlock) => {
+            if o.file.is_none() && !o.clipboard {
+                return Err("Overlay dismissed".into());
+            }
+            let deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                if lock.try_lock().is_ok() {
+                    break;
+                }
+                if Instant::now() > deadline {
+                    return Err("Previous editor is still closing".into());
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
         Err(e) => return Err(e.into()),
+    }
+
+    let _ = std::fs::remove_file(&sock_path);
+    let socket_guard = match UnixListener::bind(&sock_path) {
+        Ok(listener) => {
+            std::thread::spawn(move || {
+                if let Ok((_stream, _)) = listener.accept() {
+                    trigger_cancel();
+                    // Fallback: if the UI does not close within 300ms, exit cleanly
+                    std::thread::sleep(Duration::from_millis(300));
+                    std::process::exit(0);
+                }
+            });
+            Some(SocketGuard(sock_path))
+        }
+        Err(err) => {
+            eprintln!("Warning: could not bind dusky-snap toggle socket: {err}");
+            None
+        }
     };
-    if contended {
-        if let Ok(pid) = std::fs::read_to_string(root.join("overlay.pid"))
-            && let Ok(pid) = pid.trim().parse::<i32>()
-            && pid > 1
-        {
-            unsafe {
-                libc::kill(pid, libc::SIGUSR1);
-            }
-        }
-        if o.file.is_none() && !o.clipboard {
-            return Err("Overlay dismissed".into());
-        }
-        let deadline = Instant::now() + Duration::from_secs(2);
-        loop {
-            if lock.try_lock().is_ok() {
-                break;
-            }
-            if Instant::now() > deadline {
-                return Err("Previous editor is still closing".into());
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-    }
-    std::fs::write(root.join("overlay.pid"), std::process::id().to_string())?;
-    unsafe {
-        libc::signal(libc::SIGUSR1, cancel_signal as *const () as usize);
-    }
-    Ok(Some(lock))
+
+    Ok(Some(InstanceGuard {
+        _lock: Some(lock),
+        _socket: socket_guard,
+    }))
 }
 pub fn run(options: Options, start: Instant) -> Result<()> {
     let _lock = match instance(&options) {
