@@ -303,7 +303,7 @@ fn main() -> Result<(), iced_exwlshell::Error> {
     let settings = iced_exwlshell::Settings {
         default_font: iced_core::Font::with_name(fonts::DEFAULT_FAMILY),
         layer_settings: LayerShellSettings {
-            layer: Layer::Top,
+            layer: Layer::Overlay,
             keyboard_interactivity: KeyboardInteractivity::Exclusive,
             anchor: Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right,
             exclusive_zone: -1,

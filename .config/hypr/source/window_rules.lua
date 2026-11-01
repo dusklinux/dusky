@@ -1847,6 +1847,7 @@ hl.layer_rule({
     name = "dusky_overview_blur",
     match = { namespace = "dusky_overview" },
     blur = true,
+    xray = false,
     ignore_alpha = 0.0
 })
 

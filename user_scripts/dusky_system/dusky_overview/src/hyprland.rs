@@ -609,8 +609,10 @@ pub fn focus_window(
         ""
     };
 
+    // If another window on the target workspace is currently fullscreen, exit fullscreen first
+    // so the newly selected window on that workspace is not trapped behind it.
     let cmd = format!(
-        "eval {prep_stmts}local target_num = tonumber(\"{safe_addr}\") for _, w in ipairs(hl.get_windows()) do local wa = tostring(w.address) if string.lower(wa) == \"{safe_addr}\" or (target_num and tonumber(wa) == target_num) then hl.dispatch(hl.dsp.focus({{ window = w }})){top_stmt} break end end"
+        "eval {prep_stmts}local target_num = tonumber(\"{safe_addr}\") for _, w in ipairs(hl.get_windows()) do local wa = tostring(w.address) if string.lower(wa) == \"{safe_addr}\" or (target_num and tonumber(wa) == target_num) then if not w.fullscreen then for _, other in ipairs(hl.get_windows()) do if other ~= w and other.workspace == w.workspace and other.fullscreen then hl.dispatch(hl.dsp.focus({{ window = other }})) if hl.dsp.window and hl.dsp.window.fullscreen then hl.dispatch(hl.dsp.window.fullscreen()) end break end end end hl.dispatch(hl.dsp.focus({{ window = w }})){top_stmt} break end end"
     );
     let resp = send_socket_command(&cmd)?;
 
