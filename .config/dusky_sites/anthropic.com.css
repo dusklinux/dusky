@@ -3,4 +3,219 @@
     html > body { background-color: var(--surface) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fhtml%20%3E%20body%1Fbg | bg: surface */
     .serif { color: var(--on_surface) !important; } /* dusky key=sel%1F.serif%1Ftext | text: on_surface */
     /* <<< dusky:picks */
+
+    /* ---- Base ---- */
+    :root,
+    .theme-ivory,
+    .theme-slate,
+    .theme-slate-850,
+    .theme-black {
+        color-scheme: dark !important;
+
+        /* Invert the gray ramp: the low end is now the dark surface stack and
+           the high end is foreground text. */
+        --color-gray-000: var(--surface_container_highest, #34343a) !important;
+        --color-gray-050: var(--surface, #131318) !important;
+        --color-gray-100: var(--surface_container_low, #1b1b21) !important;
+        --color-gray-150: var(--surface_container_low, #1b1b21) !important;
+        --color-gray-200: var(--surface_container, #1f1f25) !important;
+        --color-gray-250: var(--surface_container, #1f1f25) !important;
+        --color-gray-300: var(--surface_container_high, #2a292f) !important;
+        --color-gray-350: var(--surface_container_high, #2a292f) !important;
+        --color-gray-400: var(--outline_variant, #46464f) !important;
+        --color-gray-450: var(--outline_variant, #46464f) !important;
+        --color-gray-500: var(--outline, #91909a) !important;
+        --color-gray-550: var(--on_surface_variant, #c7c5d0) !important;
+        --color-gray-600: var(--on_surface_variant, #c7c5d0) !important;
+        --color-gray-650: var(--on_surface, #e4e1e9) !important;
+        --color-gray-700: var(--on_surface, #e4e1e9) !important;
+        --color-gray-750: var(--on_surface, #e4e1e9) !important;
+        --color-gray-800: var(--on_surface, #e4e1e9) !important;
+        --color-gray-850: var(--on_surface, #e4e1e9) !important;
+        --color-gray-900: var(--on_background, #e4e1e9) !important;
+        --color-gray-950: var(--on_background, #e4e1e9) !important;
+        --color-gray-1000: var(--on_surface, #e4e1e9) !important;
+
+        /* Accent / brand colours remapped onto the Matugen roles */
+        --color-oat: var(--tertiary_container, #5e3c52) !important;
+        --color-olive: var(--secondary, #c5c4dd) !important;
+        --color-cactus: var(--secondary_container, #444559) !important;
+        --color-sky: var(--primary, #bec2ff) !important;
+        --color-sky-interactive: var(--primary, #bec2ff) !important;
+        --color-heather: var(--secondary_container, #444559) !important;
+        --color-fig: var(--tertiary, #e8b9d5) !important;
+        --color-coral: var(--error, #ffb4ab) !important;
+        --color-clay-primary: var(--primary, #bec2ff) !important;
+        --color-clay-interactive: var(--primary, #bec2ff) !important;
+        --color-iris: var(--primary_container, #3e4278) !important;
+        --color-iris-deep: var(--primary_fixed, #e0e0ff) !important;
+        --color-periwinkle: var(--primary_container, #3e4278) !important;
+        --color-periwinkle-deep: var(--primary_fixed, #e0e0ff) !important;
+        --color-periwinkle-interactive: var(--primary, #bec2ff) !important;
+
+        /* Slate / ivory / cloud aliases */
+        --color-slate-000: var(--surface, #131318) !important;
+        --color-slate-050: var(--surface_container_low, #1b1b21) !important;
+        --color-slate-250: var(--surface_container_high, #2a292f) !important;
+        --color-slate-350: var(--outline_variant, #46464f) !important;
+        --color-slate-500: var(--on_surface_variant, #c7c5d0) !important;
+        --color-slate-950: var(--on_surface, #e4e1e9) !important;
+        --color-slate-dark: var(--surface_container, #1f1f25) !important;
+        --color-slate-medium: var(--on_surface_variant, #c7c5d0) !important;
+        --color-ivory-dark: var(--surface_container_low, #1b1b21) !important;
+        --color-ivory-light: var(--on_surface, #e4e1e9) !important;
+        --color-ivory-medium: var(--surface_container_high, #2a292f) !important;
+        --color-cloud-medium: var(--surface_container, #1f1f25) !important;
+        --color-focus: var(--primary, #bec2ff) !important;
+
+        /* Semantic theme tokens */
+        --theme-background-primary: var(--surface, #131318) !important;
+        --theme-background-secondary: var(--surface_container_low, #1b1b21) !important;
+        --theme-background-tertiary: var(--surface_container, #1f1f25) !important;
+        --theme-background-quaternary: var(--surface_container_high, #2a292f) !important;
+        --theme-foreground-primary: var(--on_surface, #e4e1e9) !important;
+        --theme-foreground-body: var(--on_surface, #e4e1e9) !important;
+        --theme-foreground-secondary: var(--on_surface_variant, #c7c5d0) !important;
+        --theme-foreground-tertiary: var(--on_surface_variant, #c7c5d0) !important;
+        --theme-foreground-quaternary: var(--outline, #91909a) !important;
+        --theme-border-primary: var(--outline_variant, #46464f) !important;
+        --theme-border-secondary: var(--outline_variant, #46464f) !important;
+        --theme-border-tertiary: var(--outline_variant, #46464f) !important;
+        --theme-button-primary-background: var(--primary, #bec2ff) !important;
+        --theme-button-primary-foreground: var(--on_primary, #272b60) !important;
+        --theme-button-primary-border: var(--primary, #bec2ff) !important;
+        --theme-button-secondary-background: var(--surface_container_high, #2a292f) !important;
+        --theme-button-secondary-foreground: var(--on_surface, #e4e1e9) !important;
+        --theme-button-secondary-border: var(--outline_variant, #46464f) !important;
+        --theme-button-tertiary-background: var(--surface_container, #1f1f25) !important;
+        --theme-button-tertiary-foreground: var(--on_surface, #e4e1e9) !important;
+        --theme-button-tertiary-border: var(--outline_variant, #46464f) !important;
+        --theme-focus-ring: var(--primary, #bec2ff) !important;
+        --hero-bg: var(--surface, #131318) !important;
+        --hero-ink: var(--on_surface, #e4e1e9) !important;
+        --button-background: var(--primary, #bec2ff) !important;
+        --button-border: var(--primary, #bec2ff) !important;
+    }
+
+    html,
+    body {
+        background-color: var(--surface, #131318) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    body [data-site-header-theme] {
+        --theme-background-primary: var(--surface, #131318) !important;
+        --theme-foreground-primary: var(--on_surface, #e4e1e9) !important;
+        --theme-border-primary: var(--outline_variant, #46464f) !important;
+    }
+
+    /* Headers, nav, footers and full-bleed bands */
+    header,
+    nav,
+    footer,
+    [data-site-nav],
+    [data-site-header],
+    [data-global-nav],
+    [class*="site-header"],
+    [class*="site-footer"],
+    [class*="navigation"] {
+        background-color: var(--surface, #131318) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    /* Cards, panels, popovers and dropdowns */
+    [class*="card"],
+    [class*="Card"],
+    [class*="panel"],
+    [class*="popover"],
+    [class*="dropdown"],
+    [class*="menu"],
+    [role="dialog"],
+    [role="menu"],
+    [role="listbox"] {
+        background-color: var(--surface_container_low, #1b1b21) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    /* Text elements that rely on default black */
+    p, li, span, h1, h2, h3, h4, h5, h6, strong, em, blockquote, figcaption,
+    dt, dd, label, summary, th, td {
+        color: inherit;
+    }
+
+    h1, h2, h3, h4, h5, h6 {
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    a {
+        color: var(--primary, #bec2ff);
+    }
+
+    /* Form controls */
+    input, textarea, select {
+        background-color: var(--surface_container_low, #1b1b21) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    input::placeholder,
+    textarea::placeholder {
+        color: var(--on_surface_variant, #c7c5d0) !important;
+        opacity: 1 !important;
+    }
+
+    button {
+        color: inherit;
+    }
+
+    hr {
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    /* Code blocks */
+    pre, code, kbd, samp {
+        background-color: var(--surface_container, #1f1f25);
+        color: var(--on_surface, #e4e1e9);
+        border-color: var(--outline_variant, #46464f);
+    }
+
+    /* Cookie / consent banners */
+    [class*="cookie"],
+    [class*="consent"],
+    [class*="Consent"],
+    [id*="cookie"],
+    [id*="consent"] {
+        background-color: var(--surface_container_high, #2a292f) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    [class*="cookie"] p,
+    [class*="consent"] p,
+    [class*="Consent"] p {
+        color: var(--on_surface_variant, #c7c5d0) !important;
+    }
+
+    [class*="cookie"] a,
+    [class*="consent"] a,
+    [class*="Consent"] a {
+        color: var(--primary, #bec2ff) !important;
+    }
+
+    /* Images / logos that assume a light backdrop */
+    img[src*="logo"],
+    svg[class*="logo"] {
+        color: var(--on_surface, #e4e1e9);
+    }
+
+    ::selection {
+        background-color: var(--primary, #bec2ff);
+        color: var(--on_primary, #272b60);
+    }
+
+    * {
+        scrollbar-color: var(--outline_variant, #46464f) var(--surface, #131318);
+    }
 }

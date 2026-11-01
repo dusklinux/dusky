@@ -1,14 +1,227 @@
 @-moz-document domain("archlinux.org") {
-    :not(#archnavbar *):not(a):not(code):not(input):not(#id_maintainer):not(#id_flagged):not(#qjump *):not(#id_repo *):not(#id_arch *):not(#id_setlang):not(#pkglist-search > form:nth-child(2) > fieldset:nth-child(2) > div:nth-child(2) > select:nth-child(2)):not(button):not(#pkglist-search > form:nth-child(2) > fieldset:nth-child(2) > div:nth-child(4) > select:nth-child(2)):not(#pkglist-search > form:nth-child(2) > fieldset:nth-child(2) > div:nth-child(5) > select:nth-child(2)):not(#pkglist-search > form:nth-child(2) > fieldset:nth-child(2) > div:nth-child(6) > select:nth-child(2)):not(#pkglist-search > form:nth-child(2) > fieldset:nth-child(2) > div:nth-child(7) > select:nth-child(2)):not(svg):not(svg *):not(img):not(i):not(.icon):not([class*="icon"]):not(.comments-header h3 span.text) {
-        background: var(--surface) !important;
-        color: var(--on_surface) !important;
+    /* >>> dusky:picks - managed by the Visual Picker, one rule per line */
+    /* <<< dusky:picks */
+
+    :root {
+        color-scheme: dark !important;
+        --arch-bg: var(--surface, #131318);
+        --arch-panel: var(--surface_container_low, #1b1b21);
+        --arch-panel-high: var(--surface_container, #1f1f25);
+        --arch-ink: var(--on_surface, #e4e1e9);
+        --arch-ink-dim: var(--on_surface_variant, #c7c5d0);
+        --arch-line: var(--outline_variant, #46464f);
+        --arch-accent: var(--primary, #bec2ff);
+        --arch-accent-ink: var(--on_primary, #272b60);
     }
 
-    code {
-        background: var(--surface_container_high) !important;
+    html,
+    body {
+        background-color: var(--surface, #131318) !important;
+        color: var(--on_surface, #e4e1e9) !important;
     }
 
-    #brdmenu a {
-        background: var(--surface) !important;
+    /* ---- Top navbar ---- */
+    #archnavbar,
+    #archnavbar.anb-home,
+    #archnavbar.anb-packages,
+    #archnavbar.anb-forums,
+    #archnavbar.anb-wiki,
+    #archnavbar.anb-bugs,
+    #archnavbar.anb-security,
+    #archnavbar.anb-aur,
+    #archnavbar.anb-download {
+        background: var(--surface_container_low, #1b1b21) !important;
+        border-bottom: 3px solid var(--primary, #bec2ff) !important;
+    }
+
+    #archnavbar a,
+    #archnavbar li a {
+        color: var(--on_surface_variant, #c7c5d0) !important;
+    }
+
+    #archnavbar a:hover,
+    #archnavbar a:focus,
+    #archnavbar li.active a {
+        color: var(--primary, #bec2ff) !important;
+    }
+
+    #archlogo,
+    #archlogo img {
+        filter: none;
+    }
+
+    /* ---- Content boxes ---- */
+    .box {
+        background-color: var(--surface_container_low, #1b1b21) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border: 1px solid var(--outline_variant, #46464f) !important;
+    }
+
+    .box h2,
+    .box h3,
+    .box h4 {
+        background-color: var(--surface_container, #1f1f25) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-bottom: 1px solid var(--outline_variant, #46464f) !important;
+    }
+
+    .box h2 a,
+    .box h3 a {
+        color: var(--primary, #bec2ff) !important;
+    }
+
+    /* News tab heading (originally a blue gradient chip) */
+    #news .box h2,
+    #news h2 {
+        background-color: var(--primary_container, #3e4278) !important;
+        background-image: none !important;
+        color: var(--on_primary_container, #e0e0ff) !important;
+        border-bottom: 1px solid var(--outline_variant, #46464f) !important;
+    }
+
+    #news .box h2 a,
+    #news h2 a {
+        color: var(--on_primary_container, #e0e0ff) !important;
+    }
+
+    /* Sidebar search widget keeps a stronger accent surface */
+    .widget {
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    #pkgsearch {
+        background-color: var(--primary_container, #3e4278) !important;
+        color: var(--on_primary_container, #e0e0ff) !important;
+        border: 1px solid var(--outline_variant, #46464f) !important;
+    }
+
+    #pkgsearch h3,
+    #pkgsearch label,
+    #pkgsearch p {
+        color: var(--on_primary_container, #e0e0ff) !important;
+    }
+
+    /* ---- Typography / links ---- */
+    h1, h2, h3, h4, h5, h6 {
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    a {
+        color: var(--primary, #bec2ff) !important;
+    }
+
+    a:hover,
+    a:focus {
+        color: var(--tertiary, #e8b9d5) !important;
+    }
+
+    /* ---- Code ---- */
+    code,
+    pre,
+    kbd,
+    samp,
+    tt {
+        background-color: var(--surface_container_high, #2a292f) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    pre code {
+        background-color: transparent !important;
+    }
+
+    /* ---- Tables / package lists ---- */
+    table {
+        background-color: transparent !important;
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    th {
+        background-color: var(--surface_container_high, #2a292f) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    td {
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    tr:nth-child(even) td {
+        background-color: var(--surface_container_low, #1b1b21) !important;
+    }
+
+    /* ---- Forms ---- */
+    input,
+    textarea,
+    select,
+    button {
+        background-color: var(--surface_container, #1f1f25) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border: 1px solid var(--outline_variant, #46464f) !important;
+    }
+
+    input::placeholder,
+    textarea::placeholder {
+        color: var(--on_surface_variant, #c7c5d0) !important;
+        opacity: 1 !important;
+    }
+
+    input[type="submit"],
+    input[type="button"],
+    button,
+    .button {
+        background-color: var(--primary, #bec2ff) !important;
+        color: var(--on_primary, #272b60) !important;
+        border-color: var(--primary, #bec2ff) !important;
+    }
+
+    input[type="submit"]:hover,
+    input[type="button"]:hover,
+    button:hover {
+        background-color: var(--primary_fixed_dim, #bec2ff) !important;
+    }
+
+    fieldset,
+    legend {
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    /* ---- Footer ---- */
+    #footer {
+        background-color: var(--surface_container_low, #1b1b21) !important;
+        color: var(--on_surface_variant, #c7c5d0) !important;
+        border-top: 1px solid var(--outline_variant, #46464f) !important;
+    }
+
+    #footer a,
+    #footer p a {
+        color: var(--primary, #bec2ff) !important;
+    }
+
+    /* ---- Misc chrome ---- */
+    hr {
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    .news h4 a,
+    #news h4 a {
+        color: var(--primary, #bec2ff) !important;
+    }
+
+    .news .date,
+    .news time {
+        color: var(--on_surface_variant, #c7c5d0) !important;
+    }
+
+    ::selection {
+        background-color: var(--primary, #bec2ff);
+        color: var(--on_primary, #272b60);
+    }
+
+    * {
+        scrollbar-color: var(--outline_variant, #46464f) var(--surface, #131318);
     }
 }

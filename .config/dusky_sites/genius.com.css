@@ -1,10 +1,163 @@
 @-moz-document domain("genius.com") {
     /* >>> dusky:picks - managed by the Visual Picker, one rule per line */
-    body { background-color: var(--surface) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fbody%1Fbg | bg: surface */
-    div { background-color: var(--surface) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fdiv%1Fbg | bg: surface */
-    #sticky-nav { background-color: var(--surface) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1F%23sticky-nav%1Fbg | bg: surface */
-    form.StickyNavSearch-desktop__Form-sc-212872c2-0.gDkJXT.ng-pristine { background-color: var(--surface_container_highest) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fform.StickyNavSearch-desktop__Form-sc-212872c2-0.gDkJXT.ng-pristine%1Fbg | bg: surface_container_highest */
-    input.StickyNavSearch-desktop__Input-sc-212872c2-2.dDDWOS { background-color: var(--surface_variant) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Finput.StickyNavSearch-desktop__Input-sc-212872c2-2.dDDWOS%1Fbg | bg: surface_variant */
-    a { background-color: var(--surface) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fa%1Fbg | bg: surface */
     /* <<< dusky:picks */
+
+    :root {
+        color-scheme: dark !important;
+    }
+
+    html,
+    body,
+    #application,
+    #application > div {
+        background-color: var(--surface, #131318) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    /* ---- Header / sticky nav / search ---- */
+    [class*="PageHeader"],
+    [class*="StickyNav"],
+    [class*="Header-desktop"],
+    [class*="Header-mobile"],
+    [class*="SearchBar"],
+    [class*="SearchInput"],
+    [class*="NavBar"],
+    [class*="Nav-desktop"] {
+        background-color: var(--surface_container_low, #1b1b21) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    [class*="Header"] a,
+    [class*="StickyNav"] a,
+    [class*="Nav"] a {
+        color: var(--on_surface_variant, #c7c5d0) !important;
+    }
+
+    [class*="Header"] a:hover,
+    [class*="StickyNav"] a:hover,
+    [class*="Nav"] a:hover {
+        color: var(--primary, #bec2ff) !important;
+    }
+
+    input,
+    textarea,
+    select,
+    [class*="SearchInput"],
+    [class*="Search__Input"] {
+        background-color: var(--surface_container, #1f1f25) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    input::placeholder,
+    textarea::placeholder {
+        color: var(--on_surface_variant, #c7c5d0) !important;
+        opacity: 1 !important;
+    }
+
+    /* ---- Cards, charts, editorial placements, sidebars ---- */
+    [class*="ChartSong"],
+    [class*="Chart-desktop"],
+    [class*="Chart-mobile"],
+    [class*="EditorialPlacement__Container"],
+    [class*="Latest-desktop__Placement"],
+    [class*="SquareSelect"],
+    [class*="Sidebar"],
+    [class*="SongHeader"],
+    [class*="SongDescription"],
+    [class*="Referent"],
+    [class*="AlbumHeader"],
+    [class*="ArtistHeader"],
+    [class*="ProfileHeader"] {
+        background-color: var(--surface_container_low, #1b1b21) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    [class*="PageGrid"] {
+        background-color: transparent !important;
+    }
+
+    /* ---- Lyrics / song body ---- */
+    [class*="Lyrics__Container"],
+    [class*="Lyrics__Root"],
+    [class*="SongBody"],
+    [class*="RichText"],
+    [class*="Referent"] {
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    [class*="Lyrics__Container"] a,
+    [class*="RichText"] a {
+        color: var(--primary, #bec2ff) !important;
+        background-color: transparent !important;
+    }
+
+    [class*="Lyrics__Container"] a:hover,
+    [class*="RichText"] a:hover {
+        background-color: var(--primary_container, #3e4278) !important;
+        color: var(--on_primary_container, #e0e0ff) !important;
+    }
+
+    /* ---- Global type ---- */
+    h1, h2, h3, h4, h5, h6 {
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    p, li, span, div, td, th, label, blockquote, figcaption {
+        border-color: var(--outline_variant, #46464f);
+    }
+
+    a {
+        color: var(--primary, #bec2ff) !important;
+    }
+
+    a:hover {
+        color: var(--tertiary, #e8b9d5) !important;
+    }
+
+    /* ---- Buttons / selects ---- */
+    button {
+        background-color: var(--surface_container_high, #2a292f) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    button:hover {
+        background-color: var(--surface_container_highest, #34343a) !important;
+    }
+
+    [class*="Button"][class*="primary"],
+    [class*="Button--primary"] {
+        background-color: var(--primary, #bec2ff) !important;
+        color: var(--on_primary, #272b60) !important;
+    }
+
+    /* ---- Footer ---- */
+    [class*="PageFooter"],
+    [class*="Footer-desktop"],
+    [class*="Footer-mobile"] {
+        background-color: var(--surface_container_low, #1b1b21) !important;
+        color: var(--on_surface_variant, #c7c5d0) !important;
+        border-top: 1px solid var(--outline_variant, #46464f) !important;
+    }
+
+    [class*="PageFooter"] a,
+    [class*="Footer"] a {
+        color: var(--primary, #bec2ff) !important;
+    }
+
+    hr {
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    ::selection {
+        background-color: var(--primary, #bec2ff);
+        color: var(--on_primary, #272b60);
+    }
+
+    * {
+        scrollbar-color: var(--outline_variant, #46464f) var(--surface, #131318);
+    }
 }

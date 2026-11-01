@@ -1,32 +1,306 @@
 @-moz-document domain("helpx.adobe.com") {
     /* >>> dusky:picks - managed by the Visual Picker, one rule per line */
-    body { background-color: var(--background) !important; color: var(--on_background) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fbody%1Fbg | bg: background */
-    div { background-color: var(--background) !important; color: var(--on_background) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fdiv%1Fbg | bg: background */
     #title-bar > h1.page-title { color: var(--on_surface) !important; } /* dusky key=sel%1F%23title-bar%20%3E%20h1.page-title%1Ftext | text: on_surface */
-    p { color: var(--on_secondary_container) !important; } /* dusky key=sel%1Fp%1Ftext | text: on_secondary_container */
-    h2 { color: var(--on_surface) !important; } /* dusky key=sel%1Fh2%1Ftext | text: on_surface */
     div.cmp-text > p > a { color: var(--primary) !important; } /* dusky key=sel%1Fdiv.cmp-text%20%3E%20p%20%3E%20a%1Ftext | text: primary */
-    button.feds-navLink.feds-navLink--hoverCaret { color: var(--on_surface) !important; } /* dusky key=sel%1Fbutton.feds-navLink.feds-navLink--hoverCaret%1Ftext | text: on_surface */
-    path { fill: var(--primary) !important; color: var(--primary) !important; } /* dusky key=sel%1Fpath%1Ffill | fill: primary */
-    span { color: var(--on_surface) !important; } /* dusky key=sel%1Fspan%1Ftext | text: on_surface */
-    a { color: var(--on_surface) !important; } /* dusky key=sel%1Fa%1Ftext | text: on_surface */
-    button { color: var(--on_surface_variant) !important; } /* dusky key=sel%1Fbutton%1Ftext | text: on_surface_variant */
-    footer.global-footer { background-color: var(--background) !important; color: var(--on_background) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Ffooter.global-footer%1Fbg | bg: background */
-    button { background-color: var(--background) !important; color: var(--on_background) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fbutton%1Fbg | bg: background */
-    div.position { background-color: var(--background) !important; color: var(--on_background) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fdiv.position%1Fbg | bg: background */
-    h3 { color: var(--on_primary_container) !important; } /* dusky key=sel%1Fh3%1Ftext | text: on_primary_container */
-    img.icon-link-out { background-color: var(--primary_fixed_dim) !important; } /* dusky key=sel%1Fimg.icon-link-out%1Fbg | bg: primary_fixed_dim */
     div.fade-overlay { display: none !important; } /* dusky key=sel%1Fdiv.fade-overlay%1Fdisplay | hidden */
-    div.feds-navItem.feds-navItem--centered > div.feds-cta-wrapper > a.feds-cta.feds-cta--primary.helpx-action-visible { background-color: var(--surface_variant) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fdiv.feds-navItem.feds-navItem--centered%20%3E%20div.feds-cta-wrapper%20%3E%20a.feds-cta.feds-cta--primary.helpx-action-visible%1Fbg | bg: surface_variant */
-    li { color: var(--on_surface) !important; } /* dusky key=sel%1Fli%1Ftext | text: on_surface */
-    h4 { color: var(--on_surface) !important; } /* dusky key=sel%1Fh4%1Ftext | text: on_surface */
-    div.globalnavheader.globalNavHeader-V2.globalNavHeader { background-color: var(--background) !important; color: var(--on_background) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fdiv.globalnavheader.globalNavHeader-V2.globalNavHeader%1Fbg | bg: background */
-    a.feds-navLink { background-color: var(--background) !important; color: var(--on_background) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fa.feds-navLink%1Fbg | bg: background */
-    a.feds-cta.feds-cta--primary { background-color: var(--surface_variant) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fa.feds-cta.feds-cta--primary%1Fbg | bg: surface_variant */
-    div.feds-navLink-image > picture > img { background-color: var(--primary) !important; color: var(--on_primary) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fdiv.feds-navLink-image%20%3E%20picture%20%3E%20img%1Fbg | bg: primary */
-    a.spectrum-Button.spectrum-Button--cta.dexter-Button--sizeS { background-color: var(--inverse_on_surface) !important; } /* dusky key=sel%1Fa.spectrum-Button.spectrum-Button--cta.dexter-Button--sizeS%1Fbg | bg: inverse_on_surface */
-    .column-ua03l03 { background-color: var(--surface) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1F.column-ua03l03%1Fbg | bg: surface */
-    .column-jc13lag { background-color: var(--surface) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1F.column-jc13lag%1Fbg | bg: surface */
-    .column-mx23lpn { background-color: var(--surface) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1F.column-mx23lpn%1Fbg | bg: surface */
     /* <<< dusky:picks */
+
+    /* ---- Adobe FEDS design tokens ---- */
+    :root,
+    body {
+        color-scheme: dark !important;
+
+        --feds-background-nav: var(--surface_container_low, #1b1b21) !important;
+        --feds-background-popup: var(--surface_container, #1f1f25) !important;
+        --feds-background-promo: var(--surface_container, #1f1f25) !important;
+        --feds-background-promo--dark: var(--surface, #131318) !important;
+        --feds-borderColor: var(--outline_variant, #46464f) !important;
+        --feds-borderColor-menu: var(--outline_variant, #46464f) !important;
+        --feds-borderColor-navLink: var(--on_surface, #e4e1e9) !important;
+        --feds-color-adobeBrand: var(--primary, #bec2ff) !important;
+        --feds-color-headline: var(--on_surface, #e4e1e9) !important;
+        --feds-color-hamburger: var(--on_surface, #e4e1e9) !important;
+        --feds-color-breadcrumbs--current: var(--on_surface_variant, #c7c5d0) !important;
+        --feds-color-signIn: var(--on_surface, #e4e1e9) !important;
+        --feds-background-link--hover: var(--surface_container_high, #2a292f) !important;
+        --feds-borderColor-link: var(--outline_variant, #46464f) !important;
+        --feds-color-link: var(--primary, #bec2ff) !important;
+        --feds-color-blue-link: var(--primary, #bec2ff) !important;
+        --feds-color-link--hover: var(--primary_fixed_dim, #bec2ff) !important;
+        --feds-color-link-dark: var(--on_surface, #e4e1e9) !important;
+        --feds-borderColor-link-dark: var(--outline_variant, #46464f) !important;
+        --feds-color-navLink-description: var(--on_surface_variant, #c7c5d0) !important;
+        --feds-color-link-breadcrumbs: var(--on_surface_variant, #c7c5d0) !important;
+        --feds-cta-primary-bg: var(--primary, #bec2ff) !important;
+        --feds-cta-primary-bg--hover: var(--primary_fixed_dim, #bec2ff) !important;
+        --feds-background-footer: var(--surface_container_low, #1b1b21) !important;
+        --feds-borderColor-featuredProducts: var(--outline_variant, #46464f) !important;
+        --feds-color-white-v2: var(--on_surface, #e4e1e9) !important;
+        --feds-color-black-v2: var(--surface, #131318) !important;
+        --feds-background-cloudmenu-v2: var(--surface_container_high, #2a292f) !important;
+        --feds-borderColor-link-v2: var(--outline_variant, #46464f) !important;
+        --feds-backgroundColor-tabs-v2: var(--surface_container_low, #1b1b21) !important;
+        --feds-backgroundColor-tabContent-v2: var(--surface_container, #1f1f25) !important;
+        --feds-borderColor-localnav-v2: var(--outline_variant, #46464f) !important;
+        --feds-skeleton-color-1: var(--surface_container_high, #2a292f) !important;
+        --feds-skeleton-color-2: var(--surface_container, #1f1f25) !important;
+        --feds-skeleton-color-3: var(--surface_container_high, #2a292f) !important;
+    }
+
+    html,
+    body {
+        background-color: var(--surface, #131318) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    /* ---- Global navigation ---- */
+    header,
+    #feds-topnav,
+    .feds-navBar-wrapper,
+    .global-navigation,
+    .globalnavheader,
+    .globalNavHeader,
+    #feds-header,
+    .feds-nav,
+    .feds-navItem,
+    .feds-menu,
+    .feds-popup {
+        background-color: var(--surface_container_low, #1b1b21) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    .feds-navLink,
+    .feds-navLink--hoverCaret,
+    .feds-navLink--active,
+    .feds-navLink-description,
+    .feds-signIn,
+    .feds-navList-item {
+        background-color: transparent !important;
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    .feds-navLink:hover,
+    .feds-navLink:focus,
+    .feds-navLink--active {
+        color: var(--primary, #bec2ff) !important;
+    }
+
+    .feds-cta,
+    .feds-cta--primary,
+    a.feds-cta.feds-cta--primary {
+        background-color: var(--primary, #bec2ff) !important;
+        color: var(--on_primary, #272b60) !important;
+        border-color: var(--primary, #bec2ff) !important;
+    }
+
+    .feds-cta:hover {
+        background-color: var(--primary_fixed_dim, #bec2ff) !important;
+    }
+
+    /* ---- Footer ---- */
+    footer,
+    #feds-footernav,
+    .global-footer,
+    .feds-footer {
+        background-color: var(--surface_container_low, #1b1b21) !important;
+        color: var(--on_surface_variant, #c7c5d0) !important;
+        border-top: 1px solid var(--outline_variant, #46464f) !important;
+    }
+
+    footer a,
+    .global-footer a,
+    .feds-footer a {
+        color: var(--primary, #bec2ff) !important;
+    }
+
+    /* ---- Main content ---- */
+    /* Dexter layout blocks often carry author-picked light fills */
+    [class*="dexter-"],
+    .dexter-Columns-column {
+        background-color: transparent !important;
+    }
+
+    .dexter-Card,
+    .dexter-Panel,
+    .dexter-Modal {
+        background-color: var(--surface_container_low, #1b1b21) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    main,
+    .feds-topnav-wrapper,
+    .globalnavheader,
+    #title-bar,
+    .cmp-text,
+    .column-ua03l03,
+    .column-jc13lag,
+    .column-mx23lpn,
+    .dexter-Columns {
+        background-color: var(--surface, #131318) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    .feds-topnav-wrapper {
+        background-color: var(--surface_container_low, #1b1b21) !important;
+    }
+
+    h1, h2, h3, h4, h5, h6 {
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    p, li, dd, dt, figcaption, blockquote, td, th {
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    a {
+        color: var(--primary, #bec2ff) !important;
+    }
+
+    a:hover {
+        color: var(--tertiary, #e8b9d5) !important;
+    }
+
+    /* ---- Spectrum components ---- */
+    .spectrum-Card,
+    .spectrum-Popover,
+    .spectrum-Dialog,
+    .spectrum-Menu,
+    .spectrum-QuickActions,
+    .spectrum-Toast,
+    .spectrum-Tooltip,
+    .dexter-Card,
+    .dexter-Panel {
+        background-color: var(--surface_container_low, #1b1b21) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    .spectrum-Button,
+    .spectrum-ActionButton,
+    .spectrum-Button--secondary,
+    .spectrum-Button--cta {
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    .spectrum-Button--cta,
+    .spectrum-Button--accent,
+    a.spectrum-Button.spectrum-Button--cta {
+        background-color: var(--primary, #bec2ff) !important;
+        color: var(--on_primary, #272b60) !important;
+        border-color: var(--primary, #bec2ff) !important;
+    }
+
+    .spectrum-Button--secondary {
+        background-color: var(--surface_container_high, #2a292f) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    .spectrum-Button-label,
+    .spectrum-Button--secondary .spectrum-Button-label,
+    .spectrum-Button--cta .spectrum-Button-label {
+        color: inherit !important;
+    }
+
+    /* Language / country selector */
+    [class*="country"],
+    [class*="Country"],
+    [class*="language"],
+    [class*="Language"],
+    #feds-countrySelector,
+    .feds-countrySelector {
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    /* Promo stickers / feedback widgets */
+    .sticker,
+    [class*="feedback"],
+    [class*="Feedback"] {
+        background-color: var(--surface_container_high, #2a292f) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    .sticker *,
+    [class*="feedback"] *,
+    [class*="Feedback"] * {
+        color: inherit !important;
+    }
+
+    .spectrum-FieldLabel,
+    .spectrum-Form-itemLabel,
+    .spectrum-Dialog-title,
+    .spectrum-Menu-itemLabel {
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    .spectrum-Menu-item:hover,
+    .spectrum-Menu-item.is-focused,
+    .spectrum-Menu-item.is-selected {
+        background-color: var(--surface_container_high, #2a292f) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    .spectrum-Divider {
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    /* ---- Forms / code / tables ---- */
+    input,
+    textarea,
+    select,
+    button {
+        background-color: var(--surface_container, #1f1f25) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    input::placeholder,
+    textarea::placeholder {
+        color: var(--on_surface_variant, #c7c5d0) !important;
+        opacity: 1 !important;
+    }
+
+    button,
+    input[type="submit"],
+    input[type="button"] {
+        background-color: var(--surface_container_high, #2a292f) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    code,
+    pre,
+    kbd,
+    samp {
+        background-color: var(--surface_container_high, #2a292f) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    table {
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    th {
+        background-color: var(--surface_container_high, #2a292f) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    td {
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    hr {
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    ::selection {
+        background-color: var(--primary, #bec2ff);
+        color: var(--on_primary, #272b60);
+    }
+
+    * {
+        scrollbar-color: var(--outline_variant, #46464f) var(--surface, #131318);
+    }
 }

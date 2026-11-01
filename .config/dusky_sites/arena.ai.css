@@ -1,14 +1,182 @@
 @-moz-document domain("arena.ai") {
     /* >>> dusky:picks - managed by the Visual Picker, one rule per line */
-    pre.shiki.github-dark.shiki-code-block { background-color: var(--surface_container) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fpre.shiki.github-dark.shiki-code-block%1Fbg | bg: surface_container */
-    div.flex-1 { background-color: var(--surface) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fdiv.flex-1%1Fbg | bg: surface */
-    div.flex-col { background-color: var(--surface) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fdiv.flex-col%1Fbg | bg: surface */
-    textarea.flex-none.resize-none.body-base { background-color: var(--surface) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Ftextarea.flex-none.resize-none.body-base%1Fbg | bg: surface */
-    form.flex-col { background-color: var(--surface) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fform.flex-col%1Fbg | bg: surface */
-    div.flex-none { background-color: var(--surface) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fdiv.flex-none%1Fbg | bg: surface */
-    div { background-color: var(--surface) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fdiv%1Fbg | bg: surface */
-    span[role="tab"] { background-color: var(--surface) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fspan%5Brole%3D%22tab%22%5D%1Fbg | bg: surface */
-    button.shrink-0 { background-color: var(--primary_container) !important; color: var(--on_primary_container) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fbutton.shrink-0%1Fbg | bg: primary_container */
-    button[aria-label="Dusky Template Generator audit"] { background-color: var(--on_secondary) !important; } /* dusky key=sel%1Fbutton%5Baria-label%3D%22Dusky%20Template%20Generator%20audit%22%5D%1Fbg | bg: on_secondary */
     /* <<< dusky:picks */
+
+    /* Arena ships a complete dark token set behind `.dark`, but the palette is
+       injected as hex on :root while these tokens are consumed as HSL triplets.
+       Re-declare them on <body> (descendants inherit, so it still wins over the
+       inline :root values). */
+    html {
+        background-color: var(--surface, #131318) !important;
+        color-scheme: dark !important;
+    }
+
+    body,
+    body.dark {
+        --header-primary: var(--on_surface_hsl, 262.5 15.4% 89.8%) !important;
+        --header-secondary: var(--on_surface_hsl, 262.5 15.4% 89.8%) !important;
+        --text-primary: var(--on_surface_hsl, 262.5 15.4% 89.8%) !important;
+        --text-secondary: var(--on_surface_hsl, 262.5 15.4% 89.8%) !important;
+        --text-tertiary: var(--on_surface_variant_hsl, 250.9 10.5% 79.4%) !important;
+        --text-muted: var(--outline_hsl, 246 4.7% 58.4%) !important;
+        --text-placeholder: var(--outline_hsl, 246 4.7% 58.4%) !important;
+
+        --interactive-active: var(--on_surface_hsl, 262.5 15.4% 89.8%) !important;
+        --interactive-normal: var(--on_surface_variant_hsl, 250.9 10.5% 79.4%) !important;
+        --interactive-link: var(--primary_hsl, 236.3 100% 87.3%) !important;
+        --interactive-positive: var(--primary_hsl, 236.3 100% 87.3%) !important;
+        --interactive-negative: var(--error_hsl, 6.4 100% 83.5%) !important;
+        --interactive-warning: var(--tertiary_hsl, 324.3 50.5% 81.8%) !important;
+        --interactive-inverted: var(--surface_container_highest_hsl, 240 5.5% 21.6%) !important;
+        --interactive-cta: var(--primary_hsl, 236.3 100% 87.3%) !important;
+        --interactive-cta-hover: var(--primary_fixed_dim_hsl, 236.3 100% 87.3%) !important;
+        --interactive-cta-active: var(--primary_fixed_hsl, 240 100% 93.9%) !important;
+        --interactive-cta-focus: var(--primary_hsl, 236.3 100% 87.3%) !important;
+        --interactive-cta-secondary: var(--surface_container_high_hsl, 250 6.8% 17.3%) !important;
+        --interactive-cta-secondary-hover: var(--surface_container_highest_hsl, 240 5.5% 21.6%) !important;
+        --interactive-cta-secondary-active: var(--surface_variant_hsl, 240 6% 29.2%) !important;
+        --interactive-on-cta: var(--on_primary_hsl, 235.8 42.2% 26.5%) !important;
+        --interactive-on-inverted: var(--on_surface_hsl, 262.5 15.4% 89.8%) !important;
+        --interactive-purple: var(--tertiary_hsl, 324.3 50.5% 81.8%) !important;
+        --interactive-pink: var(--tertiary_hsl, 324.3 50.5% 81.8%) !important;
+
+        --syntax-red: var(--error_hsl, 6.4 100% 83.5%) !important;
+        --syntax-blue: var(--primary_hsl, 236.3 100% 87.3%) !important;
+        --syntax-green: var(--secondary_hsl, 242.4 26.9% 81.8%) !important;
+        --syntax-yellow: var(--tertiary_hsl, 324.3 50.5% 81.8%) !important;
+        --syntax-light-blue: var(--primary_fixed_hsl, 240 100% 93.9%) !important;
+        --syntax-teal: var(--secondary_fixed_hsl, 242.4 26.9% 81.8%) !important;
+        --syntax-pink: var(--tertiary_fixed_hsl, 324.3 50.5% 81.8%) !important;
+        --syntax-purple: var(--inverse_primary_hsl, 236.1 26.4% 45.3%) !important;
+
+        --border-faint: var(--outline_variant_hsl, 240 6% 29.2%) !important;
+        --border-faint-solid: var(--outline_variant_hsl, 240 6% 29.2%) !important;
+        --border-medium: var(--outline_variant_hsl, 240 6% 29.2%) !important;
+        --border-strong: var(--outline_hsl, 246 4.7% 58.4%) !important;
+        --border-primary: var(--outline_hsl, 246 4.7% 58.4%) !important;
+
+        --surface-primary: var(--surface_hsl, 240 11.6% 8.4%) !important;
+        --surface-secondary: var(--surface_container_low_hsl, 240 10% 11.8%) !important;
+        --surface-tertiary: var(--surface_container_hsl, 240 8.8% 13.3%) !important;
+        --surface-floating: var(--surface_container_high_hsl, 250 6.8% 17.3%) !important;
+        --surface-raised: var(--surface_container_high_hsl, 250 6.8% 17.3%) !important;
+        --surface-raised-alt: var(--surface_container_high_hsl, 250 6.8% 17.3%) !important;
+        --surface-raised-tertiary: var(--surface_container_hsl, 240 8.8% 13.3%) !important;
+        --surface-highlight: var(--surface_container_high_hsl, 250 6.8% 17.3%) !important;
+        --surface-skeleton: var(--surface_container_high_hsl, 250 6.8% 17.3%) !important;
+        --surface-first-place: var(--tertiary_container_hsl, 321.2 22.1% 30.2%) !important;
+        --surface-second-place: var(--secondary_container_hsl, 237.1 13.4% 30.8%) !important;
+        --surface-third-place: var(--primary_container_hsl, 235.9 31.9% 35.7%) !important;
+
+        /* Brand ramps used for labels and charts */
+        --brand-yellow: var(--tertiary_hsl, 324.3 50.5% 81.8%) !important;
+        --brand-yellow-1: var(--surface_container_highest_hsl, 240 5.5% 21.6%) !important;
+        --brand-yellow-2: var(--tertiary_container_hsl, 321.2 22.1% 30.2%) !important;
+        --brand-yellow-3: var(--tertiary_container_hsl, 321.2 22.1% 30.2%) !important;
+        --brand-yellow-5: var(--tertiary_hsl, 324.3 50.5% 81.8%) !important;
+        --brand-yellow-6: var(--tertiary_hsl, 324.3 50.5% 81.8%) !important;
+        --brand-yellow-7: var(--tertiary_hsl, 324.3 50.5% 81.8%) !important;
+        --brand-yellow-9: var(--on_tertiary_hsl, 320.6 29.6% 21.2%) !important;
+        --brand-yellow-10: var(--on_tertiary_hsl, 320.6 29.6% 21.2%) !important;
+        --brand-green: var(--secondary_hsl, 242.4 26.9% 81.8%) !important;
+        --brand-green-6: var(--secondary_hsl, 242.4 26.9% 81.8%) !important;
+        --brand-green-7: var(--secondary_hsl, 242.4 26.9% 81.8%) !important;
+        --brand-teal: var(--primary_hsl, 236.3 100% 87.3%) !important;
+        --brand-teal-6: var(--primary_hsl, 236.3 100% 87.3%) !important;
+        --brand-blue: var(--primary_hsl, 236.3 100% 87.3%) !important;
+        --brand-blue-6: var(--primary_hsl, 236.3 100% 87.3%) !important;
+        --brand-red: var(--error_hsl, 6.4 100% 83.5%) !important;
+        --brand-red-1: var(--error_container_hsl, 355.9 100% 28.8%) !important;
+        --brand-red-2: var(--error_container_hsl, 355.9 100% 28.8%) !important;
+        --brand-red-3: var(--error_container_hsl, 355.9 100% 28.8%) !important;
+        --brand-red-5: var(--error_hsl, 6.4 100% 83.5%) !important;
+        --brand-red-6: var(--error_hsl, 6.4 100% 83.5%) !important;
+        --brand-red-9: var(--on_error_hsl, 357.1 100% 20.6%) !important;
+        --brand-red-10: var(--on_error_hsl, 357.1 100% 20.6%) !important;
+        --brand-neutral-1: var(--surface_hsl, 240 11.6% 8.4%) !important;
+        --brand-neutral-2: var(--surface_container_low_hsl, 240 10% 11.8%) !important;
+        --brand-neutral-3: var(--surface_container_hsl, 240 8.8% 13.3%) !important;
+        --brand-neutral-4: var(--surface_container_high_hsl, 250 6.8% 17.3%) !important;
+        --brand-neutral-5: var(--surface_container_highest_hsl, 240 5.5% 21.6%) !important;
+        --brand-neutral-6: var(--outline_variant_hsl, 240 6% 29.2%) !important;
+        --brand-neutral-7: var(--outline_hsl, 246 4.7% 58.4%) !important;
+        --brand-neutral-8: var(--on_surface_variant_hsl, 250.9 10.5% 79.4%) !important;
+        --brand-neutral-9: var(--on_surface_hsl, 262.5 15.4% 89.8%) !important;
+        --brand-neutral-10: var(--on_surface_hsl, 262.5 15.4% 89.8%) !important;
+        --brand-neutral-11: var(--on_surface_hsl, 262.5 15.4% 89.8%) !important;
+        --brand-neutral-12: var(--on_surface_hsl, 262.5 15.4% 89.8%) !important;
+
+        --highlight-background: var(--primary_hsl, 236.3 100% 87.3%) !important;
+        --highlight-text: var(--on_primary_hsl, 235.8 42.2% 26.5%) !important;
+
+        --background: var(--surface_hsl, 240 11.6% 8.4%) !important;
+        --foreground: var(--on_surface_hsl, 262.5 15.4% 89.8%) !important;
+        --card: var(--surface_container_low_hsl, 240 10% 11.8%) !important;
+        --card-foreground: var(--on_surface_hsl, 262.5 15.4% 89.8%) !important;
+        --popover: var(--surface_container_hsl, 240 8.8% 13.3%) !important;
+        --popover-foreground: var(--on_surface_hsl, 262.5 15.4% 89.8%) !important;
+        --primary: var(--primary_hsl, 236.3 100% 87.3%) !important;
+        --primary-foreground: var(--on_primary_hsl, 235.8 42.2% 26.5%) !important;
+        --secondary: var(--surface_container_high_hsl, 250 6.8% 17.3%) !important;
+        --secondary-foreground: var(--on_surface_hsl, 262.5 15.4% 89.8%) !important;
+        --muted: var(--surface_container_high_hsl, 250 6.8% 17.3%) !important;
+        --muted-foreground: var(--outline_hsl, 246 4.7% 58.4%) !important;
+        --accent: var(--surface_container_hsl, 240 8.8% 13.3%) !important;
+        --accent-foreground: var(--on_surface_hsl, 262.5 15.4% 89.8%) !important;
+        --destructive: var(--error_hsl, 6.4 100% 83.5%) !important;
+        --destructive-foreground: var(--on_error_hsl, 357.1 100% 20.6%) !important;
+        --border: var(--outline_variant_hsl, 240 6% 29.2%) !important;
+        --input: var(--outline_variant_hsl, 240 6% 29.2%) !important;
+        --ring: var(--primary_hsl, 236.3 100% 87.3%) !important;
+        --chart-1: var(--primary_hsl, 236.3 100% 87.3%) !important;
+        --chart-2: var(--secondary_hsl, 242.4 26.9% 81.8%) !important;
+        --chart-3: var(--tertiary_hsl, 324.3 50.5% 81.8%) !important;
+        --chart-4: var(--error_hsl, 6.4 100% 83.5%) !important;
+        --chart-5: var(--primary_fixed_dim_hsl, 236.3 100% 87.3%) !important;
+        --sidebar-background: var(--surface_hsl, 240 11.6% 8.4%) !important;
+        --sidebar-foreground: var(--on_surface_hsl, 262.5 15.4% 89.8%) !important;
+        --sidebar-primary: var(--primary_hsl, 236.3 100% 87.3%) !important;
+        --sidebar-primary-foreground: var(--on_primary_hsl, 235.8 42.2% 26.5%) !important;
+        --sidebar-accent: var(--surface_container_hsl, 240 8.8% 13.3%) !important;
+        --sidebar-accent-foreground: var(--on_surface_hsl, 262.5 15.4% 89.8%) !important;
+        --sidebar-border: var(--outline_variant_hsl, 240 6% 29.2%) !important;
+        --sidebar-ring: var(--primary_hsl, 236.3 100% 87.3%) !important;
+
+        background-color: var(--surface, #131318) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    /* Native form controls: matugen's hex roles are fine outside hsl() tokens */
+    input,
+    textarea,
+    select {
+        background-color: var(--surface_container_low, #1b1b21) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    input::placeholder,
+    textarea::placeholder {
+        color: var(--on_surface_variant, #c7c5d0) !important;
+        opacity: 1 !important;
+    }
+
+    /* Skeleton loaders should not flash pale grey */
+    .bg-surface-skeleton\/60,
+    [class*="bg-surface-skeleton"] {
+        background-color: var(--surface_container_high, #2a292f) !important;
+    }
+
+    a {
+        color: var(--primary, #bec2ff);
+    }
+
+    ::selection {
+        background-color: var(--primary, #bec2ff);
+        color: var(--on_primary, #272b60);
+    }
+
+    * {
+        scrollbar-color: var(--outline_variant, #46464f) var(--surface, #131318);
+    }
 }

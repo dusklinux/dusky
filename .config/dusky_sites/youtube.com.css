@@ -158,4 +158,167 @@
     button { color: var(--primary) !important; } /* dusky key=sel%1Fbutton%1Ftext | text: primary */
     div.ytChipShapeChip.ytChipShapeActive.ytChipShapeOnlyTextPadding { background-color: var(--secondary_fixed_dim) !important; } /* dusky key=sel%1Fdiv.ytChipShapeChip.ytChipShapeActive.ytChipShapeOnlyTextPadding%1Fbg | bg: secondary_fixed_dim */
     /* <<< dusky:picks */
+
+    /* ---- Brand-red icon fills (guide entries, chips, logo) ---- */
+    ytd-guide-entry-renderer svg path[fill="#FF0000"],
+    ytd-guide-entry-renderer svg path[fill="#ff0000"],
+    ytd-guide-entry-renderer svg path[fill="red"],
+    ytd-mini-guide-entry-renderer svg path[fill="#FF0000"],
+    ytd-mini-guide-entry-renderer svg path[fill="#ff0000"],
+    yt-img-shadow img[src*="youtube_music"],
+    ytd-topbar-logo-renderer svg path[fill="#FF0000"],
+    ytd-topbar-logo-renderer svg path[fill="#ff0000"],
+    #logo-icon svg path[fill="#FF0000"],
+    #logo-icon svg path[fill="#ff0000"],
+    .ytp-swatch-color,
+    .ytp-swatch-background-color {
+        fill: var(--primary, #bec2ff) !important;
+        color: var(--primary, #bec2ff) !important;
+        background-color: var(--primary, #bec2ff) !important;
+    }
+
+    /* Keep white logo glyphs legible on the tinted logo */
+    #logo-icon [fill="white"],
+    ytd-topbar-logo-renderer [fill="white"] {
+        fill: var(--on_primary, #272b60) !important;
+    }
+
+    /* ---- Event ticket shelf calendar badge (white by default) ---- */
+    #calendar-avatar-month,
+    #calendar-avatar-day {
+        background-color: var(--surface_container_high, #2a292f) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    #calendar-avatar-month-text,
+    #calendar-avatar-day-text,
+    #calendar-avatar {
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    /* ---- General chrome that YouTube paints near-black ---- */
+    #masthead-container.ytd-app,
+    #guide-content.ytd-app,
+    ytd-guide-renderer,
+    ytd-app,
+    ytd-page-manager,
+    ytd-watch-flexy,
+    #columns,
+    #primary,
+    #secondary,
+    #below,
+    #chat-container,
+    ytd-comments,
+    ytd-comments-header-renderer,
+    ytd-item-section-renderer,
+    ytd-shelf-renderer,
+    ytd-rich-grid-renderer,
+    ytd-rich-section-renderer,
+    ytd-search,
+    ytd-search-header-renderer,
+    ytd-channel-renderer {
+        background-color: var(--background, #131318) !important;
+        color: var(--on_background, #e4e1e9) !important;
+    }
+
+    /* Cards, menus, dialogs */
+    ytd-popup-container,
+    tp-yt-iron-dropdown,
+    tp-yt-paper-dialog,
+    ytd-multi-page-menu-renderer,
+    ytd-menu-popup-renderer,
+    ytd-playlist-panel-renderer,
+    ytd-engagement-panel-section-list-renderer,
+    #comment-section-renderer,
+    ytd-comment-thread-renderer,
+    ytd-comment-renderer {
+        background-color: var(--surface_container, #1f1f25) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    /* Inputs */
+    input,
+    textarea,
+    .ytSearchboxComponentInputBox,
+    ytd-searchbox,
+    #search-form {
+        background-color: var(--surface_container, #1f1f25) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    input::placeholder,
+    textarea::placeholder {
+        color: var(--on_surface_variant, #c7c5d0) !important;
+        opacity: 1 !important;
+    }
+
+    /* Links / metadata */
+    a.yt-simple-endpoint,
+    #video-title,
+    yt-formatted-string#video-title {
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    #metadata-line,
+    #description,
+    .ytd-video-meta-block,
+    #info,
+    #byline,
+    .yt-core-attributed-string--link-inherit-color {
+        color: var(--on_surface_variant, #c7c5d0) !important;
+    }
+
+    a:hover #video-title,
+    #video-title:hover {
+        color: var(--primary, #bec2ff) !important;
+    }
+
+    /* Chip rows */
+    ytd-feed-filter-chip-bar-renderer,
+    #chips-wrapper,
+    yt-chip-cloud-chip-renderer {
+        background-color: var(--background, #131318) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    yt-chip-cloud-chip-renderer[selected],
+    .ytChipShapeActive {
+        background-color: var(--secondary_container, #44475b) !important;
+        color: var(--on_secondary_container, #e0e0ff) !important;
+    }
+
+    /* Subscribe / filled buttons */
+    ytd-subscribe-button-renderer .yt-spec-button-shape-next--filled,
+    #subscribe-button .yt-spec-button-shape-next--filled,
+    .yt-spec-button-shape-next--filled {
+        background-color: var(--primary, #bec2ff) !important;
+        color: var(--on_primary, #272b60) !important;
+    }
+
+    .yt-spec-button-shape-next--tonal {
+        background-color: var(--surface_container_high, #2a292f) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    /* Comments / description plates */
+    #description-inline-expander,
+    ytd-expander,
+    #comment,
+    #content-text,
+    tp-yt-paper-button {
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    /* Scrollbars / selection */
+    ::selection {
+        background-color: var(--primary, #bec2ff);
+        color: var(--on_primary, #272b60);
+    }
+
+    * {
+        scrollbar-color: var(--outline_variant, #46464f) var(--background, #131318);
+    }
+
 }

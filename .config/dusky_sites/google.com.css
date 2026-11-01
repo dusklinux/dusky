@@ -58,4 +58,278 @@
     div.bvUkz { background-color: var(--on_tertiary) !important; } /* dusky key=sel%1Fdiv.bvUkz%1Fbg | bg: on_tertiary */
     button.uMMzHc { background-color: var(--inverse_on_surface) !important; } /* dusky key=sel%1Fbutton.uMMzHc%1Fbg | bg: inverse_on_surface */
     /* <<< dusky:picks */
+
+    /* ---- Shared base ---- */
+    :root,
+    html,
+    body {
+        color-scheme: dark !important;
+        background-color: var(--surface, #131318) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    /* Google's search page uses a larger set of design tokens than the
+       homepage; map the common ones to the palette as well. */
+    :root,
+    .jKhXsc,
+    .YzCcne,
+    .f6F9Be,
+    .c93Gbe {
+        --bbQxAb: var(--primary, #bec2ff) !important;
+        --YLNNHc: var(--on_surface, #e4e1e9) !important;
+        --KIZPne: var(--on_surface_variant, #c7c5d0) !important;
+        --xhUGwc: var(--surface, #131318) !important;
+        --aYn2S: var(--surface_container_high, #2a292f) !important;
+        --XKMDxc: var(--surface_container_low, #1b1b21) !important;
+        --xPpiM: var(--surface, #131318) !important;
+        --Lm570b: var(--surface_container, #1f1f25) !important;
+        --JKqx2: var(--primary, #bec2ff) !important;
+        --gS5jXb: var(--outline_variant, #46464f) !important;
+        --m3c6: var(--surface_container, #1f1f25) !important;
+        --cIehld: var(--surface, #131318) !important;
+        --V9tjod: var(--primary, #bec2ff) !important;
+        --Wmwad: var(--on_surface, #e4e1e9) !important;
+        --EyL8Vc: var(--surface_container, #1f1f25) !important;
+        --o7KxAc: var(--on_surface_variant, #c7c5d0) !important;
+        --nFGR8d: var(--surface_container_high, #2a292f) !important;
+        --vW7fVb: var(--surface_container_low, #1b1b21) !important;
+        --N0zEgd: var(--outline_variant, #46464f) !important;
+        --Gg8cwb: var(--on_surface, #e4e1e9) !important;
+        --fQ4bF: var(--on_surface_variant, #c7c5d0) !important;
+        --Z0LcW: var(--surface_container, #1f1f25) !important;
+        --PdAKRc: var(--on_surface, #e4e1e9) !important;
+        --mXwfNd: var(--outline_variant, #46464f) !important;
+        --uU37Db: var(--error, #ffb4ab) !important;
+        --Tv5GF: var(--surface_container_high, #2a292f) !important;
+        --jTvU2c: var(--surface_container_low, #1b1b21) !important;
+        --qR0wKb: var(--on_surface_variant, #c7c5d0) !important;
+        --e7m7Jc: var(--surface_container, #1f1f25) !important;
+    }
+
+    /* ---- Search results chrome ---- */
+    #search,
+    #rso,
+    #center_col,
+    #rcnt,
+    #topabar,
+    #top_nav,
+    #hdtb,
+    #hdtb-msb,
+    #botstuff,
+    #foot,
+    #footcnt,
+    .T14B5e,
+    .crJ18e,
+    .LHJvCe,
+    #result-stats,
+    .KP7LCb,
+    .dURPMd,
+    .MjjYud,
+    .g,
+    .tF2Cxc,
+    .yuRUbf,
+    .VwiC3b,
+    .IsZvec,
+    .lr_container,
+    .related-question-pair,
+    .wQiwMc,
+    .ULSxyf,
+    .BGd9F,
+    .cUnQKe,
+    .ez24Df,
+    .u60jwe,
+    .TbwUpd {
+        background-color: transparent !important;
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    #center_col,
+    #rcnt,
+    #search,
+    #botstuff,
+    .dURPMd,
+    .MjjYud,
+    .g,
+    .ULSxyf,
+    .related-question-pair,
+    .cUnQKe {
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    /* Result titles / URLs / snippets */
+    .LC20lb,
+    .DKV0Md,
+    h3,
+    #search h3 {
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    .VwiC3b,
+    .IsZvec,
+    .st,
+    .VwiC3b span,
+    .MUxGbd,
+    .aCOpRe,
+    .hgKElc,
+    #result-stats,
+    .LHJvCe,
+    .qLRKHc,
+    .GI74Re {
+        color: var(--on_surface_variant, #c7c5d0) !important;
+    }
+
+    cite,
+    .iUh30,
+    .tjvcx,
+    .byr,
+    .TbwUpd,
+    .yuRUbf cite {
+        color: var(--primary, #bec2ff) !important;
+    }
+
+    #search a,
+    #rso a,
+    #center_col a,
+    .yuRUbf a,
+    .LC20lb {
+        color: var(--primary, #bec2ff) !important;
+    }
+
+    #search a:visited,
+    #rso a:visited,
+    .LC20lb:visited {
+        color: var(--tertiary, #e8b9d5) !important;
+    }
+
+    /* Tabs / filters */
+    #hdtb a,
+    .hdtb-mitem a,
+    .hdtb-mitem,
+    .crJ18e a,
+    .T47uwc a {
+        color: var(--on_surface_variant, #c7c5d0) !important;
+    }
+
+    #hdtb a:hover,
+    .hdtb-mitem a:hover,
+    .crJ18e a:hover {
+        color: var(--primary, #bec2ff) !important;
+    }
+
+    #hdtb .hdtb-mitem.hdtb-msel,
+    #hdtb .hdtb-mitem.hdtb-msel a,
+    .crJ18e .R1QWuf {
+        color: var(--primary, #bec2ff) !important;
+        border-color: var(--primary, #bec2ff) !important;
+    }
+
+    #hdtb,
+    #topabar,
+    .hdtb-mitem {
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    /* Search field (both pages) */
+    .RNNXgb,
+    .aajZCb,
+    .kzKS5c,
+    .SDkEP,
+    .dRYYxd,
+    .ywK6Rd,
+    .gLFyf,
+    textarea.gLFyf,
+    input.gLFyf {
+        background-color: var(--surface_container, #1f1f25) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    .gLFyf::placeholder,
+    input::placeholder,
+    textarea::placeholder {
+        color: var(--on_surface_variant, #c7c5d0) !important;
+        opacity: 1 !important;
+    }
+
+    /* Buttons (Search / I'm Feeling Lucky / filters) */
+    .T14B5e input[type="submit"],
+    input[type="submit"],
+    button,
+    .plR5qb,
+    .zsYMMe {
+        background-color: var(--surface_container_high, #2a292f) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border: 1px solid var(--outline_variant, #46464f) !important;
+    }
+
+    button:hover,
+    input[type="submit"]:hover {
+        background-color: var(--surface_container_highest, #34343a) !important;
+        border-color: var(--outline, #91909a) !important;
+    }
+
+    /* Footer */
+    #foot,
+    #footcnt,
+    #fbar,
+    .f6F9Be,
+    .c93Gbe,
+    #bottomads {
+        background-color: var(--surface_container_low, #1b1b21) !important;
+        color: var(--on_surface_variant, #c7c5d0) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    #foot a,
+    #fbar a,
+    .f6F9Be a,
+    .c93Gbe a {
+        color: var(--primary, #bec2ff) !important;
+    }
+
+    /* Knowledge panels / cards / ads */
+    .kp-wholepage,
+    .KpMlq,
+    .knowledge-panel,
+    .ULSxyf,
+    .u60jwe,
+    .ez24Df,
+    .BgzE1b,
+    .xpcFVe,
+    .zp-2j,
+    .fYRpH {
+        background-color: var(--surface_container_low, #1b1b21) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    .kp-wholepage h2,
+    .knowledge-panel h2 {
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    /* Pagination */
+    #pnnext,
+    #pnprev,
+    .O8a4Jc,
+    .SJajHc {
+        background-color: var(--surface_container_high, #2a292f) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    hr,
+    .KTBKoe,
+    .rGm9tf {
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    ::selection {
+        background-color: var(--primary, #bec2ff);
+        color: var(--on_primary, #272b60);
+    }
+
+    * {
+        scrollbar-color: var(--outline_variant, #46464f) var(--surface, #131318);
+    }
+
 }

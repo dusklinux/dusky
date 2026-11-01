@@ -13,9 +13,203 @@
     article { background-color: var(--surface_dim) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Farticle%1Fbg | bg: surface_dim */
     /* <<< dusky:picks */
 
-    :root {
-  --color-background-composer-surface : var(--surface_container_low) !important;
-  --color-surface : var(--surface) !important;
-  --color-background-panel : var(--surface) !important;
-  }
+    /* ---- Base: ChatGPT's dark mode uses near-black, neutralise to the palette ---- */
+    :root,
+    html,
+    body {
+        color-scheme: dark !important;
+        background-color: var(--surface, #131318) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    /* Top-level layout wrappers carry their own near-black fills */
+    body > div,
+    body > div > div,
+    body > div > div > div,
+    #__next,
+    #__next > div,
+    #web-mobile-root,
+    #web-mobile-root > div,
+    #web-mobile-root > div > div,
+    #web-mobile-root > div > div > div,
+    #web-mobile-root > div > div > div > div {
+        background-color: transparent !important;
+    }
+
+    /* Header CTAs (the unauthenticated "Log in" is a white pill by default) */
+    header button {
+        background-color: var(--surface_container_high, #2a292f) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    main,
+    [role="main"],
+    #thread,
+    .thread {
+        background-color: var(--surface, #131318) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    /* Decorative full-bleed background layers are rendered as <span>s */
+    main span,
+    [role="main"] span,
+    footer span {
+        background-color: transparent !important;
+    }
+
+    /* Sidebar / rail */
+    aside,
+    nav,
+    [class*="sidebar"],
+    [class*="Sidebar"] {
+        background-color: var(--surface_container_low, #1b1b21) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    /* Header / top bar */
+    header,
+    [class*="sticky"],
+    [class*="topbar"],
+    [class*="TopBar"] {
+        background-color: var(--surface, #131318) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    /* Composer */
+    form,
+    [class*="composer"],
+    [class*="Composer"] {
+        background-color: var(--surface_container, #1f1f25) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    /* Cards, popovers, dialogs, sheets */
+    [role="dialog"],
+    [role="menu"],
+    [role="listbox"],
+    [role="tooltip"],
+    [class*="popover"],
+    [class*="Popover"],
+    [class*="modal"],
+    [class*="Modal"],
+    [class*="menu"],
+    [class*="Menu"] {
+        background-color: var(--surface_container, #1f1f25) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+        box-shadow: 0 8px 28px rgba(0, 0, 0, .45) !important;
+    }
+
+    /* Typography and links */
+    h1, h2, h3, h4, h5, h6,
+    [class*="heading"],
+    [class*="Heading"] {
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    p, li, dd, dt, span, div, td, th, label, blockquote, figcaption {
+        border-color: var(--outline_variant, #46464f);
+    }
+
+    a,
+    [class*="link"],
+    [class*="Link"] {
+        color: var(--primary, #bec2ff) !important;
+    }
+
+    a:hover {
+        color: var(--primary_fixed, #e0e0ff) !important;
+    }
+
+    /* Muted helper text that site renders in mid-grey */
+    [class*="text-secondary"],
+    [class*="text-tertiary"],
+    [class*="muted"],
+    [class*="Muted"],
+    time,
+    small {
+        color: var(--on_surface_variant, #c7c5d0) !important;
+    }
+
+    /* Inputs (composer textarea, search, dialogs) */
+    input,
+    textarea,
+    select,
+    [contenteditable="true"] {
+        background-color: transparent !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+        caret-color: var(--primary, #bec2ff);
+    }
+
+    input::placeholder,
+    textarea::placeholder {
+        color: var(--on_surface_variant, #c7c5d0) !important;
+        opacity: 1 !important;
+    }
+
+    /* Buttons: keep icon buttons transparent, fill only real CTAs */
+    button {
+        color: inherit;
+    }
+
+    button[class*="primary"],
+    button[data-testid*="primary"],
+    [class*="btn-primary"],
+    [class*="button-primary"] {
+        background-color: var(--primary, #bec2ff) !important;
+        color: var(--on_primary, #272b60) !important;
+        border-color: var(--primary, #bec2ff) !important;
+    }
+
+    /* Message bubbles */
+    [data-message-author-role="user"],
+    [data-testid*="user-message"],
+    [class*="user-message"],
+    [class*="UserMessage"] {
+        background-color: var(--primary_container, #3e4278) !important;
+        color: var(--on_primary_container, #e0e0ff) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    [data-message-author-role="assistant"],
+    [data-testid*="assistant"],
+    [class*="assistant"] {
+        background-color: transparent !important;
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    /* Code */
+    pre,
+    code,
+    kbd,
+    samp {
+        background-color: var(--surface_container_high, #2a292f) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    pre code {
+        background-color: transparent !important;
+    }
+
+    /* Tables and rules */
+    table { color: var(--on_surface, #e4e1e9) !important; }
+    th { background-color: var(--surface_container_high, #2a292f) !important; color: var(--on_surface, #e4e1e9) !important; }
+    td { border-color: var(--outline_variant, #46464f) !important; }
+    hr, [role="separator"] { border-color: var(--outline_variant, #46464f) !important; }
+
+    /* Selection / scrollbars */
+    ::selection {
+        background-color: var(--primary, #bec2ff);
+        color: var(--on_primary, #272b60);
+    }
+
+    * {
+        scrollbar-color: var(--outline_variant, #46464f) var(--surface, #131318);
+    }
 }

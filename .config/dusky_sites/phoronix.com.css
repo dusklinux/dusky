@@ -1,11 +1,252 @@
 @-moz-document domain("phoronix.com") {
     /* >>> dusky:picks - managed by the Visual Picker, one rule per line */
-    div { background-color: var(--background) !important; color: var(--on_background) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fdiv%1Fbg | bg: background */
-    input { background-color: var(--surface_container_low) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Finput%1Fbg | bg: surface_container_low */
-    a { background-color: var(--surface) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fa%1Fbg | bg: surface */
-    article.full > div.content > blockquote { color: var(--primary_fixed_dim) !important; } /* dusky key=sel%1Farticle.full%20%3E%20div.content%20%3E%20blockquote%1Ftext | text: primary_fixed_dim */
-    p { color: var(--on_secondary_container) !important; } /* dusky key=sel%1Fp%1Ftext | text: on_secondary_container */
-    header { color: var(--on_tertiary_container) !important; } /* dusky key=sel%1Fheader%1Ftext | text: on_tertiary_container */
-    #main > article { color: var(--secondary) !important; } /* dusky key=sel%1F%23main%20%3E%20article%1Ftext | text: secondary */
     /* <<< dusky:picks */
+
+    :root {
+        color-scheme: dark !important;
+        --phx-bg: var(--surface, #131318);
+        --phx-panel: var(--surface_container_low, #1b1b21);
+        --phx-panel-high: var(--surface_container, #1f1f25);
+        --phx-ink: var(--on_surface, #e4e1e9);
+        --phx-ink-dim: var(--on_surface_variant, #c7c5d0);
+        --phx-line: var(--outline_variant, #46464f);
+        --phx-accent: var(--primary, #bec2ff);
+        --phx-on-accent: var(--on_primary, #272b60);
+    }
+
+    html,
+    body,
+    #content-bg,
+    #content,
+    #main-wrap,
+    #main,
+    .wcontainer {
+        background-color: var(--surface, #131318) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    /* ---- Header / navigation ---- */
+    #headerwrap,
+    #headerright,
+    #menuwrap,
+    #litemenu,
+    #categories-list,
+    #categories-content,
+    #search,
+    .defpadding {
+        background-color: var(--surface_container_low, #1b1b21) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    #headerwrap {
+        border-bottom: 2px solid var(--primary, #bec2ff) !important;
+    }
+
+    #menuwrap,
+    #litemenu,
+    #categories-list {
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    #menuwrap a,
+    #litemenu a,
+    .menulink,
+    .linknode,
+    #categories-list a,
+    #social a {
+        color: var(--on_surface_variant, #c7c5d0) !important;
+    }
+
+    #menuwrap a:hover,
+    #litemenu a:hover,
+    .menulink:hover,
+    #categories-list a:hover {
+        color: var(--primary, #bec2ff) !important;
+    }
+
+    #search input,
+    #search input[type="text"],
+    #search input[type="search"] {
+        background-color: var(--surface_container, #1f1f25) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border: 1px solid var(--outline_variant, #46464f) !important;
+    }
+
+    /* ---- Articles ---- */
+    article,
+    article.full,
+    article.full .content,
+    #main article {
+        background-color: transparent !important;
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    article h1,
+    article h2,
+    article h3,
+    #main h1,
+    #main h2,
+    #main h3 {
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    #main h1 a,
+    #main h2 a,
+    article h1 a,
+    article h2 a,
+    article h3 a {
+        color: var(--primary, #bec2ff) !important;
+        text-decoration-color: var(--outline_variant, #46464f);
+    }
+
+    .details,
+    .details a,
+    .extra-info,
+    .extra-info a {
+        color: var(--on_surface_variant, #c7c5d0) !important;
+    }
+
+    .details a:hover,
+    .extra-info a:hover {
+        color: var(--primary, #bec2ff) !important;
+    }
+
+    article p,
+    article li,
+    #main p,
+    #main li,
+    #main td {
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    article.full > div.content > blockquote,
+    blockquote {
+        background-color: var(--surface_container_low, #1b1b21) !important;
+        color: var(--on_surface_variant, #c7c5d0) !important;
+        border-left: 3px solid var(--primary, #bec2ff) !important;
+    }
+
+    /* ---- Sidebar widgets / popular list ---- */
+    .widget,
+    .popular-list,
+    .comments,
+    .home_icons,
+    #rightcolumn,
+    #sidebar {
+        background-color: var(--surface_container_low, #1b1b21) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    .widget h3,
+    .widget h4,
+    .popular-list h3,
+    .popular-list h4 {
+        background-color: var(--surface_container, #1f1f25) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-bottom: 1px solid var(--outline_variant, #46464f) !important;
+    }
+
+    .popular-list a,
+    .widget a,
+    .comments a {
+        color: var(--primary, #bec2ff) !important;
+    }
+
+    .popular-list li,
+    .widget li {
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    /* ---- Global text / links / code ---- */
+    a {
+        color: var(--primary, #bec2ff) !important;
+    }
+
+    a:hover {
+        color: var(--tertiary, #e8b9d5) !important;
+    }
+
+    h1, h2, h3, h4, h5, h6 {
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    code,
+    pre,
+    kbd,
+    samp,
+    tt {
+        background-color: var(--surface_container_high, #2a292f) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    pre code {
+        background-color: transparent !important;
+    }
+
+    /* ---- Tables / forms ---- */
+    table {
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    th {
+        background-color: var(--surface_container_high, #2a292f) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    td {
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    input,
+    textarea,
+    select,
+    button {
+        background-color: var(--surface_container, #1f1f25) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border: 1px solid var(--outline_variant, #46464f) !important;
+    }
+
+    input[type="submit"],
+    input[type="button"],
+    button {
+        background-color: var(--primary, #bec2ff) !important;
+        color: var(--on_primary, #272b60) !important;
+        border-color: var(--primary, #bec2ff) !important;
+    }
+
+    input::placeholder,
+    textarea::placeholder {
+        color: var(--on_surface_variant, #c7c5d0) !important;
+        opacity: 1 !important;
+    }
+
+    /* ---- Footer / misc ---- */
+    #footer,
+    #footerwrap,
+    .footer {
+        background-color: var(--surface_container_low, #1b1b21) !important;
+        color: var(--on_surface_variant, #c7c5d0) !important;
+        border-top: 1px solid var(--outline_variant, #46464f) !important;
+    }
+
+    #footer a {
+        color: var(--primary, #bec2ff) !important;
+    }
+
+    hr {
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    ::selection {
+        background-color: var(--primary, #bec2ff);
+        color: var(--on_primary, #272b60);
+    }
+
+    * {
+        scrollbar-color: var(--outline_variant, #46464f) var(--surface, #131318);
+    }
 }

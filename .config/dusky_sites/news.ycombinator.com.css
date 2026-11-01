@@ -1,15 +1,166 @@
 @-moz-document domain("news.ycombinator.com") {
     /* >>> dusky:picks - managed by the Visual Picker, one rule per line */
-    html { background-color: var(--background) !important; color: var(--on_background) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fhtml%1Fbg | bg: background */
-    tbody { background-color: var(--background) !important; color: var(--on_background) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Ftbody%1Fbg | bg: background */
-    a { color: var(--inverse_surface) !important; } /* dusky key=sel%1Fa%1Ftext | text: inverse_surface */
-    table { background-color: var(--background) !important; color: var(--on_background) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Ftable%1Fbg | bg: background */
-    input[name="q"] { background-color: var(--primary) !important; color: var(--on_primary) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Finput%5Bname%3D%22q%22%5D%1Fbg | bg: primary */
-    div { color: var(--on_surface) !important; } /* dusky key=sel%1Fdiv%1Ftext | text: on_surface */
-    textarea[name="text"] { background-color: var(--background) !important; color: var(--on_background) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Ftextarea%5Bname%3D%22text%22%5D%1Fbg | bg: background */
-    td:nth-of-type(2) > form > input:nth-of-type(4) { background-color: var(--surface_container_lowest) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Ftd%3Anth-of-type(2)%20%3E%20form%20%3E%20input%3Anth-of-type(4)%1Fbg | bg: surface_container_lowest */
-    span.pagetop > b.hnname > a { color: var(--primary) !important; } /* dusky key=sel%1Fspan.pagetop%20%3E%20b.hnname%20%3E%20a%1Ftext | text: primary */
-    td:nth-of-type(3) > span.pagetop > a { color: var(--secondary) !important; } /* dusky key=sel%1Ftd%3Anth-of-type(3)%20%3E%20span.pagetop%20%3E%20a%1Ftext | text: secondary */
-    div.votearrow { background-color: var(--tertiary_container) !important; color: var(--on_tertiary_container) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fdiv.votearrow%1Fbg | bg: tertiary_container */
     /* <<< dusky:picks */
+
+    :root {
+        color-scheme: dark !important;
+    }
+
+    html,
+    body {
+        background-color: var(--surface, #131318) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    #hnmain {
+        background-color: var(--surface_container_low, #1b1b21) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    /* Orange header bar becomes the accent container */
+    #hnmain td[bgcolor="#ff6600"],
+    #hnmain td[style*="ff6600"],
+    #hnmain tr:first-child > td,
+    #hnmain > tbody > tr:first-child > td {
+        background-color: var(--primary_container, #3e4278) !important;
+        color: var(--on_primary_container, #e0e0ff) !important;
+    }
+
+    #hnmain tr:first-child a,
+    #hnmain tr:first-child .pagetop,
+    #hnmain tr:first-child .pagetop a,
+    #hnmain tr:first-child b,
+    #hnmain tr:first-child span {
+        color: var(--on_primary_container, #e0e0ff) !important;
+    }
+
+    /* Story text and links */
+    .title,
+    .title a,
+    .storylink,
+    a.storylink {
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    .title a:visited,
+    .storylink:visited {
+        color: var(--on_surface_variant, #c7c5d0) !important;
+    }
+
+    a {
+        color: var(--primary, #bec2ff) !important;
+    }
+
+    a:visited {
+        color: var(--tertiary, #e8b9d5) !important;
+    }
+
+    .rank,
+    .subtext,
+    .subtext a,
+    .score,
+    .comhead,
+    .comhead a,
+    .sitebit,
+    .sitebit a,
+    .age,
+    .age a,
+    .reply a,
+    .navs,
+    .navs a {
+        color: var(--on_surface_variant, #c7c5d0) !important;
+    }
+
+    .subtext a:hover,
+    .comhead a:hover,
+    .reply a:hover {
+        color: var(--primary, #bec2ff) !important;
+    }
+
+    .comment,
+    .comment a,
+    .commtext,
+    .commtext a,
+    .default,
+    .story,
+    .story p {
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    .comment {
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    /* Spacer rows and the grey rule lines */
+    .spacer,
+    .morespace {
+        background-color: transparent !important;
+    }
+
+    #hnmain td[style*="height:2px"],
+    #hnmain td[style*="height: 2px"],
+    .title + td {
+        background-color: var(--outline_variant, #46464f) !important;
+    }
+
+    .morelink,
+    a.morelink {
+        color: var(--primary, #bec2ff) !important;
+        background-color: transparent !important;
+    }
+
+    /* Forms (login, submit, search) */
+    input,
+    textarea,
+    select,
+    button {
+        background-color: var(--surface_container, #1f1f25) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border: 1px solid var(--outline_variant, #46464f) !important;
+    }
+
+    input[type="submit"],
+    button[type="submit"] {
+        background-color: var(--primary, #bec2ff) !important;
+        color: var(--on_primary, #272b60) !important;
+        border-color: var(--primary, #bec2ff) !important;
+    }
+
+    input::placeholder,
+    textarea::placeholder {
+        color: var(--on_surface_variant, #c7c5d0) !important;
+        opacity: 1 !important;
+    }
+
+    /* Vote arrows get a palette tint; dimmed so scores stay readable */
+    .votelinks img,
+    .votelinks a {
+        color: var(--primary, #bec2ff);
+    }
+
+    /* Footer */
+    #footer,
+    .footer {
+        background-color: var(--surface_container_low, #1b1b21) !important;
+        color: var(--on_surface_variant, #c7c5d0) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    #footer a,
+    .footer a {
+        color: var(--primary, #bec2ff) !important;
+    }
+
+    hr {
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    ::selection {
+        background-color: var(--primary, #bec2ff);
+        color: var(--on_primary, #272b60);
+    }
+
+    * {
+        scrollbar-color: var(--outline_variant, #46464f) var(--surface, #131318);
+    }
 }

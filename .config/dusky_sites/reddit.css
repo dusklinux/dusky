@@ -1,38 +1,306 @@
 @-moz-document domain("reddit.com") {
+    /* >>> dusky:picks - managed by the Visual Picker, one rule per line */
+    /* <<< dusky:picks */
+
+    /* ---- Reddit (Shreddit + legacy) design tokens ---- */
+    :root,
+    html,
+    body {
+        color-scheme: dark !important;
+
+        --color-neutral-background: var(--surface, #131318) !important;
+        --color-neutral-background-weak: var(--surface_container_low, #1b1b21) !important;
+        --color-neutral-background-strong: var(--surface_container_low, #1b1b21) !important;
+        --color-neutral-background-hover: var(--surface_container_high, #2a292f) !important;
+        --color-neutral-background-selected: var(--surface_container_high, #2a292f) !important;
+        --color-neutral-background-container: var(--surface_container_low, #1b1b21) !important;
+        --color-neutral-background-container-strong: var(--surface_container_high, #2a292f) !important;
+        --color-neutral-background-container-strong-hover: var(--surface_container_highest, #34343a) !important;
+
+        --color-neutral-content: var(--on_surface, #e4e1e9) !important;
+        --color-neutral-content-strong: var(--on_surface, #e4e1e9) !important;
+        --color-neutral-content-weak: var(--on_surface_variant, #c7c5d0) !important;
+
+        --color-neutral-border: var(--outline_variant, #46464f) !important;
+        --color-neutral-border-weak: var(--outline_variant, #46464f) !important;
+        --color-neutral-border-medium: var(--outline_variant, #46464f) !important;
+        --color-neutral-border-strong: var(--outline, #91909a) !important;
+
+        --color-primary: var(--primary, #bec2ff) !important;
+        --color-primary-background: var(--primary, #bec2ff) !important;
+        --color-primary-background-hover: var(--primary_fixed_dim, #bec2ff) !important;
+        --color-primary-background-selected: var(--primary_container, #3e4278) !important;
+        --color-on-primary: var(--on_primary, #272b60) !important;
+
+        --color-secondary: var(--on_surface_variant, #c7c5d0) !important;
+        --color-secondary-background: var(--surface_container_low, #1b1b21) !important;
+        --color-secondary-background-hover: var(--surface_container_high, #2a292f) !important;
+        --color-secondary-background-selected: var(--surface_container_high, #2a292f) !important;
+        --color-secondary-plain: var(--on_surface, #e4e1e9) !important;
+        --color-secondary-plain-weak: var(--on_surface_variant, #c7c5d0) !important;
+        --color-secondary-weak: var(--on_surface_variant, #c7c5d0) !important;
+
+        --color-tone-1: var(--on_surface, #e4e1e9) !important;
+        --color-tone-2: var(--on_surface, #e4e1e9) !important;
+        --color-tone-3: var(--on_surface_variant, #c7c5d0) !important;
+        --color-tone-4: var(--on_surface_variant, #c7c5d0) !important;
+        --color-tone-5: var(--outline, #91909a) !important;
+        --color-tone-6: var(--surface_variant, #46464f) !important;
+        --color-tone-7: var(--surface_container_high, #2a292f) !important;
+
+        --color-ui-canvas: var(--surface, #131318) !important;
+        --color-ui-canvas-text: var(--on_surface, #e4e1e9) !important;
+        --color-interface-base: var(--surface, #131318) !important;
+        --color-interface-base-weak: var(--surface_container_low, #1b1b21) !important;
+        --color-interface-base-strong: var(--surface_container_high, #2a292f) !important;
+
+        --color-link: var(--primary, #bec2ff) !important;
+        --color-link-hover: var(--primary_fixed, #e0e0ff) !important;
+        --color-link-visited: var(--tertiary, #e8b9d5) !important;
+        --color-link-default: var(--primary, #bec2ff) !important;
+
+        --color-upvote: var(--primary, #bec2ff) !important;
+        --color-downvote: var(--tertiary, #e8b9d5) !important;
+        --color-online: var(--secondary, #c5c4dd) !important;
+        --color-brand-orange: var(--primary, #bec2ff) !important;
+
+        --color-button-primary-background: var(--primary, #bec2ff) !important;
+        --color-button-primary-text: var(--on_primary, #272b60) !important;
+        --color-button-secondary-background: var(--surface_container_high, #2a292f) !important;
+        --color-button-secondary-text: var(--on_surface, #e4e1e9) !important;
+        --color-button-secondary-border: var(--outline_variant, #46464f) !important;
+        --color-button-tertiary-background: transparent !important;
+        --color-button-tertiary-text: var(--on_surface, #e4e1e9) !important;
+
+        --color-danger: var(--error, #ffb4ab) !important;
+        --color-danger-background: var(--error_container, #93000a) !important;
+        --color-danger-text: var(--on_error_container, #ffdad6) !important;
+        --color-success: var(--secondary, #c5c4dd) !important;
+        --color-warning: var(--tertiary, #e8b9d5) !important;
+
+        --color-neutral-background-selected-weak: var(--surface_container, #1f1f25) !important;
+        --color-neutral-content-disabled: var(--outline, #91909a) !important;
+        --color-opacity-50: rgba(228, 225, 233, 0.5) !important;
+
+        background-color: var(--surface, #131318) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    html,
+    body,
+    #main-content,
+    main,
+    [role="main"],
+    .App,
+    .route,
+    #SHORTCUT_FOCUSABLE_DIV,
+    #2x-container,
+    .content,
+    .ListingLayout-backgroundContainer,
+    .grid-container,
+    .layout,
+    .main {
+        background-color: var(--surface, #131318) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    /* ---- Header / nav / sidebars ---- */
+    header,
+    nav,
+    #header,
+    #header-container,
+    .header,
+    faceplate-tracker,
+    shreddit-header-large,
+    shreddit-header-small,
+    #left-sidebar,
+    #right-sidebar,
+    .sidebar,
+    aside,
+    [slot="sidebar"],
+    .left-sidebar,
+    .right-sidebar {
+        background-color: var(--surface_container_low, #1b1b21) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    /* ---- Posts / comments / cards ---- */
+    article,
+    shreddit-post,
+    shreddit-comment,
+    shreddit-comment-tree,
+    shreddit-profile-comment,
+    .Comment,
+    .Post,
+    .thing,
+    .sitetable,
+    .link,
+    [data-testid="post-container"],
+    [data-testid="comment"],
+    [slot="comment"],
+    .promotedlink,
+    .card,
+    .PostHeader,
+    .CommentHeader {
+        background-color: var(--surface_container_low, #1b1b21) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    shreddit-post:hover,
+    shreddit-comment:hover {
+        background-color: var(--surface_container, #1f1f25) !important;
+    }
+
+    /* ---- Text ---- */
+    h1, h2, h3, h4, h5, h6,
+    [slot="title"],
+    a[slot="title"],
+    .title,
+    .PostTitle {
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    p, li, dd, dt, span, td, th, label, blockquote, figcaption {
+        color: inherit;
+    }
+
+    a,
+    a[slot="title"],
+    .md a,
+    .comment-body a,
+    [slot="text-body"] a {
+        color: var(--primary, #bec2ff) !important;
+    }
+
+    a:visited,
+    .md a:visited {
+        color: var(--tertiary, #e8b9d5) !important;
+    }
+
+    .md,
+    .comment-body,
+    [slot="text-body"],
+    [slot="comment"] p {
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    time,
+    .created,
+    .tagline,
+    .meta,
+    .PostMeta,
+    .CommentMeta,
+    [slot="credit-bar"] {
+        color: var(--on_surface_variant, #c7c5d0) !important;
+    }
+
+    /* ---- Buttons ---- */
+    button,
+    [role="button"],
+    .button,
+    .btn,
+    shreddit-async-loader button {
+        background-color: var(--surface_container_high, #2a292f) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    button:hover,
+    [role="button"]:hover {
+        background-color: var(--surface_container_highest, #34343a) !important;
+    }
+
+    button[type="submit"],
+    .button-primary,
+    [variant="primary"] {
+        background-color: var(--primary, #bec2ff) !important;
+        color: var(--on_primary, #272b60) !important;
+        border-color: var(--primary, #bec2ff) !important;
+    }
+
+    /* ---- Forms / search ---- */
+    input,
+    textarea,
+    select,
+    search-input,
+    faceplate-search-input,
+    .search-input,
+    [slot="search"] input {
+        background-color: var(--surface_container, #1f1f25) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    input::placeholder,
+    textarea::placeholder {
+        color: var(--on_surface_variant, #c7c5d0) !important;
+        opacity: 1 !important;
+    }
+
+    /* ---- Dropdowns / modals / popovers ---- */
+    [role="menu"],
+    [role="listbox"],
+    [role="dialog"],
+    .menu,
+    .dropdown,
+    .popover,
+    .modal,
+    faceplate-dropdown-menu,
+    faceplate-dialog,
+    shreddit-dialog,
+    shreddit-overlay,
+    .subreddit-rule-item {
+        background-color: var(--surface_container, #1f1f25) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    /* ---- Code ---- */
+    code,
+    pre,
+    kbd,
+    samp {
+        background-color: var(--surface_container_high, #2a292f) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    pre code {
+        background-color: transparent !important;
+    }
+
+    /* ---- Media / tables / rules ---- */
+    table {
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    th {
+        background-color: var(--surface_container_high, #2a292f) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    td {
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    hr,
+    .divider {
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    img,
+    video {
+        color-scheme: dark;
+    }
+
+    ::selection {
+        background-color: var(--primary, #bec2ff);
+        color: var(--on_primary, #272b60);
+    }
+
     * {
-	--color-neutral-background: var(--surface) !important;
-	--color-neutral-content: var(--on_surface) !important;
-	--color-neutral-background-selected: var(--surface_bright) !important;
-	--color-neutral-background-hover: var(--surface_container) !important;
-	--color-neutral-background-weak: var(--surface_container) !important;
-	--color-neutral-background-strong: var(--surface_container_low) !important;
-	--color-primary-background: var(--surface) !important;
-	--color-primary-background-hover: var(--primary_container) !important;
-	--color-secondary-background-hover: var(--surface_bright) !important;
-	--color-secondary-background-selected: var(--surface_bright) !important;
-	--color-neutral-content-weak: var(--on_surface_variant) !important;
-	--color-primary: var(--primary) !important;
-	--color-secondary-background: var(--surface) !important;
-	--color-neutral-background-container-strong: var(--surface_container_high) !important;
-	--color-neutral-background-container-strong-hover: var(--surface_container_highest) !important;
-	--color-secondary-weak: var(--primary) !important;
-	--color-coolgray-900: var(--primary) !important;
-	--color-coolgray-850: var(--secondary_fixed) !important;
-	--color-coolgray-50: var(--surface_container_high) !important;
-	--color-secondary-plain-weak: var(--on_surface_variant) !important;
-	--color-secondary: var(--on_surface_variant) !important;
-     }
-
-     .WkGKgAfDZXg_Q1Un {
-	border: var(--border-width-small)solid var(--primary) !important;
-	background: var(--surface) !important;
-     }
-
-     ._PmJypc84I8Fqjrr:hover {
-	color: var(--surface) !important;
-     }
-
-     .C3wyHryfIsKm5Scc .z9s8b0zHNQwRLdGH .Ed68NogwJ8USjhUc {
-  	color: var(--surface) !important;
-     }
+        scrollbar-color: var(--outline_variant, #46464f) var(--surface, #131318);
+    }
 }

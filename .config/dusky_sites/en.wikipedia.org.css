@@ -32,4 +32,260 @@
     figcaption { background-color: var(--surface) !important; color: var(--on_surface) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Ffigcaption%1Fbg | bg: surface */
     table { background-color: var(--background) !important; color: var(--on_background) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Ftable%1Fbg | bg: background */
     /* <<< dusky:picks */
+
+    /* ---- Map Wikipedia's Codex token system onto the Matugen palette ---- */
+    :root,
+    html {
+        color-scheme: dark !important;
+
+        --background-color-base: var(--surface, #131318) !important;
+        --background-color-neutral: var(--surface_container_low, #1b1b21) !important;
+        --background-color-neutral-subtle: var(--surface_container_low, #1b1b21) !important;
+        --background-color-interactive: var(--surface_container_high, #2a292f) !important;
+        --background-color-interactive-subtle: var(--surface_container, #1f1f25) !important;
+        --background-color-interactive-subtle--hover: var(--surface_container_high, #2a292f) !important;
+        --background-color-interactive-subtle--active: var(--surface_container_highest, #34343a) !important;
+        --background-color-interactive--hover: var(--surface_container_highest, #34343a) !important;
+        --background-color-interactive--active: var(--surface_variant, #46464f) !important;
+        --background-color-inverted: var(--on_surface, #e4e1e9) !important;
+        --background-color-progressive-subtle: var(--primary_container, #3e4278) !important;
+        --background-color-progressive-subtle--hover: var(--primary_container, #3e4278) !important;
+        --background-color-progressive-subtle--active: var(--primary_fixed_dim, #bec2ff) !important;
+        --background-color-disabled: var(--surface_container_high, #2a292f) !important;
+        --background-color-disabled-subtle: var(--surface_container, #1f1f25) !important;
+        --background-color-error-subtle: var(--error_container, #93000a) !important;
+        --background-color-destructive-subtle: var(--error_container, #93000a) !important;
+        --background-color-warning-subtle: var(--tertiary_container, #5e3c52) !important;
+        --background-color-success-subtle: var(--secondary_container, #444559) !important;
+
+        --color-base: var(--on_surface, #e4e1e9) !important;
+        --color-base--hover: var(--on_background, #e4e1e9) !important;
+        --color-base--subtle: var(--on_surface_variant, #c7c5d0) !important;
+        --color-emphasized: var(--on_surface, #e4e1e9) !important;
+        --color-inverted: var(--surface, #131318) !important;
+        --color-subtle: var(--on_surface_variant, #c7c5d0) !important;
+        --color-neutral: var(--on_surface_variant, #c7c5d0) !important;
+        --color-notice: var(--on_surface_variant, #c7c5d0) !important;
+        --color-disabled: var(--outline, #91909a) !important;
+        --color-disabled-emphasized: var(--outline, #91909a) !important;
+        --color-progressive: var(--primary, #bec2ff) !important;
+        --color-progressive--hover: var(--primary_fixed, #e0e0ff) !important;
+        --color-progressive--active: var(--primary_fixed, #e0e0ff) !important;
+        --color-icon-progressive: var(--primary, #bec2ff) !important;
+        --color-visited: var(--tertiary, #e8b9d5) !important;
+        --color-visited--hover: var(--tertiary_fixed, #ffd8ee) !important;
+        --color-visited--active: var(--tertiary_fixed, #ffd8ee) !important;
+        --color-destructive: var(--error, #ffb4ab) !important;
+        --color-destructive--hover: var(--error, #ffb4ab) !important;
+        --color-destructive--active: var(--on_error_container, #ffdad6) !important;
+        --color-error: var(--error, #ffb4ab) !important;
+        --color-error--hover: var(--error, #ffb4ab) !important;
+        --color-error--active: var(--on_error_container, #ffdad6) !important;
+        --color-warning: var(--tertiary, #e8b9d5) !important;
+        --color-success: var(--secondary, #c5c4dd) !important;
+        --color-content-added: var(--secondary, #c5c4dd) !important;
+        --color-content-removed: var(--error, #ffb4ab) !important;
+
+        --border-color-base: var(--outline_variant, #46464f) !important;
+        --border-color-subtle: var(--outline_variant, #46464f) !important;
+        --border-color-muted: var(--outline_variant, #46464f) !important;
+        --border-color-emphasized: var(--outline, #91909a) !important;
+        --border-color-inverted: var(--surface, #131318) !important;
+        --border-color-progressive: var(--primary, #bec2ff) !important;
+        --border-color-progressive--hover: var(--primary_fixed, #e0e0ff) !important;
+        --border-color-progressive--active: var(--primary_fixed, #e0e0ff) !important;
+        --border-color-interactive: var(--outline, #91909a) !important;
+        --border-color-interactive--hover: var(--on_surface_variant, #c7c5d0) !important;
+        --border-color-interactive--active: var(--on_surface, #e4e1e9) !important;
+        --border-color-disabled: var(--outline_variant, #46464f) !important;
+        --border-color-warning--active: var(--tertiary, #e8b9d5) !important;
+        --border-color-destructive: var(--error, #ffb4ab) !important;
+        --border-color-error: var(--error, #ffb4ab) !important;
+    }
+
+    html,
+    body,
+    .mw-page-container,
+    .mw-page-container-inner,
+    .vector-body,
+    #content,
+    #mw-content-text,
+    .mw-parser-output {
+        background-color: var(--surface, #131318) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    /* Chrome: header, sidebars, tabs, menus */
+    .vector-header-container,
+    .vector-header,
+    .mw-header,
+    #mw-head,
+    #mw-panel,
+    .vector-main-menu,
+    .vector-dropdown-content,
+    .vector-menu-content,
+    .vector-toc,
+    #vector-toc-panel,
+    .vector-pinnable-element,
+    .vector-page-toolbar,
+    .mw-footer,
+    #footer {
+        background-color: var(--surface_container_low, #1b1b21) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    /* Content surfaces */
+    .mw-body,
+    .mw-body-content,
+    .mp-box,
+    .mp-panel,
+    .navbox,
+    .infobox,
+    .toc,
+    #toc,
+    .vector-toc,
+    .thumbinner,
+    .mw-halign-left,
+    .mw-halign-right,
+    .catlinks,
+    #catlinks,
+    .printfooter,
+    .mw-editsection,
+    .mw-heading,
+    .mw-message-box {
+        background-color: var(--surface_container_low, #1b1b21) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    .mw-message-box,
+    .mw-notification,
+    .oo-ui-popupWidget-popup,
+    .oo-ui-menuSelectWidget,
+    .oo-ui-dropdownWidget-handle,
+    .vector-popup,
+    .mwe-popups-container {
+        background-color: var(--surface_container, #1f1f25) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    /* Typography */
+    h1, h2, h3, h4, h5, h6,
+    .mw-heading,
+    .firstHeading,
+    #firstHeading {
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    .mw-body-content,
+    .mw-parser-output,
+    p,
+    li,
+    dd,
+    dt,
+    blockquote,
+    figcaption {
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    .mw-body-content a,
+    .mw-parser-output a,
+    a {
+        color: var(--primary, #bec2ff) !important;
+    }
+
+    .mw-body-content a:visited,
+    .mw-parser-output a:visited {
+        color: var(--tertiary, #e8b9d5) !important;
+    }
+
+    .mw-body-content a.new,
+    .mw-parser-output a.new {
+        color: var(--error, #ffb4ab) !important;
+    }
+
+    small,
+    .mw-body-content small,
+    sub,
+    sup {
+        color: var(--on_surface_variant, #c7c5d0);
+    }
+
+    /* Tables */
+    table,
+    .wikitable,
+    .infobox {
+        background-color: var(--surface_container_low, #1b1b21) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    th {
+        background-color: var(--surface_container_high, #2a292f) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    td {
+        background-color: transparent !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    /* Code */
+    code,
+    pre,
+    kbd,
+    samp,
+    tt,
+    .mw-highlight {
+        background-color: var(--surface_container_high, #2a292f) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    pre code {
+        background-color: transparent !important;
+    }
+
+    /* Forms / OOUI */
+    input,
+    textarea,
+    select,
+    button,
+    .oo-ui-inputWidget-input,
+    .oo-ui-buttonElement-button,
+    .oo-ui-textInputWidget input,
+    .cdx-text-input__input,
+    .cdx-button {
+        background-color: var(--surface_container, #1f1f25) !important;
+        color: var(--on_surface, #e4e1e9) !important;
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    input::placeholder,
+    textarea::placeholder {
+        color: var(--on_surface_variant, #c7c5d0) !important;
+        opacity: 1 !important;
+    }
+
+    .cdx-button--action-progressive,
+    .oo-ui-flaggedElement-progressive > .oo-ui-buttonElement-button {
+        background-color: var(--primary, #bec2ff) !important;
+        color: var(--on_primary, #272b60) !important;
+    }
+
+    hr {
+        border-color: var(--outline_variant, #46464f) !important;
+    }
+
+    ::selection {
+        background-color: var(--primary, #bec2ff);
+        color: var(--on_primary, #272b60);
+    }
+
+    * {
+        scrollbar-color: var(--outline_variant, #46464f) var(--surface, #131318);
+    }
 }
