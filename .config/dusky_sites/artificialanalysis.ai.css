@@ -1,17 +1,386 @@
 @-moz-document domain("artificialanalysis.ai") {
+    /* >>> dusky:picks - managed by the Visual Picker, one rule per line */
+    /* <<< dusky:picks */
+
+    :root,
+    .dark,
+    [data-theme="dark"] {
+        color-scheme: dark !important;
+
+        /* shadcn/Tailwind design tokens, expressed as HSL channel triplets so
+         * hsl(var(--token)) keeps working. The host also publishes
+         * --<role>_hsl triplets; using them keeps this theme in sync with
+         * Matugen palette changes, and the literals are fallbacks for older
+         * host builds. */
+        --foreground: var(--on_surface_hsl, 262.5 15.38% 89.8%);
+        --card: var(--surface_container_hsl, 240 8.82% 13.33%);
+        --card-foreground: var(--on_surface_hsl, 262.5 15.38% 89.8%);
+        --popover: var(--surface_container_hsl, 240 8.82% 13.33%);
+        --popover-foreground: var(--on_surface_hsl, 262.5 15.38% 89.8%);
+
+        --border: var(--outline_variant_hsl, 240 6.04% 29.22%);
+        --input: var(--outline_variant_hsl, 240 6.04% 29.22%);
+        --ring: var(--primary_hsl, 236.31 100% 87.25%);
+
+        --muted: var(--surface_container_low_hsl, 240 10% 11.76%);
+        --muted-foreground: var(--on_surface_variant_hsl, 250.91 10.48% 79.41%);
+        --accent: var(--surface_container_high_hsl, 250 6.82% 17.25%);
+        --accent-foreground: var(--on_surface_hsl, 262.5 15.38% 89.8%);
+        --secondary-foreground: var(--on_secondary_container_hsl, 242.4 67.57% 92.75%);
+
+        --destructive: var(--error_hsl, 6.43 100% 83.53%);
+        --destructive-foreground: var(--on_error_hsl, 357.14 100% 20.59%);
+
+        --sidebar-background: var(--surface_container_low_hsl, 240 10% 11.76%);
+        --sidebar-foreground: var(--on_surface_variant_hsl, 250.91 10.48% 79.41%);
+        --sidebar-primary: var(--primary_hsl, 236.31 100% 87.25%);
+        --sidebar-primary-foreground: var(--on_primary_hsl, 235.79 42.22% 26.47%);
+        --sidebar-accent: var(--surface_container_high_hsl, 250 6.82% 17.25%);
+        --sidebar-accent-foreground: var(--on_surface_hsl, 262.5 15.38% 89.8%);
+        --sidebar-border: var(--outline_variant_hsl, 240 6.04% 29.22%);
+        --sidebar-ring: var(--primary_hsl, 236.31 100% 87.25%);
+
+        /* Neutral ramp: backgrounds where the site uses it as a fill, borders
+         * where it uses it as a line. Text classes are corrected below. */
+        --neutral-50: var(--surface_container_low_hsl, 240 10% 11.76%);
+        --neutral-100: var(--surface_container_high_hsl, 250 6.82% 17.25%);
+        --neutral-200: var(--surface_container_highest_hsl, 240 5.45% 21.57%);
+        --neutral-500: var(--surface_container_highest_hsl, 240 5.45% 21.57%);
+        --neutral-600: var(--outline_hsl, 246 4.72% 58.43%);
+        --neutral-700: var(--surface_container_highest_hsl, 240 5.45% 21.57%);
+        --neutral-900: var(--on_surface_hsl, 262.5 15.38% 89.8%);
+
+        /* Brand ramp, mapped onto Matugen roles. Purple/blue are the accent,
+         * mint/lime/magenta are tertiary, orange is the warm data accent. */
+        --brand-plum: var(--primary_hsl, 236.31 100% 87.25%);
+        --brand-purple: var(--primary_hsl, 236.31 100% 87.25%);
+        --brand-purple-light: 236 32% 20%; /* footer panel: a deep tint of primary */
+        --brand-purple-dark: var(--primary_container_hsl, 235.86 31.87% 35.69%);
+        --brand-blue: var(--primary_hsl, 236.31 100% 87.25%);
+        --brand-blue-light: var(--surface_container_high_hsl, 250 6.82% 17.25%);
+        --brand-green-dark: var(--secondary_hsl, 242.4 26.88% 81.76%);
+        --brand-lime: var(--secondary_hsl, 242.4 26.88% 81.76%);
+        --brand-magenta: var(--tertiary_hsl, 324.26 50.54% 81.76%);
+        --brand-mint: var(--tertiary_hsl, 324.26 50.54% 81.76%);
+        --brand-peach: var(--surface_container_high_hsl, 250 6.82% 17.25%);
+        --brand-orange: var(--error_hsl, 6.43 100% 83.53%);
+        --brand-yellow: var(--tertiary_hsl, 324.26 50.54% 81.76%);
+    }
+
     html,
     body,
-    main,
     #__next,
-    .bg-background {
+    main {
         background-color: var(--background) !important;
         color: var(--on_background) !important;
+    }
+
+    /* --background is a palette hex (inline !important), so every hsl(var(...))
+     * use of it is invalid. Re-point those utilities at the hex directly. */
+    .bg-background,
+    .hover\:bg-background:hover,
+    .focus\:bg-background:focus,
+    .data-\[state\=active\]\:bg-background[data-state=active],
+    .data-\[state\=on\]\:bg-background[data-state=on],
+    .max-lg\:bg-background,
+    .lg\:before\:bg-background::before {
+        background-color: var(--background) !important;
+    }
+    .bg-background\/95 {
+        background-color: color-mix(in srgb, var(--background) 95%, transparent) !important;
+    }
+    .text-background,
+    .hover\:text-background:hover {
+        color: var(--background) !important;
+    }
+    .ring-background {
+        --tw-ring-color: var(--background) !important;
+    }
+    .ring-offset-background {
+        --tw-ring-offset-color: var(--background) !important;
+    }
+    .from-background {
+        --tw-gradient-from: var(--background) var(--tw-gradient-from-position) !important;
+        --tw-gradient-to: color-mix(in srgb, var(--background) 0%, transparent) var(--tw-gradient-to-position) !important;
+        --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to) !important;
+    }
+    .to-background {
+        --tw-gradient-to: var(--background) var(--tw-gradient-to-position) !important;
+    }
+
+    /* --secondary is also a palette hex and is used as a fill in a few controls. */
+    .bg-secondary,
+    .hover\:bg-secondary:hover,
+    .data-\[state\=open\]\:bg-secondary[data-state=open] {
+        background-color: var(--secondary_container) !important;
+    }
+    .hover\:bg-secondary\/80:hover {
+        background-color: color-mix(in srgb, var(--secondary_container) 80%, transparent) !important;
+    }
+
+    /* Hard-coded white/black utilities. */
+    .bg-white {
+        background-color: var(--surface_container) !important;
+    }
+    .bg-white\/5 { background-color: color-mix(in srgb, var(--on_surface) 5%, transparent) !important; }
+    .bg-white\/10 { background-color: color-mix(in srgb, var(--on_surface) 10%, transparent) !important; }
+    .bg-white\/25 { background-color: color-mix(in srgb, var(--on_surface) 25%, transparent) !important; }
+    .bg-white\/40 { background-color: color-mix(in srgb, var(--on_surface) 40%, transparent) !important; }
+    .bg-white\/60 { background-color: color-mix(in srgb, var(--on_surface) 60%, transparent) !important; }
+    .bg-white\/70 { background-color: color-mix(in srgb, var(--on_surface) 70%, transparent) !important; }
+    .bg-white\/80 { background-color: color-mix(in srgb, var(--on_surface) 80%, transparent) !important; }
+    .bg-white\/90 { background-color: color-mix(in srgb, var(--on_surface) 90%, transparent) !important; }
+    .bg-white\/95 { background-color: color-mix(in srgb, var(--surface_container) 95%, transparent) !important; }
+
+    .bg-black {
+        background-color: var(--surface_container_lowest) !important;
+    }
+    .bg-black\/5 { background-color: color-mix(in srgb, var(--surface_container_lowest) 5%, transparent) !important; }
+    .bg-black\/10 { background-color: color-mix(in srgb, var(--surface_container_lowest) 10%, transparent) !important; }
+    .bg-black\/20 { background-color: color-mix(in srgb, var(--surface_container_lowest) 20%, transparent) !important; }
+    .bg-black\/30 { background-color: color-mix(in srgb, var(--surface_container_lowest) 30%, transparent) !important; }
+    .bg-black\/40 { background-color: color-mix(in srgb, var(--surface_container_lowest) 40%, transparent) !important; }
+    .bg-black\/50 { background-color: color-mix(in srgb, var(--surface_container_lowest) 50%, transparent) !important; }
+    .bg-black\/60 { background-color: color-mix(in srgb, var(--surface_container_lowest) 60%, transparent) !important; }
+    .bg-black\/70 { background-color: color-mix(in srgb, var(--surface_container_lowest) 70%, transparent) !important; }
+    .bg-black\/80 { background-color: color-mix(in srgb, var(--surface_container_lowest) 80%, transparent) !important; }
+
+    .text-black {
+        color: var(--on_surface) !important;
+    }
+    .text-black\/50 {
+        color: color-mix(in srgb, var(--on_surface) 50%, transparent) !important;
+    }
+    .text-white {
+        color: var(--on_surface) !important;
+    }
+    .text-white\/30 { color: color-mix(in srgb, var(--on_surface) 30%, transparent) !important; }
+    .text-white\/50 { color: color-mix(in srgb, var(--on_surface) 50%, transparent) !important; }
+    .text-white\/60 { color: color-mix(in srgb, var(--on_surface) 60%, transparent) !important; }
+    .text-white\/70 { color: color-mix(in srgb, var(--on_surface) 70%, transparent) !important; }
+    .text-white\/75 { color: color-mix(in srgb, var(--on_surface) 75%, transparent) !important; }
+    .text-white\/80 { color: color-mix(in srgb, var(--on_surface) 80%, transparent) !important; }
+    .text-white\/90 { color: color-mix(in srgb, var(--on_surface) 90%, transparent) !important; }
+    .text-white\/\[0\.12\] { color: color-mix(in srgb, var(--on_surface) 12%, transparent) !important; }
+
+    .border-white {
+        border-color: var(--outline) !important;
+    }
+    .border-black {
+        border-color: var(--outline_variant) !important;
+    }
+    .hover\:border-black:hover {
+        border-color: var(--primary) !important;
+    }
+
+    /* Neutral text utilities: the neutral ramp above is tuned for fills. */
+    .text-neutral-500,
+    .text-neutral-500\/60 {
+        color: var(--on_surface_variant) !important;
+    }
+    .text-neutral-600 {
+        color: var(--on_surface_variant) !important;
+    }
+    .text-neutral-700 {
+        color: var(--on_surface) !important;
+    }
+    .text-neutral-900 {
+        color: var(--on_surface) !important;
+    }
+
+    /* Brand text/badge fixes where one token serves both fill and ink. */
+    .text-brand-purple-dark,
+    .marker\:text-brand-purple-dark::marker {
+        color: var(--primary) !important;
+    }
+    .text-brand-blue-light {
+        color: var(--on_surface_variant) !important;
+    }
+    .text-brand-purple-light,
+    .hover\:text-brand-purple-light:hover {
+        color: var(--on_primary_container) !important;
+    }
+    .text-brand-plum\/60 {
+        color: color-mix(in srgb, var(--primary) 60%, transparent) !important;
+    }
+    .text-brand-plum\/70 {
+        color: color-mix(in srgb, var(--primary) 70%, transparent) !important;
+    }
+    .placeholder\:text-brand-plum\/60::placeholder {
+        color: color-mix(in srgb, var(--primary) 60%, transparent) !important;
+    }
+
+    .bg-brand-plum,
+    .hover\:bg-brand-plum\/90:hover {
+        background-color: var(--primary_container) !important;
+    }
+    .bg-brand-purple-dark,
+    .hover\:bg-brand-purple-dark\/90:hover,
+    .group:hover .group-hover\:bg-brand-purple-dark {
+        background-color: var(--primary_container) !important;
+    }
+    .bg-brand-green-dark,
+    .hover\:bg-brand-green-dark\/90:hover {
+        background-color: var(--secondary_container) !important;
+    }
+
+    /* Readable ink on accent fills. */
+    .bg-black.text-white,
+    .bg-black .text-white {
+        color: var(--on_surface) !important;
+    }
+    .bg-brand-purple.text-white,
+    .bg-brand-purple .text-white,
+    .bg-brand-blue.text-white,
+    .bg-brand-blue .text-white {
+        color: var(--on_primary) !important;
+    }
+    .bg-brand-plum.text-white,
+    .bg-brand-plum .text-white {
+        color: var(--on_primary_container) !important;
+    }
+    .bg-brand-mint.text-black,
+    .bg-brand-mint .text-black,
+    .bg-brand-lime.text-black,
+    .bg-brand-lime .text-black,
+    .bg-brand-yellow.text-black,
+    .bg-brand-yellow .text-black,
+    .bg-brand-magenta.text-black,
+    .bg-brand-magenta .text-black {
+        color: var(--on_tertiary) !important;
+    }
+    .bg-brand-orange.text-black,
+    .bg-brand-orange .text-black {
+        color: var(--on_error) !important;
+    }
+    .bg-brand-purple-dark.text-white,
+    .bg-brand-purple-dark .text-white {
+        color: var(--on_primary_container) !important;
+    }
+
+    /* Cards, popovers, tables, inputs. */
+    .bg-card { background-color: var(--surface_container) !important; }
+    .text-card-foreground { color: var(--on_surface) !important; }
+    .bg-popover { background-color: var(--surface_container) !important; }
+    .text-popover-foreground { color: var(--on_surface) !important; }
+    .text-secondary-foreground { color: var(--on_secondary_container) !important; }
+    .bg-muted { background-color: var(--surface_container_low) !important; }
+    .text-muted-foreground { color: var(--on_surface_variant) !important; }
+    .bg-accent { background-color: var(--surface_container_high) !important; }
+    .text-accent-foreground { color: var(--on_surface) !important; }
+
+    .border-border,
+    .border-input,
+    .divide-border > :not([hidden]) ~ :not([hidden]) {
+        border-color: var(--outline_variant) !important;
+    }
+    .ring-ring {
+        --tw-ring-color: var(--primary) !important;
+    }
+
+    input,
+    textarea,
+    select {
+        background-color: var(--surface_container_lowest) !important;
+        color: var(--on_surface) !important;
+        border-color: var(--outline_variant) !important;
+    }
+    input::placeholder,
+    textarea::placeholder {
+        color: var(--on_surface_variant) !important;
+    }
+
+    table,
+    thead,
+    tbody,
+    tfoot,
+    tr,
+    th,
+    td {
+        border-color: var(--outline_variant) !important;
+    }
+    thead,
+    th {
+        background-color: var(--surface_container) !important;
+        color: var(--on_surface_variant) !important;
+    }
+    tbody tr:hover,
+    tr:hover {
+        background-color: var(--surface_container_high) !important;
+    }
+
+    /* Recharts uses presentation fills, so override them at the SVG level. */
+    .recharts-wrapper svg text {
+        fill: var(--on_surface) !important;
+        stroke: var(--background);
+        stroke-width: 2px;
+        paint-order: stroke;
+    }
+    .recharts-cartesian-grid line,
+    .recharts-cartesian-axis line {
+        stroke: var(--outline_variant) !important;
+    }
+    .recharts-cartesian-axis-tick-value,
+    .recharts-legend-item-text {
+        fill: var(--on_surface_variant) !important;
+    }
+
+    /* Model/brand colours are fixed data colours and some series are literally
+     * black, which disappears against the dark page. A hairline edge keeps every
+     * bar legible without recolouring the data. */
+    .recharts-rectangle {
+        stroke: color-mix(in srgb, var(--on_surface) 32%, transparent) !important;
+        stroke-width: 1px;
+    }
+
+    /* Recharts draws rotated axis labels in <foreignObject> HTML, where the site
+     * hard-codes a near-black text colour inline. */
+    svg foreignObject a,
+    svg foreignObject div,
+    svg foreignObject span,
+    svg foreignObject p {
+        color: var(--on_surface) !important;
+        -webkit-text-fill-color: var(--on_surface) !important;
+    }
+    svg foreignObject a {
+        text-decoration-color: var(--outline) !important;
+    }
+    .recharts-default-tooltip,
+    .recharts-tooltip-wrapper > div {
+        background-color: var(--surface_container_high) !important;
+        border-color: var(--outline_variant) !important;
+        color: var(--on_surface) !important;
+    }
+
+    /* Segmented tab bars: the active trigger is hard-coded to `!text-black`, which
+     * disappears on a dark panel. Use the normal ink for active and muted ink for
+     * the rest so the selected tab still reads as selected. */
+    .data-\[state\=active\]\:\!text-black[data-state="active"],
+    .data-\[state\=active\]\:text-foreground[data-state="active"],
+    .data-\[state\=active\]\:\!text-foreground[data-state="active"] {
+        color: var(--on_surface) !important;
+    }
+    .data-\[state\=inactive\]\:text-neutral-700[data-state="inactive"],
+    [role="tab"][data-state="inactive"] {
+        color: var(--on_surface_variant) !important;
+    }
+    [role="tablist"] {
+        border-color: var(--outline_variant) !important;
+    }
+    [role="tab"][data-state="active"] .text-brand-purple-dark {
+        color: var(--primary) !important;
+    }
+
+    /* Scrollbars and selection. */
+    * {
+        scrollbar-color: var(--outline) var(--surface_container_low);
+    }
+    ::selection {
+        background-color: color-mix(in srgb, var(--primary) 35%, transparent);
+        color: var(--on_surface);
     }
 
     .text-foreground {
         color: var(--on_background) !important;
     }
-
-    /* >>> dusky:picks - managed by the Visual Picker, one rule per line */
-    /* <<< dusky:picks */
 }
