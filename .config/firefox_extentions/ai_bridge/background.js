@@ -61,6 +61,7 @@ function connectWS(force = false){
     isConnecting = false;
     log("WS connected successfully!");
     await setStatus(true);
+    ensureContentScriptsInAllAiTabs();
 
     if(heartbeatInterval) clearInterval(heartbeatInterval);
     heartbeatInterval = setInterval(() => {
@@ -75,9 +76,42 @@ function connectWS(force = false){
     try{ msg = JSON.parse(event.data); }catch{ return; }
 
     if(msg.type === "RELOAD_EXTENSION"){
-      log("Reconnecting extension bridge...");
+      log("Reloading extension...");
       try{ ws.send(JSON.stringify({type: "RELOAD_ACK"})); }catch{}
-      connectWS(true);
+      try{ browser.runtime.reload(); }catch{ connectWS(true); }
+      return;
+    }
+
+    if(msg.type === "INSPECT_DOM"){
+      try {
+        const res = await browser.scripting.executeScript({
+          target: {tabId: msg.tabId || activeTabId},
+          func: () => {
+            const ed = document.querySelector('#prompt-textarea, [contenteditable="true"], textarea');
+            const btns = Array.from(document.querySelectorAll('button')).map(b => ({
+              testid: b.getAttribute('data-testid'),
+              label: b.getAttribute('aria-label'),
+              text: b.textContent.trim(),
+              disabled: b.disabled,
+              vis: b.offsetParent !== null
+            })).filter(b => b.vis && (b.testid?.includes('send') || b.label?.toLowerCase().includes('send') || b.testid?.includes('stop') || b.label?.toLowerCase().includes('stop')));
+            return {
+              url: window.location.href,
+              editor: ed ? {
+                tag: ed.tagName,
+                id: ed.id,
+                contenteditable: ed.getAttribute('contenteditable'),
+                text: ed.textContent,
+                lexical: ed.getAttribute('data-lexical-editor')
+              } : null,
+              buttons: btns
+            };
+          }
+        });
+        ws?.send(JSON.stringify({type: "INSPECT_REPLY", result: res[0]?.result}));
+      } catch (e) {
+        ws?.send(JSON.stringify({type: "INSPECT_REPLY", error: String(e)}));
+      }
       return;
     }
 
@@ -131,11 +165,25 @@ async function sendMessageWithTimeout(tabId, msg, timeoutMs = 2000){
         return;
       }
 
+      let isGemini = false;
+      let targetUrl = "";
       try{
         const tab = await browser.tabs.get(targetId);
+        targetUrl = tab.url || "";
+        isGemini = targetUrl.includes("gemini.google.com");
         if(tab.windowId) await browser.windows.update(tab.windowId, {focused: true});
         await browser.tabs.update(targetId, {active: true});
       }catch(e){ log("Focus error (non-fatal):", e); }
+
+      try {
+        ws?.send(JSON.stringify({
+          type: "TAB_INFO",
+          requestId: msg.requestId,
+          tabId: targetId,
+          url: targetUrl,
+          isGemini: isGemini
+        }));
+      } catch(e) {}
 
       try{
         await sendMessageWithTimeout(targetId, msg, 2500);
@@ -246,21 +294,40 @@ function scheduleReconnect(){
 }
 
 // --- Firefox MV3 Alarms Keep-Alive & Auto-Heal ---
-try {
-  browser.alarms?.create("keepAlive", {periodInMinutes: 0.1});
-  browser.alarms?.onAlarm.addListener((alarm) => {
-    if(alarm.name === "keepAlive"){
-      if(!ws || ws.readyState !== WebSocket.OPEN){
-        connectWS(true);
-      }
+browser.alarms?.onAlarm?.addListener((alarm) => {
+  if (alarm.name === "keepAlive") {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      connectWS(false);
     }
-  });
-} catch(e) {}
+    ensureContentScriptsInAllAiTabs();
+  }
+});
+
+try {
+  browser.alarms?.create("keepAlive", { periodInMinutes: 1 });
+} catch (e) {}
 
 const knownAiTabs = new Set();
 
 function isAiUrl(url){
   return !!(url && AI_URL_PATTERNS.some(p => url.includes(p)));
+}
+
+async function ensureContentScriptsInAllAiTabs() {
+  try {
+    const tabs = await browser.tabs.query({});
+    for (const tab of tabs) {
+      if (tab.id && isAiUrl(tab.url)) {
+        try {
+          await browser.scripting.executeScript({
+            target: { tabId: tab.id },
+            files: ["content_isolated.js"]
+          });
+          knownAiTabs.add(tab.id);
+        } catch (e) {}
+      }
+    }
+  } catch (e) {}
 }
 
 // --- activeTabId Lock Priority Tab Targeting ---
@@ -359,15 +426,25 @@ browser.runtime.onMessage.addListener((msg, sender)=>{
   }
 });
 
-browser.runtime.onStartup.addListener(()=> connectWS(true));
-browser.runtime.onInstalled.addListener(()=> connectWS(true));
+browser.runtime.onStartup.addListener(() => {
+  connectWS(true);
+  ensureContentScriptsInAllAiTabs();
+});
 
-try{
-  const stored = await browser.storage.session.get("activeTabId");
-  if(stored?.activeTabId) activeTabId = stored.activeTabId;
-}catch{}
+browser.runtime.onInstalled.addListener(() => {
+  connectWS(true);
+  ensureContentScriptsInAllAiTabs();
+});
+
+browser.storage.session?.get("activeTabId").then((stored) => {
+  if (stored?.activeTabId) activeTabId = stored.activeTabId;
+}).catch(() => {});
+
 connectWS(true);
 
-if(browser.action?.onClicked){
-  browser.action.onClicked.addListener(()=> connectWS(true));
+if (browser.action?.onClicked) {
+  browser.action.onClicked.addListener(() => {
+    connectWS(true);
+    ensureContentScriptsInAllAiTabs();
+  });
 }

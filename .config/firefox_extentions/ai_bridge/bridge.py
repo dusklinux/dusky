@@ -6,9 +6,10 @@ Bridges terminal commands to open web AI tabs (ChatGPT, Claude, Gemini, Meta AI)
 
 import sys
 import os
+import socket
+import time as _time
 import json
 import asyncio
-import socket
 import base64
 import hashlib
 import uuid
@@ -20,6 +21,7 @@ HOST = "127.0.0.1"
 PORT = 8765
 
 CONNECTED_CLIENTS = set()
+PENDING_QUERY_TARGETS = {}
 
 def make_ws_response_key(sec_key):
     magic = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -142,20 +144,14 @@ def get_active_window():
         pass
     return LAST_NON_FIREFOX_TARGET["address"], LAST_NON_FIREFOX_TARGET["workspace_id"]
 
-def _do_os_return(prev_addr=None, prev_ws_id=None):
-    """Focus Firefox AI tab, send hardware Return for Gemini, and restore previous window/workspace focus."""
+def _get_firefox_target():
     try:
-        if not prev_addr:
-            prev_addr, prev_ws_id = get_active_window()
-
-        # Query clients for Firefox target
         res = subprocess.run(
             ["hyprctl", "clients", "-j"],
             capture_output=True, text=True, timeout=2,
         )
         if res.returncode != 0:
-            return
-
+            return None
         clients = json.loads(res.stdout)
         ai_keywords = (
             "google gemini", "gemini.google", "chatgpt", "claude",
@@ -168,7 +164,46 @@ def _do_os_return(prev_addr=None, prev_ws_id=None):
             if any(k in title for k in ai_keywords):
                 preferred = c
                 break
-        target = preferred or (ff[0] if ff else None)
+        return preferred or (ff[0] if ff else None)
+    except Exception:
+        return None
+
+def _focus_window(target):
+    if not target:
+        return
+    addr = target.get("address")
+    ws_info = target.get("workspace", {}) or {}
+    ws_id = ws_info.get("id")
+    multi_mon_ws = os.environ.get(
+        "AI_BRIDGE_MULTI_MON_WS",
+        os.path.expanduser("~/user_scripts/hypr/multi_monitor_workspace.sh"),
+    )
+    if ws_id is not None and ws_id > 0:
+        rel_ws = ((ws_id - 1) % 10) + 1
+        try:
+            subprocess.run(
+                [multi_mon_ws, "workspace", str(rel_ws)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2,
+            )
+        except Exception:
+            pass
+        subprocess.run(
+            ["hyprctl", "dispatch", f'hl.dsp.focus({{ workspace = "{ws_id}" }})'],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2,
+        )
+    if addr:
+        subprocess.run(
+            ["hyprctl", "dispatch", f'hl.dsp.focus({{ window = "address:{addr}" }})'],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2,
+        )
+
+def _do_os_return(prev_addr=None, prev_ws_id=None):
+    """Focus Firefox AI tab, send hardware Return for Gemini, and restore previous window/workspace focus."""
+    try:
+        if not prev_addr:
+            prev_addr, prev_ws_id = get_active_window()
+
+        target = _get_firefox_target()
         if not target:
             return
 
@@ -177,27 +212,10 @@ def _do_os_return(prev_addr=None, prev_ws_id=None):
         ws_id = ws_info.get("id")
         multi_mon_ws = os.environ.get(
             "AI_BRIDGE_MULTI_MON_WS",
-            "/home/dusk/user_scripts/hypr/multi_monitor_workspace.sh",
+            os.path.expanduser("~/user_scripts/hypr/multi_monitor_workspace.sh"),
         )
 
-        if ws_id is not None and ws_id > 0:
-            rel_ws = ((ws_id - 1) % 10) + 1
-            try:
-                subprocess.run(
-                    [multi_mon_ws, "workspace", str(rel_ws)],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2,
-                )
-            except Exception:
-                pass
-            subprocess.run(
-                ["hyprctl", "dispatch", f'hl.dsp.focus({{ workspace = "{ws_id}" }})'],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2,
-            )
-
-        subprocess.run(
-            ["hyprctl", "dispatch", f'hl.dsp.focus({{ window = "address:{addr}" }})'],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2,
-        )
+        _focus_window(target)
 
         _time.sleep(0.6)  # Let Firefox fully accept focus before keypress
         # Plain Return only — Ctrl+Return inserts a newline in Gemini's
@@ -343,11 +361,28 @@ async def handle_client(reader, writer):
                 CONNECTED_CLIENTS.difference_update(dead)
                 continue
 
-            # Capture caller's active window/workspace IMMEDIATELY at T=0.0s before background.js brings Firefox to front!
+            if msg_type == "TAB_INFO":
+                info_req = data.get("requestId")
+                is_gem = data.get("isGemini", False)
+                prev_info = PENDING_QUERY_TARGETS.pop(info_req, (None, None))
+                if is_gem:
+                    print(f"[Daemon] Gemini target confirmed for {info_req} — scheduling _do_os_return in 1.5s", flush=True)
+                    _schedule_os_return(prev_info[0], prev_info[1])
+                else:
+                    print(f"[Daemon] Non-Gemini target ({data.get('url', '')}) — skipping hardware Return (JS click sufficient)", flush=True)
+                continue
+
+            # Capture caller's active window/workspace IMMEDIATELY at T=0.0s and ensure Firefox has Wayland focus for typing
             prev_addr = None
             prev_ws_id = None
             if msg_type == "RUN_QUERY":
                 prev_addr, prev_ws_id = get_active_window()
+                ff_target = _get_firefox_target()
+                if ff_target:
+                    _focus_window(ff_target)
+                    await asyncio.sleep(0.3)
+                if req_id:
+                    PENDING_QUERY_TARGETS[req_id] = (prev_addr, prev_ws_id)
 
             # Broadcast all messages to all other connected clients
             dead = set()
@@ -367,8 +402,8 @@ async def handle_client(reader, writer):
                 # If no extension clients received the query, wait for one to connect
                 # (handles race after daemon restart — extension reconnects in ~2.5s)
                 if broadcast_count == 0:
-                    print("[Daemon] No extension clients — waiting up to 5s for reconnect...", flush=True)
-                    for _retry in range(10):  # 10 x 0.5s = 5s max
+                    print("[Daemon] No extension clients — waiting up to 8s for reconnect...", flush=True)
+                    for _retry in range(16):  # 16 x 0.5s = 8s max
                         await asyncio.sleep(0.5)
                         others = [c for c in CONNECTED_CLIENTS if c != ws]
                         if others:
@@ -385,7 +420,7 @@ async def handle_client(reader, writer):
                                 print(f"[Daemon] Retry succeeded — broadcast to {broadcast_count} client(s)", flush=True)
                                 break
                     if broadcast_count == 0:
-                        print("[Daemon] WARNING: No extension clients after 5s — query lost!", flush=True)
+                        print("[Daemon] WARNING: No extension clients after 8s — query lost!", flush=True)
                         # Notify the CLI client that the query couldn't be delivered
                         try:
                             await ws.send(json.dumps({
@@ -396,10 +431,21 @@ async def handle_client(reader, writer):
                         except Exception:
                             pass
 
-                # Only steal focus / wtype when an extension client actually received the query.
-                if broadcast_count > 0:
-                    print(f"[Daemon] Scheduling _do_os_return in 1.5s (prev_addr={prev_addr}, prev_ws={prev_ws_id})", flush=True)
-                    _schedule_os_return(prev_addr, prev_ws_id)
+                # Gemini fallback check in case TAB_INFO is delayed or not received
+                async def _gemini_fallback_check(r_id, p_addr, p_ws):
+                    await asyncio.sleep(1.6)
+                    if r_id in PENDING_QUERY_TARGETS:
+                        PENDING_QUERY_TARGETS.pop(r_id, None)
+                        try:
+                            res = subprocess.run(["hyprctl", "activewindow", "-j"], capture_output=True, text=True, timeout=1)
+                            if res.returncode == 0 and "gemini" in res.stdout.lower():
+                                print(f"[Daemon] Fallback: active window is Gemini — scheduling _do_os_return", flush=True)
+                                _schedule_os_return(p_addr, p_ws)
+                        except Exception:
+                            pass
+
+                if broadcast_count > 0 and req_id:
+                    asyncio.create_task(_gemini_fallback_check(req_id, prev_addr, prev_ws_id))
 
     except Exception as e:
         print(f"[Daemon] client handler error: {e!r}", flush=True)
@@ -474,6 +520,63 @@ def safe_write(text):
         except Exception:
             pass
 
+def is_port_open(host=HOST, port=PORT, timeout=0.3):
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as test_sock:
+            test_sock.settimeout(timeout)
+            test_sock.connect((host, port))
+            return True
+    except (ConnectionRefusedError, OSError):
+        return False
+
+def ensure_daemon():
+    """Ensure the bridge daemon is running, auto-starting via systemctl or background process."""
+    if is_port_open(HOST, PORT):
+        return True
+
+    # 1. Try systemd user service first
+    try:
+        r = subprocess.run(
+            ["systemctl", "--user", "is-active", SERVICE_NAME],
+            capture_output=True, text=True, timeout=2,
+        )
+        if r.stdout.strip() != "active":
+            print(f"[bridge] Starting {SERVICE_NAME}...", file=sys.stderr)
+            subprocess.run(
+                ["systemctl", "--user", "start", SERVICE_NAME],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5,
+            )
+    except Exception:
+        pass
+
+    # Wait up to 3s for systemd to bring it up
+    t_end = _time.time() + 3.0
+    while _time.time() < t_end:
+        if is_port_open(HOST, PORT):
+            return True
+        _time.sleep(0.1)
+
+    # 2. Fallback: launch daemon directly in background
+    print("[bridge] Spawning daemon process in background...", file=sys.stderr)
+    try:
+        subprocess.Popen(
+            [sys.executable, os.path.abspath(__file__), "--daemon"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception as e:
+        print(f"[bridge] Failed to spawn daemon: {e}", file=sys.stderr)
+        return False
+
+    t_end = _time.time() + 3.5
+    while _time.time() < t_end:
+        if is_port_open(HOST, PORT):
+            return True
+        _time.sleep(0.1)
+
+    return False
+
 def send_query_cli(query_text, stream=True, idle_timeout=10.0, hard_timeout=1800.0):
     """Send one prompt and wait for FINAL (or idle/hard timeout fallback).
 
@@ -481,11 +584,19 @@ def send_query_cli(query_text, stream=True, idle_timeout=10.0, hard_timeout=1800
                   the last full text as complete (guards against missing FINAL).
     hard_timeout: absolute max wait from query send.
     """
-    import time as _time
+    if not is_port_open(HOST, PORT):
+        if not ensure_daemon():
+            print(f"[Error] Local AI Bridge daemon on {HOST}:{PORT} could not be started.", file=sys.stderr)
+            print("Run 'python3 bridge.py --daemon' or 'systemctl --user start localai_bridge.service'.", file=sys.stderr)
+            sys.exit(1)
 
     s = socket.socket()
     s.settimeout(1.0)  # allow periodic idle checks
-    s.connect((HOST, PORT))
+    try:
+        s.connect((HOST, PORT))
+    except (ConnectionRefusedError, OSError) as e:
+        print(f"[Error] Failed to connect to Local AI Bridge on {HOST}:{PORT}: {e}", file=sys.stderr)
+        sys.exit(1)
     sec_key = base64.b64encode(os.urandom(16)).decode("utf-8")
     handshake = (
         f"GET / HTTP/1.1\r\n"
@@ -611,7 +722,7 @@ def send_query_cli(query_text, stream=True, idle_timeout=10.0, hard_timeout=1800
             if not part:
                 return b""
             buf.extend(part)
-        return bytes(buf)
+        return buf.take_bytes() if hasattr(buf, "take_bytes") else bytes(buf)
 
     while True:
         now = _time.time()

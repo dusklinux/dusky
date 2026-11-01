@@ -5,6 +5,10 @@
 // Most sites only need CSS selectors — the defaults handle React/contenteditable.
 // Override setInput/clickSend only for sites needing special handling (like Gemini).
 (() => {
+  if (typeof globalThis.__LOCAL_AI_BRIDGE_MAIN_CLEANUP__ === "function") {
+    try { globalThis.__LOCAL_AI_BRIDGE_MAIN_CLEANUP__(); } catch (e) {}
+  }
+
   const BRIDGE = "__LOCAL_AI_BRIDGE__";
 
   // --- State ---
@@ -85,7 +89,11 @@
 
   function readResponseText(el) {
     if (!el) return "";
-    const body = el.querySelector?.("message-content") || el;
+    const body = el.querySelector?.("message-content") ||
+                 el.querySelector?.(".markdown") ||
+                 el.querySelector?.(".font-claude-message") ||
+                 el.querySelector?.(".prose") ||
+                 el;
     const txt = body.innerText || body.textContent || "";
     return txt.replace(/\r\n/g, "\n").trim();
   }
@@ -372,6 +380,132 @@
   }
 
   // ============================================================
+  //  CHATGPT-SPECIFIC IMPLEMENTATIONS (Lexical & React)
+  // ============================================================
+
+  function chatgptSetInput(editor, text) {
+    if (!editor || !isEditableNode(editor)) return false;
+    selectAndFocus(editor);
+
+    // 1. Try paste event with DataTransfer (primary path for Lexical)
+    try {
+      const dt = new DataTransfer();
+      dt.setData("text/plain", text);
+      const pasteEv = new ClipboardEvent("paste", {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        clipboardData: dt,
+      });
+      editor.dispatchEvent(pasteEv);
+    } catch (e) {}
+
+    // 2. Try beforeinput with insertText and insertFromPaste
+    if (!editor.textContent || !editor.textContent.includes(text)) {
+      try {
+        const dt = new DataTransfer();
+        dt.setData("text/plain", text);
+        const ev = new InputEvent("beforeinput", {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          inputType: "insertFromPaste",
+          dataTransfer: dt,
+        });
+        editor.dispatchEvent(ev);
+      } catch (e) {}
+    }
+
+    if (!editor.textContent || !editor.textContent.includes(text)) {
+      try {
+        editor.dispatchEvent(new InputEvent("beforeinput", {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          inputType: "insertText",
+          data: text,
+        }));
+      } catch (e) {}
+    }
+
+    // 3. Try document.execCommand
+    if (!editor.textContent || !editor.textContent.includes(text)) {
+      try { document.execCommand("selectAll", false, null); } catch {}
+      try { document.execCommand("insertText", false, text); } catch {}
+    }
+
+    // 4. Fallback: manual paragraph if empty
+    if (!editor.textContent || !editor.textContent.includes(text)) {
+      try {
+        while (editor.firstChild) editor.removeChild(editor.firstChild);
+        const p = document.createElement("p");
+        p.textContent = text;
+        editor.appendChild(p);
+      } catch {}
+    }
+
+    // 5. Fire standard input events
+    try { editor.dispatchEvent(new Event("input", { bubbles: true, composed: true })); } catch {}
+    try { editor.dispatchEvent(new Event("change", { bubbles: true, composed: true })); } catch {}
+
+    // Force enable send buttons
+    const btn = getSendButton();
+    if (btn) {
+      btn.removeAttribute("disabled");
+      btn.disabled = false;
+      btn.removeAttribute("aria-disabled");
+    }
+
+    return true;
+  }
+
+  async function chatgptClickSend() {
+    const editor = getEditor();
+
+    // 1. Wait for send button to be enabled by React
+    for (let i = 0; i < 15; i++) {
+      const btn = getSendButton();
+      if (btn && !btn.disabled && btn.getAttribute("aria-disabled") !== "true") {
+        btn.click();
+        console.log("[LocalAI MAIN] ChatGPT: send button clicked");
+        return true;
+      }
+      await new Promise(r => setTimeout(r, 100));
+    }
+
+    // 2. Direct Enter keydown dispatch on editor
+    if (editor) {
+      selectAndFocus(editor);
+      try {
+        editor.dispatchEvent(new KeyboardEvent("keydown", {
+          key: "Enter",
+          code: "Enter",
+          keyCode: 13,
+          which: 13,
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+        }));
+        console.log("[LocalAI MAIN] ChatGPT: dispatched Enter on editor");
+        return true;
+      } catch (e) {}
+    }
+
+    // 3. Fallback click
+    const btn = getSendButton();
+    if (btn) {
+      try {
+        btn.removeAttribute("disabled");
+        btn.disabled = false;
+        btn.removeAttribute("aria-disabled");
+        btn.click();
+      } catch {}
+      return true;
+    }
+    return false;
+  }
+
+  // ============================================================
   //  SITE DEFINITIONS
   //
   //  To add a new site, copy one of the blocks below and adjust
@@ -396,11 +530,13 @@
 
   defineSite("chatgpt.com", {
     name: "ChatGPT",
-    editorSelector: '#prompt-textarea, div[data-lexical-editor="true"]',
-    sendButtonSelector: 'button[data-testid="send-button"], button[aria-label*="Send"]',
+    editorSelector: '#prompt-textarea, div[data-lexical-editor="true"], div[contenteditable="true"]',
+    sendButtonSelector: 'button[data-testid="send-button"], button[aria-label*="Send prompt"], button[aria-label*="Send message"], button[aria-label*="Send"]',
     stopButtonSelector: 'button[data-testid="stop-button"], button[aria-label*="Stop generating"], button[aria-label*="Stop"]',
-    responseContainerSelector: 'div[data-message-author-role="assistant"]',
-    thinkingSelector: '.result-thinking, [data-testid="thinking-animation"]',
+    responseContainerSelector: 'article[data-testid*="conversation-turn"], div[data-message-author-role="assistant"], div[class*="agent-turn"]',
+    thinkingSelector: '.result-thinking, [data-testid="thinking-animation"], [data-testid="thought"], [data-testid="reasoning-expander"]',
+    setInput: chatgptSetInput,
+    clickSend: chatgptClickSend,
     completionIdleMs: 1200,
     completionFallbackMs: 2500,
     completionSafetyMs: 4000,
@@ -409,11 +545,13 @@
   // Legacy OpenAI domain alias
   defineSite("chat.openai.com", {
     name: "ChatGPT (Legacy)",
-    editorSelector: '#prompt-textarea, div[data-lexical-editor="true"]',
-    sendButtonSelector: 'button[data-testid="send-button"], button[aria-label*="Send"]',
+    editorSelector: '#prompt-textarea, div[data-lexical-editor="true"], div[contenteditable="true"]',
+    sendButtonSelector: 'button[data-testid="send-button"], button[aria-label*="Send prompt"], button[aria-label*="Send message"], button[aria-label*="Send"]',
     stopButtonSelector: 'button[data-testid="stop-button"], button[aria-label*="Stop generating"], button[aria-label*="Stop"]',
-    responseContainerSelector: 'div[data-message-author-role="assistant"]',
-    thinkingSelector: '.result-thinking, [data-testid="thinking-animation"]',
+    responseContainerSelector: 'article[data-testid*="conversation-turn"], div[data-message-author-role="assistant"], div[class*="agent-turn"]',
+    thinkingSelector: '.result-thinking, [data-testid="thinking-animation"], [data-testid="thought"], [data-testid="reasoning-expander"]',
+    setInput: chatgptSetInput,
+    clickSend: chatgptClickSend,
     completionIdleMs: 1200,
     completionFallbackMs: 2500,
     completionSafetyMs: 4000,
@@ -421,11 +559,11 @@
 
   defineSite("claude.ai", {
     name: "Claude",
-    editorSelector: 'div.ProseMirror[contenteditable="true"], div[contenteditable="true"]',
-    sendButtonSelector: 'button[aria-label*="Send"], button[data-testid*="send"]',
-    stopButtonSelector: 'button[aria-label*="Stop"]',
-    responseContainerSelector: '.font-claude-message, [data-is-streaming="true"]',
-    thinkingSelector: '[data-is-thinking="true"], .thinking-indicator',
+    editorSelector: 'div.ProseMirror[contenteditable="true"], div[contenteditable="true"], fieldset div[contenteditable="true"]',
+    sendButtonSelector: 'button[aria-label*="Send"], button[data-testid*="send"], button[aria-label*="send"]',
+    stopButtonSelector: 'button[aria-label*="Stop"], button[aria-label*="stop"]',
+    responseContainerSelector: '.font-claude-message, [data-is-streaming="true"], div[data-message-author-role="assistant"]',
+    thinkingSelector: '[data-is-thinking="true"], .thinking-indicator, [data-testid="thought"]',
     completionIdleMs: 1200,
     completionFallbackMs: 2500,
     completionSafetyMs: 4000,
@@ -916,7 +1054,7 @@
   //  MESSAGE LISTENER
   // ============================================================
 
-  globalThis.addEventListener("message", (e) => {
+  const onPageMessage = (e) => {
     const data = e?.data;
     if (!data || data.__bridge !== BRIDGE) return;
     if (data.direction !== "BG_TO_MAIN") return;
@@ -924,7 +1062,16 @@
     const site = getSiteConfig();
     console.log("[LocalAI MAIN]", site.name || "Unknown", "- Received:", msg?.type, msg?.query?.substring(0, 30));
     if (msg?.type === "RUN_QUERY") handleQuery(msg);
-  });
+  };
+
+  globalThis.addEventListener("message", onPageMessage);
+
+  globalThis.__LOCAL_AI_BRIDGE_MAIN_CLEANUP__ = () => {
+    stopObserver();
+    clearTimeout(queryTimeoutTimer);
+    clearInterval(focusKeepaliveTimer);
+    try { globalThis.removeEventListener("message", onPageMessage); } catch (e) {}
+  };
 
   const site = getSiteConfig();
   console.log("[LocalAI MAIN] Injected - ready for queries -", site.name || "Unknown site", "adapter loaded");

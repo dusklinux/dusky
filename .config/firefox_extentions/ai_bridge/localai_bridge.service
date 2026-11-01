@@ -1,12 +1,14 @@
 [Unit]
-Description=Local AI Bridge Daemon
+Description=Local AI Web Bridge Daemon
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 /home/dusk/.config/firefox_extentions/ai_bridge/bridge.py --daemon
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/env python3 %h/.config/firefox_extentions/ai_bridge/bridge.py --daemon
 Restart=always
 RestartSec=2
 
 [Install]
 WantedBy=default.target
+
