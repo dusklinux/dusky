@@ -275,6 +275,7 @@ def copy_to_wayland_clipboard(text: str) -> bool:
             ["wl-copy", "--type", "text/plain", "--", text],
             check=True,
             timeout=2.0,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -302,8 +303,10 @@ def send_desktop_notification(
                 title,
                 message,
             ],
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            start_new_session=True,
         )
     except OSError:
         pass
@@ -326,7 +329,7 @@ def discover_pipewire_nodes() -> tuple[list[PipeWireNode], list[PipeWireNode]]:
             check=True,
         )
         objects = json.loads(proc.stdout)
-    except (subprocess.SubprocessError, OSError, ValueError):
+    except (subprocess.SubprocessError, OSError, ValueError, AttributeError):
         return sources, sinks
 
     default_source_name = ""
@@ -334,9 +337,12 @@ def discover_pipewire_nodes() -> tuple[list[PipeWireNode], list[PipeWireNode]]:
 
     # Locate default metadata
     for obj in objects:
-        if obj.get("props", {}).get("metadata.name") == "default":
-            for item in obj.get("metadata", []):
-                if item.get("subject") == 0:
+        if not isinstance(obj, dict):
+            continue
+        props = obj.get("props") or {}
+        if props.get("metadata.name") == "default":
+            for item in (obj.get("metadata") or []):
+                if isinstance(item, dict) and item.get("subject") == 0:
                     key = item.get("key")
                     val = item.get("value")
                     name = val.get("name") if isinstance(val, dict) else val
@@ -348,7 +354,10 @@ def discover_pipewire_nodes() -> tuple[list[PipeWireNode], list[PipeWireNode]]:
 
     # Parse audio nodes
     for obj in objects:
-        props = obj.get("info", {}).get("props", {})
+        if not isinstance(obj, dict):
+            continue
+        info = obj.get("info") or {}
+        props = info.get("props") or obj.get("props") or {}
         media_class = props.get("media.class", "")
         node_name = props.get("node.name", "")
         desc = props.get("node.description", node_name)
@@ -682,6 +691,9 @@ class DuskyAudioEngine:
         """Stop recording cleanly with EOS flushing."""
         if self.state not in (RecordState.RECORDING, RecordState.PAUSED):
             return False
+
+        if self.state == RecordState.PAUSED:
+            self.paused_duration += time.monotonic() - self.pause_start
 
         self.stopped_by_timer = stopped_by_timer
         self.state = RecordState.FINALIZING
@@ -1299,7 +1311,7 @@ class PlayerWaveformWidget(Static):
             idx = int(i * len(self.peaks) / width)
             resampled.append(self.peaks[min(idx, len(self.peaks) - 1)])
 
-        playhead_col = int(self.progress_fraction * width)
+        playhead_col = min(width - 1, max(0, int(self.progress_fraction * width)))
         lines = [Text() for _ in range(height)]
 
         for x, frac in enumerate(resampled):
@@ -2023,7 +2035,7 @@ class DuskyVoiceApp(App[None]):
             func(*args)
         else:
             try:
-                self.call_later(func, *args)
+                self.call_from_thread(func, *args)
             except RuntimeError:
                 pass
 
@@ -2355,10 +2367,11 @@ class DuskyVoiceApp(App[None]):
         self._safe_dispatch(self._update_meters, peaks)
 
     def _update_meters(self, peaks: list[float]) -> None:
+        sanitized = [p if math.isfinite(p) else -80.0 for p in peaks]
         vu = self.query_one("#vu_meter", LiveVuMeter)
-        vu.update_levels(peaks)
+        vu.update_levels(sanitized)
         if self.engine.state == RecordState.RECORDING:
-            max_peak = max(peaks) if peaks else -80.0
+            max_peak = max(sanitized) if sanitized else -80.0
             fraction = max(0.0, min(1.0, (max_peak - (-60.0)) / 60.0)) if max_peak > -80.0 else 0.0
             osc = self.query_one("#oscilloscope", RollingOscilloscope)
             osc.push_peak(fraction)
@@ -2395,13 +2408,20 @@ class DuskyVoiceApp(App[None]):
                 btn_pause.disabled = True
                 btn_cancel.disabled = False
                 self.set_status(f"Pre-roll delay: {self.countdown_remaining}s", "warning")
-            else:  # IDLE or FINALIZING
+            elif state == RecordState.FINALIZING:
+                btn_rec.label = "󰆓  Saving..."
+                btn_rec.remove_class("-recording")
+                btn_pause.disabled = True
+                btn_cancel.disabled = True
+                self.set_status("Finalizing audio file...", "warning")
+            else:  # IDLE
                 btn_rec.label = "󰐽  Record"
                 btn_rec.remove_class("-recording")
                 btn_pause.disabled = True
                 btn_pause.label = "󰏤  Pause"
                 btn_cancel.disabled = True
                 self.query_one("#oscilloscope", RollingOscilloscope).clear()
+                self.query_one("#vu_meter", LiveVuMeter).update_levels([-80.0, -80.0])
                 self.set_status("Ready", "info")
 
     def _update_banner(self) -> None:
@@ -2698,6 +2718,9 @@ class DuskyVoiceApp(App[None]):
     def _toggle_playback(self) -> None:
         if not self.selected_memo:
             return
+        if self.engine.state != RecordState.IDLE:
+            self.notify("Cannot play audio while recording is in progress.", severity="warning")
+            return
         if self.player.state == PlayerState.PLAYING:
             if not self.player.pause():
                 self.notify("Could not pause playback.", severity="error")
@@ -2867,11 +2890,17 @@ class DuskyVoiceApp(App[None]):
             self._refresh_library()
 
     def on_unmount(self) -> None:
+        self._closing = True
+        if self._countdown_timer:
+            self._countdown_timer.stop()
+            self._countdown_timer = None
+        self.engine.on_level_callback = None
         self.engine.on_state_change = None
         self.engine.on_finished = None
         self.engine.on_error = None
         self.player.on_state_change = None
-        self._closing = True
+        self.player.on_eos = None
+        self.player.on_error = None
         self._waveform_cancel.set()
         if self.engine.pipeline:
             if self.engine.state in (RecordState.RECORDING, RecordState.PAUSED):
