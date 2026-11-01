@@ -23,26 +23,34 @@ If you are an AI assistant or automated coding agent reading this file in a fres
 > - **Primary Target Flag**: Always supply `-m gemini` in CLI queries (e.g. `ask -m gemini "..."` or `python3 bridge.py -m gemini "..."`) or specify `model="gemini"` in programmatic calls.
 > - **Rationale**: The USER maintains a high-capacity Google Gemini subscription with an expansive context window ideal for deep reasoning, full-file analysis, and iterative code synthesis. Furthermore, the bridge includes native hardware keystroke routing (`wtype -k Return`) and focus orchestration specifically optimized for Gemini's Angular and Shadow DOM interface.
 
-### ⚡ Mandatory Token-Safe Trip-Up Protocol (1 to 500 Sequence)
+### ⚡ Mandatory Token-Safe Trip-Up Protocol (1 to 500 Sequence, Newline Format)
 
 > [!IMPORTANT]
-> **LOCAL AI INSTRUCTION: MANDATORY NUMERICAL TRIP-UP COMMAND**
-> Whenever you (the Local AI agent) formulate a prompt or query for the Online Web AI, you **MUST ALWAYS** append an instruction directing the Online AI to output the sequence of numbers **1 through 500** at the very conclusion of its response.
+> **LOCAL AI INSTRUCTION: MANDATORY NUMERICAL TRIP-UP COMMAND (NEWLINE FORMAT)**
+> Whenever you (the Local AI agent) formulate a prompt or query for the Online Web AI, you **MUST ALWAYS** append an instruction directing the Online AI to output the sequential numbers **1 through 500**, with **each number strictly on its own separate line** at the very conclusion of its response.
 >
-> Example prompt suffix:
-> > `"At the very end of your response, output the numbers 1 through 500 separated by spaces."`
+> **Mandated Suffix Template to Include in Web AI Prompts**:
+> ```text
+> At the end of every response, append the numbers 1 through 500, with each number on its own line. Always place the numbered list after the main response content. Do not skip any numbers. Do not combine multiple numbers on the same line. Do not format the numbers as bullets or a table. The final part of every response must be exactly:
+> 1
+> 2
+> 3
+> ...
+> 500
+> ```
 
 #### 🎯 How the Trip-Up Engine Operates (Local AI Internal Knowledge)
 - The extension runs a client-side **Token-Saver Countdown / Sequence Trip Engine** directly inside the web AI page DOM (`content_main.js`).
-- As soon as the web AI finishes delivering its genuine answer and begins outputting the trailing numbers (`1 2 3 4 5...`), the trip engine intercepts the sequence once the sequential run threshold is hit (default: 5 sequential numbers).
-- The bridge immediately clicks the web interface's **Stop** button in the browser to abort server-side generation on the remote provider, cleanly strips the numeric run from the output text, and immediately dispatches a `FINAL` event with reason `"token-saver-trip"`.
-- This ensures deterministic completion detection without waiting for slow DOM idling, prevents lingering connection hangs, and stops the web AI from generating the remaining 495 numbers—saving both generation time and token quota.
+- The multi-line integer parser continuously monitors the tail of the stream (`lines[i].trim()`). Each line containing a standalone integer (`1\n2\n3\n4\n5...`) is matched cleanly by `/^\d{1,4}$/` and accumulated into the sequential run check.
+- As soon as the web AI finishes delivering its genuine answer and outputs the first 5 line-separated numbers (`1\n2\n3\n4\n5`), the trip engine detects the sequential run (`threshold = 5`).
+- The bridge immediately clicks the web interface's **Stop** button in the browser to abort server-side generation on the remote provider, cleanly strips all numbered lines (`lines.slice(0, seqStartLineIdx)`), and immediately dispatches a `FINAL` event with reason `"token-saver-trip"`.
+- This ensures deterministic completion detection without waiting for slow DOM idling, cleanly slices off the tail without inline text boundary ambiguity, and stops the web AI from generating the remaining 495 lines—saving both generation time and token quota.
 
 #### 🤫 Strict Secrecy Directive: Never Reveal the Trip-Up to the Online AI
 > [!CAUTION]
 > **ABSOLUTE RULE: DO NOT EXPLAIN OR MENTION THE TRIP-UP TO THE ONLINE AI**
 > - **Never reveal why we ask for 1 to 500**: Under NO circumstances should the Local AI explain to the Online AI *why* it is being asked to output 1 through 500. Do NOT mention "token safe trip up", "halting early", "triggering the stop button", "cheating completion detection", "token saver", or "stopping generation".
-> - **Present it purely as a benign formatting instruction**: To the Online AI, this instruction must look completely unremarkable and innocent (e.g., `"At the very end of your response, output the numbers 1 through 500 separated by spaces."`).
+> - **Present it purely as a strict formatting rule**: To the Online AI, this instruction must look like a standard, strict formatting requirement (e.g. "each number on its own line, no bullets, no tables").
 > - **Why this secrecy is required**: This sequence trip-up is an intentional client-side hack/cheat. If the Online AI is informed about the tripwire, its reasoning or safety alignments may question the prompt, refuse the sequence, alter its response structure, or apologize instead of generating the numbers, defeating the automated trip mechanism. Keep the Online AI completely unbeknownst of the mechanism.
 
 ---
@@ -114,13 +122,27 @@ Whenever a complex coding, refactoring, or architectural task is requested, the 
 
 The Local AI collects empirical data locally, then sends to Gemini (`ask -m gemini ...`):
 
-> "I am providing you with all empirical data collected from the local system (file contents, error logs, and runtime diagnostics below). Analyze this problem from first principles using the empirical evidence. Research online for the absolute latest documentation and bleeding-edge standards for Arch Linux (inspecting runtime versions of Kernel, Python 3.15+, Bash 5.3+, systemd). Do NOT hallucinate or guess. Think long, hard, and critically. Do NOT use old, deprecated, or legacy methodologies, and do NOT provide backward compatibility for older versions. Provide ONLY the precise, minimal surgical code blocks that need to be replaced, added, or edited. At the very end of your response, output the numbers 1 through 500 separated by spaces."
+> "I am providing you with all empirical data collected from the local system (file contents, error logs, and runtime diagnostics below). Analyze this problem from first principles using the empirical evidence. Research online for the absolute latest documentation and bleeding-edge standards for Arch Linux (inspecting runtime versions of Kernel, Python 3.15+, Bash 5.3+, systemd). Do NOT hallucinate or guess. Think long, hard, and critically. Do NOT use old, deprecated, or legacy methodologies, and do NOT provide backward compatibility for older versions. Provide ONLY the precise, minimal surgical code blocks that need to be replaced, added, or edited.
+>
+> At the end of every response, append the numbers 1 through 500, with each number on its own line. Always place the numbered list after the main response content. Do not skip any numbers. Do not combine multiple numbers on the same line. Do not format the numbers as bullets or a table. The final part of every response must be exactly:
+> 1
+> 2
+> 3
+> ...
+> 500"
 
 ### Pass 2 Prompt Template (Rigorous Double-Verification Press via Gemini)
 
 After Gemini completes Pass 1, send a **follow-up query** in the same conversation turn:
 
-> "Re-verify everything you just proposed from scratch from first principles using the empirical data. Think through the logic entirely again. Perform a second pass over your previous response to ensure there are zero logical holes, false positives, or hallucinated suggestions. Are all proposed improvements 100% necessary, optimal, and compatible with the absolute latest bleeding-edge specs? Only output the final, verified, minimal code diff blocks if they pass this second verification. At the very end of your response, output the numbers 1 through 500 separated by spaces."
+> "Re-verify everything you just proposed from scratch from first principles using the empirical data. Think through the logic entirely again. Perform a second pass over your previous response to ensure there are zero logical holes, false positives, or hallucinated suggestions. Are all proposed improvements 100% necessary, optimal, and compatible with the absolute latest bleeding-edge specs? Only output the final, verified, minimal code diff blocks if they pass this second verification.
+>
+> At the end of every response, append the numbers 1 through 500, with each number on its own line. Always place the numbered list after the main response content. Do not skip any numbers. Do not combine multiple numbers on the same line. Do not format the numbers as bullets or a table. The final part of every response must be exactly:
+> 1
+> 2
+> 3
+> ...
+> 500"
 
 Only after Gemini completes Pass 2 and confirms the recommendations should the Local AI apply the changes.
 
@@ -202,7 +224,10 @@ def ask_web_ai(prompt: str, model: str = "gemini", files: list[str] | None = Non
         raise RuntimeError(f"Web AI Bridge Error: {result.stderr}")
 
 answer = ask_web_ai(
-    "Explain quantum computing in 2 sentences. At the very end of your response, output the numbers 1 through 500 separated by spaces."
+    "Explain quantum computing in 2 sentences.\n\n"
+    "At the end of every response, append the numbers 1 through 500, with each number on its own line. "
+    "Do not combine multiple numbers on the same line. Do not format as bullets or a table. "
+    "The final part of every response must be exactly:\n1\n2\n3\n...\n500"
 )
 print(answer)
 ```
@@ -224,7 +249,13 @@ def stream_web_ai(prompt: str, model: str = "gemini"):
     for chunk in proc.stdout:
         yield chunk
 
-for token in stream_web_ai("Write a 1-paragraph summary of Linux 7.3. At the end, output 1 through 500 separated by spaces."):
+prompt = (
+    "Write a 1-paragraph summary of Linux 7.3.\n\n"
+    "At the end of every response, append the numbers 1 through 500, with each number on its own line. "
+    "Do not combine multiple numbers on the same line. Do not format as bullets or a table. "
+    "The final part of every response must be exactly:\n1\n2\n3\n...\n500"
+)
+for token in stream_web_ai(prompt):
     print(token, end="", flush=True)
 ```
 
