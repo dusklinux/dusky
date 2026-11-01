@@ -18,6 +18,10 @@ mod ui;
 
 use config::AppConfig;
 use std::env;
+use std::io::Write;
+use std::os::unix::net::{UnixListener, UnixStream};
+use std::path::PathBuf;
+use std::time::Duration;
 use ui::TrayApp;
 
 // Iced streams stay responsive while the separate four-worker query pool waits.
@@ -74,6 +78,29 @@ impl SingleInstanceGuard {
             Err(e) => Err(format!("Could not lock {}: {e}", path.display())),
         }
     }
+}
+
+struct SocketGuard(PathBuf);
+
+impl Drop for SocketGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+fn instance_socket_path() -> PathBuf {
+    backend::runtime_dir().join("dusky-tray.sock")
+}
+
+fn spawn_ipc_watcher(listener: UnixListener) {
+    std::thread::spawn(move || {
+        if let Ok((_stream, _)) = listener.accept() {
+            click_away::dismiss();
+            // Fallback: if the UI event loop takes longer than 250ms to exit, force termination.
+            std::thread::sleep(Duration::from_millis(250));
+            std::process::exit(0);
+        }
+    });
 }
 
 fn read_card_vendor_driver(card_name: &str) -> Option<(String, String, String)> {
@@ -276,12 +303,32 @@ fn main() -> Result<(), iced_winit::Error> {
         std::process::exit(2);
     }
 
+    // Single-instance zero-latency toggle: if already running, signal it to dismiss and exit immediately.
+    let sock_path = instance_socket_path();
+    if let Ok(mut stream) = UnixStream::connect(&sock_path) {
+        let _ = stream.set_write_timeout(Some(Duration::from_millis(50)));
+        let _ = stream.write_all(b"dismiss\n");
+        return Ok(());
+    }
+
     let _guard = match SingleInstanceGuard::acquire() {
         Ok(Some(g)) => g,
         Ok(None) => return Ok(()),
         Err(error) => {
             eprintln!("Could not start Dusky Tray: {error}");
             std::process::exit(1);
+        }
+    };
+
+    let _ = std::fs::remove_file(&sock_path);
+    let _socket_guard = match UnixListener::bind(&sock_path) {
+        Ok(listener) => {
+            spawn_ipc_watcher(listener);
+            Some(SocketGuard(sock_path))
+        }
+        Err(error) => {
+            eprintln!("Warning: could not bind dusky-tray toggle socket: {error}");
+            None
         }
     };
 

@@ -25,6 +25,9 @@ fn channel() -> &'static Channel {
 extern "C" fn cleared() {
     let _ = channel().0.unbounded_send(());
 }
+pub fn dismiss() {
+    let _ = channel().0.unbounded_send(());
+}
 pub fn events() -> impl Stream<Item = crate::ui::Message> {
     channel()
         .1
