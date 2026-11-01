@@ -926,6 +926,12 @@ hl.bind(
 -- -------------------------------------------------------------------------------------------------
 
 hl.bind(
+    "ALT + TAB",
+    hl.dsp.exec_cmd("dusky_overview"),
+    { description = "Dusky Overview" }
+)
+
+hl.bind(
     "SUPER + TAB",
     hl.dsp.focus({ workspace = "previous" }),
     { description = "Last Workspace", repeating = true }

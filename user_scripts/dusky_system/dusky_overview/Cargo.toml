@@ -1,0 +1,27 @@
+[package]
+name = "dusky_overview"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+description = "One-shot, zero-persistent-RAM Wayland workspace overview for Hyprland 0.57+"
+authors = ["Dusky"]
+license = "MIT"
+
+[dependencies]
+iced = { version = "0.14.0", features = ["image", "svg", "advanced"] }
+iced_core = "0.14.0"
+iced_graphics = "0.14.0"
+iced_widget = { version = "0.14.2", features = ["advanced"] }
+iced_exwlshell = { version = "0.20.1", default-features = false }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+strip = true
+panic = "abort"
+codegen-units = 1
+
+[patch.crates-io]
+fontdb = { path = "../../rust_shared/fontdb" }

@@ -1842,6 +1842,14 @@ hl.layer_rule({
     ignore_alpha = 0.0
 })
 
+-- Dusky Overview Layer Rule
+hl.layer_rule({
+    name = "dusky_overview_blur",
+    match = { namespace = "dusky_overview" },
+    blur = true,
+    ignore_alpha = 0.0
+})
+
 -- SMART GAPS (Disabled / Examples)
 -- -----------------------------------------------------------------------------
 -- These blocks are retained from your config as commented examples. They show

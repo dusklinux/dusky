@@ -1,0 +1,4 @@
+[build]
+# Direct Cargo commands run from this project always keep artifacts on tmpfs and compile for the host CPU.
+target-dir = "/tmp/dusky_overview-target"
+rustflags = ["-C", "target-cpu=native"]

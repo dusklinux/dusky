@@ -176,6 +176,7 @@ tasks = [
     "U | 151_dusky_papers_setup.py --update-cache",
     "U | 152_dusky_tray_setup.py",
     "U | 153_dusky_center_setup.py",
+    "U | 153_dusky_overview_setup.py",
     "U | once,ignore-fail | wallpaper_selector_to_dusky_paper_rename_cache.py --cleanup",
     # "U | once | append_defaults_keybinds_edit_here.sh",
     "U | ignore-fail | tui_matugen.py --smart",

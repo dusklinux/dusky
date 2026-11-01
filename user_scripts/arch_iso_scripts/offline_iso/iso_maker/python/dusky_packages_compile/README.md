@@ -49,7 +49,7 @@ package includes its exact binary/source manifest and disables makepkg stripping
 because the builder already strips the executable. User setup step 154 reuses a
 matching package without a compiler, or builds natively after source edits.
 
-The four GUI recipes use `build_rust.py` and the shared
+The five GUI recipes (`dusky-center`, `dusky_overview`, `dusky-papers`, `dusky-snap`, `dusky-tray`) use `build_rust.py` and the shared
 `147_rust_compiles_shared_NOT_STANDALONE.py` storage policy. Their recipe-local
 symlinks are declared as makepkg sources. The generator fingerprints their
 contents and copies them into each isolated recipe, so they remain available
