@@ -11,8 +11,17 @@ If you are an AI assistant or automated coding agent reading this file in a fres
 ### 🔑 Local vs. Online AI Token Economy Mandate
 
 - **Local AI Token Constraints**: Local AI agents (you) operate under tight token limits.
-- **Online AI Subscription & Capacity**: The USER has a **high-capacity paid subscription** for web AI models (ChatGPT, Gemini, Claude, Meta AI) with substantially higher token limits than the local AI.
+- **Online AI Subscription & Capacity**: The USER has a **high-capacity paid subscription** for web AI models with substantially higher token limits than the local AI.
 - **Mandated Workflow**: You **MUST leverage the online web AI as much as possible** for all heavy lifting, deep reasoning, code generation, architectural design, and extensive verification to conserve local tokens.
+
+### 🌐 Default Target Platform Mandate: Google Gemini
+
+> [!IMPORTANT]
+> **LOCAL AI INSTRUCTION: USE GOOGLE GEMINI BY DEFAULT**
+> Whenever you (the Local AI agent) interact with the web AI bridge, **YOU MUST TARGET GOOGLE GEMINI BY DEFAULT (`-m gemini`)** instead of any other platform (ChatGPT, Claude, or Meta AI), unless the USER explicitly requests a different model.
+>
+> - **Primary Target Flag**: Always supply `-m gemini` in CLI queries (e.g. `ask -m gemini "..."` or `python3 bridge.py -m gemini "..."`) or specify `model="gemini"` in programmatic calls.
+> - **Rationale**: The USER maintains a high-capacity Google Gemini subscription with an expansive context window ideal for deep reasoning, full-file analysis, and iterative code synthesis. Furthermore, the bridge includes native hardware keystroke routing (`wtype -k Return`) and focus orchestration specifically optimized for Gemini's Angular and Shadow DOM interface.
 
 ### ⚡ Mandatory Token-Safe Trip-Up Protocol (1 to 500 Sequence)
 
@@ -99,21 +108,21 @@ The Local AI agent and Online Web AI model work as a **hand-in-glove pair**:
 
 ## 🔄 Mandatory 2-Pass Verification Protocol
 
-Whenever a complex coding, refactoring, or architectural task is requested, the Local AI agent MUST execute the following **2-pass protocol**:
+Whenever a complex coding, refactoring, or architectural task is requested, the Local AI agent MUST execute the following **2-pass protocol using Google Gemini (`-m gemini`) by default**:
 
-### Pass 1 Prompt Template (Empirical Data + Research Proposal)
+### Pass 1 Prompt Template (Empirical Data + Research Proposal via Gemini)
 
-The Local AI collects empirical data locally, then sends:
+The Local AI collects empirical data locally, then sends to Gemini (`ask -m gemini ...`):
 
 > "I am providing you with all empirical data collected from the local system (file contents, error logs, and runtime diagnostics below). Analyze this problem from first principles using the empirical evidence. Research online for the absolute latest documentation and bleeding-edge standards for Arch Linux (inspecting runtime versions of Kernel, Python 3.15+, Bash 5.3+, systemd). Do NOT hallucinate or guess. Think long, hard, and critically. Do NOT use old, deprecated, or legacy methodologies, and do NOT provide backward compatibility for older versions. Provide ONLY the precise, minimal surgical code blocks that need to be replaced, added, or edited. At the very end of your response, output the numbers 1 through 500 separated by spaces."
 
-### Pass 2 Prompt Template (Rigorous Double-Verification Press)
+### Pass 2 Prompt Template (Rigorous Double-Verification Press via Gemini)
 
-After the Online AI completes Pass 1, send a **follow-up query** in the same conversation turn:
+After Gemini completes Pass 1, send a **follow-up query** in the same conversation turn:
 
 > "Re-verify everything you just proposed from scratch from first principles using the empirical data. Think through the logic entirely again. Perform a second pass over your previous response to ensure there are zero logical holes, false positives, or hallucinated suggestions. Are all proposed improvements 100% necessary, optimal, and compatible with the absolute latest bleeding-edge specs? Only output the final, verified, minimal code diff blocks if they pass this second verification. At the very end of your response, output the numbers 1 through 500 separated by spaces."
 
-Only after the Online AI completes Pass 2 and confirms the recommendations should the Local AI apply the changes.
+Only after Gemini completes Pass 2 and confirms the recommendations should the Local AI apply the changes.
 
 ---
 
@@ -121,22 +130,22 @@ Only after the Online AI completes Pass 2 and confirms the recommendations shoul
 
 ### 1. Primary Command Line Interface (`ask` Alias & `bridge.py`)
 
-To query the active web AI tab (e.g. Gemini, ChatGPT, Claude, Meta AI) synchronously:
+To query Google Gemini (the default target platform) synchronously:
 
 ```bash
-ask "YOUR PROMPT HERE"
+ask -m gemini "YOUR PROMPT HERE"
 ```
 
 Or directly via Python script:
 
 ```bash
-python3 "$HOME/.config/firefox_extentions/ai_bridge/bridge.py" "YOUR PROMPT HERE"
+python3 "$HOME/.config/firefox_extentions/ai_bridge/bridge.py" -m gemini "YOUR PROMPT HERE"
 ```
 
 #### Advanced CLI Options:
 | Flag / Option | Description |
 | :--- | :--- |
-| `-m, --model <name>` | Route directly to specific web AI service: `chatgpt`, `gemini`, `claude`, or `meta`. |
+| `-m, --model <name>` | Route directly to specific web AI service: `gemini` (**default choice**), `chatgpt`, `claude`, or `meta`. |
 | `-f, --file <path>` | Attach one or more local files (can be specified multiple times; base64 encoded and attached via `DataTransfer`). |
 | `-i, --image <path>` | Attach one or more images (can be specified multiple times). |
 | `--no-trip` | Disable the automatic Token-Saver sequence trip engine if raw unhalted generation is required. |
@@ -148,32 +157,36 @@ python3 "$HOME/.config/firefox_extentions/ai_bridge/bridge.py" "YOUR PROMPT HERE
 #### Usage Examples:
 
 ```bash
-# 1. Target a specific web model with file attachments
-ask -m claude -f ./bridge.py "Review this file for modern Python 3.15 async practices"
+# 1. Primary Default Query (Google Gemini) with file attachments
+ask -m gemini -f ./bridge.py "Review this file for modern Python 3.15 async practices"
 
-# 2. Pipe file or command output via stdin
-git diff | ask -m chatgpt "Analyze this git diff and point out edge cases"
+# 2. Pipe file or command output via stdin to Gemini
+git diff | ask -m gemini "Analyze this git diff and point out edge cases"
 
-# 3. Interactive Mode (prevent shell quote escaping for complex strings)
-ask
+# 3. Querying alternate models when explicitly requested
+ask -m claude "Alternate architecture perspective"
+ask -m chatgpt "Alternate review"
+
+# 4. Interactive Mode (prevent shell quote escaping for complex strings)
+ask -m gemini
 # Enter prompt, then press Enter or EOF (Ctrl+D)
 ```
 
-- **Interactive Mode**: Run `ask` with no arguments to enter interactive prompt mode (prevents all shell escaping/quoting issues for complex strings containing `?`, `'`, `"`, `$`, `*`).
+- **Interactive Mode**: Run `ask -m gemini` with no trailing query to enter interactive prompt mode (prevents all shell escaping/quoting issues for complex strings containing `?`, `'`, `"`, `$`, `*`).
 - **Noglob Protection**: The `ask` alias uses `zsh` `noglob` so unquoted question marks (`ask what ?`) will never fail with glob errors.
 - **Output**: Streams text token-by-token directly to `stdout`. Shows `[Thinking...]` during model reasoning.
 - **Exit Code**: Returns `0` on completion.
 
 ### 2. Python Programmatic Integration
 
-#### Full Response (Synchronous):
+#### Full Response (Synchronous, Gemini Default):
 ```python
 import os
 import subprocess
 from pathlib import Path
 
-def ask_web_ai(prompt: str, model: str | None = None, files: list[str] | None = None) -> str:
-    """Send a prompt to the Web AI bridge and return the complete answer."""
+def ask_web_ai(prompt: str, model: str = "gemini", files: list[str] | None = None) -> str:
+    """Send a prompt to the Web AI bridge (Gemini by default) and return the complete answer."""
     bridge_path = Path.home() / ".config/firefox_extentions/ai_bridge/bridge.py"
     cmd = ["python3", str(bridge_path)]
     if model:
@@ -189,19 +202,18 @@ def ask_web_ai(prompt: str, model: str | None = None, files: list[str] | None = 
         raise RuntimeError(f"Web AI Bridge Error: {result.stderr}")
 
 answer = ask_web_ai(
-    "Explain quantum computing in 2 sentences. At the very end of your response, output the numbers 1 through 500 separated by spaces.",
-    model="gemini"
+    "Explain quantum computing in 2 sentences. At the very end of your response, output the numbers 1 through 500 separated by spaces."
 )
 print(answer)
 ```
 
-#### Real-Time Token Streaming (Generator):
+#### Real-Time Token Streaming (Generator, Gemini Default):
 ```python
 import subprocess
 from pathlib import Path
 
-def stream_web_ai(prompt: str, model: str | None = None):
-    """Stream response tokens live in real-time as they are generated by the web AI."""
+def stream_web_ai(prompt: str, model: str = "gemini"):
+    """Stream response tokens live in real-time as they are generated by web AI (Gemini by default)."""
     bridge_path = Path.home() / ".config/firefox_extentions/ai_bridge/bridge.py"
     cmd = ["python3", str(bridge_path)]
     if model:
