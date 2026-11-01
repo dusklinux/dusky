@@ -300,7 +300,10 @@
           else if (el.tagName === "RICH-TEXTAREA") {
             try { if (el.value !== undefined) el.value = text; } catch {}
           } else {
-            el.innerHTML = "<p>" + text + "</p>";
+            el.textContent = "";
+            const p = document.createElement("p");
+            p.textContent = text;
+            el.appendChild(p);
           }
         } catch { try { el.textContent = text; } catch {} }
         try { if (el.value !== undefined) el.value = text; } catch {}
