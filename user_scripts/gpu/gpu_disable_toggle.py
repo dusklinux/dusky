@@ -38,6 +38,7 @@ import argparse
 import errno
 import fcntl
 import fnmatch
+import functools
 import json
 import os
 import re
@@ -56,8 +57,16 @@ MIN_PY = (3, 15, 0)
 MIN_KERNEL = (7, 3)
 
 
+def _read(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
 def check_versions() -> None:
-    m = re.prefixmatch(r"(\d+)\.(\d+)", Path("/proc/sys/kernel/osrelease").read_text(encoding="utf-8").strip())
+    raw = _read(Path("/proc/sys/kernel/osrelease"))
+    m = re.prefixmatch(r"(\d+)\.(\d+)", raw)
     if not m or (int(m.group(1)), int(m.group(2))) < MIN_KERNEL:
         sys.stderr.write("[FATAL] Kernel 7.3+ required.\n")
         raise SystemExit(1)
@@ -97,6 +106,7 @@ STATE_FILE = STATE_DIR / "state.json"
 ASUS_DGPU_DISABLE = Path("/sys/devices/platform/asus-nb-wmi/dgpu_disable")
 ASUS_ARMOURY_DGPU_DISABLE = Path("/sys/devices/virtual/firmware-attributes/asus-armoury/attributes/dgpu_disable/current_value")
 ASUS_TMPFILES = Path("/etc/tmpfiles.d/99-asus-dgpu-disable.conf")
+PCI_IDS_PATHS = (Path("/usr/share/hwdata/pci.ids"), Path("/usr/share/misc/pci.ids"))
 
 # Only these cmdline keys are owned. The iommu keys are required: without an
 # active IOMMU, vfio-pci probe fails with -EINVAL and the GPU stays half-claimed.
@@ -112,7 +122,10 @@ GPU_CLASSES = {"0300", "0301", "0302", "0380"}
 
 # DRM drivers to keep off the disabled card, per PCI GPU vendor.
 VENDOR_DRM = frozendict({
-    "10de": ("nouveau", "nvidia", "nvidia_drm", "nvidia_modeset", "nvidia_uvm", "nvidia_peermem"),
+    "10de": (
+        "nouveau", "nvidia", "nvidia_drm", "nvidia_modeset", "nvidia_uvm",
+        "nvidia_peermem", "nova", "nova_core", "nova_drm",
+    ),
     "1002": ("amdgpu", "radeon"),
     "8086": ("i915", "xe"),
     "1af4": ("virtio_gpu",),
@@ -140,6 +153,11 @@ def elevate() -> None:
     if sudo is None:
         sys.stderr.write("[FATAL] Need root (sudo not found). Re-run as root.\n")
         raise SystemExit(1)
+    if not sys.stdin.isatty() and not os.environ.get("SUDO_ASKPASS"):
+        res = subprocess.run([sudo, "-n", "true"], capture_output=True)
+        if res.returncode != 0:
+            sys.stderr.write("[FATAL] Root privileges required, but terminal is non-interactive and passwordless sudo is not configured. Re-run with sudo.\n")
+            raise SystemExit(1)
     try:
         script = Path(sys.argv[0]).resolve(strict=True)
     except OSError:
@@ -305,11 +323,40 @@ class PciDevice:
         return self.klass[:4]
 
 
-def _read(path: Path) -> str:
-    try:
-        return path.read_text(encoding="utf-8").strip()
-    except OSError:
-        return ""
+@functools.cache
+def lookup_pci_ids(vendor_hex: str, device_hex: str) -> str | None:
+    """Fallback parser for /usr/share/hwdata/pci.ids when lspci is unavailable."""
+    v_clean = vendor_hex.lower().removeprefix("0x")
+    d_clean = device_hex.lower().removeprefix("0x")
+    if not (len(v_clean) == 4 and len(d_clean) == 4):
+        return None
+    for ids_path in PCI_IDS_PATHS:
+        if not ids_path.exists():
+            continue
+        try:
+            in_vendor = False
+            v_name, d_name = "", ""
+            with open(ids_path, encoding="utf-8", errors="replace") as f:
+                for raw_line in f:
+                    if not raw_line or raw_line.startswith("#"):
+                        continue
+                    if not raw_line.startswith("\t"):
+                        if in_vendor:
+                            break
+                        if raw_line[:4].lower() == v_clean:
+                            in_vendor = True
+                            v_name = raw_line[4:].strip()
+                    elif in_vendor and raw_line.startswith("\t") and not raw_line.startswith("\t\t"):
+                        stripped = raw_line[1:]
+                        if stripped[:4].lower() == d_clean:
+                            d_name = stripped[4:].strip()
+                            break
+            if v_name and d_name:
+                return f"{v_name} {d_name}"
+            return d_name or v_name or None
+        except OSError:
+            pass
+    return None
 
 
 def lspci_labels() -> dict[str, str]:
@@ -340,10 +387,17 @@ def enumerate_pci() -> list[PciDevice]:
             continue
         link = node / "driver"
         driver = link.resolve().name if link.is_symlink() else None
+        label = labels.get(node.name)
+        if not label:
+            label_file = node / "label"
+            if label_file.exists():
+                label = _read(label_file)
+            if not label:
+                label = lookup_pci_ids(vendor, device) or "unknown device"
         devs.append(PciDevice(
             addr=node.name, vendor=vendor, device=device, klass=klass,
             driver=driver, boot_vga=_read(node / "boot_vga") == "1",
-            label=labels.get(node.name, "unknown device"),
+            label=label,
         ))
     return devs
 
@@ -599,7 +653,7 @@ def desired_params(blacklist: set[str], ids: list[str], vendor: str, amd_force: 
 
 
 def cpu_vendor() -> str:
-    text = Path("/proc/cpuinfo").read_text(encoding="utf-8")
+    text = _read(Path("/proc/cpuinfo"))
     if "GenuineIntel" in text:
         return "intel"
     if "AuthenticAMD" in text:
@@ -1227,6 +1281,21 @@ def do_status() -> None:
     elif os.geteuid() != 0:
         staged_cmdline_ids = "(run with sudo to check staged boot entries)"
 
+    if staged_cmdline_ids:
+        if staged_cmdline_ids.startswith("("):
+            staged_val = f"[dim]{staged_cmdline_ids}[/dim]"
+        else:
+            staged_val = f"[green]{staged_cmdline_ids}[/green]"
+    else:
+        staged_val = "[dim]absent[/dim]"
+
+    if entry:
+        boot_entry_str = f"[green]{entry.ident}[/green]"
+    elif os.geteuid() != 0:
+        boot_entry_str = "[dim](run with sudo to inspect)[/dim]"
+    else:
+        boot_entry_str = "[dim]none found[/dim]"
+
     table = Table(title="Disable state", header_style="bold magenta")
     table.add_column("Component")
     table.add_column("State")
@@ -1235,11 +1304,10 @@ def do_status() -> None:
     table.add_row(str(MKINITCPIO_DROPIN), "[green]present[/green]" if dropin else "[dim]absent[/dim]")
     table.add_row("running cmdline vfio-pci.ids",
                   f"[green]{running_ids.group(1)}[/green]" if running_ids else "[dim]absent[/dim]")
-    table.add_row("staged cmdline vfio-pci.ids",
-                  f"[green]{staged_cmdline_ids}[/green]" if staged_cmdline_ids else "[dim]absent[/dim]")
+    table.add_row("staged cmdline vfio-pci.ids", staged_val)
     table.add_row("state.json action",
                   f"[cyan]{action}[/cyan]" if state else "[dim]none[/dim]")
-    table.add_row("managed boot entry", entry.ident if entry else "unknown")
+    table.add_row("managed boot entry", boot_entry_str)
     table.add_row("pending operation", str(pending or "none"))
     table.add_row("images rebuilt", str(state.get("rebuilt", "unknown")))
     table.add_row("state.json claimed IDs",
