@@ -1111,15 +1111,10 @@ class AppFooter(Vertical):
     def compose(self) -> ComposeResult:
         with FlowContainer(id="footer-shortcuts-container"):
             yield Shortcut("r", "Record", "toggle_record", id="sc-r")
-            yield Shortcut("space", "Pause/Play", "toggle_pause_play", id="sc-space")
             yield Shortcut("c", "Discard", "cancel_record", id="sc-c")
-            yield Shortcut("h/l", "Seek ±5s", "seek_fwd", id="sc-seek")
-            yield Shortcut("s", "Stop", "stop_player", id="sc-s")
-            yield Shortcut("y", "Copy Path", "copy_path", id="sc-y")
             yield Shortcut("e", "Rename", "rename_selected", id="sc-e")
             yield Shortcut("d", "Delete", "delete_selected", id="sc-d")
             yield Shortcut("/", "Search", "focus_search", id="sc-slash")
-            yield Shortcut("q", "Quit", "quit_app", id="sc-q")
 
         with Horizontal(id="footer-bottom-row"):
             yield Label(f"󰈔 {RECORDINGS_DIR}", id="file-link")
@@ -1150,23 +1145,52 @@ class AppFooter(Vertical):
 # =============================================================================
 
 class LiveVuMeter(Static):
-    """Calibrated audio decibel meter with true multi-channel support."""
+    """Calibrated audio decibel meter with true multi-channel support and integrated timecode."""
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.channel_peaks: list[float] = [-80.0, -80.0]
+        self.elapsed: float = 0.0
+        self.max_limit: float = 0.0
 
     def update_levels(self, peaks: list[float]) -> None:
         self.channel_peaks = peaks if peaks else [-80.0]
         self.refresh()
 
+    def update_time(self, elapsed: float, max_limit: float = 0.0) -> None:
+        self.elapsed = elapsed
+        self.max_limit = max_limit
+        self.refresh()
+
     def render(self) -> RenderableType:
-        width = max(14, self.size.width - 24)
+        full_width = self.size.width if self.size.width > 20 else 80
+        width = max(14, full_width - 24)
         tc = getattr(self.app, "theme_colors", DEFAULT_THEME)
 
         # Calibrated dB scale header with high-contrast legibility
         scale = Text()
         scale.append("     -60dB      -36dB    -18dB   -12dB   -6dB  -3dB  0dB", style=f"bold {tc['accent']}")
+
+        # Integrated timecode readout on far right of decibel scale line
+        total = int(self.elapsed)
+        minutes = total // 60
+        seconds = total % 60
+        tenths = int((self.elapsed - total) * 10)
+        clock_str = f"{minutes:02d}:{seconds:02d}.{tenths}"
+
+        time_part = Text()
+        time_part.append("TIMECODE  ", style=f"bold {tc['accent']}")
+        time_part.append(clock_str, style=f"bold {tc['fg']}")
+        if self.max_limit > 0:
+            remaining = max(0.0, self.max_limit - self.elapsed)
+            rem_total = int(remaining)
+            rem_min = rem_total // 60
+            rem_sec = rem_total % 60
+            time_part.append(f"  (-{rem_min:02d}:{rem_sec:02d})", style=tc["warning"])
+
+        pad_spaces = max(2, full_width - len(scale.plain) - len(time_part.plain) - 2)
+        scale.append(" " * pad_spaces)
+        scale.append_text(time_part)
 
         lines = [scale]
         is_mono = len(self.channel_peaks) == 1
@@ -1702,64 +1726,111 @@ class DuskyVoiceApp(App[None]):
     }
 
     Select > SelectCurrent {
+        width: 100%;
         height: 3;
-        border: none;
-        border-bottom: solid $primary 60%;
-        background: $primary 10%;
+        border: solid $secondary 55%;
+        background: $surface;
         color: $foreground;
         padding: 0 1;
+        align: left middle;
         box-sizing: border-box;
     }
 
+    Select > SelectCurrent > Static#label {
+        width: 1fr;
+        height: 1;
+        color: $foreground;
+        content-align: left middle;
+        overflow-x: hidden;
+        text-overflow: ellipsis;
+    }
+
+    Select > SelectCurrent > .arrow {
+        width: auto;
+        height: 1;
+        color: $primary;
+        text-style: bold;
+        padding-left: 1;
+        content-align: right middle;
+    }
+
     Select:hover > SelectCurrent {
-        background: $primary 18%;
-        border-bottom: solid $primary 80%;
+        border: solid $primary 80%;
+        background: $primary 15%;
+        color: $foreground;
     }
 
     Select:focus > SelectCurrent,
     Select.-expanded > SelectCurrent {
-        border-bottom: solid $primary;
-        background: $primary 25%;
+        border: solid $primary;
+        background: $primary 22%;
         color: $foreground;
+        text-style: bold;
     }
 
     SelectOverlay {
+        width: 100%;
         border: solid $primary;
-        background: $surface;
+        background: $background;
         color: $foreground;
         max-height: 12;
+        padding: 0;
+        box-sizing: border-box;
+    }
+
+    SelectOverlay > .option-list--option {
+        padding: 0 1;
+        color: $foreground;
+    }
+
+    SelectOverlay > .option-list--option-hover {
+        background: $primary 18%;
+        color: $foreground;
     }
 
     SelectOverlay > .option-list--option-highlighted {
-        background: $primary 30%;
+        background: $primary 32%;
         color: $foreground;
         text-style: bold;
     }
 
     Input {
-        border: none;
-        border-bottom: solid $primary 60%;
-        background: $primary 10%;
-        color: $foreground;
+        width: 100%;
         height: 3;
+        border: solid $secondary 55%;
+        background: $surface;
+        color: $foreground;
         padding: 0 1;
+        box-sizing: border-box;
+    }
+
+    Input:hover {
+        border: solid $primary 80%;
+        background: $primary 12%;
     }
 
     Input:focus {
-        border: none;
-        border-bottom: solid $primary;
+        border: solid $primary;
         background: $primary 20%;
+        color: $foreground;
+    }
+
+    #input_title {
+        margin-bottom: 1;
     }
 
     #lbl_target_preview {
+        width: 100%;
         height: 3;
-        content-align: left middle;
-        padding: 0 1;
+        border: solid $secondary 40%;
+        background: $surface 60%;
         color: $primary;
-        background: $primary 10%;
-        border-bottom: solid $primary 60%;
+        padding: 0 1;
+        margin-bottom: 1;
+        content-align: left middle;
         overflow-x: hidden;
         text-overflow: ellipsis;
+        box-sizing: border-box;
     }
 
     /* Library Styling */
@@ -2079,12 +2150,6 @@ class DuskyVoiceApp(App[None]):
                 # Pane 1: Studio Recorder
                 with Vertical(id="pane_studio", classes="tab_pane"):
                     with Vertical(id="console_deck"):
-                        yield NoticeBox(
-                            "󰐽  STANDBY • READY TO CAPTURE",
-                            level="info",
-                            id="banner_box",
-                        )
-                        yield DigitalTimerDisplay(id="timer_box")
                         yield LiveVuMeter(id="vu_meter")
                         yield RollingOscilloscope(id="oscilloscope")
 
@@ -2425,31 +2490,34 @@ class DuskyVoiceApp(App[None]):
                 self.set_status("Ready", "info")
 
     def _update_banner(self) -> None:
-        banner = self.query_one("#banner_box", NoticeBox)
-        state = self.engine.state
-        if state == RecordState.RECORDING:
-            banner.update_notice("󰑋  RECORDING LIVE", level="danger")
-        elif state == RecordState.PAUSED:
-            banner.update_notice("󰏤  RECORDING PAUSED", level="warning")
-        elif state == RecordState.COUNTDOWN:
-            banner.update_notice(f"󰔚  STARTING IN {self.countdown_remaining}s...", level="warning")
-        elif state == RecordState.FINALIZING:
-            banner.update_notice("󰆓  FINALIZING & FLUSHING HEADERS...", level="success")
-        else:
-            banner.update_notice("󰐽  STANDBY • READY TO CAPTURE", level="info")
+        try:
+            banner = self.query_one("#banner_box", NoticeBox)
+            state = self.engine.state
+            if state == RecordState.RECORDING:
+                banner.update_notice("󰑋  RECORDING LIVE", level="danger")
+            elif state == RecordState.PAUSED:
+                banner.update_notice("󰏤  RECORDING PAUSED", level="warning")
+            elif state == RecordState.COUNTDOWN:
+                banner.update_notice(f"󰔚  STARTING IN {self.countdown_remaining}s...", level="warning")
+            elif state == RecordState.FINALIZING:
+                banner.update_notice("󰆓  FINALIZING & FLUSHING HEADERS...", level="success")
+            else:
+                banner.update_notice("󰐽  STANDBY • READY TO CAPTURE", level="info")
+        except Exception:
+            pass
 
     def _clock_tick(self) -> None:
         """Periodic clock update for recording or playback."""
         self.engine.poll()
         self.player.poll()
-        timer_box = self.query_one("#timer_box", DigitalTimerDisplay)
+        vu = self.query_one("#vu_meter", LiveVuMeter)
         if self.engine.state in (RecordState.RECORDING, RecordState.PAUSED):
             elapsed = self.engine.elapsed_seconds
-            timer_box.update_time(elapsed, self.engine.max_duration)
+            vu.update_time(elapsed, self.engine.max_duration)
             if self.engine.max_duration > 0 and elapsed >= self.engine.max_duration:
                 self.engine.stop(stopped_by_timer=True)
         else:
-            timer_box.update_time(0.0)
+            vu.update_time(0.0)
 
         if self.player.state == PlayerState.PLAYING and self.player.duration_sec > 0:
             pos = self.player.get_position()
