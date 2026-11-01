@@ -321,7 +321,7 @@ hl.bind(
 -- Toggle: kill the open panel if it is running, otherwise launch it.
 cond_bind(
     "ALT + V",
-    hl.dsp.exec_cmd([[pkill -x dusky-tray || "$HOME/.local/bin/dusky-tray"]]),
+    hl.dsp.exec_cmd([["$HOME/.local/bin/dusky-tray"]]),
     { description = "Dusky Tray (Toggle)" }
 )
 
