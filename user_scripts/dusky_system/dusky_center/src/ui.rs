@@ -925,6 +925,10 @@ impl CenterApp {
         } else { self.refresh_controls() }
     }
 
+    pub fn trigger_dismiss() {
+        let _ = Self::dismiss_channel().0.unbounded_send(());
+    }
+
     pub fn subscription(&self) -> Subscription<Message> {
         let events = iced::event::listen_with(|event, status, _| match (&status, &event) {
             (
@@ -940,7 +944,12 @@ impl CenterApp {
         let highlight = if self.search_highlight.is_some() {
             Subscription::run(Self::highlight_ticks)
         } else { Subscription::none() };
-        Subscription::batch([events, Subscription::run(Self::ticks), highlight])
+        Subscription::batch([
+            events,
+            Subscription::run(Self::ticks),
+            highlight,
+            Subscription::run(Self::dismiss_events),
+        ])
     }
 
     fn highlight_ticks() -> impl iced_futures::futures::Stream<Item = Message> {
@@ -977,6 +986,28 @@ impl CenterApp {
             futures_timer::Delay::new(Duration::from_secs(3)).await;
             Some((Message::Tick, ()))
         })
+    }
+
+    fn dismiss_channel() -> &'static (iced_futures::futures::channel::mpsc::UnboundedSender<()>, std::sync::Mutex<Option<iced_futures::futures::channel::mpsc::UnboundedReceiver<()>>>) {
+        static CHANNEL: std::sync::OnceLock<(iced_futures::futures::channel::mpsc::UnboundedSender<()>, std::sync::Mutex<Option<iced_futures::futures::channel::mpsc::UnboundedReceiver<()>>>)> = std::sync::OnceLock::new();
+        CHANNEL.get_or_init(|| {
+            let (tx, rx) = iced_futures::futures::channel::mpsc::unbounded();
+            (tx, std::sync::Mutex::new(Some(rx)))
+        })
+    }
+
+    fn dismiss_events() -> impl iced_futures::futures::Stream<Item = Message> {
+        use iced_futures::futures::StreamExt;
+        let rx = Self::dismiss_channel()
+            .1
+            .lock()
+            .unwrap()
+            .take()
+            .unwrap_or_else(|| {
+                let (_, rx) = iced_futures::futures::channel::mpsc::unbounded();
+                rx
+            });
+        rx.map(|()| Message::CloseApp)
     }
 
     // ---------------------------------------------------------------------------

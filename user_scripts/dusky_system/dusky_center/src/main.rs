@@ -17,6 +17,10 @@ pub mod ui;
 
 use config::AppConfig;
 use std::env;
+use std::io::Write;
+use std::os::unix::net::{UnixListener, UnixStream};
+use std::path::PathBuf;
+use std::time::Duration;
 use ui::CenterApp;
 
 struct BackgroundExecutor(iced_futures::futures::executor::ThreadPool);
@@ -76,6 +80,28 @@ impl SingleInstanceGuard {
     }
 }
 
+struct SocketGuard(PathBuf);
+impl Drop for SocketGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+fn instance_socket_path() -> PathBuf {
+    backend::runtime_dir().join("dusky-center.sock")
+}
+
+fn spawn_ipc_watcher(listener: UnixListener) {
+    std::thread::spawn(move || {
+        if let Ok((_stream, _)) = listener.accept() {
+            ui::CenterApp::trigger_dismiss();
+            std::thread::sleep(Duration::from_millis(250));
+            backend::cmd::shutdown();
+            std::process::exit(0);
+        }
+    });
+}
+
 fn main() -> iced::Result {
     renderer::trace_startup();
     let mut initial_page = None;
@@ -122,12 +148,32 @@ fn main() -> iced::Result {
         }
     }
 
+    // Single-instance zero-latency toggle: if already running, signal it to dismiss and exit immediately.
+    let sock_path = instance_socket_path();
+    if let Ok(mut stream) = UnixStream::connect(&sock_path) {
+        let _ = stream.set_write_timeout(Some(Duration::from_millis(50)));
+        let _ = stream.write_all(b"dismiss\n");
+        return Ok(());
+    }
+
     let _guard = match SingleInstanceGuard::acquire() {
         Ok(Some(g)) => g,
         Ok(None) => return Ok(()),
         Err(error) => {
             eprintln!("Could not start Dusky Center: {error}");
             std::process::exit(1);
+        }
+    };
+
+    let _ = std::fs::remove_file(&sock_path);
+    let _socket_guard = match UnixListener::bind(&sock_path) {
+        Ok(listener) => {
+            spawn_ipc_watcher(listener);
+            Some(SocketGuard(sock_path))
+        }
+        Err(error) => {
+            eprintln!("Warning: could not bind dusky-center toggle socket: {error}");
+            None
         }
     };
 

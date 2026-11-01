@@ -113,7 +113,7 @@ hl.bind(
 
 hl.bind(
     "SUPER + SPACE",
-    hl.dsp.exec_cmd([[pkill -x dusky-center || dusky-run dusky-center]]),
+    hl.dsp.exec_cmd([[dusky-run dusky-center]]),
     { description = "Dusky Center" }
 )
 
