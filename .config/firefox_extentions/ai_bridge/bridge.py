@@ -630,12 +630,13 @@ def send_query_cli(
     query_text,
     files=None,
     stream=True,
-    idle_timeout=10.0,
+    idle_timeout=60.0,
     hard_timeout=1800.0,
     trip_enabled=True,
     trip_threshold=5,
     trip_leading=False,
     model=None,
+    tab_id=None,
 ):
     if not is_port_open(HOST, PORT):
         if not ensure_daemon():
@@ -683,20 +684,20 @@ def send_query_cli(
     rx_buf = bytearray(resp[header_end:])
 
     req_id = str(uuid.uuid4())
-    _ws_send_masked_json(
-        s,
-        {
-            "type": "RUN_QUERY",
-            "query": query_text,
-            "files": files or [],
-            "model": model,
-            "requestId": req_id,
-            "tripEnabled": trip_enabled,
-            "tripThreshold": trip_threshold,
-            "tripLeading": trip_leading,
-            "tripTrailing": trip_enabled,
-        },
-    )
+    req_payload = {
+        "type": "RUN_QUERY",
+        "query": query_text,
+        "files": files or [],
+        "model": model,
+        "requestId": req_id,
+        "tripEnabled": trip_enabled,
+        "tripThreshold": trip_threshold,
+        "tripLeading": trip_leading,
+        "tripTrailing": trip_enabled,
+    }
+    if tab_id is not None:
+        req_payload["tabId"] = tab_id
+    _ws_send_masked_json(s, req_payload)
 
     full_text = ""
     emitted = ""
@@ -925,6 +926,8 @@ if __name__ == "__main__":
     parser.add_argument("--no-trip", action="store_true", help="Disable Token-Saver automatic sequence trip")
     parser.add_argument("--trip-leading", action="store_true", help="Trip and stop immediately on leading 1..500 countdowns")
     parser.add_argument("--trip-threshold", type=int, default=5, help="Sequential integer count to trigger trip (default: 5)")
+    parser.add_argument("--idle-timeout", type=float, default=60.0, help="Idle timeout in seconds before treating as FINAL (default: 60.0)")
+    parser.add_argument("--tab-id", type=int, default=None, help="Target specific browser tab ID")
     parser.add_argument("query", nargs="*", help="Prompt query string")
     args = parser.parse_args()
 
@@ -942,8 +945,10 @@ if __name__ == "__main__":
         send_query_cli(
             query_str,
             files=attachments,
+            idle_timeout=args.idle_timeout,
             trip_enabled=not args.no_trip,
             trip_threshold=args.trip_threshold,
             trip_leading=args.trip_leading,
             model=args.model,
+            tab_id=args.tab_id,
         )
