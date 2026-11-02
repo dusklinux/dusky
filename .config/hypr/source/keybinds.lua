@@ -928,19 +928,31 @@ hl.bind(
 hl.bind(
     "ALT + TAB",
     hl.dsp.exec_cmd("dusky_overview"),
-    { description = "Dusky Overview" }
+    { description = "Dusky Overview", repeating = true }
+)
+
+hl.bind(
+    "ALT + SHIFT + TAB",
+    hl.dsp.exec_cmd("dusky_overview --reverse"),
+    { description = "Dusky Overview (Reverse)", repeating = true }
+)
+
+hl.bind(
+    "CTRL + ALT + TAB",
+    hl.dsp.exec_cmd("dusky_overview --detailed"),
+    { description = "Dusky Overview (Detailed Window Next)", repeating = true }
+)
+
+hl.bind(
+    "CTRL + ALT + SHIFT + TAB",
+    hl.dsp.exec_cmd("dusky_overview --detailed --reverse"),
+    { description = "Dusky Overview (Detailed Window Prev)", repeating = true }
 )
 
 hl.bind(
     "SUPER + TAB",
     hl.dsp.focus({ workspace = "previous" }),
     { description = "Last Workspace", repeating = true }
-)
-
-hl.bind(
-    "ALT + SHIFT + TAB",
-    hl.dsp.focus({ workspace = "e-1" }),
-    { description = "Cycle Backward", repeating = true }
 )
 
 hl.bind(

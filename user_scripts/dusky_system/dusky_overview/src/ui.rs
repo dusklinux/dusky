@@ -2,7 +2,6 @@ use crate::hyprland::{self, Client, OverviewSnapshot, WorkspaceKey, WorkspaceVie
 use crate::icons::{IconRegistry, ResolvedAppIcon};
 use iced::alignment::{Horizontal, Vertical};
 use iced::event::{self, Event};
-use iced::futures::channel::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use iced::keyboard::{
     self, Key,
     key::{Code, Named, Physical},
@@ -25,6 +24,10 @@ use std::time::{Duration, Instant};
 
 const PREVIEW_BASE_HEIGHT: f32 = 220.0;
 const MAX_COLUMNS: usize = 3;
+const HEARTBEAT_INTERVAL: Duration = Duration::from_millis(25);
+const HOLD_INITIAL_DELAY: Duration = Duration::from_millis(325);
+const HOLD_REPEAT_INTERVAL: Duration = Duration::from_millis(150);
+const IPC_STREAM_THRESHOLD: Duration = Duration::from_millis(95);
 
 #[derive(Debug, Clone, Copy)]
 pub struct ThemePalette {
@@ -167,38 +170,54 @@ pub enum PostExitAction {
     FocusSnapPicker,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IpcCommand {
+    NextWs,
+    PrevWs,
+    NextItem,
+    PrevItem,
+    Activate,
+    Dismiss,
+    SnapPickerMapped,
+}
+
 static POST_EXIT_ACTION: OnceLock<PostExitAction> = OnceLock::new();
-static IPC_TX: OnceLock<UnboundedSender<Message>> = OnceLock::new();
-static PENDING_IPC_MSG: Mutex<Option<Message>> = Mutex::new(None);
+static PENDING_IPC: Mutex<Vec<IpcCommand>> = Mutex::new(Vec::new());
 
 pub fn take_post_exit_action() -> Option<&'static PostExitAction> {
     POST_EXIT_ACTION.get()
 }
 
-fn notify_ui(msg: Message) {
-    if let Some(tx) = IPC_TX.get() {
-        let _ = tx.unbounded_send(msg);
-    } else if let Ok(mut slot) = PENDING_IPC_MSG.lock() {
-        *slot = Some(msg);
+pub fn send_ipc_command(cmd: IpcCommand) {
+    if let Ok(mut queue) = PENDING_IPC.lock() {
+        queue.push(cmd);
     }
-}
-
-fn external_signal_stream() -> UnboundedReceiver<Message> {
-    let (tx, rx) = mpsc::unbounded();
-    if let Ok(mut slot) = PENDING_IPC_MSG.lock()
-        && let Some(msg) = slot.take()
-    {
-        let _ = tx.unbounded_send(msg);
-    }
-    let _ = IPC_TX.set(tx);
-    rx
 }
 
 pub fn spawn_ipc_watchers(listener: UnixListener) {
-    // 1. Single-instance toggle watcher: dismisses immediately when a second dusky_overview runs.
+    // 1. Single-instance IPC command watcher: continuously handles next/prev/activate/dismiss commands.
     thread::spawn(move || {
-        if let Ok((_stream, _addr)) = listener.accept() {
-            notify_ui(Message::Dismiss);
+        for stream in listener.incoming().flatten() {
+            let _ = stream.set_read_timeout(Some(Duration::from_millis(50)));
+            let reader = BufReader::new(stream);
+            if let Some(Ok(line)) = reader.lines().next() {
+                let cmd = match line.trim() {
+                    "next_ws" | "next" => IpcCommand::NextWs,
+                    "prev_ws" | "prev" | "reverse" => IpcCommand::PrevWs,
+                    "next_item" => IpcCommand::NextItem,
+                    "prev_item" => IpcCommand::PrevItem,
+                    "activate" => {
+                        send_ipc_command(IpcCommand::Activate);
+                        break;
+                    }
+                    "dismiss" => {
+                        send_ipc_command(IpcCommand::Dismiss);
+                        break;
+                    }
+                    _ => IpcCommand::NextWs,
+                };
+                send_ipc_command(cmd);
+            }
         }
     });
 
@@ -215,7 +234,7 @@ pub fn spawn_ipc_watchers(listener: UnixListener) {
         for line in reader.lines().map_while(Result::ok) {
             if line.starts_with("openwindow>>") && line.contains("dusky-snap-pick") {
                 thread::sleep(Duration::from_millis(25));
-                notify_ui(Message::SnapPickerMapped);
+                send_ipc_command(IpcCommand::SnapPickerMapped);
                 break;
             }
         }
@@ -305,6 +324,12 @@ pub enum SelectionTarget {
 #[derive(Debug, Clone)]
 pub enum Message {
     AnimationFrame(Instant),
+    Heartbeat(Instant),
+    ModifiersChanged(keyboard::Modifiers),
+    CtrlKeyChanged(bool),
+    ShiftKeyChanged(bool),
+    TabPressed { shift: bool, ctrl: bool, alt: bool },
+    TabReleased { alt: bool },
     WindowHoverEntered { ws_idx: usize, win_idx: usize },
     WindowHoverExited { ws_idx: usize, win_idx: usize },
     ActivateWindow {
@@ -348,11 +373,26 @@ pub struct OverviewApp {
     window_hover_positions: Vec<Vec<f32>>,
     window_hover_animations: Vec<Vec<SpringAnimation>>,
     animating: bool,
+    alt_held: bool,
+    tab_held: bool,
+    tab_shift: bool,
+    tab_ctrl: bool,
+    next_repeat_deadline: Option<Instant>,
+    last_ipc_at: Option<Instant>,
+    last_step_at: Option<Instant>,
 }
 
 impl OverviewApp {
-    pub fn new(snapshot: OverviewSnapshot, palette: ThemePalette) -> (Self, Task<Message>) {
-        let selected = Self::initial_selection(&snapshot);
+    pub fn new(
+        snapshot: OverviewSnapshot,
+        palette: ThemePalette,
+        reverse: bool,
+        detailed: bool,
+    ) -> (Self, Task<Message>) {
+        if let Ok(mut queue) = PENDING_IPC.lock() {
+            queue.clear();
+        }
+        let selected = Self::initial_selection(&snapshot, reverse, detailed);
         let custom_theme = Theme::custom(
             String::from("DuskyMatugen"),
             iced::theme::Palette {
@@ -378,7 +418,8 @@ impl OverviewApp {
         for (idx, ws) in snapshot.workspaces.iter().enumerate() {
             let initial = if idx == initial_ws_idx { 1.0 } else { 0.0 };
             card_select_positions.push(initial);
-            card_animations.push(SpringAnimation::new(initial, 38.0, 1.0, now));
+            // omega = 60.0 settles 90% in 65ms and 98% in 97ms for crisp 150ms auto-repeat cycling.
+            card_animations.push(SpringAnimation::new(initial, 60.0, 1.0, now));
 
             let win_count = ws.clients.len();
             window_hover_positions.push(vec![0.0; win_count]);
@@ -388,7 +429,7 @@ impl OverviewApp {
                     .collect(),
             );
         }
-        let entrance_spring = SpringAnimation::new(1.0, 32.0, 1.0, now);
+        let entrance_spring = SpringAnimation::new(1.0, 36.0, 1.0, now);
         let icons = IconRegistry::load();
         (
             Self {
@@ -405,6 +446,13 @@ impl OverviewApp {
                 window_hover_positions,
                 window_hover_animations,
                 animating: true,
+                alt_held: true,
+                tab_held: false,
+                tab_shift: reverse,
+                tab_ctrl: detailed,
+                next_repeat_deadline: None,
+                last_ipc_at: Some(now),
+                last_step_at: Some(now),
             },
             Task::none(),
         )
@@ -422,7 +470,7 @@ impl OverviewApp {
         self.palette
     }
 
-    fn initial_selection(snapshot: &OverviewSnapshot) -> SelectionTarget {
+    fn active_selection(snapshot: &OverviewSnapshot) -> SelectionTarget {
         // 1. Prioritize the focused window if it resides on an active visible workspace.
         if let Some(ref focused_addr) = snapshot.focused_address {
             for (ws_idx, ws) in snapshot.workspaces.iter().enumerate() {
@@ -460,9 +508,9 @@ impl OverviewApp {
         SelectionTarget::Workspace(0)
     }
 
-    fn all_targets(&self) -> Vec<SelectionTarget> {
+    fn collect_targets(snapshot: &OverviewSnapshot) -> Vec<SelectionTarget> {
         let mut targets = Vec::new();
-        for (ws_idx, ws) in self.snapshot.workspaces.iter().enumerate() {
+        for (ws_idx, ws) in snapshot.workspaces.iter().enumerate() {
             if ws.clients.is_empty() {
                 targets.push(SelectionTarget::Workspace(ws_idx));
             } else {
@@ -475,6 +523,61 @@ impl OverviewApp {
             targets.push(SelectionTarget::Workspace(0));
         }
         targets
+    }
+
+    fn initial_selection(
+        snapshot: &OverviewSnapshot,
+        reverse: bool,
+        detailed: bool,
+    ) -> SelectionTarget {
+        let current = Self::active_selection(snapshot);
+        let ws_count = snapshot.workspaces.len();
+
+        if detailed || ws_count <= 1 {
+            let targets = Self::collect_targets(snapshot);
+            return if let Some(pos) = targets.iter().position(|t| *t == current) {
+                if reverse {
+                    let prev = if pos == 0 { targets.len() - 1 } else { pos - 1 };
+                    targets[prev].clone()
+                } else {
+                    targets[(pos + 1) % targets.len()].clone()
+                }
+            } else {
+                targets.first().cloned().unwrap_or(current)
+            };
+        }
+
+        // Default workspace-level mode: step directly to the next/previous workspace card.
+        let current_ws_idx = match current {
+            SelectionTarget::Workspace(ws_idx) => ws_idx,
+            SelectionTarget::Window { ws_idx, .. } => ws_idx,
+        };
+        let target_ws_idx = if reverse {
+            if current_ws_idx == 0 {
+                ws_count - 1
+            } else {
+                current_ws_idx - 1
+            }
+        } else {
+            (current_ws_idx + 1) % ws_count
+        };
+
+        if let Some(ws) = snapshot.workspaces.get(target_ws_idx) {
+            if ws.clients.is_empty() {
+                SelectionTarget::Workspace(target_ws_idx)
+            } else {
+                SelectionTarget::Window {
+                    ws_idx: target_ws_idx,
+                    win_idx: ws.clients.len() - 1,
+                }
+            }
+        } else {
+            current
+        }
+    }
+
+    fn all_targets(&self) -> Vec<SelectionTarget> {
+        Self::collect_targets(&self.snapshot)
     }
 
     fn current_ws_index(&self) -> usize {
@@ -523,6 +626,16 @@ impl OverviewApp {
         self.animating = true;
     }
 
+    fn step_by_modifiers(&mut self, shift: bool, ctrl: bool) -> Task<Message> {
+        let ws_count = self.snapshot.workspaces.len();
+        match (ctrl || ws_count <= 1, shift) {
+            (false, false) => self.update(Message::SelectNextWorkspace),
+            (false, true) => self.update(Message::SelectPrevWorkspace),
+            (true, false) => self.update(Message::SelectNextItem),
+            (true, true) => self.update(Message::SelectPrevItem),
+        }
+    }
+
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::AnimationFrame(now) => {
@@ -546,6 +659,117 @@ impl OverviewApp {
                     }
                 }
                 self.animating = still_moving;
+                Task::none()
+            }
+            Message::Heartbeat(now) => {
+                // 1. Drain pending IPC commands from Hyprland keybinds
+                let ipc_commands = if let Ok(mut q) = PENDING_IPC.lock() {
+                    std::mem::take(&mut *q)
+                } else {
+                    Vec::new()
+                };
+
+                for cmd in ipc_commands {
+                    match cmd {
+                        IpcCommand::Activate => {
+                            return self.update(Message::ActivateSelected);
+                        }
+                        IpcCommand::Dismiss => {
+                            return self.update(Message::Dismiss);
+                        }
+                        IpcCommand::SnapPickerMapped => {
+                            return self.update(Message::SnapPickerMapped);
+                        }
+                        IpcCommand::NextWs
+                        | IpcCommand::PrevWs
+                        | IpcCommand::NextItem
+                        | IpcCommand::PrevItem => {
+                            let ipc_reverse = matches!(cmd, IpcCommand::PrevWs | IpcCommand::PrevItem);
+                            let ipc_detailed = matches!(cmd, IpcCommand::NextItem | IpcCommand::PrevItem);
+                            let reverse = ipc_reverse || self.tab_shift;
+                            let detailed = ipc_detailed || self.tab_ctrl;
+
+                            let dt_ipc = self
+                                .last_ipc_at
+                                .map(|t| now.saturating_duration_since(t))
+                                .unwrap_or(Duration::from_secs(10));
+                            self.last_ipc_at = Some(now);
+
+                            let is_burst = dt_ipc <= IPC_STREAM_THRESHOLD;
+                            let dt_step = self
+                                .last_step_at
+                                .map(|t| now.saturating_duration_since(t))
+                                .unwrap_or(Duration::from_secs(10));
+
+                            if is_burst {
+                                if dt_step >= HOLD_REPEAT_INTERVAL {
+                                    self.last_step_at = Some(now);
+                                    let _ = self.step_by_modifiers(reverse, detailed);
+                                }
+                            } else if dt_step >= Duration::from_millis(90) {
+                                self.last_step_at = Some(now);
+                                let _ = self.step_by_modifiers(reverse, detailed);
+                            }
+                        }
+                    }
+                }
+
+                // 2. In-window Tab hold auto-repeat evaluation
+                if self.tab_held {
+                    if let Some(deadline) = self.next_repeat_deadline {
+                        if now >= deadline {
+                            self.next_repeat_deadline = Some(now + HOLD_REPEAT_INTERVAL);
+                            self.last_step_at = Some(now);
+                            let _ = self.step_by_modifiers(self.tab_shift, self.tab_ctrl);
+                        }
+                    }
+                }
+
+                Task::none()
+            }
+            Message::ModifiersChanged(mods) => {
+                self.tab_shift = mods.shift();
+                self.tab_ctrl = mods.control();
+                if mods.alt() {
+                    self.alt_held = true;
+                    Task::none()
+                } else if self.alt_held {
+                    self.alt_held = false;
+                    self.tab_held = false;
+                    self.next_repeat_deadline = None;
+                    self.update(Message::ActivateSelected)
+                } else {
+                    Task::none()
+                }
+            }
+            Message::CtrlKeyChanged(down) => {
+                self.tab_ctrl = down;
+                Task::none()
+            }
+            Message::ShiftKeyChanged(down) => {
+                self.tab_shift = down;
+                Task::none()
+            }
+            Message::TabPressed { shift, ctrl, alt } => {
+                self.tab_shift = shift;
+                self.tab_ctrl = ctrl;
+                if alt {
+                    self.alt_held = true;
+                }
+                if !self.tab_held {
+                    self.tab_held = true;
+                    self.next_repeat_deadline = Some(Instant::now() + HOLD_INITIAL_DELAY);
+                    self.last_step_at = Some(Instant::now());
+                    return self.step_by_modifiers(shift, ctrl);
+                }
+                Task::none()
+            }
+            Message::TabReleased { alt } => {
+                if alt {
+                    self.alt_held = true;
+                }
+                self.tab_held = false;
+                self.next_repeat_deadline = None;
                 Task::none()
             }
             Message::WindowHoverEntered { ws_idx, win_idx } => {
@@ -579,6 +803,8 @@ impl OverviewApp {
                 iced::exit()
             }
             Message::ActivateSelected => {
+                self.tab_held = false;
+                self.next_repeat_deadline = None;
                 match &self.selected {
                     SelectionTarget::Workspace(ws_idx) => {
                         if let Some(ws) = self.snapshot.workspaces.get(*ws_idx) {
@@ -626,22 +852,26 @@ impl OverviewApp {
             }
             Message::SelectNextWorkspace => {
                 let count = self.snapshot.workspaces.len();
-                if count > 0 {
+                if count > 1 {
                     let next_ws = (self.current_ws_index() + 1) % count;
                     self.select_workspace_by_index(next_ws);
+                    self.sync_selection_springs();
+                    Task::none()
+                } else {
+                    self.update(Message::SelectNextItem)
                 }
-                self.sync_selection_springs();
-                Task::none()
             }
             Message::SelectPrevWorkspace => {
                 let count = self.snapshot.workspaces.len();
-                if count > 0 {
+                if count > 1 {
                     let cur = self.current_ws_index();
                     let prev_ws = if cur == 0 { count - 1 } else { cur - 1 };
                     self.select_workspace_by_index(prev_ws);
+                    self.sync_selection_springs();
+                    Task::none()
+                } else {
+                    self.update(Message::SelectPrevItem)
                 }
-                self.sync_selection_springs();
-                Task::none()
             }
             Message::SelectNextWindowInWorkspace => {
                 let ws_idx = self.current_ws_index();
@@ -728,7 +958,7 @@ impl OverviewApp {
                             while Instant::now() < deadline {
                                 if hyprland::is_snap_picker_mapped() {
                                     thread::sleep(Duration::from_millis(20));
-                                    notify_ui(Message::SnapPickerMapped);
+                                    send_ipc_command(IpcCommand::SnapPickerMapped);
                                     break;
                                 }
                                 thread::sleep(Duration::from_millis(12));
@@ -743,7 +973,11 @@ impl OverviewApp {
                 let _ = POST_EXIT_ACTION.set(PostExitAction::FocusSnapPicker);
                 iced::exit()
             }
-            Message::Dismiss => iced::exit(),
+            Message::Dismiss => {
+                self.tab_held = false;
+                self.next_repeat_deadline = None;
+                iced::exit()
+            }
         }
     }
 
@@ -754,60 +988,125 @@ impl OverviewApp {
                 physical_key,
                 modifiers,
                 ..
-            }) => match key.as_ref() {
-                Key::Named(Named::PrintScreen) => Some(Message::TriggerScreenshot {
-                    full_screen: !modifiers.shift(),
-                }),
-                _ if matches!(physical_key, Physical::Code(Code::PrintScreen)) => {
-                    Some(Message::TriggerScreenshot {
+            }) => {
+                if matches!(key.as_ref(), Key::Named(Named::Control))
+                    || matches!(
+                        physical_key,
+                        Physical::Code(Code::ControlLeft) | Physical::Code(Code::ControlRight)
+                    )
+                {
+                    return Some(Message::CtrlKeyChanged(true));
+                }
+                if matches!(key.as_ref(), Key::Named(Named::Shift))
+                    || matches!(
+                        physical_key,
+                        Physical::Code(Code::ShiftLeft) | Physical::Code(Code::ShiftRight)
+                    )
+                {
+                    return Some(Message::ShiftKeyChanged(true));
+                }
+
+                match key.as_ref() {
+                    Key::Named(Named::PrintScreen) => Some(Message::TriggerScreenshot {
                         full_screen: !modifiers.shift(),
-                    })
-                }
-                Key::Character("s" | "S") if modifiers.logo() => Some(Message::TriggerScreenshot {
-                    full_screen: !modifiers.shift(),
-                }),
-                Key::Named(Named::Escape) => Some(Message::Dismiss),
-                Key::Named(Named::Enter) | Key::Named(Named::Space) => {
-                    Some(Message::ActivateSelected)
-                }
-                Key::Named(Named::Tab) => {
-                    if modifiers.alt() {
-                        Some(Message::Dismiss)
-                    } else if modifiers.shift() {
-                        Some(Message::SelectPrevItem)
-                    } else {
-                        Some(Message::SelectNextItem)
+                    }),
+                    _ if matches!(physical_key, Physical::Code(Code::PrintScreen)) => {
+                        Some(Message::TriggerScreenshot {
+                            full_screen: !modifiers.shift(),
+                        })
                     }
+                    Key::Character("s" | "S") if modifiers.logo() => {
+                        Some(Message::TriggerScreenshot {
+                            full_screen: !modifiers.shift(),
+                        })
+                    }
+                    Key::Named(Named::Escape) => Some(Message::Dismiss),
+                    Key::Named(Named::Enter) | Key::Named(Named::Space) => {
+                        Some(Message::ActivateSelected)
+                    }
+                    Key::Named(Named::Tab) => Some(Message::TabPressed {
+                        shift: modifiers.shift(),
+                        ctrl: modifiers.control(),
+                        alt: modifiers.alt(),
+                    }),
+                    _ if matches!(physical_key, Physical::Code(Code::Tab)) => {
+                        Some(Message::TabPressed {
+                            shift: modifiers.shift(),
+                            ctrl: modifiers.control(),
+                            alt: modifiers.alt(),
+                        })
+                    }
+                    Key::Named(Named::ArrowRight) => Some(Message::SelectNextWorkspace),
+                    Key::Named(Named::ArrowLeft) => Some(Message::SelectPrevWorkspace),
+                    Key::Named(Named::ArrowDown) => Some(Message::SelectNextWindowInWorkspace),
+                    Key::Named(Named::ArrowUp) => Some(Message::SelectPrevWindowInWorkspace),
+                    Key::Character("l" | "L") => Some(Message::SelectNextWorkspace),
+                    Key::Character("h" | "H") => Some(Message::SelectPrevWorkspace),
+                    Key::Character("j" | "J") => Some(Message::SelectNextWindowInWorkspace),
+                    Key::Character("k" | "K") => Some(Message::SelectPrevWindowInWorkspace),
+                    Key::Character("q" | "Q") => Some(Message::Dismiss),
+                    Key::Character(ch) if ch.len() == 1 => match ch.as_bytes()[0] {
+                        b @ b'1'..=b'9' => Some(Message::QuickWorkspace((b - b'0') as i32)),
+                        b'0' => Some(Message::QuickWorkspace(10)),
+                        _ => None,
+                    },
+                    _ => Some(Message::ModifiersChanged(modifiers)),
                 }
-                Key::Named(Named::ArrowRight) => Some(Message::SelectNextWorkspace),
-                Key::Named(Named::ArrowLeft) => Some(Message::SelectPrevWorkspace),
-                Key::Named(Named::ArrowDown) => Some(Message::SelectNextWindowInWorkspace),
-                Key::Named(Named::ArrowUp) => Some(Message::SelectPrevWindowInWorkspace),
-                Key::Character("l" | "L") => Some(Message::SelectNextWorkspace),
-                Key::Character("h" | "H") => Some(Message::SelectPrevWorkspace),
-                Key::Character("j" | "J") => Some(Message::SelectNextWindowInWorkspace),
-                Key::Character("k" | "K") => Some(Message::SelectPrevWindowInWorkspace),
-                Key::Character("q" | "Q") => Some(Message::Dismiss),
-                Key::Character(ch) if ch.len() == 1 => match ch.as_bytes()[0] {
-                    b @ b'1'..=b'9' => Some(Message::QuickWorkspace((b - b'0') as i32)),
-                    b'0' => Some(Message::QuickWorkspace(10)),
-                    _ => None,
-                },
-                _ => None,
-            },
+            }
+            Event::Keyboard(keyboard::Event::KeyReleased {
+                key,
+                physical_key,
+                modifiers,
+                ..
+            }) => {
+                if matches!(
+                    key.as_ref(),
+                    Key::Named(Named::Alt) | Key::Named(Named::AltGraph)
+                ) || matches!(
+                    physical_key,
+                    Physical::Code(Code::AltLeft) | Physical::Code(Code::AltRight)
+                ) {
+                    Some(Message::ActivateSelected)
+                } else if matches!(key.as_ref(), Key::Named(Named::Tab))
+                    || matches!(physical_key, Physical::Code(Code::Tab))
+                {
+                    Some(Message::TabReleased {
+                        alt: modifiers.alt(),
+                    })
+                } else if matches!(key.as_ref(), Key::Named(Named::Control))
+                    || matches!(
+                        physical_key,
+                        Physical::Code(Code::ControlLeft) | Physical::Code(Code::ControlRight)
+                    )
+                {
+                    Some(Message::CtrlKeyChanged(false))
+                } else if matches!(key.as_ref(), Key::Named(Named::Shift))
+                    || matches!(
+                        physical_key,
+                        Physical::Code(Code::ShiftLeft) | Physical::Code(Code::ShiftRight)
+                    )
+                {
+                    Some(Message::ShiftKeyChanged(false))
+                } else {
+                    Some(Message::ModifiersChanged(modifiers))
+                }
+            }
+            Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
+                Some(Message::ModifiersChanged(modifiers))
+            }
             _ => None,
         });
 
-        let ipc_sub = Subscription::run(external_signal_stream);
+        let heartbeat_sub = iced::time::every(HEARTBEAT_INTERVAL).map(Message::Heartbeat);
 
         if self.animating {
             Subscription::batch([
                 keyboard_sub,
-                ipc_sub,
+                heartbeat_sub,
                 iced::window::frames().map(Message::AnimationFrame),
             ])
         } else {
-            Subscription::batch([keyboard_sub, ipc_sub])
+            Subscription::batch([keyboard_sub, heartbeat_sub])
         }
     }
 

@@ -35,13 +35,19 @@ fn print_help() {
     println!("dusky_overview {}", env!("CARGO_PKG_VERSION"));
     println!("Usage: dusky_overview [OPTIONS]\n");
     println!("Options:");
+    println!("  --next, -n        Open and select next workspace (default)");
+    println!("  --reverse, -r,    Open and select previous workspace");
+    println!("  --prev, -p");
+    println!("  --detailed, -w    Open and select next window item (item-level mode)");
+    println!("  --activate, -a    Activate the currently selected item in a running instance");
+    println!("  --dismiss, -d     Dismiss a running instance without switching");
     println!("  --version, -v, -V Show version information and exit");
-    println!("  --help, -h       Show this help message and exit");
+    println!("  --help, -h        Show this help message and exit");
     println!("\nBehavior:");
     println!("  One-shot, zero-resident-RAM Wayland workspace overview for Hyprland 0.57+.");
     println!("  Displays active workspaces and proportional window layout miniatures.");
-    println!("  Click or press Enter on a window/workspace to switch focus and exit.");
-    println!("  Press Escape or click outside to dismiss and exit immediately.");
+    println!("  Hold Alt and press Tab / Shift+Tab to cycle workspaces; hold Ctrl for item detail.");
+    println!("  Release Alt to activate and exit. Press Escape or click outside to dismiss.");
 }
 
 fn is_card_sleeping(sys_base: &str) -> bool {
@@ -258,23 +264,62 @@ fn optimize_gpu_environment() {
 
 fn main() -> Result<(), iced_exwlshell::Error> {
     let args: Vec<String> = env::args().collect();
-    if args.len() > 1 {
-        let opt = args[1].as_str();
-        if matches!(opt, "--help" | "-h") {
-            print_help();
-            return Ok(());
-        }
-        if matches!(opt, "--version" | "-v" | "-V") {
-            println!("dusky_overview {}", env!("CARGO_PKG_VERSION"));
-            return Ok(());
+    let mut reverse = false;
+    let mut detailed = false;
+    let mut ipc_only_cmd: Option<&[u8]> = None;
+
+    for opt in args.iter().skip(1).map(String::as_str) {
+        match opt {
+            "--help" | "-h" => {
+                print_help();
+                return Ok(());
+            }
+            "--version" | "-v" | "-V" => {
+                println!("dusky_overview {}", env!("CARGO_PKG_VERSION"));
+                return Ok(());
+            }
+            "--reverse" | "-r" | "--prev" | "-p" => {
+                reverse = true;
+            }
+            "--next" | "-n" => {
+                reverse = false;
+            }
+            "--detailed" | "--window" | "-w" => {
+                detailed = true;
+            }
+            "-W" | "--prev-item" => {
+                detailed = true;
+                reverse = true;
+            }
+            "--activate" | "-a" => {
+                ipc_only_cmd = Some(b"activate\n");
+            }
+            "--dismiss" | "-d" => {
+                ipc_only_cmd = Some(b"dismiss\n");
+            }
+            _ => {}
         }
     }
 
-    // Single-instance zero-latency toggle: if already running, signal it to dismiss and exit immediately.
+    // Single-instance IPC: if already running, send command to the active instance and exit immediately.
     let sock_path = instance_socket_path();
     if let Ok(mut stream) = UnixStream::connect(&sock_path) {
         let _ = stream.set_write_timeout(Some(Duration::from_millis(50)));
-        let _ = stream.write_all(b"dismiss\n");
+        let cmd: &[u8] = if let Some(explicit_cmd) = ipc_only_cmd {
+            explicit_cmd
+        } else if detailed && reverse {
+            b"prev_item\n"
+        } else if detailed {
+            b"next_item\n"
+        } else if reverse {
+            b"prev_ws\n"
+        } else {
+            b"next_ws\n"
+        };
+        let _ = stream.write_all(cmd);
+        std::process::exit(0);
+    }
+    if ipc_only_cmd.is_some() {
         std::process::exit(0);
     }
     let _ = std::fs::remove_file(&sock_path);
@@ -315,7 +360,7 @@ fn main() -> Result<(), iced_exwlshell::Error> {
     };
 
     let run_result = iced_exwlshell::layershell::application(
-        move || OverviewApp::new(snapshot.clone(), palette),
+        move || OverviewApp::new(snapshot.clone(), palette, reverse, detailed),
         OverviewApp::namespace,
         OverviewApp::update,
         OverviewApp::view,
