@@ -115,13 +115,23 @@ impl AppTheme {
                 PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config")
             });
 
-        // 1. Dedicated dusky_center palette
+        // 1. Unified dusky palette
+        let dusky_path = base.join("matugen/generated/dusky.json");
+        if dusky_path.is_file() {
+            return dusky_path;
+        }
+        let rust_path = base.join("matugen/generated/dusky_rust.json");
+        if rust_path.is_file() {
+            return rust_path;
+        }
+
+        // 2. Dedicated dusky_center palette
         let center_path = base.join("matugen/generated/dusky_center.json");
         if center_path.is_file() {
             return center_path;
         }
 
-        // 2. Fallback to dusky_tray palette
+        // 3. Fallback to dusky_tray palette
         base.join("matugen/generated/dusky_tray.json")
     }
 

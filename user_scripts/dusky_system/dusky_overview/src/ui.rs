@@ -57,7 +57,9 @@ impl ThemePalette {
         };
 
         let candidates = [
-            home.join(".config/matugen/generated/dusky_tui.json"),
+            home.join(".config/matugen/generated/dusky.json"),
+            home.join(".config/matugen/generated/dusky_rust.json"),
+            home.join(".config/matugen/generated/dusky_center.json"),
             home.join(".config/matugen/generated/dusky_tray.json"),
         ];
 
@@ -1435,7 +1437,7 @@ impl OverviewApp {
         };
 
         let badge_color = if is_fullscreen {
-            p.tertiary
+            accent
         } else if is_grouped {
             p.accent
         } else {
@@ -1450,7 +1452,7 @@ impl OverviewApp {
                 container(text(badge_str).size(9).color(p.bg))
                     .padding([2, 6])
                     .style(move |_theme: &Theme| container::Style {
-                        background: Some(Background::Color(p.tertiary)),
+                        background: Some(Background::Color(accent)),
                         text_color: Some(p.bg),
                         border: Border {
                             color: Color::TRANSPARENT,
@@ -1574,7 +1576,7 @@ impl OverviewApp {
                 let eff_hover = if hovered { 1.0_f32 } else { hover_t };
 
                 let rest_bg = if is_fullscreen {
-                    mix_color(p.bg, p.tertiary, 0.26)
+                    mix_color(p.bg, accent, 0.26)
                 } else if is_selected {
                     mix_color(p.bg, p.accent, 0.24)
                 } else if is_floating {
@@ -1583,7 +1585,7 @@ impl OverviewApp {
                     mix_color(p.bg, p.muted, 0.28)
                 };
                 let hover_bg = if is_fullscreen {
-                    mix_color(p.bg, p.tertiary, 0.38)
+                    mix_color(p.bg, accent, 0.38)
                 } else {
                     mix_color(p.bg, p.accent, 0.32)
                 };
@@ -1596,7 +1598,7 @@ impl OverviewApp {
                 };
 
                 let rest_border_col = if is_fullscreen {
-                    p.tertiary
+                    accent
                 } else if is_selected {
                     p.accent
                 } else if is_hypr_focused {
@@ -1605,7 +1607,7 @@ impl OverviewApp {
                     with_alpha(accent, if is_occluded_under_fs { 0.45 } else { 0.62 })
                 };
                 let hover_border_col = mix_color(
-                    if is_fullscreen { p.tertiary } else { p.accent },
+                    if is_fullscreen { accent } else { p.accent },
                     Color::WHITE,
                     0.28,
                 );

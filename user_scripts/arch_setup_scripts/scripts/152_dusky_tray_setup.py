@@ -436,10 +436,12 @@ def setup(project: Path, install_dir: Path, force: bool) -> int:
         log("ERR", "No native or packaged Dusky Tray binary is available")
         return 1
     install_defaults(project, install_dir)
-    launcher = Path.home() / ".local/bin/dusky-tray"
+    launcher = Path.home() / ".local/bin/dusky_tray"
     launcher.parent.mkdir(parents=True, exist_ok=True)
     if not link_system_binary(binary, launcher):
         return 1
+    legacy_launcher = Path.home() / ".local/bin/dusky-tray"
+    link_system_binary(launcher, legacy_launcher)
     # Only remove the obsolete source-tree executable after installation succeeds.
     (project / "bin/dusky-tray").unlink(missing_ok=True)
     try:

@@ -67,7 +67,7 @@
     },
     {
       "icon": "terminal",
-      "accent": "auto",
+      "accent": "accent",
       "class": ["kitty", "foot", "alacritty", "org.wezfurlong.wezterm", "com.mitchellh.ghostty"]
     }
   ]

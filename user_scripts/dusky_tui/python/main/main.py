@@ -515,6 +515,16 @@ EXAMPLES:
         TARGET_FILE = Path(schema_module.TARGET_FILE).expanduser().resolve()
 
         THEME_FILE = getattr(schema_module, "THEME_FILE", None)
+        if THEME_FILE:
+            tf_path = Path(THEME_FILE).expanduser()
+            if tf_path.name == "dusky_tui.json":
+                dusky_tf = tf_path.with_name("dusky.json")
+                if dusky_tf.is_file():
+                    THEME_FILE = str(dusky_tf)
+        else:
+            default_dusky = Path("~/.config/matugen/generated/dusky.json").expanduser()
+            if default_dusky.is_file():
+                THEME_FILE = str(default_dusky)
         APP_TITLE = getattr(schema_module, "APP_TITLE", "Dusky Configurator")
         DEFAULT_MODE = getattr(schema_module, "DEFAULT_MODE", "auto")
         ENABLE_USER_PRESETS = getattr(schema_module, "ENABLE_USER_PRESETS", True)

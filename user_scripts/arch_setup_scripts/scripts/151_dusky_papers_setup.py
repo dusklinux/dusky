@@ -506,7 +506,7 @@ def main(argv: list[str] | None = None) -> int:
     install_dir = home / ".local/share/dusky/dusky_papers"
     binary = install_dir / "dusky-papers"
     manifest_path = install_dir / "binary_manifest.json"
-    local_bin = home / ".local/bin/dusky-papers"
+    local_bin = home / ".local/bin/dusky_papers"
     thumb_dir = home / ".cache/dusky_images/dusky_papers/thumbs"
     settings_dir = home / ".config/dusky/settings/dusky_theme"
 
@@ -584,6 +584,13 @@ def main(argv: list[str] | None = None) -> int:
             if not (local_bin.is_symlink() and local_bin.readlink() == binary):
                 temporary_link.symlink_to(binary)
                 os.replace(temporary_link, local_bin)
+            legacy_link = local_bin.parent / "dusky-papers"
+            try:
+                legacy_tmp = legacy_link.with_name(f".{legacy_link.name}.{os.getpid()}.tmp")
+                legacy_tmp.symlink_to(local_bin)
+                os.replace(legacy_tmp, legacy_link)
+            except OSError:
+                pass
         except OSError as error:
             temporary_link.unlink(missing_ok=True)
             log("WARN", f"Could not create launcher symlink: {error}")

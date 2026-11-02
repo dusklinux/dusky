@@ -414,17 +414,21 @@ def _append_value_preview(
 
 
 def load_matugen_json(file_path: Path) -> dict[str, str] | None:
-    if not file_path.exists():
-        return None
+    candidates = [file_path]
+    if file_path.name == "dusky_tui.json":
+        candidates.insert(0, file_path.with_name("dusky.json"))
 
-    try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            if isinstance(data, dict):
-                return data
-            return None
-    except (OSError, UnicodeError, json.JSONDecodeError):
-        return None
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return data
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            continue
+    return None
 
 
 def _pad_cells(s: str, width: int) -> str:
@@ -2135,7 +2139,16 @@ Tooltip {
         self.tabs = tabs
         self.editor_title = title
         self.schema_name = schema_name
-        self.theme_path = Path(theme_path).expanduser().resolve() if theme_path else None
+        if theme_path:
+            raw_path = Path(theme_path).expanduser()
+            if raw_path.name == "dusky_tui.json":
+                dusky_target = raw_path.with_name("dusky.json")
+                if dusky_target.is_file():
+                    raw_path = dusky_target
+            self.theme_path = raw_path.resolve()
+        else:
+            default_dusky = Path("~/.config/matugen/generated/dusky.json").expanduser()
+            self.theme_path = default_dusky.resolve() if default_dusky.is_file() else None
         self.enable_user_presets = enable_user_presets
         self.user_presets_tab_name = user_presets_tab
         self.user_presets_tab_idx = 0

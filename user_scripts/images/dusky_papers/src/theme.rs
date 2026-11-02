@@ -28,49 +28,73 @@ impl Default for AppTheme {
 
 impl AppTheme {
     pub fn load() -> Self {
-        let home = std::env::var("HOME").map(PathBuf::from).unwrap_or_default();
-        let matugen_json = home.join(".config/matugen/generated/dusky_tui.json");
+        let base = std::env::var_os("XDG_CONFIG_HOME")
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                std::env::var("HOME")
+                    .map(|h| PathBuf::from(h).join(".config"))
+                    .unwrap_or_else(|_| PathBuf::from("/home/dusk/.config"))
+            });
 
-        if let Ok(content) = fs::read_to_string(&matugen_json) {
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-                let accent = json
-                    .get("accent")
-                    .and_then(|v| v.as_str())
-                    .and_then(hex_to_color)
-                    .unwrap_or(Color::from_rgb8(255, 182, 141));
+        let candidates = [
+            base.join("matugen/generated/dusky.json"),
+            base.join("matugen/generated/dusky_rust.json"),
+            base.join("matugen/generated/dusky_tui.json"),
+        ];
 
-                let bg = json
-                    .get("bg")
-                    .and_then(|v| v.as_str())
-                    .and_then(hex_to_color)
-                    .unwrap_or(Color::from_rgb8(10, 12, 16));
+        for path in &candidates {
+            if let Ok(content) = fs::read_to_string(path) {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+                    let accent = json
+                        .get("accent")
+                        .or_else(|| json.get("primary"))
+                        .and_then(|v| v.as_str())
+                        .and_then(hex_to_color)
+                        .unwrap_or(Color::from_rgb8(255, 182, 141));
 
-                let fg = json
-                    .get("fg")
-                    .and_then(|v| v.as_str())
-                    .and_then(hex_to_color)
-                    .unwrap_or(Color::from_rgb8(240, 243, 255));
+                    let bg = json
+                        .get("bg")
+                        .and_then(|v| v.as_str())
+                        .and_then(hex_to_color)
+                        .unwrap_or(Color::from_rgb8(10, 12, 16));
 
-                let muted = json
-                    .get("muted")
-                    .and_then(|v| v.as_str())
-                    .and_then(hex_to_color)
-                    .unwrap_or(Color::from_rgb8(140, 150, 175));
+                    let card_bg = json
+                        .get("card_bg")
+                        .or_else(|| json.get("surface"))
+                        .and_then(|v| v.as_str())
+                        .and_then(hex_to_color)
+                        .unwrap_or(Color::from_rgb8(16, 18, 26));
 
-                let success = json
-                    .get("success")
-                    .and_then(|v| v.as_str())
-                    .and_then(hex_to_color)
-                    .unwrap_or(Color::from_rgb8(52, 211, 153));
+                    let fg = json
+                        .get("fg")
+                        .and_then(|v| v.as_str())
+                        .and_then(hex_to_color)
+                        .unwrap_or(Color::from_rgb8(240, 243, 255));
 
-                return Self {
-                    bg,
-                    card_bg: Color::from_rgb8(16, 18, 26),
-                    fg,
-                    accent,
-                    muted,
-                    success,
-                };
+                    let muted = json
+                        .get("muted")
+                        .or_else(|| json.get("fg_muted"))
+                        .and_then(|v| v.as_str())
+                        .and_then(hex_to_color)
+                        .unwrap_or(Color::from_rgb8(140, 150, 175));
+
+                    let success = json
+                        .get("profile_green")
+                        .or_else(|| json.get("success"))
+                        .and_then(|v| v.as_str())
+                        .and_then(hex_to_color)
+                        .unwrap_or(Color::from_rgb8(52, 211, 153));
+
+                    return Self {
+                        bg,
+                        card_bg,
+                        fg,
+                        accent,
+                        muted,
+                        success,
+                    };
+                }
             }
         }
 

@@ -26,7 +26,7 @@ from python.engines.matugen import MatugenEngine
 ENGINE_TYPE = "matugen"
 TARGET_FILE = "~/.config/matugen/config.toml"
 APP_TITLE = "Dusky Matugen TUI"
-THEME_FILE = "~/.config/matugen/generated/dusky_tui.json"
+THEME_FILE = "~/.config/matugen/generated/dusky.json"
 
 # =============================================================================
 # 2. UI & ENVIRONMENT BEHAVIOR
@@ -265,13 +265,13 @@ SCHEMA: dict[int, list[ConfigItem]] = {
             extended_help="**Theme Change Notification**\n\nSends desktop notification upon theme update completion."
         ),
         ConfigItem(
-            label="Dusky TUI Theme",
-            key="dusky_tui",
+            label="Dusky Palette",
+            key="dusky",
             scope="DEFAULT",
             type_="bool",
             default=True,
             group="Dusky Services",
-            extended_help="**Dusky TUI Color Scheme**\n\nGenerates `dusky_tui.json` for all Dusky TUI interactive apps."
+            extended_help="**Dusky Palette Generation**\n\nGenerates `dusky.json` for all Dusky applications (Rust UI & Dusky TUI)."
         ),
         ConfigItem(
             label="Dusky Visualizer",
@@ -588,7 +588,7 @@ SCHEMA: dict[int, list[ConfigItem]] = {
             preset_payload={
                 "alacritty": False, "beeper": False, "btop": True, "cava": True,
                 "dusky_cursor": False,
-                "dusky_sites": True, "dusky_tui": True, "dusky_visualizer_colors": True,
+                "dusky_sites": True, "dusky": True, "dusky_visualizer_colors": True,
                 "fastfetch": True, "foot": True, "gtk3": True, "gtk4": True,
                 "gtksourceview": True, "hyprland": True, "hyprlock": True,
                 "icon_theme": True, "kate_syntax": True,
@@ -616,7 +616,7 @@ SCHEMA: dict[int, list[ConfigItem]] = {
             preset_payload={
                 "alacritty": False, "beeper": False, "btop": False, "cava": False,
                 "dusky_cursor": False,
-                "dusky_sites": False, "dusky_tui": True, "dusky_visualizer_colors": False,
+                "dusky_sites": False, "dusky": True, "dusky_visualizer_colors": False,
                 "fastfetch": False, "foot": True, "gtk3": False, "gtk4": False,
                 "gtksourceview": False, "hyprland": True, "hyprlock": False,
                 "icon_theme": False, "kate_syntax": False,
@@ -644,7 +644,7 @@ SCHEMA: dict[int, list[ConfigItem]] = {
             preset_payload={
                 "alacritty": True, "beeper": True, "btop": True, "cava": True,
                 "dusky_cursor": True,
-                "dusky_sites": True, "dusky_tui": True, "dusky_visualizer_colors": True,
+                "dusky_sites": True, "dusky": True, "dusky_visualizer_colors": True,
                 "fastfetch": True, "foot": True, "gtk3": True, "gtk4": True,
                 "gtksourceview": True, "hyprland": True, "hyprlock": True,
                 "icon_theme": True, "kate_syntax": True,

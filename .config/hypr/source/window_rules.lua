@@ -1176,7 +1176,7 @@ hl.window_rule({
 hl.window_rule({
     name = "controlcenter",
     match = {
-        class = "^(com\\.github\\.dusky\\.controlcenter|dusky-center)$",
+        class = "^(com\\.github\\.dusky\\.controlcenter|dusky-center|dusky_center)$",
     },
     float = true,
     size = {670, "(monitor_h*0.90)"},
@@ -1478,7 +1478,7 @@ hl.window_rule({
 --- Dusky Papers ---
 hl.layer_rule({
     name = "dusky_papers",
-    match = { namespace = "dusky-papers" },
+    match = { namespace = "^(dusky-papers|dusky_papers)$" },
     blur = true,
     xray = false, -- Blur the windows underneath, rather than only the wallpaper.
     ignore_alpha = 0.0
@@ -2000,7 +2000,7 @@ hl.window_rule({
 -- The shared focus-grab helper handles outside clicks without a backdrop.
 hl.window_rule({
     name = "dusky_tray_window",
-    match = { class = "^dusky-tray$" },
+    match = { class = "^(dusky-tray|dusky_tray)$" },
     float = true,
     pin = true,
     move = {"monitor_w-window_w-20", "monitor_h-window_h-20"},

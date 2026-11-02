@@ -726,7 +726,7 @@ show_configs_menu() {
 
         case "$choice" in
             '  Dusky Center')
-                run_app dusky-center
+                run_app dusky_center
                 ;;
             '  Hypr Reload')
                 run_app hyprctl reload

@@ -76,7 +76,7 @@ impl ResolvedAppIcon {
             AccentSlot::Tertiary => palette.tertiary,
             AccentSlot::Muted => palette.muted,
             AccentSlot::Auto => match self.category_key.as_str() {
-                "browser" => palette.accent,
+                "browser" | "terminal" => palette.accent,
                 "files" => palette.tertiary,
                 "code" | "editor" => palette.secondary,
                 "media" => Color {

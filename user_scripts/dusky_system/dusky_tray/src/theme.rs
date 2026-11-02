@@ -113,13 +113,21 @@ impl AppTheme {
     }
 
     pub fn palette_path() -> PathBuf {
-        std::env::var_os("XDG_CONFIG_HOME")
+        let base = std::env::var_os("XDG_CONFIG_HOME")
             .filter(|p| !p.is_empty())
             .map(PathBuf::from)
             .unwrap_or_else(|| {
                 PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config")
-            })
-            .join("matugen/generated/dusky_tray.json")
+            });
+        let dusky_path = base.join("matugen/generated/dusky.json");
+        if dusky_path.is_file() {
+            return dusky_path;
+        }
+        let rust_path = base.join("matugen/generated/dusky_rust.json");
+        if rust_path.is_file() {
+            return rust_path;
+        }
+        base.join("matugen/generated/dusky_tray.json")
     }
 
     pub fn load() -> Self {

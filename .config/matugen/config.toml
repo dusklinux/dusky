@@ -201,18 +201,14 @@ post_hook   = '''
   pkill -SIGUSR1 -x kitty || :
 '''
 
-# Rust dusky tray: one complete palette, reloaded while the panel is visible.
-[templates.dusky_tray]
-input_path = '~/.config/matugen/templates/dusky_tray.json'
-output_path = '~/.config/matugen/generated/dusky_tray.json'
-
-[templates.dusky_center]
-input_path = '~/.config/matugen/templates/dusky_center.json'
-output_path = '~/.config/matugen/generated/dusky_center.json'
-
-[templates.dusky_tui]
-input_path  = '~/.config/matugen/templates/dusky_tui.json'
-output_path = '~/.config/matugen/generated/dusky_tui.json'
+# Unified palette for all Dusky applications (Rust apps & Dusky TUI)
+[templates.dusky]
+input_path  = '~/.config/matugen/templates/dusky.json'
+output_path = '~/.config/matugen/generated/dusky.json'
+post_hook   = '''
+  ln -nfs "$HOME/.config/matugen/generated/dusky.json" "$HOME/.config/matugen/generated/dusky_tui.json"
+  ln -nfs "$HOME/.config/matugen/generated/dusky.json" "$HOME/.config/matugen/generated/dusky_rust.json"
+'''
 
 [templates.foot]
 input_path  = '~/.config/matugen/templates/foot-colors.ini'

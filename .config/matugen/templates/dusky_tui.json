@@ -1,9 +1,0 @@
-{
-  "bg": "{{ colors.background.default.hex }}",
-  "fg": "{{ colors.on_background.default.hex }}",
-  "accent": "{{ colors.primary.default.hex }}",
-  "error": "{{ colors.error.default.hex }}",
-  "warning": "{{ colors.secondary.default.hex }}",
-  "success": "{{ colors.tertiary.default.hex }}",
-  "muted": "{{ colors.surface_variant.default.hex }}"
-}

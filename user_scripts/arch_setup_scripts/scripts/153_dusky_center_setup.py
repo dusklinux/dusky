@@ -436,10 +436,12 @@ def setup(project: Path, install_dir: Path, force: bool) -> int:
         log("ERR", "No native or packaged Dusky Center binary is available")
         return 1
     install_defaults(project, install_dir)
-    launcher = Path.home() / ".local/bin/dusky-center"
+    launcher = Path.home() / ".local/bin/dusky_center"
     launcher.parent.mkdir(parents=True, exist_ok=True)
     if not link_system_binary(binary, launcher):
         return 1
+    legacy_launcher = Path.home() / ".local/bin/dusky-center"
+    link_system_binary(launcher, legacy_launcher)
     log("OK", f"Dusky Center ready at {launcher}")
     return 0
 
