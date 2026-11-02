@@ -1003,6 +1003,252 @@
     };
   }
 
+  /* ══ THEME AUDIT (authoring aid) ════════════════════════════════════
+   * Walks visible text elements, resolves their composited background and
+   * reports low-contrast or off-palette colours.  Read-only apart from a
+   * temporary outline sheet, which clears itself after a minute. */
+  const AUDIT_SKIP_TAGS = new Set([
+    "script", "style", "noscript", "template", "meta", "link", "title", "head",
+    "svg", "canvas", "video", "audio", "iframe", "object", "embed", "img",
+    "picture", "input", "textarea", "select", "option",
+  ]);
+  const AUDIT_MAX_ELEMENTS = 6000;
+  const AUDIT_MAX_FINDINGS = 100;
+  const AUDIT_SHEET = new CSSStyleSheet();
+  let auditTimer = 0;
+
+  function clearAudit() {
+    clearTimeout(auditTimer);
+    auditTimer = 0;
+    document.adoptedStyleSheets = document.adoptedStyleSheets.filter((s) => s !== AUDIT_SHEET);
+  }
+
+  function showAudit(selectors) {
+    clearAudit();
+    if (!selectors.length) return;
+    try {
+      AUDIT_SHEET.replaceSync(selectors.slice(0, 150)
+        .map((sel) => `${sel}{outline:2px solid var(--primary, #ffb59d) !important;outline-offset:1px !important;}`)
+        .join("\n"));
+      document.adoptedStyleSheets = [...document.adoptedStyleSheets, AUDIT_SHEET];
+      auditTimer = setTimeout(clearAudit, 60_000);
+    } catch { /* an exotic selector must not break the audit */ }
+  }
+
+  const rgbHex = ({ r, g, b }) => "#" + [r, g, b]
+    .map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0"))
+    .join("");
+
+  const contrastRatio = (a, b) => {
+    const la = luminance(a.r, a.g, a.b), lb = luminance(b.r, b.g, b.b);
+    return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+  };
+
+  const blendOver = (fg, bg) => ({
+    r: fg.r * fg.a + bg.r * (1 - fg.a),
+    g: fg.g * fg.a + bg.g * (1 - fg.a),
+    b: fg.b * fg.a + bg.b * (1 - fg.a),
+    a: 1,
+  });
+
+  const labChannel = (v) => {
+    v /= 255;
+    return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  };
+
+  function toLab({ r, g, b }) {
+    const R = labChannel(r), G = labChannel(g), B = labChannel(b);
+    const x = (0.4124 * R + 0.3576 * G + 0.1805 * B) / 0.95047;
+    const y = 0.2126 * R + 0.7152 * G + 0.0722 * B;
+    const z = (0.0193 * R + 0.1192 * G + 0.9505 * B) / 1.08883;
+    const f = (t) => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116);
+    const fx = f(x), fy = f(y), fz = f(z);
+    return { L: 116 * fy - 16, a: 500 * (fx - fy), b: 200 * (fy - fz) };
+  }
+
+  const deltaE = (a, b) => Math.hypot(a.L - b.L, a.a - b.a, a.b - b.b);
+
+  function auditPalette(given) {
+    const out = [];
+    const rootCs = getComputedStyle(document.documentElement);
+    for (const [token] of TOKENS) {
+      const raw = (given && given[`--${token}`]) || rootCs.getPropertyValue(`--${token}`).trim();
+      if (!raw) continue;
+      const col = parseCssColor(String(raw).trim(), document.documentElement);
+      if (col && col.a > 0.5) out.push({ token, col, lab: toLab(col) });
+    }
+    return out;
+  }
+
+  function auditBackground(el) {
+    const layers = [];
+    let image = false;
+    for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
+      const cs = getComputedStyle(n);
+      if (cs.backgroundImage && cs.backgroundImage !== "none") image = true;
+      const col = parseCssColor(cs.backgroundColor, n);
+      if (!col || col.a === 0) continue;
+      layers.push(col);
+      if (col.a >= 0.999) break;
+    }
+    const surface = parseCssColor(
+      getComputedStyle(document.documentElement).getPropertyValue("--surface").trim() || "#1a110f",
+      document.documentElement,
+    ) || { r: 26, g: 17, b: 15, a: 1 };
+    let bg = surface.a >= 1 ? surface : { r: 26, g: 17, b: 15, a: 1 };
+    for (let i = layers.length - 1; i >= 0; i--) bg = blendOver(layers[i], bg);
+    return { bg, image };
+  }
+
+  /* Prefer a class/id selector so equal offenders are highlighted together. */
+  function auditSelector(el) {
+    const list = candidates(el);
+    return list.find((c) => c.sel.startsWith("#"))?.sel
+      ?? list.find((c) => c.sel.includes(".") && c.n <= 80)?.sel
+      ?? list[0]?.sel ?? nthPath(el);
+  }
+
+  function audit(msg) {
+    clearAudit();
+    const palette = auditPalette(msg?.palette);
+    const root = document.body || document.documentElement;
+    if (!root) return { ok: false, error: "The page has no body to audit." };
+
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+    const seen = new Map();
+    let scanned = 0, textCount = 0;
+
+    for (let el = walker.nextNode();
+         el && scanned < AUDIT_MAX_ELEMENTS;
+         el = walker.nextNode()) {
+      scanned++;
+      if (el === hostEl || el.closest?.("dusky-picker")) continue;
+      if (AUDIT_SKIP_TAGS.has(el.localName)) continue;
+      if (el.matches?.('[aria-hidden="true"]')) continue;
+
+      let text = "";
+      for (const n of el.childNodes) if (n.nodeType === 3) text += n.textContent;
+      text = text.replace(/\s+/g, " ").trim();
+      if (!text) continue;
+
+      const cs = getComputedStyle(el);
+      if (cs.display === "none" || cs.visibility !== "visible") continue;
+      if (Number(cs.opacity) === 0) continue;
+      if (el.getClientRects().length === 0) continue;
+
+      const fg = parseCssColor(cs.color, el);
+      if (!fg || fg.a < 0.35) continue;
+      textCount++;
+
+      const { bg, image } = auditBackground(el);
+      const ink = fg.a >= 1 ? fg : blendOver(fg, bg);
+      const ratio = contrastRatio(ink, bg);
+      const size = parseFloat(cs.fontSize) || 16;
+      const weight = cs.fontWeight === "bold" ? 700 : (parseInt(cs.fontWeight, 10) || 400);
+      const large = size >= 24 || (size >= 18.66 && weight >= 700);
+      const need = large ? 3 : 4.5;
+      const reasons = [];
+
+      if (!image && ratio + 0.05 < need) reasons.push("low-contrast");
+
+      const fgLab = toLab(ink);
+      let nearest = null;
+      for (const p of palette) {
+        const d = deltaE(fgLab, p.lab);
+        if (!nearest || d < nearest.delta) nearest = { token: p.token, delta: d };
+      }
+      if (nearest && nearest.delta > 15) reasons.push("off-palette-text");
+
+      const own = parseCssColor(cs.backgroundColor, el);
+      let bgNearest = null;
+      if (own && own.a >= 0.9 && !image && palette.length) {
+        const lab = toLab(own);
+        for (const p of palette) {
+          const d = deltaE(lab, p.lab);
+          if (!bgNearest || d < bgNearest.delta) bgNearest = { token: p.token, delta: d };
+        }
+        if (bgNearest.delta > 14) reasons.push("off-palette-background");
+      }
+
+      if (!reasons.length) continue;
+
+      const sig = `${el.localName}.${[...el.classList].sort().join(".")}` +
+        `|${rgbHex(ink)}|${rgbHex(bg)}|${reasons.join(",")}`;
+      const hit = seen.get(sig);
+      if (hit) { hit.count++; continue; }
+
+      const selector = auditSelector(el);
+      if (!selector) continue;
+      seen.set(sig, {
+        selector,
+        text: text.slice(0, 140),
+        count: 1,
+        reasons,
+        fg: rgbHex(ink),
+        bg: rgbHex(bg),
+        ratio: Math.round(ratio * 100) / 100,
+        need,
+        nearest: nearest?.token ?? "",
+        delta: Math.round(nearest?.delta ?? 0),
+        bgToken: bgNearest?.token ?? "",
+        bgDelta: Math.round(bgNearest?.delta ?? 0),
+        html: el.outerHTML.replace(/\s+/g, " ").slice(0, 360),
+      });
+    }
+
+    const issues = [...seen.values()].sort((a, b) => {
+      const rank = (x) => (x.reasons.includes("low-contrast") ? 0 : 1);
+      return rank(a) - rank(b) || b.count - a.count || a.ratio - b.ratio;
+    });
+    const shown = issues.slice(0, AUDIT_MAX_FINDINGS);
+    showAudit([...new Set(shown.map((i) => i.selector))]);
+
+    const low = issues.filter((i) => i.reasons.includes("low-contrast")).length;
+    const off = issues.filter((i) => i.reasons.some((r) => r.startsWith("off-palette"))).length;
+    const host = (location.hostname || "page").replace(/^www\./, "");
+    const lines = [
+      `# Dusky theme audit — ${host}`,
+      "",
+      `- URL: ${location.href}`,
+      `- Palette: ${palette.length} token(s) loaded` +
+        (palette.length ? "" : " — palette variables were not found on this page"),
+      `- Scanned: ${scanned} elements, ${textCount} with visible text`,
+      `- Findings: ${issues.length} (${low} low contrast, ${off} off-palette)` +
+        (issues.length > shown.length ? ` — showing the first ${shown.length}` : ""),
+      "",
+    ];
+
+    if (!shown.length) {
+      lines.push("No problems found. 🎉", "");
+    } else {
+      shown.forEach((it, i) => {
+        lines.push(
+          `## ${i + 1}. \`${it.selector}\`${it.count > 1 ? ` ×${it.count}` : ""}`,
+          `- ${it.reasons.join(", ")}`,
+          `- contrast ${it.ratio}:1 (needs ${it.need}:1) · fg ${it.fg} · bg ${it.bg}`,
+          `- nearest text token: ${it.nearest || "none"} (ΔE ${it.delta})` +
+            (it.bgToken ? ` · nearest bg token: ${it.bgToken} (ΔE ${it.bgDelta})` : ""),
+          `- text: “${it.text}”`,
+          "```html",
+          it.html,
+          "```",
+          "",
+        );
+      });
+    }
+
+    return {
+      ok: true,
+      scanned,
+      textCount,
+      issues: issues.length,
+      lowContrast: low,
+      offPalette: off,
+      truncated: issues.length > shown.length,
+      text: lines.join("\n"),
+    };
+  }
+
   /* ══ VISUAL PICKER ══════════════════════════════════════════════════ */
   const LIMITS = { RULES: 600, DECL: 4096, SEL: 512, BODY: 512 * 1024 };
 
@@ -2819,6 +3065,12 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
       case "dumpVariablesChunk":
         try { return Promise.resolve(dumpVariablesChunk(msg)); }
         catch (e) { return Promise.resolve({ ok: false, error: `Variable dump failed: ${e?.message ?? e}` }); }
+      case "audit":
+        try { return Promise.resolve(audit(msg)); }
+        catch (e) { return Promise.resolve({ ok: false, error: `Audit failed: ${e?.message ?? e}` }); }
+      case "auditClear":
+        clearAudit();
+        return Promise.resolve({ ok: true });
       case "picker":
         return setActive(msg.enable).then(() => ({ ok: true, active: S.active }));
       case "reset":
