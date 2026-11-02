@@ -2,6 +2,7 @@
 mod fonts;
 
 mod hyprland;
+mod icons;
 mod ui;
 
 use iced::Color;

@@ -1,0 +1,74 @@
+{
+  "terminal_classes": [
+    "kitty",
+    "foot",
+    "alacritty",
+    "org.wezfurlong.wezterm",
+    "com.mitchellh.ghostty"
+  ],
+  "custom_icons": {
+    "gamepad": {
+      "svg_path": "M6 12h4m-2-2v4m7-1h.01M18 11h.01M4 8h16a2 2 0 0 1 2 2v6a3 3 0 0 1-5.5 1.6L14 14h-4l-2.5 3.6A3 3 0 0 1 2 16v-6a2 2 0 0 1 2-2z"
+    }
+  },
+  "rules": [
+    {
+      "icon": "files",
+      "label": "yazi",
+      "accent": "tertiary",
+      "terminal_only": true,
+      "title": ["yazi", "ranger", "lf", "nnn"]
+    },
+    {
+      "icon": "code",
+      "label": "nvim",
+      "accent": "secondary",
+      "terminal_only": true,
+      "title": ["nvim", "neovim", "hx", "helix", "vim"]
+    },
+    {
+      "icon": "media",
+      "label": "cava",
+      "accent": "tertiary",
+      "terminal_only": true,
+      "title": ["cava", "mpv", "rmpc", "ncmpcpp"]
+    },
+    {
+      "icon": "system",
+      "label": "btop",
+      "accent": "secondary",
+      "terminal_only": true,
+      "title": ["btop", "htop", "nvtop", "lazygit"]
+    },
+    {
+      "icon": "gamepad",
+      "accent": "tertiary",
+      "class": ["steam", "lutris", "heroic", "gamescope"]
+    },
+    {
+      "icon": "browser",
+      "accent": "accent",
+      "class": ["firefox", "zen", "chromium", "brave-browser", "librewolf", "qutebrowser"]
+    },
+    {
+      "icon": "files",
+      "accent": "tertiary",
+      "class": ["thunar", "org.kde.dolphin", "dolphin", "org.gnome.nautilus", "nautilus", "nemo"]
+    },
+    {
+      "icon": "code",
+      "accent": "secondary",
+      "class": ["code", "codium", "vscodium", "dev.zed.zed", "neovide", "jetbrains-*"]
+    },
+    {
+      "icon": "editor",
+      "accent": "secondary",
+      "class": ["org.kde.kate", "kate", "mousepad", "org.gnome.texteditor"]
+    },
+    {
+      "icon": "terminal",
+      "accent": "auto",
+      "class": ["kitty", "foot", "alacritty", "org.wezfurlong.wezterm", "com.mitchellh.ghostty"]
+    }
+  ]
+}

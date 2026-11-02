@@ -1,4 +1,5 @@
 use crate::hyprland::{self, Client, OverviewSnapshot, WorkspaceKey, WorkspaceView};
+use crate::icons::{IconRegistry, ResolvedAppIcon};
 use iced::alignment::{Horizontal, Vertical};
 use iced::event::{self, Event};
 use iced::futures::channel::mpsc::{self, UnboundedReceiver, UnboundedSender};
@@ -7,7 +8,7 @@ use iced::keyboard::{
     key::{Code, Named, Physical},
 };
 use iced::widget::{
-    Column, Row, Space, button, column, container, mouse_area, row, scrollable, stack, text,
+    Column, Row, Space, button, column, container, mouse_area, row, scrollable, stack, svg, text,
 };
 use iced::{Background, Border, Color, Element, Length, Shadow, Subscription, Task, Theme, Vector};
 use serde_json::Value;
@@ -337,6 +338,7 @@ pub struct OverviewApp {
     hovered_window: Option<(usize, usize)>,
     palette: ThemePalette,
     custom_theme: Theme,
+    icons: IconRegistry,
     entrance_pos: f32,
     entrance_spring: SpringAnimation,
     card_select_positions: Vec<f32>,
@@ -385,6 +387,7 @@ impl OverviewApp {
             );
         }
         let entrance_spring = SpringAnimation::new(1.0, 32.0, 1.0, now);
+        let icons = IconRegistry::load();
         (
             Self {
                 snapshot,
@@ -392,6 +395,7 @@ impl OverviewApp {
                 hovered_window: None,
                 palette,
                 custom_theme,
+                icons,
                 entrance_pos: 0.0,
                 entrance_spring,
                 card_select_positions,
@@ -1370,12 +1374,20 @@ impl OverviewApp {
             .round()
             .clamp(28.0, (slot_h - inner_y).max(28.0));
 
-        let class_label = if client.class.is_empty() {
-            "Window"
-        } else {
+        let resolved_icon: ResolvedAppIcon = self.icons.resolve_client(client);
+        let raw_class = if !client.class.is_empty() {
             client.class.as_str()
+        } else if !client.initial_class.is_empty() {
+            client.initial_class.as_str()
+        } else {
+            "Window"
         };
-        let accent = class_accent_color(class_label, &p);
+        let effective_class_label = match resolved_icon.display_badge.as_deref() {
+            Some(tui_badge) => format!("{raw_class} · {tui_badge}"),
+            None => raw_class.to_owned(),
+        };
+        let base_class_accent = class_accent_color(raw_class, &p);
+        let accent = resolved_icon.resolve_color(base_class_accent, &p);
 
         // Anchor `tab_bar_h` to static `base_h` so it never jumps across height thresholds mid-hover.
         let tab_bar_h = if is_grouped {
@@ -1400,7 +1412,10 @@ impl OverviewApp {
             .unwrap_or(1);
         let tab_count = group_tabs.len();
 
-        let class_truncated = truncate_str(class_label, (base_w / 7.2).max(4.0) as usize);
+        let class_truncated = truncate_str(
+            &effective_class_label,
+            ((base_w - 22.0) / 7.2).max(4.0) as usize,
+        );
         let title_truncated = truncate_str(&client.title, (base_w / 5.8).max(6.0) as usize);
 
         let badge_str = if is_fullscreen {
@@ -1427,27 +1442,27 @@ impl OverviewApp {
             accent
         };
 
+        let titlebar_icon_col = mix_color(accent, p.fg, 0.35);
+
         let label_content: Element<'a, Message> = if is_fullscreen && has_fullscreen_with_others {
             // Compact high-contrast layout for the docked fullscreen banner.
             row![
-                container(
-                    text(badge_str)
-                        .size(9)
-                        .color(p.bg),
-                )
-                .padding([2, 6])
-                .style(move |_theme: &Theme| container::Style {
-                    background: Some(Background::Color(p.tertiary)),
-                    text_color: Some(p.bg),
-                    border: Border {
-                        color: Color::TRANSPARENT,
-                        width: 0.0,
-                        radius: 4.0.into(),
-                    },
-                    shadow: Shadow::default(),
-                    ..Default::default()
-                }),
+                container(text(badge_str).size(9).color(p.bg))
+                    .padding([2, 6])
+                    .style(move |_theme: &Theme| container::Style {
+                        background: Some(Background::Color(p.tertiary)),
+                        text_color: Some(p.bg),
+                        border: Border {
+                            color: Color::TRANSPARENT,
+                            width: 0.0,
+                            radius: 4.0.into(),
+                        },
+                        shadow: Shadow::default(),
+                        ..Default::default()
+                    }),
                 Space::new().width(Length::Fixed(6.0)),
+                render_svg_icon(resolved_icon.handle.clone(), 13.0, titlebar_icon_col),
+                Space::new().width(Length::Fixed(5.0)),
                 text(class_truncated).size(10).color(p.fg),
                 Space::new().width(Length::Fixed(6.0)),
                 text(title_truncated)
@@ -1462,6 +1477,8 @@ impl OverviewApp {
         } else if body_h >= 42.0 {
             let titlebar = container(
                 row![
+                    render_svg_icon(resolved_icon.handle.clone(), 12.5, titlebar_icon_col),
+                    Space::new().width(Length::Fixed(5.0)),
                     text(class_truncated).size(10).color(p.fg),
                     Space::new().width(Length::Fill),
                     text(badge_str).size(9).color(badge_color),
@@ -1485,16 +1502,33 @@ impl OverviewApp {
                 ..Default::default()
             });
 
-            let body = container(
+            let body_inner: Element<'a, Message> = if body_h >= 68.0 && w >= 76.0 {
+                let hero_icon_col = with_alpha(
+                    mix_color(accent, p.fg, 0.25),
+                    lerp(0.82, 0.98, hover_t),
+                );
+                column![
+                    render_svg_icon(resolved_icon.handle.clone(), 20.0, hero_icon_col),
+                    Space::new().height(Length::Fixed(4.0)),
+                    text(title_truncated)
+                        .size(10)
+                        .color(with_alpha(p.fg, 0.90)),
+                ]
+                .align_x(Horizontal::Center)
+                .into()
+            } else {
                 text(title_truncated)
                     .size(10)
-                    .color(with_alpha(p.fg, 0.88)),
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding([2, 6])
-            .center_x(Length::Fill)
-            .center_y(Length::Fill);
+                    .color(with_alpha(p.fg, 0.88))
+                    .into()
+            };
+
+            let body = container(body_inner)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .padding([2, 6])
+                .center_x(Length::Fill)
+                .center_y(Length::Fill);
 
             column![titlebar, body].into()
         } else {
@@ -1503,12 +1537,19 @@ impl OverviewApp {
             } else {
                 class_truncated
             };
-            container(text(compact_text).size(10).color(p.fg))
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .center_x(Length::Fill)
-                .center_y(Length::Fill)
-                .into()
+            container(
+                row![
+                    render_svg_icon(resolved_icon.handle.clone(), 11.5, titlebar_icon_col),
+                    Space::new().width(Length::Fixed(4.0)),
+                    text(compact_text).size(10).color(p.fg),
+                ]
+                .align_y(Vertical::Center),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill)
+            .into()
         };
 
         let centered_box = container(label_content)
@@ -1620,26 +1661,37 @@ impl OverviewApp {
             });
 
         let visual_unit: Element<'a, Message> = if is_grouped {
-            let per_tab_chars = ((base_w / (tab_count as f32)) / 6.8).max(4.0) as usize;
+            let per_tab_chars =
+                (((base_w / (tab_count as f32)) - 18.0) / 6.6).max(3.0) as usize;
             let mut tab_pills: Vec<Element<'a, Message>> = Vec::with_capacity(tab_count);
 
             for tab in group_tabs {
-                let tab_class = if tab.client.class.is_empty() {
-                    "win"
-                } else {
+                let tab_resolved = self.icons.resolve_client(tab.client);
+                let tab_class = if !tab.client.class.is_empty() {
                     tab.client.class.as_str()
-                };
-                let tab_accent = class_accent_color(tab_class, &p);
-                let raw_tab_label = if !tab.client.title.is_empty() && per_tab_chars >= 10 {
-                    format!("{tab_class}: {}", tab.client.title)
                 } else {
-                    tab_class.to_owned()
+                    "win"
                 };
-                let prefix = if tab.is_active_tab {
-                    "● "
+                let tab_base_accent = class_accent_color(tab_class, &p);
+                let tab_accent = tab_resolved.resolve_color(tab_base_accent, &p);
+
+                let short_lead = tab_resolved.display_badge.as_deref().unwrap_or(tab_class);
+                let raw_tab_label = if !tab.client.title.is_empty() && per_tab_chars >= 8 {
+                    if tab
+                        .client
+                        .title
+                        .to_ascii_lowercase()
+                        .starts_with(&short_lead.to_ascii_lowercase())
+                    {
+                        tab.client.title.clone()
+                    } else {
+                        format!("{short_lead}: {}", tab.client.title)
+                    }
                 } else {
-                    ""
+                    short_lead.to_owned()
                 };
+
+                let prefix = if tab.is_active_tab { "● " } else { "" };
                 let full_label = format!(
                     "{prefix}{}",
                     truncate_str(
@@ -1650,14 +1702,26 @@ impl OverviewApp {
 
                 let is_tab_active = tab.is_active_tab;
                 let is_tab_sel = tab.is_selected;
+                let tab_icon_col = if is_tab_sel || is_tab_active {
+                    mix_color(tab_accent, Color::WHITE, 0.32)
+                } else {
+                    with_alpha(mix_color(tab_accent, p.fg, 0.30), 0.88)
+                };
 
                 let pill_btn = button(
-                    container(text(full_label).size(9))
-                        .width(Length::Fill)
-                        .height(Length::Fill)
-                        .center_x(Length::Fill)
-                        .center_y(Length::Fill)
-                        .clip(true),
+                    container(
+                        row![
+                            render_svg_icon(tab_resolved.handle, 10.5, tab_icon_col),
+                            Space::new().width(Length::Fixed(3.5)),
+                            text(full_label).size(9),
+                        ]
+                        .align_y(Vertical::Center),
+                    )
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .center_x(Length::Fill)
+                    .center_y(Length::Fill)
+                    .clip(true),
                 )
                 .width(Length::FillPortion(1))
                 .height(Length::Fixed(tab_bar_h))
@@ -1803,4 +1867,14 @@ fn class_accent_color(class_name: &str, palette: &ThemePalette) -> Color {
         mix_color(palette.secondary, palette.tertiary, 0.5),
     ];
     anchors[(hash as usize) % anchors.len()]
+}
+
+fn render_svg_icon<'a>(handle: svg::Handle, size: f32, color: Color) -> Element<'a, Message> {
+    svg(handle)
+        .width(Length::Fixed(size))
+        .height(Length::Fixed(size))
+        .style(move |_theme: &Theme, _status: svg::Status| svg::Style {
+            color: Some(color),
+        })
+        .into()
 }
