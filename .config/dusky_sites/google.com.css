@@ -344,4 +344,76 @@
         color: var(--primary, #ffb59d) !important;
     }
 
+
+    /* AI Mode pill: a Visual-Picker pick fills .bvUkz with on_tertiary
+       (olive); restore a palette-toned pill instead. */
+    div.bvUkz {
+        background-color: var(--primary_container, #723520) !important;
+        background-image: none !important;
+    }
+
+    button.plR5qb,
+    button.plR5qb * {
+        color: var(--on_primary_container, #ffdbd0) !important;
+    }
+
+    /* Sign-in chip */
+    a.gb_A {
+        background-color: var(--primary, #ffb59d) !important;
+        color: var(--on_primary, #55200c) !important;
+        border-color: var(--primary, #ffb59d) !important;
+    }
+
+    a.gb_A span,
+    a.gb_A .gb_4 {
+        color: var(--on_primary, #55200c) !important;
+    }
+
+    a.gb_A:hover {
+        background-color: var(--primary_fixed, #ffdbd0) !important;
+    }
+
+    /* The search textarea shows a horizontal scrollbar strip under the field */
+    textarea.gLFyf,
+    input.gLFyf,
+    .gLFyf {
+        scrollbar-width: none !important;
+        overflow-x: hidden !important;
+    }
+
+    /* Google's leftover light-theme tokens (from the exported variable list) */
+    :root {
+        --EpFNW: var(--on_surface, #f1dfda) !important;
+        --IXoxUe: var(--on_surface_variant, #d8c2bb) !important;
+        --amnPwe: var(--on_surface_variant, #d8c2bb) !important;
+        --pEa0Bc: var(--on_surface_variant, #d8c2bb) !important;
+        --uLz37c: var(--on_surface_variant, #d8c2bb) !important;
+        --jINu6c: var(--on_surface, #f1dfda) !important;
+        --EoKObe: var(--on_surface, #f1dfda) !important;
+        --Nsm0ce: var(--primary, #ffb59d) !important;
+        --rrJJUc: var(--primary, #ffb59d) !important;
+        --TMYS9: var(--primary, #ffb59d) !important;
+        --ngPXTb: var(--primary, #ffb59d) !important;
+        --jwFC2e: var(--primary_container, #723520) !important;
+        --mXZkqc: var(--outline_variant, #53433f) !important;
+        --BRLwE: var(--outline_variant, #53433f) !important;
+        --vZe0jb: var(--outline, #a08d87) !important;
+        --ZEpPmd: var(--outline, #a08d87) !important;
+        --DEeStf: var(--surface_container, #271d1b) !important;
+        --YaIeMb: var(--surface_container, #271d1b) !important;
+        --gm3-sys-color-on-surface-variant: var(--on_surface_variant, #d8c2bb) !important;
+    }
+
+
+    /* The search textarea carries an 8px bottom border that renders as a
+       heavy bar under the field; remove it and any inner scrolling. */
+    textarea.gLFyf,
+    input.gLFyf,
+    .gLFyf,
+    .a4bIc {
+        border: 0 !important;
+        outline: none !important;
+        overflow: hidden !important;
+    }
+
 }

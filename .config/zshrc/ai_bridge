@@ -8,8 +8,8 @@ _get_bridge_py() {
         return 0
     fi
     for candidate in \
-        "$HOME/Projects/web_ai_bridge/bridge.py" \
         "$HOME/web_ai_bridge/bridge.py" \
+        "$HOME/Projects/web_ai_bridge/bridge.py" \
         "/mnt/zram1/ai_bridge/bridge.py" \
         "$HOME/.config/firefox_extentions/ai_bridge/bridge.py"; do
         if [[ -f "$candidate" ]]; then
