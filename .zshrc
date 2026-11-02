@@ -180,27 +180,6 @@ _vid() {
 }
 alias vid='noglob _vid'
 
-# Local AI Web Bridge Shortcut
-_ask_func() {
-    local bridge_py="$HOME/.config/firefox_extentions/ai_bridge/bridge.py"
-    if [ $# -eq 0 ]; then
-        if [ ! -t 0 ]; then
-            local piped_input
-            piped_input="$(cat)"
-            [ -z "$piped_input" ] && return 0
-            python3 "$bridge_py" "$piped_input"
-        else
-            local prompt=""
-            read -r "prompt?Prompt: "
-            [ -z "$prompt" ] && return 0
-            python3 "$bridge_py" "$prompt"
-        fi
-    else
-        python3 "$bridge_py" "$@"
-    fi
-}
-alias ask='noglob _ask_func'
-
 # Memory Optimization
 alias mem_optimize='sudo systemctl start dusky_pro_active_zram_swap.service'
 
@@ -259,6 +238,7 @@ local -a my_modules=(
     batstat git kvm lmstudio logs logs_old mon_info
     pkg pkg_search res_mon vfio waydroid win11 wthr cmd_atlas
     sshfile scripts neovim_delta core gemini stt_dusky session
+    ai_bridge
 )
 
 for mod in "${my_modules[@]}"; do

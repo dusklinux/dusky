@@ -1,0 +1,101 @@
+# ==============================================================================
+#  LOCAL AI WEB BRIDGE — INTERACTIVE REPL (`ask`) & FZF SESSION BROWSER (`ask_list`)
+# ==============================================================================
+
+_ask_func() {
+    local bridge_py="$HOME/.config/firefox_extentions/ai_bridge/bridge.py"
+    if [[ ! -t 0 ]]; then
+        # Piped stdin (e.g. `git diff | ask "Summarize"`): run one-shot and exit
+        python3 "$bridge_py" "$@"
+    else
+        # Interactive terminal: run initial prompt (if any) and remain in multi-turn REPL
+        python3 "$bridge_py" --interactive "$@"
+    fi
+}
+
+_ask_once_func() {
+    local bridge_py="$HOME/.config/firefox_extentions/ai_bridge/bridge.py"
+    python3 "$bridge_py" --once "$@"
+}
+
+alias ask='noglob _ask_func'
+alias ask1='noglob _ask_once_func'
+
+ask_list() {
+    local bridge_py="$HOME/.config/firefox_extentions/ai_bridge/bridge.py"
+    local conv_dir="${XDG_RUNTIME_DIR:-/tmp}/localai_bridge/conversations"
+
+    if ! command -v fzf >/dev/null 2>&1; then
+        print -u2 "[ask_list] Error: fzf is required but not installed."
+        return 1
+    fi
+
+    local lines
+    lines="$(python3 "$bridge_py" --list-tsv)"
+    if [[ -z "$lines" ]]; then
+        print -u2 "[ask_list] No saved conversations found in $conv_dir"
+        return 0
+    fi
+
+    local preview_cmd
+    if command -v bat >/dev/null 2>&1; then
+        preview_cmd='bat --color=always --style=plain --language=markdown -- {1}'
+    else
+        preview_cmd='cat -- {1}'
+    fi
+
+    local col_header
+    printf -v col_header '\033[1;37m%-19s │ %-10s │ %4s │ %s\033[0m' \
+        'TIMESTAMP' 'MODEL' 'TURN' 'FIRST PROMPT'
+
+    local out key selected_file
+    out="$(
+        print -r -- "$lines" | fzf \
+            --ansi \
+            --delimiter=$'\t' \
+            --with-nth=2.. \
+            --layout=reverse \
+            --height=100% \
+            --margin=0 \
+            --padding=0 \
+            --border=rounded \
+            --border-label=' ⏎ View │ ^R Resume │ ^Y Copy │ ^E Edit │ ^X Delete │ Esc Quit ' \
+            --border-label-pos=center:bottom \
+            --prompt='AI Sessions ❯ ' \
+            --pointer='❯' \
+            --header-first \
+            --header="$col_header" \
+            --preview="$preview_cmd" \
+            --preview-window='right:62%:wrap:border-left' \
+            --expect=ctrl-r,ctrl-y,ctrl-e \
+            --bind="ctrl-x:execute-silent(rm -f -- {1})+reload(python3 ${(q)bridge_py} --list-tsv)"
+    )" || return 0
+
+    key="${out%%$'\n'*}"
+    selected_file="${${out#*$'\n'}%%$'\t'*}"
+    [[ -z "$selected_file" || ! -f "$selected_file" ]] && return 0
+
+    case "$key" in
+        ctrl-r)
+            python3 "$bridge_py" --interactive --resume "$selected_file"
+            ;;
+        ctrl-y)
+            if command -v wl-copy >/dev/null 2>&1; then
+                wl-copy < "$selected_file"
+                print -u2 "[ask_list] Copied $(basename "$selected_file") to Wayland clipboard."
+            else
+                print -u2 "[ask_list] wl-copy not found."
+            fi
+            ;;
+        ctrl-e)
+            "${EDITOR:-nvim}" "$selected_file"
+            ;;
+        *)
+            if command -v bat >/dev/null 2>&1; then
+                bat --paging=always --style=plain --language=markdown "$selected_file"
+            else
+                "${PAGER:-less -R}" "$selected_file"
+            fi
+            ;;
+    esac
+}
