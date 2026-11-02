@@ -878,11 +878,11 @@ impl TrayApp {
 
     fn card(theme: AppTheme, radius: f32) -> container::Style {
         container::Style {
-            background: Some(Self::surface(theme, 0.05).into()),
+            background: Some(Self::surface(theme, 0.07).into()),
             border: Border {
                 radius: radius.into(),
                 color: Color {
-                    a: 0.055,
+                    a: 0.12,
                     ..theme.fg
                 },
                 width: 1.0,
@@ -893,7 +893,7 @@ impl TrayApp {
 
     fn surface(theme: AppTheme, amount: f32) -> Color {
         Color {
-            a: 0.75,
+            a: 0.42,
             ..Self::mix(theme.bg, theme.fg, amount)
         }
     }
@@ -1131,58 +1131,219 @@ impl TrayApp {
         let Some(value) = value else {
             return Space::new().into();
         };
+        let clamped = sys::clamp(value, range.0, range.1);
+        let span = (range.1 - range.0).max(f32::EPSILON);
+        let ratio = ((clamped - range.0) / span).clamp(0.0, 1.0);
         let label_tint = slider_icon_color(tint, value);
-        let inactive_rail = Self::mix(theme.card_bg, theme.fg, 0.09);
-        // Iced draws an active half-handle segment even at the minimum.
-        // Match the empty rail there so zero has no colored fill.
-        let active_rail = if value <= range.0 {
-            inactive_rail
-        } else {
-            saturate(tint, 1.3)
-        };
+        let rail_start = Self::mix(saturate(tint, 1.40), theme.bg, 0.40);
+        let rail_mid = saturate(tint, 1.25);
+        let rail_end = Self::mix(tint, Color::WHITE, 0.42);
+        let knob_base = Self::mix(saturate(tint, 1.20), Color::WHITE, 0.38);
         let glyph = match kind {
             SliderKind::Volume if value <= 0.0 => "volume-muted",
             SliderKind::Brightness if value <= range.0 => "brightness-low",
             _ => glyph,
         };
+        let track_bg = container(Space::new())
+            .width(Length::Fill)
+            .height(Length::Fixed(16.0))
+            .style(move |_| {
+                let recess = iced_core::gradient::Linear::new(iced_core::Radians::PI)
+                    .add_stop(
+                        0.0,
+                        Color {
+                            a: 0.72,
+                            ..Self::mix(theme.bg, Color::BLACK, 0.62)
+                        },
+                    )
+                    .add_stop(
+                        1.0,
+                        Color {
+                            a: 0.52,
+                            ..Self::mix(theme.bg, Color::BLACK, 0.35)
+                        },
+                    );
+                container::Style {
+                    background: Some(recess.into()),
+                    border: Border {
+                        radius: 8.0.into(),
+                        color: Color {
+                            a: 0.09,
+                            ..theme.fg
+                        },
+                        width: 1.0,
+                    },
+                    ..Default::default()
+                }
+            });
+        let left_portion = (ratio * 1000.0).round() as u16;
+        let right_portion = 1000_u16.saturating_sub(left_portion);
+        let mut active_fill_row = row![]
+            .width(Length::Fill)
+            .height(Length::Fixed(24.0))
+            .align_y(Vertical::Center);
+        if clamped > range.0 {
+            // The 20px knob center is at x = 10 + ratio * (W - 20).
+            // For a ~169px track, (10 / 169) ≈ 0.059 and (149 / 169) ≈ 0.882.
+            // Extending the active bar directly to the knob center ensures the
+            // right edge stays completely submerged underneath the solid 20px
+            // knob disc, preventing any visible gap or inward-curving crescent.
+            let fill_portion = if ratio >= 0.98 {
+                1000_u16
+            } else {
+                (59.0 + ratio * 882.0).round().clamp(1.0, 1000.0) as u16
+            };
+            let empty_portion = 1000_u16.saturating_sub(fill_portion);
+            let right_radius = if ratio >= 0.98 { 8.0 } else { 0.0 };
+            let active_pill = container(Space::new())
+                .width(Length::FillPortion(fill_portion))
+                .height(Length::Fixed(16.0))
+                .style(move |_| {
+                    let grad = iced_core::gradient::Linear::new(iced_core::Radians(
+                        std::f32::consts::FRAC_PI_2,
+                    ))
+                    .add_stop(0.0, rail_start)
+                    .add_stop(0.48, rail_mid)
+                    .add_stop(1.0, rail_end);
+                    container::Style {
+                        background: Some(grad.into()),
+                        border: Border {
+                            radius: iced_core::border::Radius {
+                                top_left: 8.0,
+                                bottom_left: 8.0,
+                                top_right: right_radius,
+                                bottom_right: right_radius,
+                            },
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }
+                });
+            active_fill_row = active_fill_row.push(active_pill);
+            if empty_portion > 0 {
+                active_fill_row =
+                    active_fill_row.push(Space::new().width(Length::FillPortion(empty_portion)));
+            }
+        }
+        let knob_dome = container(Space::new())
+            .width(Length::Fixed(16.0))
+            .height(Length::Fixed(16.0))
+            .style(move |_| {
+                let dome = iced_core::gradient::Linear::new(iced_core::Radians::PI)
+                    .add_stop(0.0, Self::mix(knob_base, Color::WHITE, 0.46))
+                    .add_stop(0.60, knob_base)
+                    .add_stop(1.0, Self::mix(knob_base, theme.bg, 0.16));
+                container::Style {
+                    background: Some(dome.into()),
+                    border: Border {
+                        radius: 8.0.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }
+            });
+        let knob_outer = container(knob_dome)
+            .width(Length::Fixed(20.0))
+            .height(Length::Fixed(20.0))
+            .center_x(Length::Fixed(20.0))
+            .center_y(Length::Fixed(20.0))
+            .style(move |_| {
+                let rim = iced_core::gradient::Linear::new(iced_core::Radians::PI)
+                    .add_stop(0.0, Self::mix(knob_base, Color::WHITE, 0.72))
+                    .add_stop(0.50, knob_base)
+                    .add_stop(1.0, Self::mix(knob_base, theme.bg, 0.32));
+                container::Style {
+                    background: Some(rim.into()),
+                    border: Border {
+                        radius: 10.0.into(),
+                        color: Color {
+                            a: 0.80,
+                            ..Self::mix(knob_base, Color::WHITE, 0.72)
+                        },
+                        width: 1.0,
+                    },
+                    shadow: iced_core::Shadow {
+                        color: Color::from_rgba(0.0, 0.0, 0.0, 0.82),
+                        offset: iced_core::Vector::new(0.0, 2.5),
+                        blur_radius: 7.0,
+                    },
+                    ..Default::default()
+                }
+            });
+        let mut knob_row = row![]
+            .width(Length::Fill)
+            .height(Length::Fixed(24.0))
+            .align_y(Vertical::Center);
+        if left_portion > 0 {
+            knob_row = knob_row.push(Space::new().width(Length::FillPortion(left_portion)));
+        }
+        knob_row = knob_row.push(
+            container(knob_outer)
+                .width(Length::Fixed(20.0))
+                .height(Length::Fixed(24.0))
+                .align_y(Vertical::Center),
+        );
+        if right_portion > 0 {
+            knob_row = knob_row.push(Space::new().width(Length::FillPortion(right_portion)));
+        }
         let s = slider(
             range.0..=range.1,
-            sys::clamp(value, range.0, range.1),
+            clamped,
             move |v| Message::SliderChanged(kind, sys::snap_to_step(v, range.0, range.1, step)),
         )
         .step(step)
         .height(24)
         .style(move |_, _| slider::Style {
             rail: slider::Rail {
-                backgrounds: (active_rail.into(), inactive_rail.into()),
-                width: 12.0,
+                backgrounds: (Color::TRANSPARENT.into(), Color::TRANSPARENT.into()),
+                width: 16.0,
                 border: Border {
-                    radius: 6.0.into(),
+                    radius: 8.0.into(),
                     ..Default::default()
                 },
             },
             handle: slider::Handle {
-                shape: slider::HandleShape::Circle { radius: 7.0 },
-                background: Color::WHITE.into(),
-                border_color: theme.bg,
+                shape: slider::HandleShape::Circle { radius: 10.0 },
+                background: Color::TRANSPARENT.into(),
+                border_color: Color::TRANSPARENT,
                 border_width: 0.0,
             },
         });
-        // Leave explicit clearance around both endpoint handles, independently
-        // of the neighboring icon and value cells.
-        let s = container(s).padding([0, 3]).width(Length::Fill);
+        // Keep `s` as the topmost child in `stack!` so it receives all pointer,
+        // drag, and wheel events first while rendering the custom track and
+        // 3D shadowed knob directly underneath.
+        let slider_stack = container(stack![
+            container(track_bg)
+                .width(Length::Fill)
+                .height(Length::Fixed(24.0))
+                .align_y(Vertical::Center),
+            active_fill_row,
+            knob_row,
+            s,
+        ])
+        .width(Length::Fill);
+        // Decrease slider length by ~7% on each side (~14% total) for elegant
+        // spacing and center alignment between icon and percentage value.
+        let s = container(slider_stack)
+            .padding(iced_core::Padding {
+                top: 0.0,
+                right: 14.0,
+                bottom: 0.0,
+                left: 14.0,
+            })
+            .width(Length::Fill);
         let name = match kind {
             SliderKind::Volume => "Volume",
             SliderKind::Brightness => "Brightness",
             SliderKind::Sunset => "Night light",
         };
         let val = text(format!("{value:.0}"))
-            .size(13)
+            .size(12)
             .font(Font::MONOSPACE)
             .color(slider_label_color(Self::mix(tint, theme.fg, 0.18), value))
-            .width(28)
+            .width(22)
             .align_x(Horizontal::Right);
-        let icon = Self::icon_label(glyph, 18.0, Some(label_tint));
+        let icon = Self::icon_label(glyph, 17.0, Some(label_tint));
         let icon = if kind == SliderKind::Volume {
             Self::hint(
                 mouse_area(
@@ -1200,7 +1361,7 @@ impl TrayApp {
         };
         container(
             row![icon, s, val]
-                .spacing(12)
+                .spacing(10)
                 .align_y(Vertical::Center),
         )
         .padding([6, 10])
@@ -1475,11 +1636,21 @@ impl TrayApp {
                     let mut style = Self::flat(theme, status);
                     style.text_color = tint;
                     if selected {
-                        style.background = Some(Color { a: 0.12, ..tint }.into());
+                        style.background = Some(
+                            Color {
+                                a: 0.16,
+                                ..theme.accent
+                            }
+                            .into(),
+                        );
                     }
                     style.border = Border {
                         radius: 15.0.into(),
-                        color: if selected { tint } else { Color::TRANSPARENT },
+                        color: if selected {
+                            theme.accent
+                        } else {
+                            Color::TRANSPARENT
+                        },
                         width: 1.5,
                     };
                     style
@@ -1701,14 +1872,74 @@ impl TrayApp {
         if let Some(error) = &self.error {
             content = content.push(text(error.clone()).size(11).color(theme.danger));
         }
+        let bg_alpha = if self.global_blur_enabled { 0.72 } else { 1.0 };
+        let panel_bg = Color {
+            a: bg_alpha,
+            ..Self::mix(theme.bg, theme.fg, 0.02)
+        };
         // Vertical padding belongs to the content, so it scrolls away instead
         // of forming fixed strips at the viewport's top and bottom edges.
-        let scroller = scrollable(container(content).padding([12, 0])).direction(
-            scrollable::Direction::Vertical(
-                scrollable::Scrollbar::new().width(0).scroller_width(0),
-            ),
-        );
-        let body = container(scroller).padding([0, 12]);
+        let scroller = scrollable(container(content).padding(iced_core::Padding {
+            top: 12.0,
+            right: 0.0,
+            bottom: 44.0,
+            left: 0.0,
+        }))
+        .direction(scrollable::Direction::Vertical(
+            scrollable::Scrollbar::new().width(0).scroller_width(0),
+        ));
+        let body: Element<'_, Message> = if self.config.layout.show_notifications
+            && !self.notifications.is_empty()
+        {
+            let fade_target = Self::mix(panel_bg, Color::BLACK, 0.18);
+            let fade_strip = container(Space::new())
+                .width(Length::Fill)
+                .height(Length::Fixed(44.0))
+                .style(move |_| {
+                    let grad = iced_core::gradient::Linear::new(iced_core::Radians::PI)
+                        .add_stop(0.0, Color::TRANSPARENT)
+                        .add_stop(
+                            0.35,
+                            Color {
+                                a: bg_alpha * 0.35,
+                                ..Self::mix(panel_bg, Color::BLACK, 0.08)
+                            },
+                        )
+                        .add_stop(
+                            0.70,
+                            Color {
+                                a: bg_alpha * 0.75,
+                                ..Self::mix(panel_bg, Color::BLACK, 0.14)
+                            },
+                        )
+                        .add_stop(
+                            1.0,
+                            Color {
+                                a: bg_alpha * 0.95,
+                                ..fade_target
+                            },
+                        );
+                    container::Style {
+                        background: Some(grad.into()),
+                        border: Border {
+                            radius: iced_core::border::Radius {
+                                top_left: 0.0,
+                                top_right: 0.0,
+                                bottom_right: 20.0,
+                                bottom_left: 20.0,
+                            },
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }
+                });
+            let bottom_fade = container(fade_strip)
+                .width(Length::Fill)
+                .align_bottom(Length::Fill);
+            stack![container(scroller).padding([0, 12]), bottom_fade].into()
+        } else {
+            container(scroller).padding([0, 12]).into()
+        };
         let limit = self.panel_monitor.map(|m| m.limit()).unwrap_or_else(|| {
             iced_core::Size::new(
                 320.0_f32.min((size.width - 40.0).max(1.0)),
@@ -1720,7 +1951,7 @@ impl TrayApp {
             .max_height(limit.height)
             .style(move |_| {
                 let mut s = Self::card(theme, 20.0);
-                s.background = Some(theme.bg.into());
+                s.background = Some(panel_bg.into());
                 // Outside pixels must stay transparent: a rendered shadow also
                 // extends the compositor's background blur beyond the border.
                 s

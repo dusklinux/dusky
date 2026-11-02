@@ -14,7 +14,7 @@ use std::time::Duration;
 
 /// Tmpfs-only runtime directory.
 ///
-/// Priority: `$XDG_RUNTIME_DIR/dusky-tray` → `/run/user/$UID/dusky-tray`
+/// Priority: `$XDG_RUNTIME_DIR/dusky_tray` → `/run/user/$UID/dusky_tray`
 /// → `/dev/shm/...` → the temporary directory, verifying tmpfs in each case.
 pub fn runtime_dir() -> PathBuf {
     static DIRECTORY: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
@@ -32,9 +32,9 @@ pub fn runtime_dir() -> PathBuf {
             ];
             for base in candidates.into_iter().flatten() {
                 let dir = if base == *"/dev/shm" || base == temp {
-                    base.join(format!("dusky-tray-{uid}"))
+                    base.join(format!("dusky_tray-{uid}"))
                 } else {
-                    base.join("dusky-tray")
+                    base.join("dusky_tray")
                 };
                 // Check the existing ancestor before mkdir: never create cache
                 // directories on disk just to discover that /tmp is not tmpfs.
@@ -96,7 +96,7 @@ pub fn mako_blacklist_file() -> PathBuf {
 /// Call only after the panel has mapped (its first successful fit).
 pub fn configure_panel_blur(enabled: bool) {
     let rule = format!(
-        "hl.dispatch(hl.dsp.window.set_prop({{window=\"class:^dusky-tray$\",prop=\"no_blur\",value=\"{}\",lock=true}}))",
+        "hl.dispatch(hl.dsp.window.set_prop({{window=\"class:^(dusky_tray|dusky-tray)$\",prop=\"no_blur\",value=\"{}\",lock=true}}))",
         !enabled
     );
     let reply = run_command(
@@ -177,7 +177,7 @@ pub fn panel_monitor() -> Option<PanelMonitor> {
 }
 pub fn fit_panel(monitor: PanelMonitor, size: iced_core::Size) -> bool {
     let actions = format!(
-        "hl.dispatch(hl.dsp.window.resize({{window=\"class:^dusky-tray$\",x={},y={},relative=false}})); hl.dispatch(hl.dsp.window.move({{window=\"class:^dusky-tray$\",x={},y={},relative=false}}))",
+        "hl.dispatch(hl.dsp.window.resize({{window=\"class:^(dusky_tray|dusky-tray)$\",x={},y={},relative=false}})); hl.dispatch(hl.dsp.window.move({{window=\"class:^(dusky_tray|dusky-tray)$\",x={},y={},relative=false}}))",
         size.width,
         size.height,
         monitor.x + monitor.size.width - size.width - 20.0,

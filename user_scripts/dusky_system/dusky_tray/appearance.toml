@@ -1,5 +1,5 @@
 # Rust tray appearance. Reloaded live every two seconds.
 # 0.0 = invisible, 1.0 = opaque. Tooltips always remain fully opaque.
-opacity = 0.85
+opacity = 0.88
 # Permit panel blur when Hyprland's global blur is enabled.
 blur = true

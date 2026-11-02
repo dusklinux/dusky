@@ -105,7 +105,7 @@ def binary_runs(binary: Path) -> bool:
             timeout=10,
             check=False,
         )
-        return result.returncode == 0 and "dusky-tray" in result.stdout
+        return result.returncode == 0 and ("dusky_tray" in result.stdout or "dusky-tray" in result.stdout)
     except (OSError, subprocess.TimeoutExpired):
         return False
 

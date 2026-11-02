@@ -48,14 +48,14 @@ impl iced_futures::Executor for BackgroundExecutor {
 
 fn print_help() {
     println!("Dusky Tray (Rust)");
-    println!("Usage: dusky-tray [OPTIONS]\n");
+    println!("Usage: dusky_tray [OPTIONS]\n");
     println!("Options:");
     println!("  --version, -v   Show version and exit");
     println!("  --help, -h      Show this help");
     println!("\nBehavior:");
     println!("  Borderless Wayland window with a bottom-right panel.");
     println!("  Esc closes the panel. All runtime caches live on tmpfs");
-    println!("  ($XDG_RUNTIME_DIR/dusky-tray, /dev/shm, or /tmp).");
+    println!("  ($XDG_RUNTIME_DIR/dusky_tray, /dev/shm, or /tmp).");
     println!("  Build with scripts/build-on-tmpfs.sh to keep intermediates on RAM.");
 }
 
@@ -89,7 +89,7 @@ impl Drop for SocketGuard {
 }
 
 fn instance_socket_path() -> PathBuf {
-    backend::runtime_dir().join("dusky-tray.sock")
+    backend::runtime_dir().join("dusky_tray.sock")
 }
 
 fn spawn_ipc_watcher(listener: UnixListener) {
@@ -295,7 +295,7 @@ fn main() -> Result<(), iced_winit::Error> {
         return Ok(());
     }
     if matches!(option, Some("--version" | "-v" | "-V")) {
-        println!("dusky-tray {}", env!("CARGO_PKG_VERSION"));
+        println!("dusky_tray {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
     if let Some(unknown) = option {
@@ -327,7 +327,7 @@ fn main() -> Result<(), iced_winit::Error> {
             Some(SocketGuard(sock_path))
         }
         Err(error) => {
-            eprintln!("Warning: could not bind dusky-tray toggle socket: {error}");
+            eprintln!("Warning: could not bind dusky_tray toggle socket: {error}");
             None
         }
     };
@@ -353,7 +353,7 @@ impl iced_winit::program::Program for TrayProgram {
     type Executor = BackgroundExecutor;
 
     fn name() -> &'static str {
-        "dusky-tray"
+        "dusky_tray"
     }
 
     fn settings(&self) -> iced_core::Settings {
@@ -369,7 +369,7 @@ impl iced_winit::program::Program for TrayProgram {
             transparent: true,
             decorations: false,
             platform_specific: iced_core::window::settings::PlatformSpecific {
-                application_id: "dusky-tray".into(),
+                application_id: "dusky_tray".into(),
                 ..Default::default()
             },
             ..Default::default()

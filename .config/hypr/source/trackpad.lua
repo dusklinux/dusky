@@ -19,7 +19,7 @@ hl.gesture({
     fingers   = 3,
     direction = "up",
     action    = function()
-        hl.exec_cmd([["$HOME/.local/bin/dusky-tray"]])
+        hl.exec_cmd([["$HOME/.local/bin/dusky_tray"]])
     end,
 })
 

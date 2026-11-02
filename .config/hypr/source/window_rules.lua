@@ -2000,18 +2000,17 @@ hl.window_rule({
 -- The shared focus-grab helper handles outside clicks without a backdrop.
 hl.window_rule({
     name = "dusky_tray_window",
-    match = { class = "^(dusky-tray|dusky_tray)$" },
+    match = { class = "^(dusky_tray|dusky-tray)$" },
     float = true,
     pin = true,
     move = {"monitor_w-window_w-20", "monitor_h-window_h-20"},
     animation = "slide bottom",
     border_size = 0,
-    -- Match the panel's 20px circular corners, including the blur mask.
     rounding = 20,
     rounding_power = 2.0,
     no_shadow = true,
-    decorate = false,
+    decorate = true,
+    no_blur = false,
     no_dim = true,
     persistent_size = false,
-    opacity = "1.0 override 1.0 override"
 })
