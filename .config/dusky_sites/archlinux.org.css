@@ -224,4 +224,17 @@
     * {
         scrollbar-color: var(--outline_variant, #46464f) var(--surface, #131318);
     }
+
+    /* News tag link: native blue fill + theme link colour was unreadable */
+    h3 > a {
+        background-color: var(--primary_container, #723520) !important;
+        color: var(--on_primary_container, #ffdbd0) !important;
+        border-color: var(--primary_container, #723520) !important;
+    }
+
+    h3 > a:hover {
+        background-color: var(--primary, #ffb59d) !important;
+        color: var(--on_primary, #55200c) !important;
+    }
+
 }

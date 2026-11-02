@@ -171,6 +171,15 @@
         border-color: var(--primary, #bec2ff) !important;
     }
 
+    /* ChatGPT paints its accent on ::before of the composer send control */
+    button[data-testid="send-button"]::before,
+    button[data-testid="composer-send-button"]::before,
+    button[aria-label="Send prompt"]::before,
+    button[aria-label="Send message"]::before {
+        background-color: var(--primary, #bec2ff) !important;
+        color: var(--on_primary, #272b60) !important;
+    }
+
     /* Message bubbles */
     [data-message-author-role="user"],
     [data-testid*="user-message"],

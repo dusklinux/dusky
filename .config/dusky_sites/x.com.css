@@ -1,4 +1,4 @@
-@-moz-document domain("x.com") {
+@-moz-document domain("x.com"), domain("twitter.com") {
     /* >>> dusky:picks - managed by the Visual Picker, one rule per line */
     header.r-lrvibr.r-1g40b8q.r-obd0qt { background-color: var(--background) !important; color: var(--on_background) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fheader.r-lrvibr.r-1g40b8q.r-obd0qt%1Fbg | bg: background */
     div[aria-label="Timeline: Your Home Timeline"] { background-color: var(--background) !important; color: var(--on_background) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fdiv%5Baria-label%3D%22Timeline%3A%20Your%20Home%20Timeline%22%5D%1Fbg | bg: background */
@@ -77,4 +77,149 @@
     :root {
   --x-black : var(--surface_container_low) !important;
   }
+
+    /* ---- X design tokens (2026 UI exposes a --x-* palette) ---- */
+    :root,
+    html,
+    body,
+    #react-root {
+        color-scheme: dark !important;
+
+        --x-bg-primary: var(--surface, #1a110f) !important;
+        --x-bg-secondary: var(--surface_container_low, #231917) !important;
+        --x-bg-tertiary: var(--surface_container_high, #322825) !important;
+        --x-bg-quaternary: var(--surface_container, #271d1b) !important;
+        --x-bg-sheets: var(--surface_container, #271d1b) !important;
+        --x-bg-modal: var(--surface_container, #271d1b) !important;
+        --x-bg-inputs: var(--surface_container_high, #322825) !important;
+        --x-bg-info: var(--surface_container_high, #322825) !important;
+        --x-bg-success: var(--secondary_container, #5d4036) !important;
+        --x-bg-warning: var(--tertiary_container, #51461a) !important;
+        --x-bg-destructive: var(--error_container, #93000a) !important;
+        --x-bg-subscribe: var(--surface_container_high, #322825) !important;
+
+        --x-fg-primary: var(--on_surface, #f1dfda) !important;
+        --x-fg-secondary: var(--on_surface_variant, #d8c2bb) !important;
+        --x-fg-tertiary: var(--outline, #a08d87) !important;
+        --x-fg-inverted: var(--surface, #1a110f) !important;
+        --x-fg-brand: var(--primary, #ffb59d) !important;
+        --x-fg-on-brand: var(--on_primary, #55200c) !important;
+        --x-fg-on-color: var(--on_primary, #55200c) !important;
+        --x-fg-success: var(--secondary, #ffdbd0) !important;
+        --x-fg-warning: var(--tertiary, #f4e2a7) !important;
+        --x-fg-destructive: var(--error, #ffb4ab) !important;
+        --x-fg-subscribe: var(--tertiary, #f4e2a7) !important;
+
+        --x-btn-primary: var(--primary, #ffb59d) !important;
+        --x-btn-primary-hover: var(--primary_fixed, #ffdbd0) !important;
+        --x-btn-primary-pressed: var(--primary_fixed_dim, #ffb59d) !important;
+        --x-btn-brand: var(--primary, #ffb59d) !important;
+        --x-btn-brand-hover: var(--primary_fixed, #ffdbd0) !important;
+        --x-btn-brand-pressed: var(--primary_fixed_dim, #ffb59d) !important;
+        --x-btn-secondary: var(--surface_container_high, #322825) !important;
+        --x-btn-secondary-hover: var(--surface_container_highest, #3d322f) !important;
+        --x-btn-secondary-pressed: var(--surface_container_highest, #3d322f) !important;
+        --x-btn-tertiary: var(--surface_container_high, #322825) !important;
+        --x-btn-tertiary-hover: var(--surface_container_highest, #3d322f) !important;
+        --x-btn-tertiary-pressed: var(--surface_container_highest, #3d322f) !important;
+        --x-btn-tertiary-opaque: var(--surface_container_high, #322825) !important;
+        --x-btn-tertiary-opaque-hover: var(--surface_container_highest, #3d322f) !important;
+        --x-btn-tertiary-opaque-pressed: var(--surface_container_highest, #3d322f) !important;
+        --x-btn-ghost-hover: var(--surface_container, #271d1b) !important;
+        --x-btn-ghost-pressed: var(--surface_container_high, #322825) !important;
+        --x-btn-inverted: var(--on_surface, #f1dfda) !important;
+        --x-btn-inverted-hover: var(--on_surface_variant, #d8c2bb) !important;
+        --x-btn-inverted-pressed: var(--on_surface_variant, #d8c2bb) !important;
+        --x-btn-destructive: var(--error, #ffb4ab) !important;
+        --x-btn-destructive-hover: var(--error, #ffb4ab) !important;
+        --x-btn-destructive-pressed: var(--error, #ffb4ab) !important;
+
+        --x-border-normal: var(--outline_variant, #53433f) !important;
+        --x-border-divider: var(--outline_variant, #53433f) !important;
+        --x-border-hover: var(--outline, #a08d87) !important;
+        --x-border-active: var(--primary, #ffb59d) !important;
+        --x-border-elevated: var(--outline_variant, #53433f) !important;
+        --x-border-media: transparent !important;
+        --x-border-destructive: var(--error, #ffb4ab) !important;
+
+        --x-ring: var(--primary, #ffb59d) !important;
+        --x-hover-faint: var(--surface_container, #271d1b) !important;
+        --x-hover-subtle: var(--surface_container_high, #322825) !important;
+        --x-segmented-control-thumb: var(--surface_container_highest, #3d322f) !important;
+        --x-skeleton-shimmer: var(--surface_container_high, #322825) !important;
+        --x-tooltip-bg: var(--surface_container_highest, #3d322f) !important;
+        --x-tooltip-fg: var(--on_surface, #f1dfda) !important;
+        --x-toast-bg: var(--surface_container, #271d1b) !important;
+
+        --x-black: var(--surface, #1a110f) !important;
+        --x-white: var(--on_surface, #f1dfda) !important;
+        --x-neutral-000: var(--on_surface, #f1dfda) !important;
+        --x-neutral-050: var(--on_surface, #f1dfda) !important;
+        --x-neutral-100: var(--on_surface_variant, #d8c2bb) !important;
+        --x-neutral-200: var(--on_surface_variant, #d8c2bb) !important;
+        --x-neutral-300: var(--outline, #a08d87) !important;
+        --x-neutral-400: var(--outline, #a08d87) !important;
+        --x-neutral-600: var(--surface_variant, #53433f) !important;
+        --x-neutral-700: var(--surface_variant, #53433f) !important;
+        --x-neutral-800: var(--surface_container_high, #322825) !important;
+        --x-neutral-900: var(--surface_container_high, #322825) !important;
+        --x-neutral-1000: var(--surface_container_low, #231917) !important;
+        --x-neutral-1100: var(--surface, #1a110f) !important;
+    }
+
+    html,
+    body,
+    #react-root {
+        background-color: var(--surface, #1a110f) !important;
+        color: var(--on_surface, #f1dfda) !important;
+    }
+
+    /* ---- New jf-* login flow: keep the social pills visible ---- */
+    form button.jf-element,
+    div.jf-element > button.jf-element {
+        background-color: var(--surface_container_high, #322825) !important;
+        color: var(--on_surface, #f1dfda) !important;
+        border: 1px solid var(--outline_variant, #53433f) !important;
+        border-radius: 9999px !important;
+    }
+
+    form button.jf-element > div,
+    div.jf-element > button.jf-element > div {
+        background-color: transparent !important;
+        color: var(--on_surface, #f1dfda) !important;
+    }
+
+    form input.jf-element,
+    form input.jf-float-input {
+        background-color: transparent !important;
+        color: var(--on_surface, #f1dfda) !important;
+    }
+
+    /* Email/username field shell */
+    form div.jf-element:has(> input.jf-float-input) {
+        background-color: var(--surface_container, #271d1b) !important;
+        border-color: var(--outline_variant, #53433f) !important;
+    }
+
+    form div.jf-element:has(> input.jf-float-input):focus-within {
+        border-color: var(--primary, #ffb59d) !important;
+    }
+
+
+    /* ---- Login float label: the new jf-* flow hardcodes sky-blue ---- */
+    .jf-float-label,
+    form label .jf-float-label,
+    .jf-float-label-container .jf-float-label {
+        color: var(--on_surface_variant, #d8c2bb) !important;
+    }
+
+    form label:focus-within .jf-float-label {
+        color: var(--primary, #ffb59d) !important;
+    }
+
+    /* Disabled Continue pill */
+    form div.jf-element:has(> div > p) {
+        color: var(--outline, #a08d87) !important;
+    }
+
 }

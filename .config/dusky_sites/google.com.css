@@ -332,4 +332,16 @@
         scrollbar-color: var(--outline_variant, #46464f) var(--surface, #131318);
     }
 
+
+    /* Top bar text links (Gmail / Images) can be re-rendered dark by Google */
+    a.gb_8,
+    #gb a.gb_8,
+    header a.gb_8 {
+        color: var(--on_surface, #f1dfda) !important;
+    }
+
+    a.gb_8:hover {
+        color: var(--primary, #ffb59d) !important;
+    }
+
 }

@@ -218,4 +218,19 @@
     * {
         scrollbar-color: var(--outline_variant, #46464f) var(--surface, #131318);
     }
+
+    /* Cookie banner buttons (hashed OneTrust-ish classes) */
+    button[class*="acceptButton"] {
+        background-color: var(--primary, #ffb59d) !important;
+        color: var(--on_primary, #55200c) !important;
+        border-color: var(--primary, #ffb59d) !important;
+    }
+
+    button[class*="rejectButton"],
+    button[class*="customizeButton"] {
+        background-color: transparent !important;
+        color: var(--on_surface, #f1dfda) !important;
+        border-color: var(--outline, #a08d87) !important;
+    }
+
 }

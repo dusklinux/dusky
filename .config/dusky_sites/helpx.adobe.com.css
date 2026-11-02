@@ -303,4 +303,143 @@
     * {
         scrollbar-color: var(--outline_variant, #46464f) var(--surface, #131318);
     }
+
+    /* ---- Top nav / breadcrumb strip ---- */
+    .flex_top_nav,
+    .feds-topnav-wrapper,
+    .homePageLinkSection {
+        background-color: var(--surface_container_low, #231917) !important;
+        color: var(--on_surface, #f1dfda) !important;
+        border-color: var(--outline_variant, #53433f) !important;
+    }
+
+    .homePageLinkSection a,
+    .homePageLinkSection span,
+    .homePageLinkSection div,
+    .productTitleText,
+    .helpKeyword,
+    .homePageTitle {
+        color: var(--on_surface, #f1dfda) !important;
+    }
+
+    a.topNavOpenApp {
+        background-color: var(--surface_container_high, #322825) !important;
+        color: var(--on_surface, #f1dfda) !important;
+        border-color: var(--outline_variant, #53433f) !important;
+    }
+
+    /* ---- Content cards / carousels ---- */
+    .card {
+        background-color: var(--surface_container_low, #231917) !important;
+        color: var(--on_surface, #f1dfda) !important;
+        border: 1px solid var(--outline_variant, #53433f) !important;
+    }
+
+    .card .card-heading-text,
+    .card-heading-text,
+    .footer-text {
+        color: var(--on_surface, #f1dfda) !important;
+    }
+
+    .card .footer-text {
+        color: var(--on_surface_variant, #d8c2bb) !important;
+    }
+
+    button.prev-btn,
+    button.next-btn {
+        background-color: var(--surface_container_high, #322825) !important;
+        color: var(--on_surface, #f1dfda) !important;
+        border-color: var(--outline_variant, #53433f) !important;
+    }
+
+    /* ---- Dexter layout fills (author-picked light grays) ---- */
+    [class*="dexter-Background"] {
+        background-color: transparent !important;
+        color: var(--on_surface, #f1dfda) !important;
+    }
+
+    .dexter-Position {
+        background-color: transparent !important;
+        color: var(--on_surface, #f1dfda) !important;
+    }
+
+    /* ---- Location modal ---- */
+    .locale-modalv2,
+    .locale-modal_contentv2,
+    .multi_lang_modal,
+    .react-spectrum-TabView,
+    .spectrum-Tabs,
+    [role="tablist"] {
+        background-color: var(--surface_container, #271d1b) !important;
+        color: var(--on_surface, #f1dfda) !important;
+        border-color: var(--outline_variant, #53433f) !important;
+    }
+
+    .spectrum-Tabs-itemLabel,
+    .spectrum-Tabs-itemLabel *,
+    .spectrum-TabView-panel,
+    .spectrum-TabView-panel * {
+        color: var(--on_surface_variant, #d8c2bb) !important;
+    }
+
+    .spectrum-Tabs-item.is-selected .spectrum-Tabs-itemLabel,
+    .spectrum-Tabs-item[aria-selected="true"] .spectrum-Tabs-itemLabel {
+        color: var(--primary, #ffb59d) !important;
+    }
+
+    /* ---- Misc light chrome ---- */
+    .sticker,
+    .spectrum-ActionButton {
+        background-color: var(--surface_container_high, #322825) !important;
+        color: var(--on_surface, #f1dfda) !important;
+        border-color: var(--outline_variant, #53433f) !important;
+    }
+
+
+    /* Sticky clone of the product nav keeps a hardcoded white fill */
+    .flex.apply-hover-effect,
+    .apply-hover-effect.sticky,
+    .apply-hover-effect {
+        background-color: var(--surface_container_low, #231917) !important;
+        color: var(--on_surface, #f1dfda) !important;
+    }
+
+    .productDetails,
+    .productDetails .productName,
+    .productDetails a {
+        background-color: transparent !important;
+        color: var(--on_surface, #f1dfda) !important;
+    }
+
+    .productDetails .productTitleText {
+        color: var(--on_surface, #f1dfda) !important;
+    }
+
+    .productDetails .helpKeyword {
+        color: var(--primary, #ffb59d) !important;
+    }
+
+    /* Device tabs (Desktop / Tablet / Mobile / Web) */
+    .device-dropdown-button .device-text,
+    .device-text {
+        color: var(--on_surface_variant, #d8c2bb) !important;
+    }
+
+    .selected-item .device-text,
+    .device-dropdown-button[aria-expanded="true"] .device-text {
+        color: var(--on_surface, #f1dfda) !important;
+    }
+
+    .selected-item {
+        background-color: var(--surface_container_high, #322825) !important;
+        color: var(--on_surface, #f1dfda) !important;
+    }
+
+
+    .topNavOpenAppText,
+    .topNavOpenApp .topNavOpenAppText,
+    a.topNavOpenApp span {
+        color: var(--on_surface, #f1dfda) !important;
+    }
+
 }

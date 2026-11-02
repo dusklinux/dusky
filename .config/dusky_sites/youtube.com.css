@@ -321,4 +321,54 @@
         scrollbar-color: var(--outline_variant, #46464f) var(--background, #131318);
     }
 
+
+    /* ---- Selected filter chip: native uses a solid light chip ---- */
+    yt-chip-cloud-chip-renderer[selected],
+    yt-chip-cloud-chip-renderer[selected] .ytChipShapeText,
+    .ytChipShapeActive,
+    .ytChipShapeActive .ytChipShapeText {
+        background-color: var(--on_surface, #f1dfda) !important;
+        color: var(--surface, #1a110f) !important;
+    }
+
+
+    /* Must outrank the preserved pick that sets --secondary_fixed_dim */
+    div.ytChipShapeChip.ytChipShapeActive.ytChipShapeOnlyTextPadding,
+    div.ytChipShapeChip.ytChipShapeActive,
+    yt-chip-cloud-chip-renderer[selected] div.ytChipShapeChip {
+        background-color: var(--on_surface, #f1dfda) !important;
+        color: var(--surface, #1a110f) !important;
+    }
+
+    div.ytChipShapeChip.ytChipShapeActive .ytChipShapeText,
+    yt-chip-cloud-chip-renderer[selected] .ytChipShapeText,
+    yt-chip-cloud-chip-renderer[selected] yt-formatted-string {
+        color: var(--surface, #1a110f) !important;
+    }
+
+
+    /* Brand app icons in the guide (inline SVG, various reds) */
+    ytd-guide-entry-renderer svg path[fill="#FF0033"],
+    ytd-guide-entry-renderer svg circle[fill="#FF0033"],
+    ytd-guide-entry-renderer svg path[fill="#FB233A"],
+    ytd-guide-entry-renderer svg circle[fill="#FB233A"],
+    ytd-guide-entry-renderer svg path[fill="#FF0000"],
+    ytd-guide-entry-renderer svg circle[fill="#FF0000"],
+    ytd-mini-guide-entry-renderer svg path[fill="#FF0033"],
+    ytd-mini-guide-entry-renderer svg circle[fill="#FF0033"],
+    ytd-mini-guide-entry-renderer svg path[fill="#FB233A"],
+    ytd-mini-guide-entry-renderer svg path[fill="#FF0000"] {
+        fill: var(--primary, #ffb59d) !important;
+    }
+
+    ytd-guide-entry-renderer svg path[fill="#FFFFFF"],
+    ytd-guide-entry-renderer svg path[fill="#FFF"],
+    ytd-guide-entry-renderer svg polygon[fill="#FFFFFF"],
+    ytd-guide-entry-renderer svg polygon[fill="#FFF"],
+    ytd-guide-entry-renderer svg path[fill="#212121"],
+    ytd-mini-guide-entry-renderer svg path[fill="#FFFFFF"],
+    ytd-mini-guide-entry-renderer svg path[fill="#FFF"] {
+        fill: var(--on_primary, #55200c) !important;
+    }
+
 }

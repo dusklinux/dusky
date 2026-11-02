@@ -270,7 +270,7 @@
         opacity: 1 !important;
     }
 
-    .cdx-button--action-progressive,
+    button.cdx-button--action-progressive,
     .oo-ui-flaggedElement-progressive > .oo-ui-buttonElement-button {
         background-color: var(--primary, #bec2ff) !important;
         color: var(--on_primary, #272b60) !important;

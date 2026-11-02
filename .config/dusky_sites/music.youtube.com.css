@@ -19,4 +19,249 @@
     html { background-color: var(--background) !important; color: var(--on_background) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fhtml%1Fbg | bg: background */
     body { background-color: var(--background) !important; color: var(--on_background) !important; border-color: var(--outline_variant) !important; } /* dusky key=sel%1Fbody%1Fbg | bg: background */
     /* <<< dusky:picks */
+
+    /* ---- Design tokens (new --yt-sys-color-baseline--* plus legacy) ---- */
+    :root,
+    html,
+    body,
+    ytmusic-app,
+    ytmusic-app-layout {
+        color-scheme: dark !important;
+
+        --yt-sys-color-baseline--base-background: var(--surface, #1a110f) !important;
+        --yt-sys-color-baseline--raised-background: var(--surface_container, #271d1b) !important;
+        --yt-sys-color-baseline--surface-container: var(--surface_container_low, #231917) !important;
+        --yt-sys-color-baseline--menu-background: var(--surface_container, #271d1b) !important;
+        --yt-sys-color-baseline--inverted-background: var(--on_surface, #f1dfda) !important;
+        --yt-sys-color-baseline--inverted-background-hover: var(--on_surface_variant, #d8c2bb) !important;
+        --yt-sys-color-baseline--solid-background: var(--on_surface, #f1dfda) !important;
+        --yt-sys-color-baseline--solid-background-inverse: var(--surface, #1a110f) !important;
+        --yt-sys-color-baseline--text-primary: var(--on_surface, #f1dfda) !important;
+        --yt-sys-color-baseline--text-secondary: var(--on_surface_variant, #d8c2bb) !important;
+        --yt-sys-color-baseline--text-disabled: var(--outline, #a08d87) !important;
+        --yt-sys-color-baseline--text-primary-inverse: var(--surface, #1a110f) !important;
+        --yt-sys-color-baseline--text-secondary-inverse: var(--on_surface_variant, #d8c2bb) !important;
+        --yt-sys-color-baseline--text-disabled-inverse: var(--outline, #a08d87) !important;
+        --yt-sys-color-baseline--call-to-action: var(--primary, #ffb59d) !important;
+        --yt-sys-color-baseline--call-to-action-hover: var(--primary_fixed, #ffdbd0) !important;
+        --yt-sys-color-baseline--additive-background: var(--surface_container_high, #322825) !important;
+        --yt-sys-color-baseline--tonal-background: var(--surface_container_high, #322825) !important;
+        --yt-sys-color-baseline--button-chip-background-hover: var(--surface_container_highest, #3d322f) !important;
+        --yt-sys-color-baseline--static-brand-red: var(--primary, #ffb59d) !important;
+        --yt-sys-color-baseline--brand-red-contrast: var(--primary, #ffb59d) !important;
+        --yt-sys-color-baseline--static-brand-white: var(--on_surface, #f1dfda) !important;
+        --yt-sys-color-baseline--static-white-background: var(--on_surface, #f1dfda) !important;
+        --yt-sys-color-baseline--wordmark-text: var(--on_surface, #f1dfda) !important;
+        --yt-sys-color-baseline--overlay-call-to-action: var(--primary, #ffb59d) !important;
+
+        --yt-spec-base-background: var(--surface, #1a110f) !important;
+        --yt-spec-raised-background: var(--surface_container, #271d1b) !important;
+        --yt-spec-general-background-a: var(--surface, #1a110f) !important;
+        --yt-spec-general-background-b: var(--surface_container_low, #231917) !important;
+        --yt-spec-general-background-c: var(--surface_container_lowest, #140c0a) !important;
+        --yt-spec-menu-background: var(--surface_container, #271d1b) !important;
+        --yt-spec-text-primary: var(--on_surface, #f1dfda) !important;
+        --yt-spec-text-secondary: var(--on_surface_variant, #d8c2bb) !important;
+        --yt-spec-call-to-action: var(--primary, #ffb59d) !important;
+        --yt-spec-icon-active-other: var(--primary, #ffb59d) !important;
+        --yt-spec-icon-inactive: var(--outline, #a08d87) !important;
+        --yt-spec-badge-chip-background: var(--surface_container_high, #322825) !important;
+        --yt-spec-static-brand-red: var(--primary, #ffb59d) !important;
+
+        background-color: var(--surface, #1a110f) !important;
+        color: var(--on_surface, #f1dfda) !important;
+    }
+
+    /* ---- Shell ---- */
+    ytmusic-app,
+    ytmusic-app-layout,
+    #content-wrapper,
+    #content,
+    #contents,
+    ytmusic-browse-response,
+    ytmusic-section-list-renderer,
+    ytmusic-shelf-renderer,
+    ytmusic-carousel-shelf-renderer,
+    ytmusic-two-row-item-renderer,
+    ytmusic-responsive-list-item-renderer,
+    ytmusic-playlist-shelf-renderer,
+    ytmusic-description-shelf-renderer,
+    ytmusic-message-renderer {
+        background-color: transparent !important;
+        color: var(--on_surface, #f1dfda) !important;
+    }
+
+    ytmusic-app-layout,
+    ytmusic-browse-response,
+    #content-wrapper {
+        background-color: var(--surface, #1a110f) !important;
+    }
+
+    /* ---- Nav / guide / player bar ---- */
+    ytmusic-nav-bar,
+    #nav-bar-background,
+    ytmusic-guide-renderer,
+    #guide-wrapper,
+    #mini-guide,
+    ytmusic-player-bar,
+    #player-bar-background,
+    ytmusic-player-page {
+        background-color: var(--surface_container_low, #231917) !important;
+        color: var(--on_surface, #f1dfda) !important;
+        border-color: var(--outline_variant, #53433f) !important;
+    }
+
+    ytmusic-nav-bar,
+    #nav-bar-background {
+        border-bottom: 1px solid var(--outline_variant, #53433f) !important;
+    }
+
+    ytmusic-player-bar {
+        border-top: 1px solid var(--outline_variant, #53433f) !important;
+    }
+
+    /* ---- Typography ---- */
+    h1, h2, h3, h4, h5, h6,
+    .title,
+    yt-formatted-string.title,
+    ytmusic-header-renderer .title,
+    ytmusic-shelf-renderer > #title,
+    ytmusic-two-row-item-renderer #title {
+        color: var(--on_surface, #f1dfda) !important;
+    }
+
+    .subtitle,
+    .secondary,
+    ytmusic-responsive-list-item-renderer .second-line,
+    ytmusic-two-row-item-renderer .subtitle,
+    yt-formatted-string.subtitle,
+    #description,
+    .byline {
+        color: var(--on_surface_variant, #d8c2bb) !important;
+    }
+
+    a,
+    a.yt-simple-endpoint,
+    ytmusic-responsive-list-item-renderer a {
+        color: inherit;
+    }
+
+    a:hover .title,
+    a:hover yt-formatted-string {
+        color: var(--primary, #ffb59d) !important;
+    }
+
+    /* ---- Chips ---- */
+    ytmusic-chip-cloud-chip-renderer[is-selected] a,
+    ytmusic-chip-cloud-chip-renderer a[aria-selected="true"],
+    ytmusic-chip-cloud-chip-renderer[chip-style*="SELECTED_WHITE"] a.selected {
+        background-color: var(--on_surface, #f1dfda) !important;
+        color: var(--surface, #1a110f) !important;
+    }
+
+    ytmusic-chip-cloud-chip-renderer a:hover {
+        background-color: var(--surface_container_highest, #3d322f) !important;
+        color: var(--on_surface, #f1dfda) !important;
+    }
+
+    /* ---- Sign in / primary CTAs ---- */
+    a.sign-in-link,
+    .sign-in-link,
+    ytmusic-button-renderer.style-primary button,
+    button.ytSpecButtonShapeNextFilled,
+    .ytSpecButtonShapeNextFilled {
+        background-color: var(--primary, #ffb59d) !important;
+        color: var(--on_primary, #55200c) !important;
+        border-color: var(--primary, #ffb59d) !important;
+    }
+
+    /* ---- Icon buttons / secondary buttons ---- */
+    ytmusic-button-renderer button,
+    tp-yt-paper-icon-button,
+    button,
+    .ytSpecButtonShapeNextTonal {
+        color: var(--on_surface, #f1dfda);
+    }
+
+    .ytSpecButtonShapeNextTonal {
+        background-color: var(--surface_container_high, #322825) !important;
+        color: var(--on_surface, #f1dfda) !important;
+    }
+
+    /* ---- Rows / cards hover ---- */
+    ytmusic-responsive-list-item-renderer:hover,
+    ytmusic-two-row-item-renderer:hover,
+    ytmusic-player-queue-item:hover {
+        background-color: var(--surface_container, #271d1b) !important;
+    }
+
+    /* ---- Search box ---- */
+    ytmusic-search-box,
+    ytmusic-search-box input,
+    #input.ytmusic-search-box,
+    .search-box input {
+        background-color: var(--surface_container, #271d1b) !important;
+        color: var(--on_surface, #f1dfda) !important;
+        border-color: var(--outline_variant, #53433f) !important;
+    }
+
+    input::placeholder {
+        color: var(--on_surface_variant, #d8c2bb) !important;
+        opacity: 1 !important;
+    }
+
+    /* ---- Menus / dialogs / popups ---- */
+    tp-yt-iron-dropdown,
+    tp-yt-paper-dialog,
+    ytmusic-popup-container,
+    ytmusic-multi-page-menu-renderer,
+    ytmusic-menu-popup-renderer,
+    ytmusic-mealbar-promo-renderer {
+        background-color: var(--surface_container, #271d1b) !important;
+        color: var(--on_surface, #f1dfda) !important;
+        border-color: var(--outline_variant, #53433f) !important;
+    }
+
+    /* ---- Progress / slider ---- */
+    #progress-bar.ytmusic-player-bar,
+    tp-yt-paper-slider #primaryProgress {
+        background-color: var(--primary, #ffb59d) !important;
+    }
+
+    /* ---- Selection / scrollbars ---- */
+    ::selection {
+        background-color: var(--primary, #ffb59d);
+        color: var(--on_primary, #55200c);
+    }
+
+    * {
+        scrollbar-color: var(--outline_variant, #53433f) var(--surface, #1a110f);
+    }
+
+    /* ---- Header play button (white circle breaks the palette) ---- */
+    ytmusic-play-button-renderer {
+        background-color: var(--primary, #ffb59d) !important;
+        color: var(--on_primary, #55200c) !important;
+    }
+
+    ytmusic-play-button-renderer yt-icon,
+    ytmusic-play-button-renderer yt-icon div,
+    ytmusic-play-button-renderer yt-icon svg,
+    ytmusic-play-button-renderer yt-icon path,
+    ytmusic-play-button-renderer .content-wrapper div {
+        color: var(--on_primary, #55200c) !important;
+        fill: var(--on_primary, #55200c) !important;
+    }
+
+    /* ---- Brand logo image: nudge YouTube red toward the palette accent ---- */
+    ytmusic-logo img.logo {
+        filter: hue-rotate(14deg) saturate(.55) brightness(1.12);
+    }
+
+    /* ---- Ensure the player-bar icons never get repainted by the div rule ---- */
+    ytmusic-player-bar yt-icon div,
+    ytmusic-player-bar tp-yt-paper-icon-button div {
+        color: inherit !important;
+    }
+
 }
