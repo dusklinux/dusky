@@ -27,7 +27,6 @@ serde_json = "1.0.151"
 [profile.release]
 opt-level = 3
 lto = "thin"
-codegen-units = 1
 panic = "abort"
 strip = true
 

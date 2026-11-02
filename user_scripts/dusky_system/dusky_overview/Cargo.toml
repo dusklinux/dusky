@@ -21,7 +21,6 @@ opt-level = 3
 lto = "thin"
 strip = true
 panic = "abort"
-codegen-units = 1
 
 [patch.crates-io]
 fontdb = { path = "../../rust_shared/fontdb" }

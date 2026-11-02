@@ -23,7 +23,7 @@ build_support = import_module("147_rust_compiles_shared_NOT_STANDALONE")
 TARGET = "x86_64-unknown-linux-gnu"
 SYSTEM_BINARY = Path("/usr/bin/dusky_overview")
 SYSTEM_SOURCE_DIGEST = Path("/usr/share/dusky_overview/source.sha256")
-BUILD_RECIPE = "overview-native-v2-fat-lto-tmpfs"
+BUILD_RECIPE = "overview-native-v2-thin-lto-tmpfs"
 
 
 def env_int(name: str, default: int, *, minimum: int = 1, maximum: int = 3600) -> int:
@@ -263,7 +263,7 @@ def build_native(project: Path, binary: Path, manifest_path: Path, version: str,
     env["CARGO_NET_RETRY"] = "1"
     env["CARGO_REGISTRIES_CRATES_IO_PROTOCOL"] = "sparse"
     env["RUSTUP_AUTO_INSTALL"] = "0"
-    env["RUSTFLAGS"] = "-C target-cpu=native -C opt-level=3 -C lto=fat -C codegen-units=1 -C panic=abort"
+    env["RUSTFLAGS"] = "-C target-cpu=native"
     env.pop("CARGO_ENCODED_RUSTFLAGS", None)
     env["CFLAGS"] = "-march=native -mtune=native -O2"
     env["CXXFLAGS"] = env["CFLAGS"]
