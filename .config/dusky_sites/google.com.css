@@ -308,13 +308,54 @@
         color: var(--on_surface, #e4e1e9) !important;
     }
 
-    /* Pagination */
+    /* Bottom pagination ("Goooogle" wordmark + numbered page links).
+       The wordmark letters and the current-page "o" are background sprites on
+       span.D2pCqd/.SJajHc, so we must not clear background-image here.  Only
+       the box backgrounds (which painted a stray rectangle behind Next) are
+       neutralised. */
     #pnnext,
     #pnprev,
-    .O8a4Jc,
-    .SJajHc {
-        background-color: var(--surface_container_high, #2a292f) !important;
-        color: var(--on_surface, #e4e1e9) !important;
+    a.KLlkp,
+    td.bQkv1e,
+    td.dlnXYb {
+        background-color: transparent !important;
+        box-shadow: none !important;
+        border-color: transparent !important;
+    }
+
+    td.bQkv1e,
+    td.bQkv1e *,
+    td.dlnXYb,
+    td.dlnXYb *,
+    a.fl,
+    a.fl *,
+    a.KLlkp,
+    a.KLlkp *,
+    #pnnext,
+    #pnnext *,
+    #pnprev,
+    #pnprev *,
+    .DHTy1e,
+    .DHTy1e * {
+        color: var(--primary, #ffb59d) !important;
+        opacity: 1 !important;
+    }
+
+    td.bQkv1e a:hover,
+    td.bQkv1e a:hover *,
+    a.KLlkp:hover,
+    a.KLlkp:hover *,
+    #pnnext:hover,
+    #pnnext:hover *,
+    #pnprev:hover,
+    #pnprev:hover * {
+        color: var(--primary_fixed, #ffdbd0) !important;
+    }
+
+    /* Any remaining page-wide links (pagination sits outside #foot in this UI) */
+    a,
+    a * {
+        color: var(--primary, #ffb59d) !important;
     }
 
     hr,
@@ -346,14 +387,22 @@
 
 
     /* AI Mode pill: a Visual-Picker pick fills .bvUkz with on_tertiary
-       (olive); restore a palette-toned pill instead. */
-    div.bvUkz {
+       (olive); restore a palette-toned pill instead.  The site also paints a
+       blue gradient on .plR5qb .bvUkz (aim-button-gradient-*), so match that
+       selector's specificity too. */
+    div.bvUkz,
+    .plR5qb .bvUkz,
+    .plR5qb.VzUPFe .bvUkz {
         background-color: var(--primary_container, #723520) !important;
         background-image: none !important;
     }
 
     button.plR5qb,
-    button.plR5qb * {
+    button.plR5qb *,
+    .plR5qb,
+    .plR5qb *,
+    .plR5qb .bvUkz,
+    .plR5qb .bvUkz * {
         color: var(--on_primary_container, #ffdbd0) !important;
     }
 
@@ -414,6 +463,68 @@
         border: 0 !important;
         outline: none !important;
         overflow: hidden !important;
+    }
+
+
+    /* ---- Result titles: always light, regardless of anchor/visited state ---- */
+    #search h3,
+    #rso h3,
+    #center_col h3,
+    #search h3 *,
+    #rso h3 *,
+    #center_col h3 *,
+    .LC20lb,
+    .LC20lb *,
+    h3.LC20lb,
+    h3.LC20lb * {
+        color: var(--on_surface, #f1dfda) !important;
+    }
+
+    #search a:visited,
+    #rso a:visited,
+    #center_col a:visited,
+    h3 a:visited,
+    .LC20lb:visited,
+    h3.LC20lb:visited {
+        color: var(--primary_fixed_dim, #ffb59d) !important;
+    }
+
+    #search a:visited h3,
+    #rso a:visited h3,
+    #search a:visited .LC20lb,
+    #rso a:visited .LC20lb {
+        color: var(--on_surface, #f1dfda) !important;
+    }
+
+    /* ---- Bold/highlighted words inside snippets (Google hardcodes #202124) ---- */
+    #search b,
+    #search strong,
+    #rso b,
+    #rso strong,
+    #center_col b,
+    #center_col strong,
+    .VwiC3b b,
+    .VwiC3b strong,
+    .MjjYud b,
+    .MjjYud strong,
+    .brs_col b,
+    .brs_col strong,
+    .related-question-pair b,
+    .related-question-pair strong,
+    .ULSxyf b,
+    .ULSxyf strong {
+        color: var(--on_surface, #f1dfda) !important;
+        font-weight: 700 !important;
+    }
+
+    /* ---- Remaining light-theme accent tokens ----
+       Pa8Wlb and todMNc are the blue/white pair used by the AI/action
+       buttons.  Map them as accent-on/on-accent so the pair stays readable
+       whichever of the two ends up as the background. */
+    :root {
+        --MoaHse: var(--primary, #ffb59d) !important;
+        --Pa8Wlb: var(--primary, #ffb59d) !important;
+        --todMNc: var(--on_primary, #55200c) !important;
     }
 
 }
