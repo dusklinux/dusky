@@ -329,7 +329,6 @@ struct GroupTabInfo<'a> {
     client: &'a Client,
     is_selected: bool,
     is_active_tab: bool,
-    is_hovered: bool,
 }
 
 pub struct OverviewApp {
@@ -1058,7 +1057,6 @@ impl OverviewApp {
                                         win_idx: idx,
                                     },
                                 is_active_tab: c.visible,
-                                is_hovered: self.hovered_window == Some((ws_idx, idx)),
                             })
                     })
                     .collect();
@@ -1069,7 +1067,6 @@ impl OverviewApp {
                         client,
                         is_selected: self.selected == SelectionTarget::Window { ws_idx, win_idx },
                         is_active_tab: client.visible,
-                        is_hovered: self.hovered_window == Some((ws_idx, win_idx)),
                     });
                 }
 
@@ -1090,7 +1087,6 @@ impl OverviewApp {
                         client,
                         is_selected: self.selected == SelectionTarget::Window { ws_idx, win_idx },
                         is_active_tab: client.visible,
-                        is_hovered: self.hovered_window == Some((ws_idx, win_idx)),
                     }],
                 ));
             }
@@ -1132,7 +1128,9 @@ impl OverviewApp {
             );
         }
 
-        // Render unselected/unhovered windows first, then promote selected and hovered windows to the top.
+        // Render unselected windows first, then promote the selected window to the top.
+        // Do NOT reorder layers based on `hover_progress`, as changing `Stack` child indices
+        // mid-animation swaps `MouseArea` hover states across sibling widgets in Iced.
         let mut promoted_layers: Vec<Element<'a, Message>> = Vec::new();
         for (rep_win_idx, group_tabs) in &render_units {
             let client = &ws.clients[*rep_win_idx];
@@ -1163,7 +1161,7 @@ impl OverviewApp {
                 has_fullscreen_with_others,
                 hover_progress,
             );
-            if is_win_selected || hover_progress > 0.01 {
+            if is_win_selected {
                 promoted_layers.push(layer);
             } else {
                 card_layers.push(layer);
@@ -1294,7 +1292,8 @@ impl OverviewApp {
         let scale_x = preview_w / mon_w;
         let scale_y = avail_h / mon_h;
 
-        let (mut x, mut y, mut w, mut h) = if is_fullscreen && has_fullscreen_with_others {
+        // 1. Compute static resting geometry (100% independent of hover_progress).
+        let (base_x, mut base_y, base_w, base_h) = if is_fullscreen && has_fullscreen_with_others {
             // Dock the fullscreen window as a prominent high-contrast top banner when other windows
             // share the workspace so background tiled/floating windows remain visible below it.
             (
@@ -1336,21 +1335,40 @@ impl OverviewApp {
         // Nudge small floating windows out of the bottom-right workspace badge zone.
         if client.floating
             && !is_fullscreen
-            && w <= 96.0
-            && h <= 48.0
-            && x + w > preview_w - 48.0
-            && y + h > preview_h - 34.0
+            && base_w <= 96.0
+            && base_h <= 48.0
+            && base_x + base_w > preview_w - 48.0
+            && base_y + base_h > preview_h - 34.0
         {
-            y = (preview_h - 34.0 - h).max(sub_top);
+            base_y = (preview_h - 34.0 - base_h).max(sub_top);
         }
 
-        // Apply spring-driven hover pop-out expansion and vertical lift while clamping to card bounds.
-        let pop_scale = hover_progress * 3.5;
-        let pop_lift = hover_progress * 2.5;
-        w = (w + pop_scale * 2.0).min(preview_w - 2.0);
-        h = (h + pop_scale * 1.5).min(preview_h - 2.0);
-        x = (x - pop_scale).clamp(1.0, (preview_w - w - 1.0).max(1.0));
-        y = (y - pop_scale * 0.75 - pop_lift).clamp(1.0, (preview_h - h - 1.0).max(1.0));
+        // 2. Compute the fixed, invariant outer hit-test slot (`slot_x, slot_y, slot_w, slot_h`).
+        //    Because this slot never moves or resizes with `hover_progress`, the `mouse_area`
+        //    never shifts out from under the cursor.
+        const MAX_POP_X: f32 = 2.5;
+        const MAX_POP_TOP: f32 = 3.0;
+        const MAX_POP_BOT: f32 = 1.0;
+
+        let slot_x = (base_x - MAX_POP_X).max(1.0).round();
+        let slot_y = (base_y - MAX_POP_TOP).max(1.0).round();
+        let slot_right = (base_x + base_w + MAX_POP_X).min(preview_w - 1.0).round();
+        let slot_bottom = (base_y + base_h + MAX_POP_BOT).min(preview_h - 1.0).round();
+        let slot_w = (slot_right - slot_x).max(base_w);
+        let slot_h = (slot_bottom - slot_y).max(base_h);
+
+        // 3. Compute the animated visual bounds inside the fixed slot.
+        let hover_t = hover_progress.clamp(0.0, 1.0);
+        let rest_pad_left = (base_x - slot_x).max(0.0);
+        let rest_pad_top = (base_y - slot_y).max(0.0);
+        let inner_x = (rest_pad_left * (1.0 - hover_t)).round();
+        let inner_y = (rest_pad_top * (1.0 - hover_t)).round();
+        let w = lerp(base_w, slot_w, hover_t)
+            .round()
+            .clamp(42.0, (slot_w - inner_x).max(42.0));
+        let h = lerp(base_h, slot_h, hover_t)
+            .round()
+            .clamp(28.0, (slot_h - inner_y).max(28.0));
 
         let class_label = if client.class.is_empty() {
             "Window"
@@ -1359,12 +1377,12 @@ impl OverviewApp {
         };
         let accent = class_accent_color(class_label, &p);
 
-        // If part of a Hyprland window group, build an interactive tab strip along the top.
+        // Anchor `tab_bar_h` to static `base_h` so it never jumps across height thresholds mid-hover.
         let tab_bar_h = if is_grouped {
-            if h >= 48.0 {
+            if base_h >= 48.0 {
                 20.0
             } else {
-                (h * 0.44).clamp(14.0, 18.0)
+                (base_h * 0.44).round().clamp(14.0, 18.0)
             }
         } else {
             0.0
@@ -1382,8 +1400,8 @@ impl OverviewApp {
             .unwrap_or(1);
         let tab_count = group_tabs.len();
 
-        let class_truncated = truncate_str(class_label, (w / 7.2).max(4.0) as usize);
-        let title_truncated = truncate_str(&client.title, (w / 5.8).max(6.0) as usize);
+        let class_truncated = truncate_str(class_label, (base_w / 7.2).max(4.0) as usize);
+        let title_truncated = truncate_str(&client.title, (base_w / 5.8).max(6.0) as usize);
 
         let badge_str = if is_fullscreen {
             if is_grouped {
@@ -1499,7 +1517,6 @@ impl OverviewApp {
             .clip(true);
 
         let is_floating = client.floating;
-        let hover_t = hover_progress.clamp(0.0, 1.0);
         let body_radius = if is_grouped { 6.5 } else { 8.5 };
 
         let win_button = button(centered_box)
@@ -1602,22 +1619,11 @@ impl OverviewApp {
                 }
             });
 
-        let body_interactive: Element<'a, Message> = mouse_area(win_button)
-            .on_enter(Message::WindowHoverEntered {
-                ws_idx,
-                win_idx: rep_win_idx,
-            })
-            .on_exit(Message::WindowHoverExited {
-                ws_idx,
-                win_idx: rep_win_idx,
-            })
-            .into();
-
-        let miniature_widget: Element<'a, Message> = if is_grouped {
-            let per_tab_chars = ((w / (tab_count as f32)) / 6.8).max(4.0) as usize;
+        let visual_unit: Element<'a, Message> = if is_grouped {
+            let per_tab_chars = ((base_w / (tab_count as f32)) / 6.8).max(4.0) as usize;
             let mut tab_pills: Vec<Element<'a, Message>> = Vec::with_capacity(tab_count);
 
-            for (tab_i, tab) in group_tabs.iter().enumerate() {
+            for tab in group_tabs {
                 let tab_class = if tab.client.class.is_empty() {
                     "win"
                 } else {
@@ -1636,13 +1642,14 @@ impl OverviewApp {
                 };
                 let full_label = format!(
                     "{prefix}{}",
-                    truncate_str(&raw_tab_label, per_tab_chars.saturating_sub(prefix.chars().count()))
+                    truncate_str(
+                        &raw_tab_label,
+                        per_tab_chars.saturating_sub(prefix.chars().count())
+                    )
                 );
 
                 let is_tab_active = tab.is_active_tab;
                 let is_tab_sel = tab.is_selected;
-                let is_tab_hov = tab.is_hovered;
-                let _ = tab_i;
 
                 let pill_btn = button(
                     container(text(full_label).size(9))
@@ -1662,16 +1669,18 @@ impl OverviewApp {
                 })
                 .style(move |_theme: &Theme, status: button::Status| {
                     let hovered =
-                        matches!(status, button::Status::Hovered | button::Status::Pressed)
-                            || is_tab_hov;
+                        matches!(status, button::Status::Hovered | button::Status::Pressed);
                     let bg = if is_tab_sel {
                         mix_color(p.bg, p.accent, if hovered { 0.58 } else { 0.48 })
                     } else if is_tab_active {
                         mix_color(p.bg, tab_accent, if hovered { 0.50 } else { 0.38 })
                     } else if hovered {
-                        mix_color(p.bg, tab_accent, 0.34)
+                        mix_color(p.bg, tab_accent, 0.36)
                     } else {
-                        with_alpha(mix_color(p.bg, p.muted, 0.22), 0.88)
+                        with_alpha(
+                            mix_color(p.bg, p.muted, lerp(0.22, 0.30, hover_t)),
+                            lerp(0.88, 0.96, hover_t),
+                        )
                     };
 
                     let border_col = if is_tab_sel {
@@ -1679,7 +1688,7 @@ impl OverviewApp {
                     } else if is_tab_active || hovered {
                         tab_accent
                     } else {
-                        with_alpha(p.muted, 0.60)
+                        with_alpha(p.muted, lerp(0.60, 0.80, hover_t))
                     };
 
                     button::Style {
@@ -1687,14 +1696,18 @@ impl OverviewApp {
                         text_color: if is_tab_sel || is_tab_active || hovered {
                             p.fg
                         } else {
-                            with_alpha(p.fg, 0.72)
+                            with_alpha(p.fg, lerp(0.72, 0.88, hover_t))
                         },
                         border: Border {
                             color: border_col,
-                            width: if is_tab_sel || is_tab_active { 1.5 } else { 1.0 },
+                            width: if is_tab_sel || is_tab_active || hovered {
+                                1.5
+                            } else {
+                                1.0
+                            },
                             radius: 5.0.into(),
                         },
-                        shadow: if is_tab_active || is_tab_sel {
+                        shadow: if is_tab_active || is_tab_sel || hovered {
                             Shadow {
                                 color: with_alpha(tab_accent, 0.28),
                                 offset: Vector::new(0.0, 1.0),
@@ -1707,17 +1720,7 @@ impl OverviewApp {
                     }
                 });
 
-                let interactive_pill = mouse_area(pill_btn)
-                    .on_enter(Message::WindowHoverEntered {
-                        ws_idx,
-                        win_idx: tab.win_idx,
-                    })
-                    .on_exit(Message::WindowHoverExited {
-                        ws_idx,
-                        win_idx: tab.win_idx,
-                    });
-
-                tab_pills.push(interactive_pill.into());
+                tab_pills.push(pill_btn.into());
             }
 
             let tab_bar = Row::with_children(tab_pills)
@@ -1728,17 +1731,42 @@ impl OverviewApp {
             column![
                 tab_bar,
                 Space::new().height(Length::Fixed(2.0)),
-                body_interactive
+                win_button
             ]
             .width(Length::Fixed(w))
             .into()
         } else {
-            body_interactive
+            win_button.into()
         };
 
+        // 4. Wrap the animated visual unit inside a fixed-size slot container and a single
+        //    unified `mouse_area` so hover state is 100% stable across tabs, gaps, and edges.
+        let positioned_visual = column![
+            Space::new().height(Length::Fixed(inner_y)),
+            row![Space::new().width(Length::Fixed(inner_x)), visual_unit],
+        ];
+
+        let fixed_hit_slot = container(positioned_visual)
+            .width(Length::Fixed(slot_w))
+            .height(Length::Fixed(slot_h));
+
+        let unified_hover_zone: Element<'a, Message> = mouse_area(fixed_hit_slot)
+            .on_enter(Message::WindowHoverEntered {
+                ws_idx,
+                win_idx: rep_win_idx,
+            })
+            .on_exit(Message::WindowHoverExited {
+                ws_idx,
+                win_idx: rep_win_idx,
+            })
+            .into();
+
         column![
-            Space::new().height(Length::Fixed(y)),
-            row![Space::new().width(Length::Fixed(x)), miniature_widget],
+            Space::new().height(Length::Fixed(slot_y)),
+            row![
+                Space::new().width(Length::Fixed(slot_x)),
+                unified_hover_zone
+            ],
         ]
         .into()
     }
