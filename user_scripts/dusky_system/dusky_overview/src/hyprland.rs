@@ -121,6 +121,8 @@ pub struct Client {
     pub mapped: bool,
     #[serde(default)]
     pub hidden: bool,
+    #[serde(default)]
+    pub visible: bool,
     pub at: [i32; 2],
     pub size: [i32; 2],
     pub workspace: WorkspaceRef,
@@ -128,6 +130,12 @@ pub struct Client {
     pub floating: bool,
     #[serde(default)]
     pub pinned: bool,
+    #[serde(default)]
+    pub fullscreen: i32,
+    #[serde(rename = "fullscreenClient", default)]
+    pub fullscreen_client: i32,
+    #[serde(default)]
+    pub grouped: Vec<String>,
     #[serde(rename = "focusHistoryID", default)]
     pub focus_history_id: i32,
     #[serde(default)]
@@ -349,6 +357,7 @@ pub fn fetch_monitors() -> Result<Vec<Monitor>, HyprError> {
     Ok(serde_json::from_str(&raw)?)
 }
 
+#[allow(clippy::type_complexity)]
 fn fetch_all_batched() -> Result<(Vec<Monitor>, Vec<Workspace>, Vec<Client>), HyprError> {
     let raw = send_socket_command("[[BATCH]]j/monitors;j/workspaces;j/clients")?;
     let mut de = serde_json::Deserializer::from_str(&raw);
@@ -510,10 +519,12 @@ pub fn fetch_snapshot() -> Result<OverviewSnapshot, HyprError> {
             }
         }
 
-        // Sort windows back-to-front: tiled before floating, older focus before newer focus.
+        // Sort windows back-to-front: tiled before floating, background tabs before visible tabs,
+        // and older focus before newer focus.
         ws_clients.sort_by(|a, b| {
             a.floating
                 .cmp(&b.floating)
+                .then_with(|| a.visible.cmp(&b.visible))
                 .then_with(|| b.focus_history_id.cmp(&a.focus_history_id))
         });
 

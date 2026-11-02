@@ -7,7 +7,7 @@ use iced::keyboard::{
     key::{Code, Named, Physical},
 };
 use iced::widget::{
-    Column, Row, Space, button, column, container, row, scrollable, stack, text,
+    Column, Row, Space, button, column, container, mouse_area, row, scrollable, stack, text,
 };
 use iced::{Background, Border, Color, Element, Length, Shadow, Subscription, Task, Theme, Vector};
 use serde_json::Value;
@@ -153,6 +153,7 @@ fn mix_color(a: Color, b: Color, t: f32) -> Color {
 }
 
 #[derive(Debug, Clone)]
+#[allow(clippy::enum_variant_names)]
 pub enum PostExitAction {
     FocusWindow {
         workspace: WorkspaceKey,
@@ -301,6 +302,8 @@ pub enum SelectionTarget {
 #[derive(Debug, Clone)]
 pub enum Message {
     AnimationFrame(Instant),
+    WindowHoverEntered { ws_idx: usize, win_idx: usize },
+    WindowHoverExited { ws_idx: usize, win_idx: usize },
     ActivateWindow {
         workspace: WorkspaceKey,
         address: String,
@@ -320,15 +323,27 @@ pub enum Message {
     Dismiss,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct GroupTabInfo<'a> {
+    win_idx: usize,
+    client: &'a Client,
+    is_selected: bool,
+    is_active_tab: bool,
+    is_hovered: bool,
+}
+
 pub struct OverviewApp {
     snapshot: OverviewSnapshot,
     selected: SelectionTarget,
+    hovered_window: Option<(usize, usize)>,
     palette: ThemePalette,
     custom_theme: Theme,
     entrance_pos: f32,
     entrance_spring: SpringAnimation,
     card_select_positions: Vec<f32>,
     card_animations: Vec<SpringAnimation>,
+    window_hover_positions: Vec<Vec<f32>>,
+    window_hover_animations: Vec<Vec<SpringAnimation>>,
     animating: bool,
 }
 
@@ -354,22 +369,36 @@ impl OverviewApp {
         };
         let mut card_select_positions = Vec::with_capacity(ws_count);
         let mut card_animations = Vec::with_capacity(ws_count);
-        for idx in 0..ws_count {
+        let mut window_hover_positions = Vec::with_capacity(ws_count);
+        let mut window_hover_animations = Vec::with_capacity(ws_count);
+
+        for (idx, ws) in snapshot.workspaces.iter().enumerate() {
             let initial = if idx == initial_ws_idx { 1.0 } else { 0.0 };
             card_select_positions.push(initial);
             card_animations.push(SpringAnimation::new(initial, 38.0, 1.0, now));
+
+            let win_count = ws.clients.len();
+            window_hover_positions.push(vec![0.0; win_count]);
+            window_hover_animations.push(
+                (0..win_count)
+                    .map(|_| SpringAnimation::new(0.0, 46.0, 0.82, now))
+                    .collect(),
+            );
         }
         let entrance_spring = SpringAnimation::new(1.0, 32.0, 1.0, now);
         (
             Self {
                 snapshot,
                 selected,
+                hovered_window: None,
                 palette,
                 custom_theme,
                 entrance_pos: 0.0,
                 entrance_spring,
                 card_select_positions,
                 card_animations,
+                window_hover_positions,
+                window_hover_animations,
                 animating: true,
             },
             Task::none(),
@@ -474,18 +503,58 @@ impl OverviewApp {
         self.animating = true;
     }
 
+    fn sync_hover_springs(&mut self) {
+        let now = Instant::now();
+        for (ws_idx, ws_anims) in self.window_hover_animations.iter_mut().enumerate() {
+            for (win_idx, anim) in ws_anims.iter_mut().enumerate() {
+                let target = if self.hovered_window == Some((ws_idx, win_idx)) {
+                    1.0
+                } else {
+                    0.0
+                };
+                anim.set_target(target, now);
+            }
+        }
+        self.animating = true;
+    }
+
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::AnimationFrame(now) => {
                 let mut still_moving = self.entrance_spring.tick(&mut self.entrance_pos, now);
                 for (i, anim) in self.card_animations.iter_mut().enumerate() {
-                    if let Some(pos) = self.card_select_positions.get_mut(i) {
-                        if anim.tick(pos, now) {
-                            still_moving = true;
+                    if let Some(pos) = self.card_select_positions.get_mut(i)
+                        && anim.tick(pos, now)
+                    {
+                        still_moving = true;
+                    }
+                }
+                for (ws_idx, ws_anims) in self.window_hover_animations.iter_mut().enumerate() {
+                    if let Some(ws_positions) = self.window_hover_positions.get_mut(ws_idx) {
+                        for (win_idx, anim) in ws_anims.iter_mut().enumerate() {
+                            if let Some(pos) = ws_positions.get_mut(win_idx)
+                                && anim.tick(pos, now)
+                            {
+                                still_moving = true;
+                            }
                         }
                     }
                 }
                 self.animating = still_moving;
+                Task::none()
+            }
+            Message::WindowHoverEntered { ws_idx, win_idx } => {
+                if self.hovered_window != Some((ws_idx, win_idx)) {
+                    self.hovered_window = Some((ws_idx, win_idx));
+                    self.sync_hover_springs();
+                }
+                Task::none()
+            }
+            Message::WindowHoverExited { ws_idx, win_idx } => {
+                if self.hovered_window == Some((ws_idx, win_idx)) {
+                    self.hovered_window = None;
+                    self.sync_hover_springs();
+                }
                 Task::none()
             }
             Message::ActivateWindow {
@@ -740,7 +809,7 @@ impl OverviewApp {
     pub fn view(&self) -> Element<'_, Message> {
         let p = self.palette;
         let entrance = self.entrance_pos.clamp(0.0, 1.0);
-        let entrance_offset = (14.0 * (1.0 - entrance)).round();
+        let entrance_offset = (16.5 * (1.0 - entrance)).round();
 
         let backdrop = button(Space::new().width(Length::Fill).height(Length::Fill))
             .width(Length::Fill)
@@ -953,33 +1022,154 @@ impl OverviewApp {
             });
 
         let mut card_layers: Vec<Element<'a, Message>> =
-            Vec::with_capacity(ws.clients.len() + 2);
+            Vec::with_capacity(ws.clients.len() + 3);
         card_layers.push(card_base_btn.into());
 
-        // Render unselected windows first, then promote the currently selected window to the top.
-        let mut selected_layer: Option<Element<'a, Message>> = None;
+        // Consolidate grouped windows by their canonical group head address so each group renders
+        // once as a multi-tab miniature rather than stacking opaque duplicates at identical coordinates.
+        let mut rendered_group_heads: Vec<&str> = Vec::new();
+        let mut render_units: Vec<(usize, Vec<GroupTabInfo<'a>>)> = Vec::new();
+
         for (win_idx, client) in ws.clients.iter().enumerate() {
-            let is_win_selected = self.selected == SelectionTarget::Window { ws_idx, win_idx };
-            let is_hypr_focused =
-                self.snapshot.focused_address.as_deref() == Some(client.address.as_str());
+            if client.grouped.len() > 1 {
+                let head = client.grouped[0].as_str();
+                if rendered_group_heads
+                    .iter()
+                    .any(|h| h.eq_ignore_ascii_case(head))
+                {
+                    continue;
+                }
+                rendered_group_heads.push(head);
+
+                let mut tabs: Vec<GroupTabInfo<'a>> = client
+                    .grouped
+                    .iter()
+                    .filter_map(|addr| {
+                        ws.clients
+                            .iter()
+                            .enumerate()
+                            .find(|(_, c)| c.address.eq_ignore_ascii_case(addr))
+                            .map(|(idx, c)| GroupTabInfo {
+                                win_idx: idx,
+                                client: c,
+                                is_selected: self.selected
+                                    == SelectionTarget::Window {
+                                        ws_idx,
+                                        win_idx: idx,
+                                    },
+                                is_active_tab: c.visible,
+                                is_hovered: self.hovered_window == Some((ws_idx, idx)),
+                            })
+                    })
+                    .collect();
+
+                if tabs.is_empty() {
+                    tabs.push(GroupTabInfo {
+                        win_idx,
+                        client,
+                        is_selected: self.selected == SelectionTarget::Window { ws_idx, win_idx },
+                        is_active_tab: client.visible,
+                        is_hovered: self.hovered_window == Some((ws_idx, win_idx)),
+                    });
+                }
+
+                let rep_idx = tabs
+                    .iter()
+                    .find(|t| t.is_selected)
+                    .or_else(|| tabs.iter().find(|t| t.is_active_tab))
+                    .or_else(|| tabs.last())
+                    .map(|t| t.win_idx)
+                    .unwrap_or(win_idx);
+
+                render_units.push((rep_idx, tabs));
+            } else {
+                render_units.push((
+                    win_idx,
+                    vec![GroupTabInfo {
+                        win_idx,
+                        client,
+                        is_selected: self.selected == SelectionTarget::Window { ws_idx, win_idx },
+                        is_active_tab: client.visible,
+                        is_hovered: self.hovered_window == Some((ws_idx, win_idx)),
+                    }],
+                ));
+            }
+        }
+
+        let ws_has_fullscreen = ws
+            .clients
+            .iter()
+            .any(|c| c.fullscreen > 0 || c.fullscreen_client > 0);
+        let has_fullscreen_with_others = ws_has_fullscreen && render_units.len() > 1;
+
+        // When a fullscreen window coexists with background windows on this workspace,
+        // add a full-bleed ambient fullscreen frame so the fullscreen state is unmistakable
+        // while keeping underlying windows visible and interactive.
+        if has_fullscreen_with_others {
+            let fs_aura = container(Space::new().width(Length::Fill).height(Length::Fill))
+                .width(Length::Fixed(preview_w - 6.0))
+                .height(Length::Fixed(preview_h - 6.0))
+                .style(move |_theme: &Theme| container::Style {
+                    background: Some(Background::Color(with_alpha(
+                        mix_color(p.bg, p.tertiary, 0.20),
+                        0.18,
+                    ))),
+                    text_color: None,
+                    border: Border {
+                        color: with_alpha(p.tertiary, 0.55),
+                        width: 1.5,
+                        radius: 10.0.into(),
+                    },
+                    shadow: Shadow::default(),
+                    ..Default::default()
+                });
+            card_layers.push(
+                column![
+                    Space::new().height(Length::Fixed(3.0)),
+                    row![Space::new().width(Length::Fixed(3.0)), fs_aura],
+                ]
+                .into(),
+            );
+        }
+
+        // Render unselected/unhovered windows first, then promote selected and hovered windows to the top.
+        let mut promoted_layers: Vec<Element<'a, Message>> = Vec::new();
+        for (rep_win_idx, group_tabs) in &render_units {
+            let client = &ws.clients[*rep_win_idx];
+            let is_win_selected = group_tabs.iter().any(|t| t.is_selected);
+            let is_hypr_focused = group_tabs.iter().any(|t| {
+                self.snapshot.focused_address.as_deref() == Some(t.client.address.as_str())
+            });
+            let hover_progress = group_tabs
+                .iter()
+                .filter_map(|t| {
+                    self.window_hover_positions
+                        .get(ws_idx)
+                        .and_then(|v| v.get(t.win_idx))
+                        .copied()
+                })
+                .fold(0.0_f32, f32::max);
 
             let layer = self.render_window_miniature(
+                ws_idx,
                 ws,
+                *rep_win_idx,
                 client,
+                group_tabs,
                 preview_w,
                 preview_h,
                 is_win_selected,
                 is_hypr_focused,
+                has_fullscreen_with_others,
+                hover_progress,
             );
-            if is_win_selected {
-                selected_layer = Some(layer);
+            if is_win_selected || hover_progress > 0.01 {
+                promoted_layers.push(layer);
             } else {
                 card_layers.push(layer);
             }
         }
-        if let Some(top_layer) = selected_layer {
-            card_layers.push(top_layer);
-        }
+        card_layers.extend(promoted_layers);
 
         // High-contrast workspace indicator badge overlaid in the bottom-right corner.
         let badge_text = if is_active && !is_special {
@@ -1068,59 +1258,99 @@ impl OverviewApp {
         .into()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_window_miniature<'a>(
         &'a self,
+        ws_idx: usize,
         ws: &'a WorkspaceView,
+        rep_win_idx: usize,
         client: &'a Client,
+        group_tabs: &[GroupTabInfo<'a>],
         preview_w: f32,
         preview_h: f32,
         is_selected: bool,
         is_hypr_focused: bool,
+        has_fullscreen_with_others: bool,
+        hover_progress: f32,
     ) -> Element<'a, Message> {
         let p = self.palette;
+        let is_fullscreen = group_tabs
+            .iter()
+            .any(|t| t.client.fullscreen > 0 || t.client.fullscreen_client > 0);
+        let is_grouped = group_tabs.len() > 1;
+        let is_occluded_under_fs = has_fullscreen_with_others && !is_fullscreen;
+
         let mon_w = ws.monitor_w.max(1.0);
         let mon_h = ws.monitor_h.max(1.0);
+
+        let inset = 4.5_f32;
+        let fs_banner_h = 40.0_f32;
+        let sub_top = if is_occluded_under_fs {
+            fs_banner_h + inset + 2.0
+        } else {
+            inset
+        };
+        let avail_h = (preview_h - sub_top - inset).max(28.0);
         let scale_x = preview_w / mon_w;
-        let scale_y = preview_h / mon_h;
+        let scale_y = avail_h / mon_h;
 
-        let raw_x = client.at[0] as f32 - ws.monitor_x;
-        let raw_y = client.at[1] as f32 - ws.monitor_y;
-        let mut raw_w = (client.size[0] as f32).clamp(32.0, mon_w);
-        let mut raw_h = (client.size[1] as f32).clamp(24.0, mon_h);
+        let (mut x, mut y, mut w, mut h) = if is_fullscreen && has_fullscreen_with_others {
+            // Dock the fullscreen window as a prominent high-contrast top banner when other windows
+            // share the workspace so background tiled/floating windows remain visible below it.
+            (
+                inset,
+                inset,
+                (preview_w - inset * 2.0).max(48.0),
+                fs_banner_h,
+            )
+        } else {
+            let raw_x = client.at[0] as f32 - ws.monitor_x;
+            let raw_y = client.at[1] as f32 - ws.monitor_y;
+            let mut raw_w = (client.size[0] as f32).clamp(32.0, mon_w);
+            let mut raw_h = (client.size[1] as f32).clamp(24.0, mon_h);
 
-        let x1 = raw_x.clamp(0.0, (mon_w - 32.0).max(0.0));
-        let y1 = raw_y.clamp(0.0, (mon_h - 24.0).max(0.0));
-        let x2 = (raw_x + raw_w).clamp(x1 + 32.0, mon_w);
-        let y2 = (raw_y + raw_h).clamp(y1 + 24.0, mon_h);
-        raw_w = (x2 - x1).max(32.0);
-        raw_h = (y2 - y1).max(24.0);
+            let x1 = raw_x.clamp(0.0, (mon_w - 32.0).max(0.0));
+            let y1 = raw_y.clamp(0.0, (mon_h - 24.0).max(0.0));
+            let x2 = (raw_x + raw_w).clamp(x1 + 32.0, mon_w);
+            let y2 = (raw_y + raw_h).clamp(y1 + 24.0, mon_h);
+            raw_w = (x2 - x1).max(32.0);
+            raw_h = (y2 - y1).max(24.0);
 
-        let inset = 3.0_f32;
-        let mut x = (x1 * scale_x).round() + inset;
-        let mut y = (y1 * scale_y).round() + inset;
-        let mut w = (raw_w * scale_x).round() - (inset * 2.0);
-        let mut h = (raw_h * scale_y).round() - (inset * 2.0);
+            let mut bx = (x1 * scale_x).round() + inset;
+            let mut by = sub_top + (y1 * scale_y).round();
+            let mut bw = (raw_w * scale_x).round() - (inset * 2.0);
+            let mut bh = (raw_h * scale_y).round() - inset;
 
-        w = w.clamp(42.0, (preview_w - inset * 2.0).max(42.0));
-        h = h.clamp(28.0, (preview_h - inset * 2.0).max(28.0));
+            bw = bw.clamp(42.0, (preview_w - inset * 2.0).max(42.0));
+            bh = bh.clamp(28.0, avail_h.max(28.0));
 
-        if x + w > preview_w - inset {
-            x = (preview_w - inset - w).max(inset);
-        }
-        if y + h > preview_h - inset {
-            y = (preview_h - inset - h).max(inset);
-        }
+            if bx + bw > preview_w - inset {
+                bx = (preview_w - inset - bw).max(inset);
+            }
+            if by + bh > preview_h - inset {
+                by = (preview_h - inset - bh).max(sub_top);
+            }
+            (bx, by, bw, bh)
+        };
 
-        // If a small floating window sits in the bottom-right badge zone, nudge it above the badge pill
-        // so the badge never covers its label or turns its border into a halo around the badge.
+        // Nudge small floating windows out of the bottom-right workspace badge zone.
         if client.floating
+            && !is_fullscreen
             && w <= 96.0
             && h <= 48.0
             && x + w > preview_w - 48.0
             && y + h > preview_h - 34.0
         {
-            y = (preview_h - 34.0 - h).max(inset);
+            y = (preview_h - 34.0 - h).max(sub_top);
         }
+
+        // Apply spring-driven hover pop-out expansion and vertical lift while clamping to card bounds.
+        let pop_scale = hover_progress * 3.5;
+        let pop_lift = hover_progress * 2.5;
+        w = (w + pop_scale * 2.0).min(preview_w - 2.0);
+        h = (h + pop_scale * 1.5).min(preview_h - 2.0);
+        x = (x - pop_scale).clamp(1.0, (preview_w - w - 1.0).max(1.0));
+        y = (y - pop_scale * 0.75 - pop_lift).clamp(1.0, (preview_h - h - 1.0).max(1.0));
 
         let class_label = if client.class.is_empty() {
             "Window"
@@ -1128,23 +1358,95 @@ impl OverviewApp {
             client.class.as_str()
         };
         let accent = class_accent_color(class_label, &p);
-        let class_truncated = truncate_str(class_label, (w / 7.0).max(4.0) as usize);
-        let title_truncated = truncate_str(&client.title, (w / 6.0).max(5.0) as usize);
 
-        let label_content: Element<'a, Message> = if h >= 50.0 {
-            let badge_str = if is_hypr_focused {
-                "●"
-            } else if client.floating {
-                "FLT"
+        // If part of a Hyprland window group, build an interactive tab strip along the top.
+        let tab_bar_h = if is_grouped {
+            if h >= 48.0 {
+                20.0
             } else {
-                ""
-            };
+                (h * 0.44).clamp(14.0, 18.0)
+            }
+        } else {
+            0.0
+        };
+        let body_h = if is_grouped {
+            (h - tab_bar_h - 2.0).max(14.0)
+        } else {
+            h
+        };
 
+        let active_tab_pos = group_tabs
+            .iter()
+            .position(|t| t.win_idx == rep_win_idx)
+            .map(|idx| idx + 1)
+            .unwrap_or(1);
+        let tab_count = group_tabs.len();
+
+        let class_truncated = truncate_str(class_label, (w / 7.2).max(4.0) as usize);
+        let title_truncated = truncate_str(&client.title, (w / 5.8).max(6.0) as usize);
+
+        let badge_str = if is_fullscreen {
+            if is_grouped {
+                format!("⛶ FULLSCREEN · {active_tab_pos}/{tab_count}")
+            } else {
+                String::from("⛶ FULLSCREEN")
+            }
+        } else if is_grouped {
+            format!("⇥ {active_tab_pos}/{tab_count} TABS")
+        } else if is_hypr_focused {
+            String::from("●")
+        } else if client.floating {
+            String::from("FLT")
+        } else {
+            String::new()
+        };
+
+        let badge_color = if is_fullscreen {
+            p.tertiary
+        } else if is_grouped {
+            p.accent
+        } else {
+            accent
+        };
+
+        let label_content: Element<'a, Message> = if is_fullscreen && has_fullscreen_with_others {
+            // Compact high-contrast layout for the docked fullscreen banner.
+            row![
+                container(
+                    text(badge_str)
+                        .size(9)
+                        .color(p.bg),
+                )
+                .padding([2, 6])
+                .style(move |_theme: &Theme| container::Style {
+                    background: Some(Background::Color(p.tertiary)),
+                    text_color: Some(p.bg),
+                    border: Border {
+                        color: Color::TRANSPARENT,
+                        width: 0.0,
+                        radius: 4.0.into(),
+                    },
+                    shadow: Shadow::default(),
+                    ..Default::default()
+                }),
+                Space::new().width(Length::Fixed(6.0)),
+                text(class_truncated).size(10).color(p.fg),
+                Space::new().width(Length::Fixed(6.0)),
+                text(title_truncated)
+                    .size(10)
+                    .color(with_alpha(p.fg, 0.85)),
+                Space::new().width(Length::Fill),
+            ]
+            .padding([0, 6])
+            .align_y(Vertical::Center)
+            .height(Length::Fill)
+            .into()
+        } else if body_h >= 42.0 {
             let titlebar = container(
                 row![
                     text(class_truncated).size(10).color(p.fg),
                     Space::new().width(Length::Fill),
-                    text(badge_str).size(9).color(accent),
+                    text(badge_str).size(9).color(badge_color),
                 ]
                 .align_y(Vertical::Center),
             )
@@ -1152,8 +1454,8 @@ impl OverviewApp {
             .width(Length::Fill)
             .style(move |_theme: &Theme| container::Style {
                 background: Some(Background::Color(with_alpha(
-                    mix_color(p.bg, accent, 0.28),
-                    0.75,
+                    mix_color(p.bg, if is_fullscreen { p.tertiary } else { accent }, 0.30),
+                    0.80,
                 ))),
                 text_color: None,
                 border: Border {
@@ -1168,7 +1470,7 @@ impl OverviewApp {
             let body = container(
                 text(title_truncated)
                     .size(10)
-                    .color(with_alpha(p.fg, 0.86)),
+                    .color(with_alpha(p.fg, 0.88)),
             )
             .width(Length::Fill)
             .height(Length::Fill)
@@ -1178,7 +1480,12 @@ impl OverviewApp {
 
             column![titlebar, body].into()
         } else {
-            container(text(class_truncated).size(10).color(p.fg))
+            let compact_text = if is_fullscreen {
+                format!("⛶ {class_truncated}")
+            } else {
+                class_truncated
+            };
+            container(text(compact_text).size(10).color(p.fg))
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .center_x(Length::Fill)
@@ -1192,9 +1499,12 @@ impl OverviewApp {
             .clip(true);
 
         let is_floating = client.floating;
+        let hover_t = hover_progress.clamp(0.0, 1.0);
+        let body_radius = if is_grouped { 6.5 } else { 8.5 };
+
         let win_button = button(centered_box)
             .width(Length::Fixed(w))
-            .height(Length::Fixed(h))
+            .height(Length::Fixed(body_h))
             .padding(2)
             .on_press(Message::ActivateWindow {
                 workspace: ws.key.clone(),
@@ -1203,43 +1513,232 @@ impl OverviewApp {
             })
             .style(move |_theme: &Theme, status: button::Status| {
                 let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+                let eff_hover = if hovered { 1.0_f32 } else { hover_t };
 
-                let bg = if hovered {
-                    mix_color(p.bg, p.accent, 0.30)
+                let rest_bg = if is_fullscreen {
+                    mix_color(p.bg, p.tertiary, 0.26)
                 } else if is_selected {
-                    mix_color(p.bg, p.accent, 0.22)
+                    mix_color(p.bg, p.accent, 0.24)
                 } else if is_floating {
                     mix_color(p.bg, p.secondary, 0.18)
                 } else {
                     mix_color(p.bg, p.muted, 0.28)
                 };
-
-                let (border_color, border_width) = if hovered {
-                    (mix_color(p.accent, Color::WHITE, 0.25), 2.0)
-                } else if is_selected {
-                    (p.accent, 2.0)
-                } else if is_hypr_focused {
-                    (with_alpha(p.secondary, 0.90), 1.5)
+                let hover_bg = if is_fullscreen {
+                    mix_color(p.bg, p.tertiary, 0.38)
                 } else {
-                    (with_alpha(accent, 0.58), 1.0)
+                    mix_color(p.bg, p.accent, 0.32)
+                };
+                let bg = lerp_color(rest_bg, hover_bg, eff_hover);
+
+                let base_alpha = if is_occluded_under_fs && !is_selected {
+                    lerp(0.78, 0.97, eff_hover)
+                } else {
+                    lerp(0.94, 0.99, eff_hover)
                 };
 
+                let rest_border_col = if is_fullscreen {
+                    p.tertiary
+                } else if is_selected {
+                    p.accent
+                } else if is_hypr_focused {
+                    with_alpha(p.secondary, 0.90)
+                } else {
+                    with_alpha(accent, if is_occluded_under_fs { 0.45 } else { 0.62 })
+                };
+                let hover_border_col = mix_color(
+                    if is_fullscreen { p.tertiary } else { p.accent },
+                    Color::WHITE,
+                    0.28,
+                );
+                let border_color = lerp_color(rest_border_col, hover_border_col, eff_hover);
+                let rest_border_w = if is_fullscreen || is_selected {
+                    2.0
+                } else if is_hypr_focused {
+                    1.5
+                } else {
+                    1.0
+                };
+                let border_width = lerp(rest_border_w, 2.2, eff_hover);
+
+                let shadow_color = if is_fullscreen {
+                    p.tertiary
+                } else {
+                    mix_color(accent, p.accent, 0.5)
+                };
+                let shadow_alpha = 0.40 * eff_hover
+                    + if is_fullscreen {
+                        0.32
+                    } else if is_selected {
+                        0.24
+                    } else {
+                        0.0
+                    };
+
                 button::Style {
-                    background: Some(Background::Color(with_alpha(bg, 0.95))),
+                    background: Some(Background::Color(with_alpha(bg, base_alpha))),
                     text_color: p.fg,
                     border: Border {
                         color: border_color,
                         width: border_width,
-                        radius: 8.5.into(),
+                        radius: body_radius.into(),
                     },
-                    shadow: Shadow::default(),
+                    shadow: Shadow {
+                        color: with_alpha(shadow_color, shadow_alpha.clamp(0.0, 0.65)),
+                        offset: Vector::new(
+                            0.0,
+                            4.5 * eff_hover + if is_fullscreen || is_selected { 2.0 } else { 0.0 },
+                        ),
+                        blur_radius: 14.0 * eff_hover
+                            + if is_fullscreen {
+                                10.0
+                            } else if is_selected {
+                                6.0
+                            } else {
+                                0.0
+                            },
+                    },
                     ..Default::default()
                 }
             });
 
+        let body_interactive: Element<'a, Message> = mouse_area(win_button)
+            .on_enter(Message::WindowHoverEntered {
+                ws_idx,
+                win_idx: rep_win_idx,
+            })
+            .on_exit(Message::WindowHoverExited {
+                ws_idx,
+                win_idx: rep_win_idx,
+            })
+            .into();
+
+        let miniature_widget: Element<'a, Message> = if is_grouped {
+            let per_tab_chars = ((w / (tab_count as f32)) / 6.8).max(4.0) as usize;
+            let mut tab_pills: Vec<Element<'a, Message>> = Vec::with_capacity(tab_count);
+
+            for (tab_i, tab) in group_tabs.iter().enumerate() {
+                let tab_class = if tab.client.class.is_empty() {
+                    "win"
+                } else {
+                    tab.client.class.as_str()
+                };
+                let tab_accent = class_accent_color(tab_class, &p);
+                let raw_tab_label = if !tab.client.title.is_empty() && per_tab_chars >= 10 {
+                    format!("{tab_class}: {}", tab.client.title)
+                } else {
+                    tab_class.to_owned()
+                };
+                let prefix = if tab.is_active_tab {
+                    "● "
+                } else {
+                    ""
+                };
+                let full_label = format!(
+                    "{prefix}{}",
+                    truncate_str(&raw_tab_label, per_tab_chars.saturating_sub(prefix.chars().count()))
+                );
+
+                let is_tab_active = tab.is_active_tab;
+                let is_tab_sel = tab.is_selected;
+                let is_tab_hov = tab.is_hovered;
+                let _ = tab_i;
+
+                let pill_btn = button(
+                    container(text(full_label).size(9))
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .center_x(Length::Fill)
+                        .center_y(Length::Fill)
+                        .clip(true),
+                )
+                .width(Length::FillPortion(1))
+                .height(Length::Fixed(tab_bar_h))
+                .padding([1, 4])
+                .on_press(Message::ActivateWindow {
+                    workspace: ws.key.clone(),
+                    address: tab.client.address.clone(),
+                    floating: tab.client.floating,
+                })
+                .style(move |_theme: &Theme, status: button::Status| {
+                    let hovered =
+                        matches!(status, button::Status::Hovered | button::Status::Pressed)
+                            || is_tab_hov;
+                    let bg = if is_tab_sel {
+                        mix_color(p.bg, p.accent, if hovered { 0.58 } else { 0.48 })
+                    } else if is_tab_active {
+                        mix_color(p.bg, tab_accent, if hovered { 0.50 } else { 0.38 })
+                    } else if hovered {
+                        mix_color(p.bg, tab_accent, 0.34)
+                    } else {
+                        with_alpha(mix_color(p.bg, p.muted, 0.22), 0.88)
+                    };
+
+                    let border_col = if is_tab_sel {
+                        mix_color(p.accent, Color::WHITE, 0.25)
+                    } else if is_tab_active || hovered {
+                        tab_accent
+                    } else {
+                        with_alpha(p.muted, 0.60)
+                    };
+
+                    button::Style {
+                        background: Some(Background::Color(bg)),
+                        text_color: if is_tab_sel || is_tab_active || hovered {
+                            p.fg
+                        } else {
+                            with_alpha(p.fg, 0.72)
+                        },
+                        border: Border {
+                            color: border_col,
+                            width: if is_tab_sel || is_tab_active { 1.5 } else { 1.0 },
+                            radius: 5.0.into(),
+                        },
+                        shadow: if is_tab_active || is_tab_sel {
+                            Shadow {
+                                color: with_alpha(tab_accent, 0.28),
+                                offset: Vector::new(0.0, 1.0),
+                                blur_radius: 4.0,
+                            }
+                        } else {
+                            Shadow::default()
+                        },
+                        ..Default::default()
+                    }
+                });
+
+                let interactive_pill = mouse_area(pill_btn)
+                    .on_enter(Message::WindowHoverEntered {
+                        ws_idx,
+                        win_idx: tab.win_idx,
+                    })
+                    .on_exit(Message::WindowHoverExited {
+                        ws_idx,
+                        win_idx: tab.win_idx,
+                    });
+
+                tab_pills.push(interactive_pill.into());
+            }
+
+            let tab_bar = Row::with_children(tab_pills)
+                .spacing(2)
+                .width(Length::Fixed(w))
+                .height(Length::Fixed(tab_bar_h));
+
+            column![
+                tab_bar,
+                Space::new().height(Length::Fixed(2.0)),
+                body_interactive
+            ]
+            .width(Length::Fixed(w))
+            .into()
+        } else {
+            body_interactive
+        };
+
         column![
             Space::new().height(Length::Fixed(y)),
-            row![Space::new().width(Length::Fixed(x)), win_button],
+            row![Space::new().width(Length::Fixed(x)), miniature_widget],
         ]
         .into()
     }
