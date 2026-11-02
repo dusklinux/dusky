@@ -157,10 +157,15 @@
         color: inherit;
     }
 
-    button[class*="primary"],
-    button[data-testid*="primary"],
-    [class*="btn-primary"],
-    [class*="button-primary"] {
+    /* NB: do not match bare [class*="primary"] — ChatGPT's token utility
+       classes (bg-token-main-surface-primary, etc.) appear on ordinary icon
+       buttons and would flood the UI with the accent colour. */
+    button[data-testid="send-button"],
+    button[data-testid="composer-send-button"],
+    button[aria-label="Send prompt"],
+    button[aria-label="Send message"],
+    .btn-primary,
+    .button-primary {
         background-color: var(--primary, #bec2ff) !important;
         color: var(--on_primary, #272b60) !important;
         border-color: var(--primary, #bec2ff) !important;
