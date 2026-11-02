@@ -422,12 +422,22 @@ impl OverviewApp {
             card_animations.push(SpringAnimation::new(initial, 60.0, 1.0, now));
 
             let win_count = ws.clients.len();
-            window_hover_positions.push(vec![0.0; win_count]);
+            let win_positions: Vec<f32> = (0..win_count)
+                .map(|win_idx| {
+                    if selected == (SelectionTarget::Window { ws_idx: idx, win_idx }) {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                })
+                .collect();
             window_hover_animations.push(
-                (0..win_count)
-                    .map(|_| SpringAnimation::new(0.0, 46.0, 0.82, now))
+                win_positions
+                    .iter()
+                    .map(|&pos| SpringAnimation::new(pos, 46.0, 0.82, now))
                     .collect(),
             );
+            window_hover_positions.push(win_positions);
         }
         let entrance_spring = SpringAnimation::new(1.0, 36.0, 1.0, now);
         let icons = IconRegistry::load();
@@ -514,8 +524,25 @@ impl OverviewApp {
             if ws.clients.is_empty() {
                 targets.push(SelectionTarget::Workspace(ws_idx));
             } else {
-                for win_idx in (0..ws.clients.len()).rev() {
-                    targets.push(SelectionTarget::Window { ws_idx, win_idx });
+                let focused_win = snapshot
+                    .focused_address
+                    .as_deref()
+                    .and_then(|addr| ws.clients.iter().position(|c| c.address == addr));
+
+                if let Some(f_idx) = focused_win {
+                    targets.push(SelectionTarget::Window {
+                        ws_idx,
+                        win_idx: f_idx,
+                    });
+                    for win_idx in (0..ws.clients.len()).rev() {
+                        if win_idx != f_idx {
+                            targets.push(SelectionTarget::Window { ws_idx, win_idx });
+                        }
+                    }
+                } else {
+                    for win_idx in (0..ws.clients.len()).rev() {
+                        targets.push(SelectionTarget::Window { ws_idx, win_idx });
+                    }
                 }
             }
         }
@@ -562,15 +589,8 @@ impl OverviewApp {
             (current_ws_idx + 1) % ws_count
         };
 
-        if let Some(ws) = snapshot.workspaces.get(target_ws_idx) {
-            if ws.clients.is_empty() {
-                SelectionTarget::Workspace(target_ws_idx)
-            } else {
-                SelectionTarget::Window {
-                    ws_idx: target_ws_idx,
-                    win_idx: ws.clients.len() - 1,
-                }
-            }
+        if snapshot.workspaces.get(target_ws_idx).is_some() {
+            SelectionTarget::Workspace(target_ws_idx)
         } else {
             current
         }
@@ -588,16 +608,8 @@ impl OverviewApp {
     }
 
     fn select_workspace_by_index(&mut self, ws_idx: usize) {
-        if let Some(ws) = self.snapshot.workspaces.get(ws_idx) {
-            if ws.clients.is_empty() {
-                self.selected = SelectionTarget::Workspace(ws_idx);
-            } else {
-                // Select the top-most / most recently focused window on that workspace.
-                self.selected = SelectionTarget::Window {
-                    ws_idx,
-                    win_idx: ws.clients.len() - 1,
-                };
-            }
+        if self.snapshot.workspaces.get(ws_idx).is_some() {
+            self.selected = SelectionTarget::Workspace(ws_idx);
         }
     }
 
@@ -608,14 +620,15 @@ impl OverviewApp {
             let target = if idx == cur_ws { 1.0 } else { 0.0 };
             anim.set_target(target, now);
         }
-        self.animating = true;
+        self.sync_hover_springs();
     }
 
     fn sync_hover_springs(&mut self) {
         let now = Instant::now();
         for (ws_idx, ws_anims) in self.window_hover_animations.iter_mut().enumerate() {
             for (win_idx, anim) in ws_anims.iter_mut().enumerate() {
-                let target = if self.hovered_window == Some((ws_idx, win_idx)) {
+                let is_sel = self.selected == SelectionTarget::Window { ws_idx, win_idx };
+                let target = if is_sel || self.hovered_window == Some((ws_idx, win_idx)) {
                     1.0
                 } else {
                     0.0
@@ -751,8 +764,12 @@ impl OverviewApp {
                 Task::none()
             }
             Message::TabPressed { shift, ctrl, alt } => {
-                self.tab_shift = shift;
-                self.tab_ctrl = ctrl;
+                if shift {
+                    self.tab_shift = true;
+                }
+                if ctrl {
+                    self.tab_ctrl = true;
+                }
                 if alt {
                     self.alt_held = true;
                 }
@@ -760,7 +777,7 @@ impl OverviewApp {
                     self.tab_held = true;
                     self.next_repeat_deadline = Some(Instant::now() + HOLD_INITIAL_DELAY);
                     self.last_step_at = Some(Instant::now());
-                    return self.step_by_modifiers(shift, ctrl);
+                    return self.step_by_modifiers(self.tab_shift, self.tab_ctrl);
                 }
                 Task::none()
             }
@@ -833,6 +850,14 @@ impl OverviewApp {
                 let targets = self.all_targets();
                 if let Some(pos) = targets.iter().position(|t| *t == self.selected) {
                     self.selected = targets[(pos + 1) % targets.len()].clone();
+                } else if let SelectionTarget::Workspace(ws_idx) = self.selected {
+                    if let Some(first_in_ws) = targets.iter().find(|t| {
+                        matches!(t, SelectionTarget::Window { ws_idx: w, .. } if *w == ws_idx)
+                    }) {
+                        self.selected = first_in_ws.clone();
+                    } else if let Some(first) = targets.first() {
+                        self.selected = first.clone();
+                    }
                 } else if let Some(first) = targets.first() {
                     self.selected = first.clone();
                 }
@@ -844,6 +869,14 @@ impl OverviewApp {
                 if let Some(pos) = targets.iter().position(|t| *t == self.selected) {
                     let prev = if pos == 0 { targets.len() - 1 } else { pos - 1 };
                     self.selected = targets[prev].clone();
+                } else if let SelectionTarget::Workspace(ws_idx) = self.selected {
+                    if let Some(last_in_ws) = targets.iter().rev().find(|t| {
+                        matches!(t, SelectionTarget::Window { ws_idx: w, .. } if *w == ws_idx)
+                    }) {
+                        self.selected = last_in_ws.clone();
+                    } else if let Some(last) = targets.last() {
+                        self.selected = last.clone();
+                    }
                 } else if let Some(first) = targets.first() {
                     self.selected = first.clone();
                 }
@@ -1050,7 +1083,7 @@ impl OverviewApp {
                         b'0' => Some(Message::QuickWorkspace(10)),
                         _ => None,
                     },
-                    _ => Some(Message::ModifiersChanged(modifiers)),
+                    _ => None,
                 }
             }
             Event::Keyboard(keyboard::Event::KeyReleased {
@@ -1088,7 +1121,7 @@ impl OverviewApp {
                 {
                     Some(Message::ShiftKeyChanged(false))
                 } else {
-                    Some(Message::ModifiersChanged(modifiers))
+                    None
                 }
             }
             Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
@@ -1727,7 +1760,7 @@ impl OverviewApp {
             }
         } else if is_grouped {
             format!("⇥ {active_tab_pos}/{tab_count} TABS")
-        } else if is_hypr_focused {
+        } else if is_selected || is_hypr_focused {
             String::from("●")
         } else if client.floating {
             String::from("FLT")
@@ -1790,8 +1823,12 @@ impl OverviewApp {
             .width(Length::Fill)
             .style(move |_theme: &Theme| container::Style {
                 background: Some(Background::Color(with_alpha(
-                    mix_color(p.bg, if is_fullscreen { p.tertiary } else { accent }, 0.30),
-                    0.80,
+                    mix_color(
+                        p.bg,
+                        if is_fullscreen { p.tertiary } else if is_selected { p.accent } else { accent },
+                        if is_selected { 0.42 } else { 0.30 },
+                    ),
+                    if is_selected { 0.92 } else { 0.80 },
                 ))),
                 text_color: None,
                 border: Border {
@@ -1908,17 +1945,21 @@ impl OverviewApp {
                 let hover_border_col = mix_color(
                     if is_fullscreen { accent } else { p.accent },
                     Color::WHITE,
-                    0.28,
+                    if is_selected { 0.38 } else { 0.28 },
                 );
                 let border_color = lerp_color(rest_border_col, hover_border_col, eff_hover);
                 let rest_border_w = if is_fullscreen || is_selected {
-                    2.0
+                    2.4
                 } else if is_hypr_focused {
                     1.5
                 } else {
                     1.0
                 };
-                let border_width = lerp(rest_border_w, 2.2, eff_hover);
+                let border_width = lerp(
+                    rest_border_w,
+                    if is_selected { 2.8 } else { 2.2 },
+                    eff_hover,
+                );
 
                 let shadow_color = if is_fullscreen {
                     p.tertiary
