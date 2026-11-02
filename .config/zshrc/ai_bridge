@@ -2,8 +2,28 @@
 #  LOCAL AI WEB BRIDGE — INTERACTIVE REPL (`ask`) & FZF SESSION BROWSER (`ask_list`)
 # ==============================================================================
 
+_get_bridge_py() {
+    if [[ -n "${LOCALAI_BRIDGE_PY:-}" && -f "$LOCALAI_BRIDGE_PY" ]]; then
+        print -r -- "$LOCALAI_BRIDGE_PY"
+        return 0
+    fi
+    for candidate in \
+        "$HOME/Projects/web_ai_bridge/bridge.py" \
+        "$HOME/web_ai_bridge/bridge.py" \
+        "/mnt/zram1/ai_bridge/bridge.py" \
+        "$HOME/.config/firefox_extentions/ai_bridge/bridge.py"; do
+        if [[ -f "$candidate" ]]; then
+            print -r -- "$candidate"
+            return 0
+        fi
+    done
+    print -u2 "[ai_bridge] Error: bridge.py not found. Set LOCALAI_BRIDGE_PY or clone web_ai_bridge."
+    return 1
+}
+
 _ask_func() {
-    local bridge_py="$HOME/.config/firefox_extentions/ai_bridge/bridge.py"
+    local bridge_py
+    bridge_py="$(_get_bridge_py)" || return 1
     if [[ ! -t 0 ]]; then
         # Piped stdin (e.g. `git diff | ask "Summarize"`): run one-shot and exit
         python3 "$bridge_py" "$@"
@@ -14,7 +34,8 @@ _ask_func() {
 }
 
 _ask_once_func() {
-    local bridge_py="$HOME/.config/firefox_extentions/ai_bridge/bridge.py"
+    local bridge_py
+    bridge_py="$(_get_bridge_py)" || return 1
     python3 "$bridge_py" --once "$@"
 }
 
@@ -22,7 +43,8 @@ alias ask='noglob _ask_func'
 alias ask1='noglob _ask_once_func'
 
 ask_list() {
-    local bridge_py="$HOME/.config/firefox_extentions/ai_bridge/bridge.py"
+    local bridge_py
+    bridge_py="$(_get_bridge_py)" || return 1
     local conv_dir="${XDG_RUNTIME_DIR:-/tmp}/localai_bridge/conversations"
 
     if ! command -v fzf >/dev/null 2>&1; then
