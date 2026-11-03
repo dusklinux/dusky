@@ -1138,7 +1138,7 @@ impl TrayApp {
         let rail_start = Self::mix(saturate(tint, 1.40), theme.bg, 0.40);
         let rail_mid = saturate(tint, 1.25);
         let rail_end = Self::mix(tint, Color::WHITE, 0.42);
-        let knob_base = Self::mix(saturate(tint, 1.20), Color::WHITE, 0.38);
+        let knob_color = Self::mix(saturate(tint, 1.30), Color::WHITE, 0.08);
         let glyph = match kind {
             SliderKind::Volume if value <= 0.0 => "volume-muted",
             SliderKind::Brightness if value <= range.0 => "brightness-low",
@@ -1225,47 +1225,24 @@ impl TrayApp {
                     active_fill_row.push(Space::new().width(Length::FillPortion(empty_portion)));
             }
         }
-        let knob_dome = container(Space::new())
-            .width(Length::Fixed(16.0))
-            .height(Length::Fixed(16.0))
-            .style(move |_| {
-                let dome = iced_core::gradient::Linear::new(iced_core::Radians::PI)
-                    .add_stop(0.0, Self::mix(knob_base, Color::WHITE, 0.46))
-                    .add_stop(0.60, knob_base)
-                    .add_stop(1.0, Self::mix(knob_base, theme.bg, 0.16));
-                container::Style {
-                    background: Some(dome.into()),
-                    border: Border {
-                        radius: 8.0.into(),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                }
-            });
-        let knob_outer = container(knob_dome)
+        let knob_head = container(Space::new())
             .width(Length::Fixed(20.0))
             .height(Length::Fixed(20.0))
-            .center_x(Length::Fixed(20.0))
-            .center_y(Length::Fixed(20.0))
             .style(move |_| {
-                let rim = iced_core::gradient::Linear::new(iced_core::Radians::PI)
-                    .add_stop(0.0, Self::mix(knob_base, Color::WHITE, 0.72))
-                    .add_stop(0.50, knob_base)
-                    .add_stop(1.0, Self::mix(knob_base, theme.bg, 0.32));
                 container::Style {
-                    background: Some(rim.into()),
+                    background: Some(knob_color.into()),
                     border: Border {
                         radius: 10.0.into(),
                         color: Color {
-                            a: 0.80,
-                            ..Self::mix(knob_base, Color::WHITE, 0.72)
+                            a: 0.32,
+                            ..Self::mix(knob_color, Color::WHITE, 0.45)
                         },
                         width: 1.0,
                     },
                     shadow: iced_core::Shadow {
-                        color: Color::from_rgba(0.0, 0.0, 0.0, 0.82),
-                        offset: iced_core::Vector::new(0.0, 2.5),
-                        blur_radius: 7.0,
+                        color: Color::from_rgba(0.0, 0.0, 0.0, 0.75),
+                        offset: iced_core::Vector::new(-3.5, 0.5),
+                        blur_radius: 5.5,
                     },
                     ..Default::default()
                 }
@@ -1278,7 +1255,7 @@ impl TrayApp {
             knob_row = knob_row.push(Space::new().width(Length::FillPortion(left_portion)));
         }
         knob_row = knob_row.push(
-            container(knob_outer)
+            container(knob_head)
                 .width(Length::Fixed(20.0))
                 .height(Length::Fixed(24.0))
                 .align_y(Vertical::Center),
@@ -1383,27 +1360,65 @@ impl TrayApp {
             .width(44)
             .style(move |_, status| {
                 let disabled = matches!(status, toggler::Status::Disabled { .. });
+                let (bg, bg_border_color, bg_border_width, fg, fg_border_color, fg_border_width) =
+                    if on && !disabled {
+                        (
+                            Self::mix(theme.bg, saturate(theme.accent, 1.25), 0.28).into(),
+                            Color {
+                                a: 0.45,
+                                ..saturate(theme.accent, 1.25)
+                            },
+                            1.5,
+                            saturate(theme.accent, 1.35).into(),
+                            Color {
+                                a: 0.25,
+                                ..Color::WHITE
+                            },
+                            1.0,
+                        )
+                    } else if disabled {
+                        (
+                            Color {
+                                a: 0.06,
+                                ..theme.fg
+                            }
+                            .into(),
+                            Color::TRANSPARENT,
+                            0.0,
+                            theme.muted.into(),
+                            Color::TRANSPARENT,
+                            0.0,
+                        )
+                    } else {
+                        (
+                            Color {
+                                a: 0.08,
+                                ..Self::mix(theme.bg, theme.fg, 0.15)
+                            }
+                            .into(),
+                            Color {
+                                a: 0.09,
+                                ..theme.fg
+                            },
+                            1.0,
+                            Color {
+                                a: 0.32,
+                                ..theme.fg
+                            }
+                            .into(),
+                            Color::TRANSPARENT,
+                            0.0,
+                        )
+                    };
                 toggler::Style {
-                    background: if on && !disabled {
-                        theme.accent.into()
-                    } else {
-                        Color {
-                            a: 0.12,
-                            ..theme.fg
-                        }
-                        .into()
-                    },
-                    foreground: if disabled {
-                        theme.muted.into()
-                    } else {
-                        Color::WHITE.into()
-                    },
+                    background: bg,
+                    foreground: fg,
                     border_radius: Some(11.0.into()),
                     padding_ratio: 0.12,
-                    background_border_width: 0.0,
-                    background_border_color: Color::TRANSPARENT,
-                    foreground_border_width: 0.0,
-                    foreground_border_color: Color::TRANSPARENT,
+                    background_border_width: bg_border_width,
+                    background_border_color: bg_border_color,
+                    foreground_border_width: fg_border_width,
+                    foreground_border_color: fg_border_color,
                     text_color: None,
                 }
             });
@@ -1435,7 +1450,7 @@ impl TrayApp {
         let icon_button = button(Self::icon_label(
             glyph,
             16.0,
-            Some(if on { theme.accent } else { theme.muted }),
+            Some(if on { saturate(theme.accent, 1.25) } else { theme.muted }),
         ))
         .padding(0)
         .on_press(if wifi {
