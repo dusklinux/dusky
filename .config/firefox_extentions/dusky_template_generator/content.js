@@ -72,19 +72,25 @@
     ["on_error", "On error"],
     ["error_container", "Error container"],
     ["on_error_container", "On error container"],
+    ["inverse_primary", "Inverse primary"],
+    ["on_primary_fixed", "On primary fixed"],
+    ["on_primary_fixed_variant", "On primary fixed variant"],
+    ["secondary_fixed", "Secondary fixed"],
+    ["on_secondary_fixed", "On secondary fixed"],
+    ["tertiary_fixed", "Tertiary fixed"],
+    ["tertiary_fixed_dim", "Tertiary fixed dim"],
+    ["on_tertiary_fixed", "On tertiary fixed"],
+    ["on_tertiary_fixed_variant", "On tertiary fixed variant"],
+    ["surface_tint", "Surface tint"],
+    ["source_color", "Source color"],
+    ["scrim", "Scrim"],
+    ["shadow", "Shadow"],
   ];
   const TOKEN_NAMES = new Set(TOKENS.map(([t]) => t));
 
   /* Everything Matugen itself injects. Exact names only: a prefix regex also
    * swallows real site tokens such as --error_bg, --surface_alt, --primary_hover. */
-  const PALETTE_OWNED = new Set([
-    ...TOKEN_NAMES,
-    "error_container", "on_error_container", "inverse_primary",
-    "on_primary_fixed", "on_primary_fixed_variant",
-    "secondary_fixed", "on_secondary_fixed",
-    "tertiary_fixed", "tertiary_fixed_dim", "on_tertiary_fixed", "on_tertiary_fixed_variant",
-    "scrim", "shadow", "source_color", "surface_tint",
-  ]);
+  const PALETTE_OWNED = new Set(TOKEN_NAMES);
   const PALETTE_SUFFIX = /_(rgb_comma|rgb|rgba|hex|hsl|raw|strip)$/;
   /* Framework internals that are never site design tokens. --mui-* and --wp--*
    * are deliberately NOT here: those are mappable palettes. */
@@ -1303,6 +1309,30 @@
     return "";
   }
 
+  /* Screen-reader-only (.sr-only) elements remain display:block and 1×1px so
+   * checkVisibility() and getClientRects() pass. Skip only clipped/1×1 nodes. */
+  function isVisuallyHidden(cs, rects) {
+    if (!rects.length) return true;
+    if ((parseFloat(cs.fontSize) || 0) < 1) return true;
+    const r = rects[0];
+    if (r.width <= 2 && r.height <= 2 &&
+        (cs.overflowX === "hidden" || cs.overflowX === "clip") &&
+        (cs.overflowY === "hidden" || cs.overflowY === "clip")) {
+      return true;
+    }
+    const cp = cs.clipPath;
+    if (cp && cp !== "none" &&
+        /^(?:inset\(\s*(?:[5-9]\d|\d{3,})%|circle\(\s*0(?:px|%)?\b)/i.test(cp)) {
+      return true;
+    }
+    const clip = cs.clip;
+    if (clip && clip !== "auto" &&
+        /^rect\(\s*(?:0|1)px,\s*(?:0|1)px,\s*(?:0|1)px,\s*(?:0|1)px\s*\)$/i.test(clip)) {
+      return true;
+    }
+    return false;
+  }
+
   /* Prefer a unique ID or bounded class selector so equal offenders highlight together. */
   function auditSelector(el) {
     let targetEl = el;
@@ -1311,7 +1341,7 @@
     }
     if (!targetEl || targetEl.nodeType !== 1) return "";
     const list = candidates(targetEl);
-    return list.find((c) => c.sel.startsWith("#") && c.n === 1)?.sel
+    return list.find((c) => c.sel.startsWith("#") && !c.sel.includes(" ") && c.n === 1)?.sel
       ?? list.find((c) => c.sel.includes(".") && c.n <= 80)?.sel
       ?? list[0]?.sel ?? nthPath(targetEl);
   }
@@ -1382,7 +1412,8 @@
 
         const cs = getComputedStyle(el);
         if (cs.visibility !== "visible") continue;
-        if (el.getClientRects().length === 0) continue;
+        const rects = el.getClientRects();
+        if (isVisuallyHidden(cs, rects)) continue;
 
         const isPlaceholder = (el.localName === "input" || el.localName === "textarea") &&
           !String(el.value || "").trim() && !!el.placeholder;
@@ -1781,9 +1812,15 @@
 
   const PAIRED_ON = {
     primary: "on_primary", primary_container: "on_primary_container",
+    primary_fixed: "on_primary_fixed", primary_fixed_dim: "on_primary_fixed",
     secondary: "on_secondary", secondary_container: "on_secondary_container",
+    secondary_fixed: "on_secondary_fixed", secondary_fixed_dim: "on_secondary_fixed",
     tertiary: "on_tertiary", tertiary_container: "on_tertiary_container",
-    error: "on_error", error_container: "on_error_container", background: "on_background",
+    tertiary_fixed: "on_tertiary_fixed", tertiary_fixed_dim: "on_tertiary_fixed",
+    error: "on_error", error_container: "on_error_container",
+    background: "on_background", inverse_surface: "inverse_on_surface",
+    inverse_primary: "on_primary_container", surface_tint: "on_primary",
+    source_color: "on_primary", scrim: "on_surface", shadow: "on_surface",
   };
 
   function declFor(group, token) {
@@ -1859,6 +1896,7 @@
     if (elm?.nodeType !== 1) return [];
     const cs = getComputedStyle(elm);
     const rootCs = getComputedStyle(document.documentElement);
+    const bodyCs = document.body ? getComputedStyle(document.body) : rootCs;
     const out = new Map();
     const index = propIndex();
     const owners = new Map();
@@ -1872,18 +1910,16 @@
       for (const name of node.style) {
         if (own && name.startsWith("--") && !/^(?:inherit|unset)$/i.test(node.style.getPropertyValue(name).trim()) && !owners.has(name)) owners.set(name, node);
       }
-      if (node !== elm) for (const name of colorRefs(node.style, true)) inheritedRefs.add(name);
+      if (node !== elm) for (const name of colorRefs(node.style)) inheritedRefs.add(name);
     }
     for (const r of index) {
       if (r.refs.length && ruleMatches(elm, r)) for (const name of r.refs) directRefs.add(name);
-      // closest() performs the selector search in Gecko; scope checks can skip
-      // a nearer match excluded by a limit without losing the inherited owner.
       let owner, ancestor;
       try {
         if (r.props.length) owner = closestRule(elm, r);
-        if (r.inheritedRefs.length) ancestor = closestRule(elm.parentElement, r);
+        if (r.refs.length) ancestor = closestRule(elm.parentElement, r);
       } catch { continue; }
-      if (ancestor) for (const name of r.inheritedRefs) inheritedRefs.add(name);
+      if (ancestor) for (const name of r.refs) inheritedRefs.add(name);
       if (!owner || owner === document.documentElement) continue;
       for (const name of r.props) {
         if (/^(?:inherit|unset)$/i.test(r.rule.style.getPropertyValue(name).trim())) continue;
@@ -1895,38 +1931,59 @@
       if (!scopes.has(node)) scopes.set(node, candidates(node).at(0)?.sel || selected());
       return scopes.get(node);
     };
-    const add = (name, used = false) => {
+    const add = (name, used = false, direct = false) => {
       if (skipVar(name)) return;
-      if (out.has(name)) { out.get(name).used ||= used; return; }
-      const value = cs.getPropertyValue(name).trim();
-      const col = parseCssColor(value, elm);
-      if (!col || col.a === 0) return;
+      if (out.has(name)) {
+        const entry = out.get(name);
+        entry.used ||= used;
+        entry.direct ||= direct;
+        return;
+      }
+      const value = cs.getPropertyValue(name).trim() ||
+        rootCs.getPropertyValue(name).trim() ||
+        bodyCs.getPropertyValue(name).trim();
+      let col = parseCssColor(value, elm);
+      if (!col || col.a === 0) {
+        if (!used || !(col?.a === 0 || /^transparent$/i.test(value))) return;
+        col = { r: 0, g: 0, b: 0, a: 1, shape: "color" };
+      }
       /* A child declaration beats an inherited root declaration, regardless
        * of the root selector's specificity. Suggest the nearest owner. */
       const owner = owners.get(name);
       const global = !owner && rootCs.getPropertyValue(name).trim() === value;
       const scope = global ? rootScope : scopeFor(owner ?? elm);
-      out.set(name, { name, value: value.length > 44 ? value.slice(0, 41) + "…" : value,
-        used, scope: scope || selected(), global, local: owner === elm,
+      const label = value || "transparent";
+      out.set(name, { name, value: label.length > 44 ? label.slice(0, 41) + "…" : label,
+        used, direct, scope: scope || selected(), global, local: owner === elm,
         col });
     };
     /* Read authored declarations: computed colours have lost their var() references. */
-    for (const name of directRefs) add(name, true);
-    // Text and SVG colours can be inherited without a declaration on the clicked node.
-    for (const name of inheritedRefs) add(name, true);
+    for (const name of directRefs) add(name, true, true);
     for (const cls of elm.classList) {
       const name = /^[a-z-]+-\((--[\w-]+)\)$/.exec(cls)?.[1];
-      if (name) add(name, true);
+      if (name) add(name, true, true);
       const tok = /^[a-z-]+-token-([\w-]+)$/.exec(cls)?.[1];
-      if (tok) add("--" + tok, true);
+      if (tok) add("--" + tok, true, true);
     }
-    /* Computed custom properties remain available even for opaque CDN sheets.
-     * Offer their colour tokens after directly referenced ones. */
+    // Text, SVG and background colours can be inherited without a declaration on the clicked node.
+    for (const name of inheritedRefs) add(name, true, false);
+    /* Gecko does not enumerate --* on getComputedStyle(); list owners and prop references instead. */
+    for (const name of owners.keys()) add(name);
+    for (const node of [document.documentElement, document.body]) {
+      if (node?.style) for (const name of node.style) if (name.startsWith("--")) add(name);
+    }
+    for (const r of index) {
+      for (const name of r.props) add(name);
+      for (const name of r.refs) add(name);
+    }
     for (const name of cs) if (name.startsWith("--")) add(name);
     verifyVariableInheritance([...out.values()], () => scopeFor(elm));
     dropProbe();
-    return [...out.values()].sort((a, b) => Number(b.used) - Number(a.used) ||
-      Number(isSemanticThemeVar(b.name)) - Number(isSemanticThemeVar(a.name)) || a.name.localeCompare(b.name));
+    return [...out.values()].sort((a, b) =>
+      Number(b.direct) - Number(a.direct) ||
+      Number(b.used) - Number(a.used) ||
+      Number(isSemanticThemeVar(b.name)) - Number(isSemanticThemeVar(a.name)) ||
+      a.name.localeCompare(b.name));
   }
 
   function resetVarSelection() {
@@ -2028,6 +2085,7 @@
           const value = palette.getPropertyValue(`--${token}${suffix}`).trim();
           if (value && !/[;{}]/.test(value)) {
             declarations.push(`--dusky-picker-${token}${suffix}:${value} !important;`);
+            hostEl.style.setProperty(`--dusky-picker-${token}${suffix}`, value, "important");
             colors[`--${token}${suffix}`] = value;
           }
         }
@@ -2042,6 +2100,7 @@
       if (!/^--[\w-]+$/.test(name) || typeof value !== "string" || /[;{}]/.test(value)) continue;
       if (!PALETTE_OWNED.has(name.slice(2).replace(PALETTE_SUFFIX, ""))) continue;
       declarations.push(`--dusky-picker-${name.slice(2)}:${value} !important;`);
+      hostEl.style.setProperty(`--dusky-picker-${name.slice(2)}`, value, "important");
     }
     paletteCss = `:root{${declarations.join("")}}`;
     theme.apply(hostEl, reply.colors);
@@ -2084,10 +2143,8 @@
       return { highlight: useSel, css: `${useSel}{display:revert !important;${OUTLINE}}` };
     }
     if (k.group?.startsWith("custom:")) {
-      /* Substitute the token into the existing var() if the rule has one,
-       * otherwise just highlight — never lie with an unrelated background. */
       const swapped = remapPalette(decl, token);
-      return { highlight: useSel, css: swapped === decl ? "" : `${useSel}{${swapped}}` };
+      return { highlight: useSel, css: `${useSel}{${swapped === decl ? declFor(colourGroup(k.group), token) : swapped}}` };
     }
     return { highlight: useSel, css: `${useSel}{${declFor(colourGroup(k.group), token)}}` };
   }
@@ -2481,7 +2538,7 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
           el("i", { class: "chip", style: { background: `var(--dusky-picker-${token}, var(--dusky-ui-control))` } }),
           el("span", { class: "swatch-name", text: label }),
         );
-        b.addEventListener("pointerenter", () => { if (!b.disabled) this.onHover?.(token); });
+        b.addEventListener("pointerenter", () => this.onHover?.(token));
         b.addEventListener("pointerleave", () => this.onLeave?.());
         b.addEventListener("focus", () => this.onHover?.(token));
         b.addEventListener("blur", () => this.onLeave?.());
@@ -2493,12 +2550,10 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
       this.refreshAvailability();
     }
     refreshAvailability() {
-      const palette = getComputedStyle(document.documentElement);
       for (const b of this.buttons) {
         const token = b.dataset.token, label = b.getAttribute("aria-label");
-        b.disabled = !CSS.supports("color", palette.getPropertyValue(`--dusky-picker-${token}`).trim());
-        b.title = b.disabled ? `${label} — palette color unavailable; regenerate Matugen and Resync`
-          : `${label} — var(--${token})`;
+        const val = hostEl.style.getPropertyValue(`--dusky-picker-${token}`).trim();
+        b.title = val ? `${label} — var(--${token}) (${val})` : `${label} — var(--${token})`;
       }
     }
     setActive(token) {
@@ -2579,8 +2634,6 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
         el("span", { class: "name", text: value }), el("span", { class: "detail", text: detail }));
       const preview = () => {
         if (S.pickStep !== "target") return;
-        const primary = getComputedStyle(document.documentElement).getPropertyValue("--dusky-picker-primary").trim();
-        if (!CSS.supports("color", primary)) { flash("Primary is unavailable — regenerate the palette and Resync", "warn"); return; }
         Preview.show(variable
           ? { highlight: "", css: `${variableScope(choice)}{${CSS.escape(value)}:${paletteValue("primary", choice.col)} !important;}` }
           : { highlight: value, css: `${value}{${declFor(colourGroup(S.group), "primary")}}` });
@@ -2899,9 +2952,8 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
     }
     if (r.raw !== undefined || k.kind === "raw") return;
     if (k.group === "display") return;
-    if (k.kind === "sel" && typeof k.group === "string" && k.group.startsWith("custom:")) {
+    if (k.kind === "sel" && typeof k.group === "string" && k.group.startsWith("custom:") && tokenOf(r.decl)) {
       const swapped = remapPalette(r.decl, token);
-      if (swapped === r.decl) return;
       writeRule(r.key, {
         sel: r.sel,
         decl: important(swapped),
@@ -2973,8 +3025,7 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
     if (isRaw && q("eraw") !== root.activeElement) q("eraw").value = r.raw;
     q("ecustom-row").hidden = isRaw;
     if (!isRaw && q("ecustom") !== root.activeElement) q("ecustom").value = r.decl;
-    q("egrid").hidden = isRaw || k.group === "display" ||
-      (k.group?.startsWith("custom:") && !tokenOf(r.decl));
+    q("egrid").hidden = isRaw || k.group === "display";
 
     const group = k.kind === "sel" ? colourGroup(k.group) : "";
     for (const b of q("eseg").children) b.setAttribute("aria-pressed", String(b.dataset.group === group));
