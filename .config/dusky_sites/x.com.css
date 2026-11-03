@@ -80,10 +80,13 @@
 
     /* ---- X design tokens (2026 UI exposes a --x-* palette) ---- */
     :root,
+    :root[data-theme="dark"],
     html,
     body,
     #react-root {
         color-scheme: dark !important;
+        --x-blue-500: var(--primary, #8bd5b5) !important;
+        --x-magenta-500: var(--tertiary, #a6ccdf) !important;
 
         --x-bg-primary: var(--surface, #1a110f) !important;
         --x-bg-secondary: var(--surface_container_low, #231917) !important;
@@ -159,6 +162,7 @@
         --x-neutral-200: var(--on_surface_variant, #d8c2bb) !important;
         --x-neutral-300: var(--outline, #a08d87) !important;
         --x-neutral-400: var(--outline, #a08d87) !important;
+        --x-neutral-500: var(--outline, #89938d) !important;
         --x-neutral-600: var(--surface_variant, #53433f) !important;
         --x-neutral-700: var(--surface_variant, #53433f) !important;
         --x-neutral-800: var(--surface_container_high, #322825) !important;
@@ -220,6 +224,57 @@
     /* Disabled Continue pill */
     form div.jf-element:has(> div > p) {
         color: var(--outline, #a08d87) !important;
+    }
+
+    /* ---- Nav muted separators & metadata (Finding 1) ---- */
+    nav div:has(> span.r-poiln3),
+    nav span.r-poiln3,
+    a[href*="/status/"] time,
+    span.tf-time {
+        color: var(--on_surface_variant, #bfc9c2) !important;
+    }
+
+    /* ---- Unread notification badge pill in nav (Finding 4) ---- */
+    header nav a div[aria-live="polite"],
+    header nav a div[aria-label*="unread" i],
+    nav a div.r-sdzlij:has(> span) {
+        background-color: var(--primary, #8bd5b5) !important;
+        color: var(--on_primary, #003827) !important;
+    }
+
+    header nav a div[aria-live="polite"] span,
+    header nav a div[aria-label*="unread" i] span,
+    nav a div.r-sdzlij > span {
+        color: var(--on_primary, #003827) !important;
+    }
+
+    /* ---- Links, mentions, "View keyboard shortcuts" & card "Show more" (Findings 5, 7, 8) ---- */
+    a[role="link"][style*="rgb(29, 155, 240)"],
+    a[role="link"][style*="rgb(29, 155, 240)"] span,
+    [data-testid="tweetText"] a[role="link"],
+    [data-testid="tweetText"] a[role="link"] span,
+    h2 > a[role="link"],
+    h2 > a[role="link"] span,
+    aside > a[role="link"],
+    aside > a[role="link"] span {
+        color: var(--primary, #8bd5b5) !important;
+    }
+
+    /* ---- Engagement states: keep Like (tertiary), Retweet (secondary), Error (error) distinct (Finding 6) ---- */
+    button[data-testid="unlike"],
+    button[data-testid="unlike"] span,
+    button[data-testid="unlike"] svg,
+    [data-testid="unlike"] [style*="rgb(249, 24, 128)"] {
+        color: var(--tertiary, #a6ccdf) !important;
+        fill: currentColor !important;
+    }
+
+    button[data-testid="unretweet"],
+    button[data-testid="unretweet"] span,
+    button[data-testid="unretweet"] svg,
+    [data-testid="unretweet"] [style*="rgb(0, 186, 124)"] {
+        color: var(--secondary, #b3ccbe) !important;
+        fill: currentColor !important;
     }
 
 }
