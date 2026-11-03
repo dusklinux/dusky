@@ -18,7 +18,7 @@ use iced::overlay::menu;
 use iced::widget::operation;
 use iced::widget::{
     Space, button, column, container, grid, mouse_area, pick_list, responsive, row,
-    scrollable, slider, text, text_input, toggler,
+    scrollable, slider, stack, text, text_input, toggler,
 };
 use iced::{Border, Color, Event, Length, Padding, Subscription, Task, mouse};
 
@@ -33,13 +33,13 @@ use crate::config::{
     ActionConfig, AppConfig, ChangeAction, ItemConfig, PageConfig, SectionConfig, ToggleActionPair,
 };
 use crate::icons::render_icon;
-use crate::theme::{AppTheme, mix};
+use crate::theme::{AppTheme, mix, saturate};
 
 pub type Element<'a, Message> = iced_core::Element<'a, Message, iced_core::Theme, crate::renderer::Renderer>;
 
 const CORE_CONTROLS: [&str; 4] = ["Volume", "Microphone", "Night Light", "Brightness"];
 const PROFILE_OPTIONS: [&str; 3] = ["Balanced", "Performance", "Power Saver"];
-const GROUP_BACKGROUND_MIX: f32 = 0.05;
+const GROUP_BACKGROUND_MIX: f32 = 0.35;
 const HOVER_HIGHLIGHT_MIX: f32 = 0.12;
 const ICON_HOVER_HIGHLIGHT_MIX: f32 = 0.1;
 const TILE_BACKGROUND_MIX: f32 = GROUP_BACKGROUND_MIX * 1.15;
@@ -1404,22 +1404,6 @@ impl CenterApp {
         let mut results_box = column![].spacing(0);
         let mut hit_count = 0;
         for hit in hits.iter().take(50) {
-            if hit_count > 0 {
-                let divider = container(Space::new().width(Length::Fill).height(1))
-                    .style(move |_| container::Style {
-                        background: Some(
-                            Color::from_rgba(
-                                palette.border.r,
-                                palette.border.g,
-                                palette.border.b,
-                                0.20,
-                            )
-                            .into(),
-                        ),
-                        ..Default::default()
-                    });
-                results_box = results_box.push(divider);
-            }
             hit_count += 1;
             let item_view = self.view_item_row_rounded(
                 hit.item, &hit.breadcrumb, Some(hit.location.clone()), row_radius(hit_count - 1, total_hits),
@@ -1462,14 +1446,14 @@ impl CenterApp {
             .style(move |_| container::Style {
                 background: Some(module_background(palette, false).into()),
                 border: Border {
-                    color: Color::from_rgba(
-                        palette.border.r,
-                        palette.border.g,
-                        palette.border.b,
-                        0.30,
-                    ),
-                    width: 1.0,
+                    color: Color::TRANSPARENT,
+                    width: 0.0,
                     radius: 14.0.into(),
+                },
+                shadow: iced::Shadow {
+                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
+                    offset: iced::Vector::new(0.0, 2.0),
+                    blur_radius: 8.0,
                 },
                 ..Default::default()
             });
@@ -1687,25 +1671,9 @@ impl CenterApp {
             return sec_col.into();
         }
 
-        // Boxed List Container for standard section items (matching GTK Adw.PreferencesGroup)
+        // Boxed List Container for standard section items (matching modern grouped cards)
         let mut items_box = column![].spacing(0);
         for (idx, item) in section.items.iter().enumerate() {
-            if idx > 0 {
-                let divider = container(Space::new().width(Length::Fill).height(1))
-                    .style(move |_| container::Style {
-                        background: Some(
-                            Color::from_rgba(
-                                palette.border.r,
-                                palette.border.g,
-                                palette.border.b,
-                                0.20,
-                            )
-                            .into(),
-                        ),
-                        ..Default::default()
-                    });
-                items_box = items_box.push(divider);
-            }
             items_box = items_box.push(self.view_item_row_rounded(
                 item, "", None, row_radius(idx, section.items.len()),
             ));
@@ -1716,14 +1684,14 @@ impl CenterApp {
             .style(move |_| container::Style {
                 background: Some(module_background(palette, false).into()),
                 border: Border {
-                    color: Color::from_rgba(
-                        palette.border.r,
-                        palette.border.g,
-                        palette.border.b,
-                        0.30,
-                    ),
-                    width: 1.0,
+                    color: Color::TRANSPARENT,
+                    width: 0.0,
                     radius: 14.0.into(),
+                },
+                shadow: iced::Shadow {
+                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
+                    offset: iced::Vector::new(0.0, 2.0),
+                    blur_radius: 8.0,
                 },
                 ..Default::default()
             });
@@ -2059,15 +2027,17 @@ impl CenterApp {
                 background: Some(module_background(palette, is_hovered).into()),
                 border: Border {
                     color: if is_hovered {
-                        subtle_hover(
-                            Color::from_rgba(palette.border.r, palette.border.g, palette.border.b, 0.30),
-                            Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.35),
-                        )
+                        Color { a: 0.20, ..palette.accent }
                     } else {
-                        Color::from_rgba(palette.border.r, palette.border.g, palette.border.b, 0.30)
+                        Color::TRANSPARENT
                     },
-                    width: 1.0,
+                    width: if is_hovered { 1.0 } else { 0.0 },
                     radius: 14.0.into(),
+                },
+                shadow: iced::Shadow {
+                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
+                    offset: iced::Vector::new(0.0, 2.0),
+                    blur_radius: 8.0,
                 },
                 ..Default::default()
             }, palette, highlight));
@@ -2106,8 +2076,6 @@ impl CenterApp {
             let val = self.slider_values.get(&key).copied()
                 .unwrap_or(item.properties.default.unwrap_or(min as f64) as f32);
 
-            let key_c1 = key.clone();
-            let key_c2 = key.clone();
             let on_change = item.on_change.clone();
 
             let is_row_hovered = self.hovered_item.as_deref() == Some(&key);
@@ -2143,25 +2111,19 @@ impl CenterApp {
                     ..Default::default()
                 });
 
-            let change_action = on_change.clone();
             let debounce = item.properties.debounce;
-            // Shared Matugen rail and handle styling.
-            let s = slider(min..=max, val, move |v| Message::SliderChanged {
-                key: key_c1.clone(),
-                value: v,
-                on_change: change_action.clone(),
-                debounce,
-            })
-            .step(step)
-            .height(24)
-            .width(Length::Fill)
-            .on_release(Message::SliderReleased {
-                key: key_c2,
-                value: val,
+            let s = render_modern_slider(
+                palette,
+                tint,
+                min,
+                max,
+                val,
+                step,
+                key.clone(),
                 on_change,
                 debounce,
-            })
-            .style(move |_, status| slider_style(palette, tint, val <= min, status));
+                None,
+            );
 
             // Monospace numeric value on right
             let val_label = text(format!("{:.0}", val.round()))
@@ -2179,7 +2141,7 @@ impl CenterApp {
                 .align_y(Vertical::Center)
                 .width(Length::FillPortion(2));
             let adjustment = row![
-                container(s).width(Length::Fill).padding([0, 4]),
+                s,
                 val_label,
             ]
             .spacing(12)
@@ -2222,9 +2184,14 @@ impl CenterApp {
             .style(move |_| container::Style {
                 background: Some(module_background(palette, false).into()),
                 border: Border {
-                    color: Color::from_rgba(palette.border.r, palette.border.g, palette.border.b, 0.30),
-                    width: 1.0,
+                    color: Color::TRANSPARENT,
+                    width: 0.0,
                     radius: 14.0.into(),
+                },
+                shadow: iced::Shadow {
+                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
+                    offset: iced::Vector::new(0.0, 2.0),
+                    blur_radius: 8.0,
                 },
                 ..Default::default()
             })
@@ -2475,7 +2442,10 @@ impl CenterApp {
                 let is_active = self.toggle_states.get(&key).copied().unwrap_or(false);
                 let toggle_pair = item.on_toggle.clone();
                 let key_clone = key.clone();
-                let mut control = toggler(is_active).size(24)
+                let mut control = toggler(is_active)
+                    .size(22)
+                    .spacing(0)
+                    .width(44)
                     .style(move |_, status| toggle_style(palette, status));
                 if self.toggle_states.contains_key(&key) && !self.busy_controls.contains(&key) && !self.unavailable_controls.contains(&key) {
                     control = control.on_toggle(move |val| Message::ToggleItem {
@@ -2492,28 +2462,18 @@ impl CenterApp {
                 let val = self.slider_values.get(&key).copied().unwrap_or(min);
                 let tint = slider_tint(palette, &key);
 
-                let key_c1 = key.clone();
-                let key_c2 = key.clone();
-                let on_change = item.on_change.clone();
-
-                let change_action = on_change.clone();
-                let debounce = item.properties.debounce;
-                let s = slider(min..=max, val, move |v| Message::SliderChanged {
-                    key: key_c1.clone(),
-                    value: v,
-                    on_change: change_action.clone(),
-                    debounce,
-                })
-                .step(step)
-                .height(24)
-                .width(130)
-                .on_release(Message::SliderReleased {
-                    key: key_c2,
-                    value: val,
-                    on_change,
-                    debounce,
-                })
-                .style(move |_, status| slider_style(palette, tint, val <= min, status));
+                let s = render_modern_slider(
+                    palette,
+                    tint,
+                    min,
+                    max,
+                    val,
+                    step,
+                    key.clone(),
+                    item.on_change.clone(),
+                    item.properties.debounce,
+                    Some(136.0),
+                );
 
                 let val_label = text(format!("{:.0}", val.round()))
                     .size(12)
@@ -2659,7 +2619,11 @@ impl CenterApp {
                 let active = self.service_states.get(&service_key).copied().unwrap_or(false);
                 let ready = self.service_statuses.get(&service_key).is_some_and(ServiceStatus::actionable)
                     && !self.busy_controls.contains(&service_key);
-                let mut control = toggler(active).size(24).style(move |_, status| toggle_style(palette, status));
+                let mut control = toggler(active)
+                    .size(22)
+                    .spacing(0)
+                    .width(44)
+                    .style(move |_, status| toggle_style(palette, status));
                 if ready { control = control.on_toggle(move |_| Message::ToggleService { unit: unit.clone(), scope: scope.clone() }); }
                 Some(control.into())
             }
@@ -2832,20 +2796,6 @@ impl CenterApp {
         if from_page.is_none() && item.item_type == "expander" && is_expanded && !item.items.is_empty() {
             let mut sub_col = column![].spacing(0);
             for sub_item in &item.items {
-                let divider = container(Space::new().width(Length::Fill).height(1))
-                    .style(move |_| container::Style {
-                        background: Some(
-                            Color::from_rgba(
-                                palette.border.r,
-                                palette.border.g,
-                                palette.border.b,
-                                0.15,
-                            )
-                            .into(),
-                        ),
-                        ..Default::default()
-                    });
-                sub_col = sub_col.push(divider);
                 sub_col = sub_col.push(
                     container(self.view_item_row(sub_item, "", None)).padding(Padding {
                         top: 0.0,
@@ -3075,21 +3025,204 @@ fn slider_tint(palette: AppTheme, key: &str) -> Color {
     }
 }
 
-fn slider_style(palette: AppTheme, tint: Color, at_minimum: bool, status: slider::Status) -> slider::Style {
-    let active = matches!(status, slider::Status::Hovered | slider::Status::Dragged);
-    let empty = mix(palette.card_bg, palette.fg, 0.09);
-    slider::Style {
+fn render_modern_slider<'a>(
+    palette: AppTheme,
+    tint: Color,
+    min: f32,
+    max: f32,
+    val: f32,
+    step: f32,
+    key: String,
+    on_change: Option<ChangeAction>,
+    debounce: bool,
+    fixed_width: Option<f32>,
+) -> Element<'a, Message> {
+    let clamped = val.clamp(min, max);
+    let span = (max - min).max(f32::EPSILON);
+    let ratio = ((clamped - min) / span).clamp(0.0, 1.0);
+    let rail_start = mix(saturate(tint, 1.40), palette.bg, 0.40);
+    let rail_mid = saturate(tint, 1.25);
+    let rail_end = mix(tint, Color::WHITE, 0.42);
+    let knob_color = mix(saturate(tint, 1.30), Color::WHITE, 0.08);
+
+    let track_bg = container(Space::new())
+        .width(Length::Fill)
+        .height(Length::Fixed(16.0))
+        .style(move |_| {
+            let recess = iced_core::gradient::Linear::new(iced_core::Radians::PI)
+                .add_stop(
+                    0.0,
+                    Color {
+                        a: 0.72,
+                        ..mix(palette.bg, Color::BLACK, 0.62)
+                    },
+                )
+                .add_stop(
+                    1.0,
+                    Color {
+                        a: 0.52,
+                        ..mix(palette.bg, Color::BLACK, 0.35)
+                    },
+                );
+            container::Style {
+                background: Some(recess.into()),
+                border: Border {
+                    radius: 8.0.into(),
+                    color: Color::TRANSPARENT,
+                    width: 0.0,
+                },
+                ..Default::default()
+            }
+        });
+
+    let left_portion = (ratio * 1000.0).round() as u16;
+    let right_portion = 1000_u16.saturating_sub(left_portion);
+    let mut active_fill_row = row![]
+        .width(Length::Fill)
+        .height(Length::Fixed(24.0))
+        .align_y(Vertical::Center);
+    if clamped > min {
+        let fill_portion = if ratio >= 0.98 {
+            1000_u16
+        } else {
+            (59.0 + ratio * 882.0).round().clamp(1.0, 1000.0) as u16
+        };
+        let empty_portion = 1000_u16.saturating_sub(fill_portion);
+        let right_radius = if ratio >= 0.98 { 8.0 } else { 0.0 };
+        let active_pill = container(Space::new())
+            .width(Length::FillPortion(fill_portion))
+            .height(Length::Fixed(16.0))
+            .style(move |_| {
+                let grad = iced_core::gradient::Linear::new(iced_core::Radians(
+                    std::f32::consts::FRAC_PI_2,
+                ))
+                .add_stop(0.0, rail_start)
+                .add_stop(0.48, rail_mid)
+                .add_stop(1.0, rail_end);
+                container::Style {
+                    background: Some(grad.into()),
+                    border: Border {
+                        radius: iced_core::border::Radius {
+                            top_left: 8.0,
+                            bottom_left: 8.0,
+                            top_right: right_radius,
+                            bottom_right: right_radius,
+                        },
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }
+            });
+        active_fill_row = active_fill_row.push(active_pill);
+        if empty_portion > 0 {
+            active_fill_row =
+                active_fill_row.push(Space::new().width(Length::FillPortion(empty_portion)));
+        }
+    }
+
+    let knob_head = container(Space::new())
+        .width(Length::Fixed(20.0))
+        .height(Length::Fixed(20.0))
+        .style(move |_| {
+            container::Style {
+                background: Some(knob_color.into()),
+                border: Border {
+                    radius: 10.0.into(),
+                    color: Color {
+                        a: 0.32,
+                        ..mix(knob_color, Color::WHITE, 0.45)
+                    },
+                    width: 1.0,
+                },
+                shadow: iced::Shadow {
+                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.75),
+                    offset: iced::Vector::new(-3.5, 0.5),
+                    blur_radius: 5.5,
+                },
+                ..Default::default()
+            }
+        });
+
+    let mut knob_row = row![]
+        .width(Length::Fill)
+        .height(Length::Fixed(24.0))
+        .align_y(Vertical::Center);
+    if left_portion > 0 {
+        knob_row = knob_row.push(Space::new().width(Length::FillPortion(left_portion)));
+    }
+    knob_row = knob_row.push(
+        container(knob_head)
+            .width(Length::Fixed(20.0))
+            .height(Length::Fixed(24.0))
+            .align_y(Vertical::Center),
+    );
+    if right_portion > 0 {
+        knob_row = knob_row.push(Space::new().width(Length::FillPortion(right_portion)));
+    }
+
+    let key_c1 = key.clone();
+    let key_c2 = key;
+    let on_change_c1 = on_change.clone();
+    let on_change_c2 = on_change;
+    let s = slider(
+        min..=max,
+        clamped,
+        move |v| Message::SliderChanged {
+            key: key_c1.clone(),
+            value: v,
+            on_change: on_change_c1.clone(),
+            debounce,
+        },
+    )
+    .step(step)
+    .height(24)
+    .width(Length::Fill)
+    .on_release(Message::SliderReleased {
+        key: key_c2,
+        value: clamped,
+        on_change: on_change_c2,
+        debounce,
+    })
+    .style(move |_, _| slider::Style {
         rail: slider::Rail {
-            backgrounds: (if at_minimum { empty } else { mix(palette.card_bg, tint, 0.62) }.into(), empty.into()),
-            width: 10.0,
-            border: Border { radius: 5.0.into(), ..Default::default() },
+            backgrounds: (Color::TRANSPARENT.into(), Color::TRANSPARENT.into()),
+            width: 16.0,
+            border: Border {
+                radius: 8.0.into(),
+                ..Default::default()
+            },
         },
         handle: slider::Handle {
-            shape: slider::HandleShape::Circle { radius: 7.0 },
-            background: mix(tint, palette.fg, if active { 0.95 } else { 0.80 }).into(),
-            border_width: 0.0,
+            shape: slider::HandleShape::Circle { radius: 10.0 },
+            background: Color::TRANSPARENT.into(),
             border_color: Color::TRANSPARENT,
+            border_width: 0.0,
         },
+    });
+
+    let slider_stack = container(stack![
+        container(track_bg)
+            .width(Length::Fill)
+            .height(Length::Fixed(24.0))
+            .align_y(Vertical::Center),
+        active_fill_row,
+        knob_row,
+        s,
+    ])
+    .width(Length::Fill);
+
+    if let Some(w) = fixed_width {
+        container(slider_stack).width(Length::Fixed(w)).into()
+    } else {
+        container(slider_stack)
+            .width(Length::Fill)
+            .padding(iced::Padding {
+                top: 0.0,
+                right: 14.0,
+                bottom: 0.0,
+                left: 14.0,
+            })
+            .into()
     }
 }
 
@@ -3099,20 +3232,35 @@ fn toggle_style(palette: AppTheme, status: toggler::Status) -> toggler::Style {
             (is_toggled, false),
         toggler::Status::Hovered { is_toggled } => (is_toggled, true),
     };
+    let (bg, bg_border_color, bg_border_width, fg, fg_border_color, fg_border_width) = if enabled {
+        (
+            mix(palette.bg, saturate(palette.accent, 1.25), if hovered { 0.35 } else { 0.28 }).into(),
+            Color { a: if hovered { 0.60 } else { 0.45 }, ..saturate(palette.accent, 1.25) },
+            1.5,
+            saturate(palette.accent, 1.35).into(),
+            Color { a: 0.25, ..Color::WHITE },
+            1.0,
+        )
+    } else {
+        (
+            Color { a: 0.08, ..mix(palette.bg, palette.fg, 0.15) }.into(),
+            Color { a: 0.09, ..palette.fg },
+            1.0,
+            Color { a: 0.32, ..palette.fg }.into(),
+            Color::TRANSPARENT,
+            0.0,
+        )
+    };
     toggler::Style {
-        background: if enabled {
-            if hovered { palette.accent_hover } else { palette.accent }
-        } else {
-            palette.card_hover
-        }.into(),
-        background_border_width: if enabled { 0.0 } else { 1.0 },
-        background_border_color: if hovered { palette.accent } else { palette.border },
-        foreground: if enabled { palette.fg } else { mix(palette.card_bg, palette.fg, 0.58) }.into(),
-        foreground_border_width: 0.0,
-        foreground_border_color: Color::TRANSPARENT,
+        background: bg,
+        foreground: fg,
+        border_radius: Some(11.0.into()),
+        padding_ratio: 0.12,
+        background_border_width: bg_border_width,
+        background_border_color: bg_border_color,
+        foreground_border_width: fg_border_width,
+        foreground_border_color: fg_border_color,
         text_color: None,
-        border_radius: None,
-        padding_ratio: 0.1,
     }
 }
 

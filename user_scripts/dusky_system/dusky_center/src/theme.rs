@@ -230,3 +230,20 @@ pub fn mix(base: Color, tint: Color, amount: f32) -> Color {
         base.b + (tint.b - base.b) * amount,
     )
 }
+
+/// Scale HSV saturation without changing hue, brightness, or alpha.
+pub fn saturate(color: Color, factor: f32) -> Color {
+    let max = color.r.max(color.g).max(color.b);
+    let min = color.r.min(color.g).min(color.b);
+    let chroma = max - min;
+    if chroma <= f32::EPSILON {
+        return color;
+    }
+    let factor = factor.min(max / chroma);
+    Color {
+        r: max - (max - color.r) * factor,
+        g: max - (max - color.g) * factor,
+        b: max - (max - color.b) * factor,
+        a: color.a,
+    }
+}
