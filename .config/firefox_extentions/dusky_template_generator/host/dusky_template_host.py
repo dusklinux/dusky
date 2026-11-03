@@ -43,7 +43,7 @@ from typing import Any, Final
 
 type Reply = dict[str, Any]
 
-VERSION: Final = "4.5.1"
+VERSION: Final = "4.5.2"
 HOST_NAME: Final = "dusky_template_generator"
 MAX_IN: Final = 8 * 1024 * 1024          # accept generously ...
 MAX_OUT: Final = 1024 * 1024 - 1024      # ... Firefox drops host replies over 1 MiB

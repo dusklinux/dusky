@@ -1163,6 +1163,28 @@
     return { r: 255, g: 255, b: 255, a: 1 };
   }
 
+  /* Author stylesheets cannot override an inline !important background unless
+   * it references a CSS variable. Skip off-palette-background for such owners. */
+  function isInlineLockedBg(el) {
+    const st = el?.style;
+    if (!st) return false;
+    if (st.getPropertyPriority("background-color") === "important") {
+      const raw = st.getPropertyValue("background-color");
+      if (raw && !varRefs(raw).length) {
+        const col = parseCssColor(raw, el);
+        if (col && col.a >= 0.999) return true;
+      }
+    }
+    if (st.getPropertyPriority("background-image") === "important") {
+      const raw = st.getPropertyValue("background-image");
+      if (raw && /gradient\(/i.test(raw) && !varRefs(raw).length) {
+        const stops = parseGradientStops(raw, el);
+        if (stops?.length && stops.every((s) => s.a >= 0.999)) return true;
+      }
+    }
+    return false;
+  }
+
   function auditBackground(el, fallbackCanvas, skipSelfBg = false) {
     const allNodes = [];
     let imageOwner = null, bgOwner = null, opaqueAt = -1;
@@ -1311,7 +1333,7 @@
     const surfaceState = new WeakMap();
     const skippedImages = new WeakSet();
     const roots = [root];
-    let scanned = 0, textCount = 0, imageSkipped = 0, shadowRoots = 0;
+    let scanned = 0, textCount = 0, imageSkipped = 0, lockedBgSkipped = 0, shadowRoots = 0;
 
     const filter = {
       acceptNode(node) {
@@ -1447,8 +1469,12 @@
               worstStop = res;
             }
           }
+          const off = !!worstStop?.off;
+          const locked = off && isInlineLockedBg(bgOwner);
+          if (locked) lockedBgSkipped++;
           surfInfo = {
-            off: !!worstStop?.off,
+            off,
+            locked,
             bgNearest: worstStop?.match ?? null,
             reported: false,
           };
@@ -1456,7 +1482,7 @@
         }
 
         let bgNearest = surfInfo?.bgNearest ?? null;
-        if (surfInfo?.off && !surfInfo.reported) {
+        if (surfInfo?.off && !surfInfo.locked && !surfInfo.reported) {
           surfInfo.reported = true;
           reasons.push("off-palette-background");
         }
@@ -1537,7 +1563,8 @@
       `- Scanned: ${scanned}${capHit ? ` (cap ${AUDIT_MAX_ELEMENTS} reached)` : ""} elements` +
         (shadowRoots ? ` across ${shadowRoots} shadow root(s)` : "") +
         `, ${textCount} with visible text` +
-        (imageSkipped ? `, ${imageSkipped} url-image background(s) skipped` : ""),
+        (imageSkipped ? `, ${imageSkipped} url-image background(s) skipped` : "") +
+        (lockedBgSkipped ? `, ${lockedBgSkipped} inline-!important background(s) skipped` : ""),
       `- Findings: ${allIssues.length} (${low} low contrast, ${off} off-palette)` +
         (allIssues.length > shown.length ? ` — showing the first ${shown.length}` : ""),
       "",
@@ -1567,6 +1594,7 @@
       scanned,
       textCount,
       imageSkipped,
+      lockedBgSkipped,
       issues: allIssues.length,
       lowContrast: low,
       offPalette: off,
