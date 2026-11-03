@@ -878,14 +878,16 @@ impl TrayApp {
 
     fn card(theme: AppTheme, radius: f32) -> container::Style {
         container::Style {
-            background: Some(Self::surface(theme, 0.07).into()),
+            background: Some(Self::surface(theme, 0.085).into()),
             border: Border {
                 radius: radius.into(),
-                color: Color {
-                    a: 0.12,
-                    ..theme.fg
-                },
-                width: 1.0,
+                color: Color::TRANSPARENT,
+                width: 0.0,
+            },
+            shadow: iced_core::Shadow {
+                color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
+                offset: iced_core::Vector::new(0.0, 2.0),
+                blur_radius: 8.0,
             },
             ..Default::default()
         }
@@ -893,7 +895,7 @@ impl TrayApp {
 
     fn surface(theme: AppTheme, amount: f32) -> Color {
         Color {
-            a: 0.42,
+            a: 0.52,
             ..Self::mix(theme.bg, theme.fg, amount)
         }
     }
@@ -982,13 +984,22 @@ impl TrayApp {
                 let mut style = Self::flat(theme, status);
                 style.background = Some(
                     if status == button::Status::Hovered {
-                        Self::surface(theme, 0.13)
+                        Self::surface(theme, 0.14)
                     } else {
-                        Self::surface(theme, 0.05)
+                        Self::surface(theme, 0.085)
                     }
                     .into(),
                 );
-                style.border = Self::card(theme, 12.0).border;
+                style.border = Border {
+                    radius: 12.0.into(),
+                    color: Color::TRANSPARENT,
+                    width: 0.0,
+                };
+                style.shadow = iced_core::Shadow {
+                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.28),
+                    offset: iced_core::Vector::new(0.0, 1.5),
+                    blur_radius: 6.0,
+                };
                 style
             });
         if kind != "net" {
@@ -1040,13 +1051,13 @@ impl TrayApp {
                 background: Some(
                     if active {
                         Color {
-                            a: if hovered { 0.26 } else { 0.16 },
+                            a: if hovered { 0.28 } else { 0.18 },
                             ..theme.accent
                         }
                     } else if hovered {
                         Self::surface(theme, 0.14)
                     } else {
-                        Self::surface(theme, 0.05)
+                        Self::surface(theme, 0.085)
                     }
                     .into(),
                 ),
@@ -1059,12 +1070,14 @@ impl TrayApp {
                             ..theme.accent
                         }
                     } else {
-                        Color {
-                            a: 0.06,
-                            ..theme.fg
-                        }
+                        Color::TRANSPARENT
                     },
-                    width: 1.0,
+                    width: if active { 1.0 } else { 0.0 },
+                },
+                shadow: iced_core::Shadow {
+                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.22),
+                    offset: iced_core::Vector::new(0.0, 1.5),
+                    blur_radius: 5.0,
                 },
                 ..Default::default()
             }
@@ -1167,11 +1180,8 @@ impl TrayApp {
                     background: Some(recess.into()),
                     border: Border {
                         radius: 8.0.into(),
-                        color: Color {
-                            a: 0.09,
-                            ..theme.fg
-                        },
-                        width: 1.0,
+                        color: Color::TRANSPARENT,
+                        width: 0.0,
                     },
                     ..Default::default()
                 }
@@ -1965,11 +1975,20 @@ impl TrayApp {
             .width(Length::Fixed(limit.width))
             .max_height(limit.height)
             .style(move |_| {
-                let mut s = Self::card(theme, 20.0);
-                s.background = Some(panel_bg.into());
                 // Outside pixels must stay transparent: a rendered shadow also
                 // extends the compositor's background blur beyond the border.
-                s
+                container::Style {
+                    background: Some(panel_bg.into()),
+                    border: Border {
+                        radius: 20.0.into(),
+                        color: Color {
+                            a: 0.08,
+                            ..Self::mix(theme.bg, theme.fg, 0.20)
+                        },
+                        width: 1.0,
+                    },
+                    ..Default::default()
+                }
             });
         crate::appearance::fit_window(
             crate::appearance::reveal(panel.into(), self.panel_opacity()),
