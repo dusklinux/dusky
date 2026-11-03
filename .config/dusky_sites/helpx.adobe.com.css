@@ -150,6 +150,16 @@
         color: var(--on_surface, #e4e1e9) !important;
     }
 
+    /* Beta article section titles + publish metadata (the site leaves them black/grey) */
+    span.sectionTitle {
+        color: var(--on_surface, #e4e1e9) !important;
+    }
+
+    #root_flex .publish-date,
+    #root_flex .publish-date-label {
+        color: var(--on_surface_variant, #c7c5d0) !important;
+    }
+
     p, li, dd, dt, figcaption, blockquote, td, th {
         color: var(--on_surface, #e4e1e9) !important;
     }
