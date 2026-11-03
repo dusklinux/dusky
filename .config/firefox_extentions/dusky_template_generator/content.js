@@ -1004,13 +1004,28 @@
   }
 
   /* ══ THEME AUDIT (authoring aid) ════════════════════════════════════
-   * Walks visible text elements, resolves their composited background and
-   * reports low-contrast or off-palette colours.  Read-only apart from a
-   * temporary outline sheet, which clears itself after a minute. */
+   * Walks visible text and form controls, resolves their composited background
+   * (including gradient stops) and reports low-contrast or off-palette colours. */
   const AUDIT_SKIP_TAGS = new Set([
     "script", "style", "noscript", "template", "meta", "link", "title", "head",
     "svg", "canvas", "video", "audio", "iframe", "object", "embed", "img",
-    "picture", "input", "textarea", "select", "option",
+    "picture", "option", "datalist", "map", "area",
+  ]);
+  const AUDIT_NONTEXT_INPUTS = new Set([
+    "hidden", "checkbox", "radio", "range", "color", "file", "image",
+  ]);
+  const AUDIT_BG_TOKENS = new Set([
+    "background", "surface", "surface_dim", "surface_bright", "surface_variant",
+    "surface_container_lowest", "surface_container_low", "surface_container",
+    "surface_container_high", "surface_container_highest", "inverse_on_surface",
+    "primary_container", "secondary_container", "tertiary_container", "error_container",
+  ]);
+  const AUDIT_FG_TOKENS = new Set([
+    "on_background", "on_surface", "on_surface_variant", "inverse_on_surface",
+    "primary", "on_primary", "on_primary_container", "primary_fixed", "primary_fixed_dim",
+    "secondary", "on_secondary", "on_secondary_container", "secondary_fixed_dim", "on_secondary_fixed_variant",
+    "tertiary", "on_tertiary", "on_tertiary_container",
+    "outline", "outline_variant", "error", "on_error", "on_error_container",
   ]);
   const AUDIT_MAX_ELEMENTS = 6000;
   const AUDIT_MAX_FINDINGS = 100;
@@ -1027,7 +1042,7 @@
     clearAudit();
     if (!selectors.length) return;
     try {
-      AUDIT_SHEET.replaceSync(selectors.slice(0, 150)
+      AUDIT_SHEET.replaceSync(selectors.slice(0, 500)
         .map((sel) => `${sel}{outline:2px solid var(--primary, #ffb59d) !important;outline-offset:1px !important;}`)
         .join("\n"));
       document.adoptedStyleSheets = [...document.adoptedStyleSheets, AUDIT_SHEET];
@@ -1051,13 +1066,8 @@
     a: 1,
   });
 
-  const labChannel = (v) => {
-    v /= 255;
-    return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
-  };
-
   function toLab({ r, g, b }) {
-    const R = labChannel(r), G = labChannel(g), B = labChannel(b);
+    const R = srgb(r), G = srgb(g), B = srgb(b);
     const x = (0.4124 * R + 0.3576 * G + 0.1805 * B) / 0.95047;
     const y = 0.2126 * R + 0.7152 * G + 0.0722 * B;
     const z = (0.0193 * R + 0.1192 * G + 0.9505 * B) / 1.08883;
@@ -1068,6 +1078,15 @@
 
   const deltaE = (a, b) => Math.hypot(a.L - b.L, a.a - b.a, a.b - b.b);
 
+  function nearestToken(lab, list) {
+    let best = null;
+    for (const p of list) {
+      const d = deltaE(lab, p.lab);
+      if (!best || d < best.delta) best = { token: p.token, delta: d };
+    }
+    return best;
+  }
+
   function auditPalette(given) {
     const out = [];
     const rootCs = getComputedStyle(document.documentElement);
@@ -1075,136 +1094,264 @@
       const raw = (given && given[`--${token}`]) || rootCs.getPropertyValue(`--${token}`).trim();
       if (!raw) continue;
       const col = parseCssColor(String(raw).trim(), document.documentElement);
-      if (col && col.a > 0.5) out.push({ token, col, lab: toLab(col) });
+      if (col && col.a > 0.5) {
+        out.push({
+          token, col, lab: toLab(col),
+          isBg: AUDIT_BG_TOKENS.has(token),
+          isFg: AUDIT_FG_TOKENS.has(token),
+        });
+      }
     }
     return out;
   }
 
-  function auditBackground(el) {
-    const layers = [];
-    let image = false;
-    for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
-      const cs = getComputedStyle(n);
-      if (cs.backgroundImage && cs.backgroundImage !== "none") image = true;
-      const col = parseCssColor(cs.backgroundColor, n);
-      if (!col || col.a === 0) continue;
-      layers.push(col);
-      if (col.a >= 0.999) break;
+  const COLOR_STOP_RE = /#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})\b|(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\([^()]+\)|\btransparent\b/gi;
+
+  function parseGradientStops(bgImage, el) {
+    const matches = bgImage.match(COLOR_STOP_RE);
+    if (!matches?.length) return null;
+    const stops = [];
+    for (const raw of matches) {
+      if (/^transparent$/i.test(raw)) {
+        stops.push({ r: 0, g: 0, b: 0, a: 0 });
+        continue;
+      }
+      const c = parseCssColor(raw, el);
+      if (c) stops.push(c);
     }
-    const surface = parseCssColor(
-      getComputedStyle(document.documentElement).getPropertyValue("--surface").trim() || "#1a110f",
-      document.documentElement,
-    ) || { r: 26, g: 17, b: 15, a: 1 };
-    let bg = surface.a >= 1 ? surface : { r: 26, g: 17, b: 15, a: 1 };
-    for (let i = layers.length - 1; i >= 0; i--) bg = blendOver(layers[i], bg);
-    return { bg, image };
+    return stops.length ? stops : null;
   }
 
-  /* Prefer a class/id selector so equal offenders are highlighted together. */
+  function defaultCanvasColor() {
+    const rootCs = getComputedStyle(document.documentElement);
+    const bodyCs = document.body ? getComputedStyle(document.body) : rootCs;
+    const scheme = `${rootCs.colorScheme} ${bodyCs.colorScheme}`;
+    if (/\bdark\b/i.test(scheme)) {
+      const surface = parseCssColor(rootCs.getPropertyValue("--surface").trim(), document.documentElement);
+      return surface && surface.a >= 1 ? surface : { r: 26, g: 17, b: 15, a: 1 };
+    }
+    return { r: 255, g: 255, b: 255, a: 1 };
+  }
+
+  function auditBackground(el, fallbackCanvas) {
+    const layers = [];
+    let imageOwner = null, bgOwner = null;
+    for (let n = el; n && n.nodeType === 1;
+         n = n.parentElement || n.getRootNode?.()?.host || null) {
+      const cs = getComputedStyle(n);
+      const bgi = cs.backgroundImage;
+      const col = parseCssColor(cs.backgroundColor, n);
+      let stops = null;
+      if (bgi && bgi !== "none") {
+        if (/url\(/i.test(bgi) && (!col || col.a < 0.999)) imageOwner ??= n;
+        if (/gradient\(/i.test(bgi)) stops = parseGradientStops(bgi, n);
+      }
+      if (stops) {
+        bgOwner ??= n;
+        const opaqueStops = stops.every((s) => s.a >= 0.999);
+        if (col && col.a > 0 && !opaqueStops) {
+          stops = stops.map((s) => (s.a >= 1 ? s : {
+            ...blendOver(s, col),
+            a: s.a + col.a * (1 - s.a),
+          }));
+        }
+        layers.push({ stops });
+        if (opaqueStops || (col && col.a >= 0.999)) break;
+        continue;
+      }
+      if (!col || col.a === 0) continue;
+      bgOwner ??= n;
+      layers.push({ stops: [col] });
+      if (col.a >= 0.999) break;
+    }
+    let candidatesBg = [fallbackCanvas];
+    for (let i = layers.length - 1; i >= 0; i--) {
+      const next = [];
+      for (const s of layers[i].stops) {
+        for (const base of candidatesBg) {
+          next.push(s.a >= 1 ? { r: s.r, g: s.g, b: s.b, a: 1 } : blendOver(s, base));
+        }
+      }
+      candidatesBg = next.slice(0, 8);
+    }
+    return {
+      bgs: candidatesBg,
+      imageOwner,
+      bgOwner: bgOwner || document.body || document.documentElement,
+    };
+  }
+
+  function auditTextOf(el) {
+    const tag = el.localName;
+    if (tag === "input") {
+      const type = (el.getAttribute("type") || "text").toLowerCase();
+      if (AUDIT_NONTEXT_INPUTS.has(type)) return "";
+      return String(el.value || el.placeholder || "").replace(/\s+/g, " ").trim();
+    }
+    if (tag === "textarea") return String(el.value || el.placeholder || "").replace(/\s+/g, " ").trim();
+    if (tag === "select") return String(el.selectedOptions?.[0]?.textContent || "").replace(/\s+/g, " ").trim();
+    let text = "";
+    for (const n of el.childNodes) if (n.nodeType === 3) text += n.textContent;
+    text = text.replace(/\s+/g, " ").trim();
+    if (text || el.childElementCount > 0) return text;
+    for (const pseudo of ["::before", "::after"]) {
+      const content = getComputedStyle(el, pseudo).content;
+      if (content && content !== "none" && content !== "normal" && /^["']/.test(content)) {
+        const cleaned = content.slice(1, -1).replace(/\s+/g, " ").trim();
+        if (cleaned) return cleaned;
+      }
+    }
+    return "";
+  }
+
+  /* Prefer a unique ID or bounded class selector so equal offenders highlight together. */
   function auditSelector(el) {
-    const list = candidates(el);
-    return list.find((c) => c.sel.startsWith("#"))?.sel
+    let targetEl = el;
+    while (targetEl?.getRootNode?.() instanceof ShadowRoot) {
+      targetEl = targetEl.getRootNode().host;
+    }
+    if (!targetEl || targetEl.nodeType !== 1) return "";
+    const list = candidates(targetEl);
+    return list.find((c) => c.sel.startsWith("#") && c.n === 1)?.sel
       ?? list.find((c) => c.sel.includes(".") && c.n <= 80)?.sel
-      ?? list[0]?.sel ?? nthPath(el);
+      ?? list[0]?.sel ?? nthPath(targetEl);
   }
 
   function audit(msg) {
     clearAudit();
     const palette = auditPalette(msg?.palette);
+    const bgPalette = palette.filter((p) => p.isBg);
+    const fgPalette = palette.filter((p) => p.isFg);
+    const inverseSurface = palette.find((p) => p.token === "inverse_surface") ?? null;
     const root = document.body || document.documentElement;
     if (!root) return { ok: false, error: "The page has no body to audit." };
 
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+    const fallbackCanvas = defaultCanvasColor();
     const seen = new Map();
-    let scanned = 0, textCount = 0;
+    const auditedSurfaces = new WeakSet();
+    const skippedImages = new WeakSet();
+    const roots = [root];
+    let scanned = 0, textCount = 0, imageSkipped = 0, shadowRoots = 0;
 
-    for (let el = walker.nextNode();
-         el && scanned < AUDIT_MAX_ELEMENTS;
-         el = walker.nextNode()) {
-      scanned++;
-      if (el === hostEl || el.closest?.("dusky-picker")) continue;
-      if (AUDIT_SKIP_TAGS.has(el.localName)) continue;
-      if (el.matches?.('[aria-hidden="true"]')) continue;
+    const filter = {
+      acceptNode(node) {
+        if (node === hostEl || node.localName === "dusky-picker") return NodeFilter.FILTER_REJECT;
+        if (AUDIT_SKIP_TAGS.has(node.localName)) return NodeFilter.FILTER_REJECT;
+        if (!node.checkVisibility({ checkOpacity: true })) return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    };
 
-      let text = "";
-      for (const n of el.childNodes) if (n.nodeType === 3) text += n.textContent;
-      text = text.replace(/\s+/g, " ").trim();
-      if (!text) continue;
-
-      const cs = getComputedStyle(el);
-      if (cs.display === "none" || cs.visibility !== "visible") continue;
-      if (Number(cs.opacity) === 0) continue;
-      if (el.getClientRects().length === 0) continue;
-
-      const fg = parseCssColor(cs.color, el);
-      if (!fg || fg.a < 0.35) continue;
-      textCount++;
-
-      const { bg, image } = auditBackground(el);
-      const ink = fg.a >= 1 ? fg : blendOver(fg, bg);
-      const ratio = contrastRatio(ink, bg);
-      const size = parseFloat(cs.fontSize) || 16;
-      const weight = cs.fontWeight === "bold" ? 700 : (parseInt(cs.fontWeight, 10) || 400);
-      const large = size >= 24 || (size >= 18.66 && weight >= 700);
-      const need = large ? 3 : 4.5;
-      const reasons = [];
-
-      if (!image && ratio + 0.05 < need) reasons.push("low-contrast");
-
-      const fgLab = toLab(ink);
-      let nearest = null;
-      for (const p of palette) {
-        const d = deltaE(fgLab, p.lab);
-        if (!nearest || d < nearest.delta) nearest = { token: p.token, delta: d };
-      }
-      if (nearest && nearest.delta > 15) reasons.push("off-palette-text");
-
-      const own = parseCssColor(cs.backgroundColor, el);
-      let bgNearest = null;
-      if (own && own.a >= 0.9 && !image && palette.length) {
-        const lab = toLab(own);
-        for (const p of palette) {
-          const d = deltaE(lab, p.lab);
-          if (!bgNearest || d < bgNearest.delta) bgNearest = { token: p.token, delta: d };
+    for (let rIdx = 0; rIdx < roots.length && scanned < AUDIT_MAX_ELEMENTS; rIdx++) {
+      const walker = document.createTreeWalker(roots[rIdx], NodeFilter.SHOW_ELEMENT, filter);
+      for (let el = walker.nextNode();
+           el && scanned < AUDIT_MAX_ELEMENTS;
+           el = walker.nextNode()) {
+        scanned++;
+        if (el.shadowRoot && !roots.includes(el.shadowRoot)) {
+          roots.push(el.shadowRoot);
+          shadowRoots++;
         }
-        if (bgNearest.delta > 14) reasons.push("off-palette-background");
+
+        const text = auditTextOf(el);
+        if (!text) continue;
+
+        const cs = getComputedStyle(el);
+        if (cs.visibility !== "visible") continue;
+        if (el.getClientRects().length === 0) continue;
+
+        const fillRaw = cs.webkitTextFillColor;
+        const fillCol = fillRaw ? parseCssColor(fillRaw, el) : null;
+        const fg = (fillCol && fillCol.a > 0) ? fillCol : parseCssColor(cs.color, el);
+        if (!fg || fg.a < 0.05) continue;
+        textCount++;
+
+        const { bgs, imageOwner, bgOwner } = auditBackground(el, fallbackCanvas);
+        let bg = bgs[0], ink = fg.a >= 1 ? fg : blendOver(fg, bg);
+        let ratio = contrastRatio(ink, bg);
+        for (let i = 1; i < bgs.length; i++) {
+          const candBg = bgs[i];
+          const candInk = fg.a >= 1 ? fg : blendOver(fg, candBg);
+          const candRatio = contrastRatio(candInk, candBg);
+          if (candRatio < ratio) {
+            ratio = candRatio;
+            bg = candBg;
+            ink = candInk;
+          }
+        }
+
+        const size = parseFloat(cs.fontSize) || 16;
+        const weight = cs.fontWeight === "bold" ? 700 : (parseInt(cs.fontWeight, 10) || 400);
+        const large = size >= 24 || (size >= 18.66 && weight >= 700);
+        const need = large ? 3 : 4.5;
+        const reasons = [];
+
+        if (imageOwner) {
+          if (!skippedImages.has(imageOwner)) {
+            skippedImages.add(imageOwner);
+            imageSkipped++;
+          }
+        } else if (ratio < need) {
+          reasons.push("low-contrast");
+        }
+
+        const fgLab = toLab(ink);
+        const nearest = nearestToken(fgLab, fgPalette.length ? fgPalette : palette);
+        if (nearest && nearest.delta > 15) reasons.push("off-palette-text");
+
+        let bgNearest = null;
+        if (!imageOwner && bgPalette.length && bgOwner && !auditedSurfaces.has(bgOwner)) {
+          auditedSurfaces.add(bgOwner);
+          const bgLab = toLab(bg);
+          const isInverseBg = inverseSurface && deltaE(bgLab, inverseSurface.lab) <= 3;
+          if (!isInverseBg) {
+            bgNearest = nearestToken(bgLab, bgPalette);
+            if (bgNearest && bgNearest.delta > 14) reasons.push("off-palette-background");
+          }
+        }
+
+        if (!reasons.length) continue;
+
+        const sig = `${el.localName}.${[...el.classList].sort().join(".")}` +
+          `|${rgbHex(ink)}|${rgbHex(bg)}|${reasons.join(",")}`;
+        const selector = auditSelector(el);
+        const hit = seen.get(sig);
+        if (hit) {
+          hit.count++;
+          if (selector && hit.selectors.size < 5) hit.selectors.add(selector);
+          continue;
+        }
+        if (!selector) continue;
+        seen.set(sig, {
+          selector,
+          selectors: new Set([selector]),
+          text: text.slice(0, 140),
+          count: 1,
+          reasons,
+          fg: rgbHex(ink),
+          bg: rgbHex(bg),
+          ratio: Math.round(ratio * 100) / 100,
+          need,
+          nearest: nearest?.token ?? "",
+          delta: Math.round(nearest?.delta ?? 0),
+          bgToken: bgNearest?.token ?? "",
+          bgDelta: Math.round(bgNearest?.delta ?? 0),
+          html: el.outerHTML.replace(/\s+/g, " ").slice(0, 360),
+        });
       }
-
-      if (!reasons.length) continue;
-
-      const sig = `${el.localName}.${[...el.classList].sort().join(".")}` +
-        `|${rgbHex(ink)}|${rgbHex(bg)}|${reasons.join(",")}`;
-      const hit = seen.get(sig);
-      if (hit) { hit.count++; continue; }
-
-      const selector = auditSelector(el);
-      if (!selector) continue;
-      seen.set(sig, {
-        selector,
-        text: text.slice(0, 140),
-        count: 1,
-        reasons,
-        fg: rgbHex(ink),
-        bg: rgbHex(bg),
-        ratio: Math.round(ratio * 100) / 100,
-        need,
-        nearest: nearest?.token ?? "",
-        delta: Math.round(nearest?.delta ?? 0),
-        bgToken: bgNearest?.token ?? "",
-        bgDelta: Math.round(bgNearest?.delta ?? 0),
-        html: el.outerHTML.replace(/\s+/g, " ").slice(0, 360),
-      });
     }
 
+    dropProbe();
     const issues = [...seen.values()].sort((a, b) => {
       const rank = (x) => (x.reasons.includes("low-contrast") ? 0 : 1);
       return rank(a) - rank(b) || b.count - a.count || a.ratio - b.ratio;
     });
     const shown = issues.slice(0, AUDIT_MAX_FINDINGS);
-    showAudit([...new Set(shown.map((i) => i.selector))]);
+    showAudit([...new Set(shown.flatMap((i) => [...i.selectors]))]);
 
     const low = issues.filter((i) => i.reasons.includes("low-contrast")).length;
     const off = issues.filter((i) => i.reasons.some((r) => r.startsWith("off-palette"))).length;
+    const capHit = scanned >= AUDIT_MAX_ELEMENTS;
     const host = (location.hostname || "page").replace(/^www\./, "");
     const lines = [
       `# Dusky theme audit — ${host}`,
@@ -1212,7 +1359,10 @@
       `- URL: ${location.href}`,
       `- Palette: ${palette.length} token(s) loaded` +
         (palette.length ? "" : " — palette variables were not found on this page"),
-      `- Scanned: ${scanned} elements, ${textCount} with visible text`,
+      `- Scanned: ${scanned}${capHit ? ` (cap ${AUDIT_MAX_ELEMENTS} reached)` : ""} elements` +
+        (shadowRoots ? ` across ${shadowRoots} shadow root(s)` : "") +
+        `, ${textCount} with visible text` +
+        (imageSkipped ? `, ${imageSkipped} url-image background(s) skipped` : ""),
       `- Findings: ${issues.length} (${low} low contrast, ${off} off-palette)` +
         (issues.length > shown.length ? ` — showing the first ${shown.length}` : ""),
       "",
@@ -1241,10 +1391,11 @@
       ok: true,
       scanned,
       textCount,
+      imageSkipped,
       issues: issues.length,
       lowContrast: low,
       offPalette: off,
-      truncated: issues.length > shown.length,
+      truncated: issues.length > shown.length || capHit,
       text: lines.join("\n"),
     };
   }
@@ -3014,6 +3165,7 @@ button,input,select,textarea{font:inherit;color:inherit;background:none;border:0
     if (on === S.active) return;
     S.active = on;
     if (on) {
+      clearAudit();
       dropIndex();
       await saveInFlight;
       if (S.note) await recover();
