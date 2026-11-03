@@ -435,6 +435,50 @@ function _gitdelta_render_stream() {
     return $rc
 }
 
+function _gitdelta_save_diff() {
+    emulate -L zsh
+    setopt localoptions extendedglob no_auto_pushd
+    local target=${1-}
+    shift 1 2>/dev/null || shift $#
+    local -a files=( "$@" )
+
+    local out_dir="/mnt/zram1/gitdelta"
+    if ! mkdir -p -- "$out_dir" 2>/dev/null; then
+        print -ru2 -- "gitdelta: failed to create directory '$out_dir'."
+        return 1
+    fi
+
+    local cwd=$PWD
+    builtin cd -q -- $HOME || return 1
+    {
+        local f safe_name out_file ts
+        ts=${(%):-%D{%Y%m%d-%H%M%S}}
+        if (( $#files == 0 )); then
+            out_file="${out_dir}/all_${target:-HEAD}_${ts}.diff"
+            if [[ -n $target ]]; then
+                git_dusky show --patch --stat "$target" >| "$out_file" || return $?
+            else
+                git_dusky diff --patch --stat HEAD >| "$out_file" || return $?
+            fi
+            print -ru2 -- "✔ Saved diff to: $out_file"
+        else
+            for f in "${files[@]}"; do
+                safe_name=${f//\//__}
+                out_file="${out_dir}/${safe_name}.diff"
+                if [[ -n $target ]]; then
+                    git_dusky show --patch --stat "$target" -- ":(literal,top)$f" >| "$out_file" || return $?
+                else
+                    git_dusky diff --patch --stat HEAD -- ":(literal,top)$f" >| "$out_file" || return $?
+                fi
+                print -ru2 -- "✔ Saved diff to: $out_file"
+            done
+        fi
+    } always {
+        builtin cd -q -- $cwd
+    }
+    return 0
+}
+
 function _gitdelta_show() {
     emulate -L zsh
     setopt localoptions pipefail
@@ -562,18 +606,25 @@ function _gitdelta_select() {
     setopt localoptions extendedglob
     local c_bg c_fg c_acc c_mut c_ok sel key file target line_num REPLY TAB=$'\t'
     local -a sel_lines lines
-    local -i rc=0
+    local -i rc=0 save_on_enter=0
 
     if (( ! $+commands[fzf] )); then
         print -ru2 -- "gitdelta: fzf is required for 'gitdelta select'."
         return 1
     fi
 
+    while [[ ${1-} == -* ]]; do
+        case $1 in
+            -s|--save) save_on_enter=1; shift ;;
+            *) break ;;
+        esac
+    done
+
     # Support optional commit number: gitdelta select [N]
     if [[ -n ${1-} ]]; then
         local n=$1
         if [[ $n != <1-> ]]; then
-            print -ru2 -- 'Usage: gitdelta select [N]  —  N = Nth-last commit (default: uncommitted changes)'
+            print -ru2 -- 'Usage: gitdelta select [-s|--save] [N]  —  N = Nth-last commit (default: uncommitted changes)'
             return 1
         fi
         if ! git_dusky rev-parse --verify --quiet "HEAD~$(( n - 1 ))" >/dev/null 2>&1; then
@@ -617,7 +668,7 @@ function _gitdelta_select() {
             --multi \
             --delimiter="$TAB" \
             --with-nth=1 \
-            --expect='ctrl-e,enter' \
+            --expect='ctrl-e,ctrl-s,enter' \
             --ellipsis='' \
             --highlight-line \
             --scrollbar='│' \
@@ -635,7 +686,7 @@ function _gitdelta_select() {
             --preview-label=' file diff ' \
             --preview-label-pos=center \
             --preview="$preview" \
-            --header='[TAB] mark   [Alt-M] vim   [Alt-←/→] resize   [Alt-H/J/K/L] move   [Alt-V] view   [Shift-↑/↓] scroll   [ctrl-e] edit   [ENTER] diff   [q] quit' \
+            --header='[TAB] mark   [Alt-M] vim   [Alt-←/→] resize   [Alt-H/J/K/L] move   [Alt-V] view   [ctrl-s] save diff   [ctrl-e] edit   [ENTER] diff   [q] quit' \
             --bind="alt-left:transform:bash ${layout_helper} --resize-preview left" \
             --bind="alt-right:transform:bash ${layout_helper} --resize-preview right" \
             --bind="alt-up:transform:bash ${layout_helper} --resize-preview up" \
@@ -672,6 +723,11 @@ function _gitdelta_select() {
         [[ -n $item_f ]] && files+=( "$item_f" )
     done
     (( $#files )) || return 0
+
+    if [[ $key == 'ctrl-s' ]] || { (( save_on_enter )) && [[ $key == '' || $key == 'enter' ]]; }; then
+        _gitdelta_save_diff "$target" "${files[@]}"
+        return $?
+    fi
 
     if [[ $key == 'ctrl-e' ]]; then
         local -a editor=( ${(z)${EDITOR:-nvim}} )
@@ -730,6 +786,12 @@ function gitdelta() {
     emulate -L zsh
     setopt localoptions extendedglob pipefail
     local n target
+    local -i save_mode=0
+
+    if [[ ${1-} == '-s' || ${1-} == '--save' || ${1-} == 'save' || ${1-} == 'file' ]]; then
+        save_mode=1
+        shift
+    fi
 
     if (( $# == 0 )); then
         git_dusky_add_list || return $?
@@ -737,26 +799,48 @@ function gitdelta() {
             print -ru2 -- 'gitdelta: no commits yet — nothing to diff against HEAD.'
             return 1
         fi
-        _gitdelta_show
+        if (( save_mode )); then
+            _gitdelta_save_diff ""
+        else
+            _gitdelta_show
+        fi
         return $?
     fi
 
     case $1 in
-        -h|--help)
+        -h|--help|help)
             print -rl -- \
-                'gitdelta            uncommitted work-tree changes vs HEAD (stages the manifest first)' \
-                'gitdelta select [N] interactive multi-file fzf diff browser (N = optional commit number)' \
-                'gitdelta FILE...    show diff for specific file(s) (full path or partial name)' \
-                'gitdelta N          Nth most recent commit, 1 = HEAD' \
-                'gitdelta N FILE...  show diff for FILE(s) in Nth commit' \
-                'gitdelta list       fzf commit browser with live delta preview'
+                'usage:' \
+                '  gitdelta                    view all uncommitted changes' \
+                '  gitdelta select             pick changed files to view diff (ctrl-s to save)' \
+                '  gitdelta list               browse commit history with live diff preview' \
+                '' \
+                'save diffs to /mnt/zram1/gitdelta/:' \
+                '  gitdelta file               save diff of all uncommitted changes to file' \
+                '  gitdelta filelist           pick specific changed files to save diff to file' \
+                '  gitdelta file 1             save diff of latest commit (or 2, 3...) to file' \
+                '' \
+                'filter by commit or path:' \
+                '  gitdelta 1                  view diff of latest commit (2 = two commits ago, etc.)' \
+                '  gitdelta select 2           pick files from 2 commits ago to view diff' \
+                '  gitdelta filelist 2         pick files from 2 commits ago to save diff' \
+                '  gitdelta <file>             view diff for a specific file or partial path' \
+                '  gitdelta file <file>        save diff for a specific file to /mnt/zram1/gitdelta/'
             return 0 ;;
         list)
             _gitdelta_browse
             return $? ;;
+        filelist|files)
+            shift
+            _gitdelta_select -s "$@"
+            return $? ;;
         select|pick)
             shift
-            _gitdelta_select "$@"
+            if (( save_mode )); then
+                _gitdelta_select -s "$@"
+            else
+                _gitdelta_select "$@"
+            fi
             return $? ;;
     esac
 
@@ -769,10 +853,19 @@ function gitdelta() {
         target="HEAD~$(( n - 1 ))"
         shift
         if (( $# == 0 )); then
-            _gitdelta_show "$target"
+            if (( save_mode )); then
+                _gitdelta_save_diff "$target"
+            else
+                _gitdelta_show "$target"
+            fi
             return $?
         fi
     else
+        git_dusky_add_list || return $?
+        if ! _git_dusky_have_head; then
+            print -ru2 -- 'gitdelta: no commits yet — nothing to diff against HEAD.'
+            return 1
+        fi
         target=""
     fi
 
@@ -792,6 +885,10 @@ function gitdelta() {
 
     local query abs REPLY
     for query in "$@"; do
+        if [[ $query == '-s' || $query == '--save' ]]; then
+            save_mode=1
+            continue
+        fi
         # 1. Exact match
         if (( ${changed_files[(Ie)$query]} )); then
             matched_files+=( "$query" )
@@ -819,7 +916,11 @@ function gitdelta() {
 
     matched_files=( ${(u)matched_files} )
     if (( $#matched_files >= 1 )); then
-        _gitdelta_show "$target" "" "${matched_files[@]}"
+        if (( save_mode )); then
+            _gitdelta_save_diff "$target" "${matched_files[@]}"
+        else
+            _gitdelta_show "$target" "" "${matched_files[@]}"
+        fi
         return $?
     fi
 

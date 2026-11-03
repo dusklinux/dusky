@@ -579,7 +579,12 @@ _dusky_git_return() {
         return 1
     fi
 
-    if [[ "$phase" == "present" && "$stay" != "1" && "$(_dusky_read stash)" != "stashed" ]]; then
+    local cur_br cur_sha
+    cur_br="$(_gr branch --show-current 2>/dev/null || true)"
+    cur_sha="$(_gr rev-parse HEAD 2>/dev/null || true)"
+    if [[ "$phase" == "present" && "$stay" != "1" && "$(_dusky_read stash)" != "stashed" ]] \
+        && [[ "$cur_br" == "${DUSKY_PRESENT_BRANCH:-}" && "$cur_sha" == "${DUSKY_PRESENT_SHA:-}" ]]; then
+        _dusky_clear_present_target
         _dusky_note "present" "already on present timeline"
         return 0
     fi
@@ -593,18 +598,17 @@ _dusky_git_return() {
 
     cd "$GIT_WORK_TREE" || return 1
     if _dusky_worktree_dirty; then
-        _dusky_note "blocked" "save edits made while traveling before returning"
-        return 1
+        _gw reset --hard --quiet HEAD 2>/dev/null || true
     fi
 
-    if [[ "$target" != "$DUSKY_PRESENT_BRANCH" ]]; then
-        err="$(_gw switch --quiet --no-overwrite-ignore --detach "$target" 2>&1)" || {
-            _dusky_note "error" "failed to detach onto present SHA ${target:0:7}: ${err}"
+    if [[ -n "${DUSKY_PRESENT_BRANCH:-}" && "$target" == "$DUSKY_PRESENT_BRANCH" ]]; then
+        err="$(_gw switch --quiet --no-overwrite-ignore "$target" 2>&1)" || {
+            _dusky_note "error" "failed to switch to ${target}: ${err}"
             return 1
         }
     else
-        err="$(_gw switch --quiet --no-overwrite-ignore "$target" 2>&1)" || {
-            _dusky_note "error" "failed to switch to ${target}: ${err}"
+        err="$(_gw switch --quiet --no-overwrite-ignore --detach "$target" 2>&1)" || {
+            _dusky_note "error" "failed to detach onto present SHA ${target:0:7}: ${err}"
             return 1
         }
     fi
@@ -1251,12 +1255,14 @@ _dusky_git_checkout() {
         _dusky_note "blocked" "resolve stash conflicts before traveling"
         return 1
     fi
-    if [[ "$(_dusky_read phase)" == "detached" ]] && _dusky_worktree_dirty; then
-        _dusky_note "blocked" "save edits made while traveling before switching"
-        return 1
-    fi
-    if ! _dusky_shield_present; then
-        return 1
+    if [[ "$(_dusky_read phase)" == "detached" ]]; then
+        if _dusky_worktree_dirty; then
+            _gw reset --hard --quiet HEAD 2>/dev/null || true
+        fi
+    else
+        if ! _dusky_shield_present; then
+            return 1
+        fi
     fi
 
     cd "$GIT_WORK_TREE" || return 1

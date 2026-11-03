@@ -744,10 +744,10 @@ class TimeMachineTests(BareRepoCase):
         self.run_tm(f'if _dusky_git_checkout {old}; then exit 22; fi\n')
         self.assertEqual((self.w / 'collision').read_text(), 'private')
 
-    def test_tm_edits_in_past_block_return(self):
+    def test_tm_edits_in_past_discarded_on_return(self):
         old = self.history()
-        self.run_tm(f'_dusky_git_checkout {old} || exit 10\nprintf changed > a\nif _dusky_git_return; then exit 23; fi\n')
-        self.assertEqual((self.w / 'a').read_text(), 'changed')
+        self.run_tm(f'_dusky_git_checkout {old} || exit 10\nprintf changed > a\n_dusky_git_return || exit 23\n')
+        self.assertEqual((self.w / 'a').read_text(), 'present\n')
 
     def test_tm_relaunch_restores_stash(self):
         old = self.history()

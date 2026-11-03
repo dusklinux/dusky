@@ -104,14 +104,17 @@ An interactive Git time-travel TUI designed specifically for dotfiles and bare r
 ### Q: Does the TUI apply my uncommitted changes onto older commits?
 **A:** **No.** Your in-progress work remains sleeping in the git stash ledger. The TUI gives you a pure, authentic snapshot of the repository as it existed on that date. Applying modern in-progress code to historical commits would create merge conflicts.
 
+### Q: What happens if I make edits while looking at an old commit?
+**A:** Any edits made to tracked files while visiting historical commits are automatically disregarded when switching to another commit or returning home. They are discarded so your return to HEAD and present uncommitted work is never blocked. Untracked files in `$HOME` are never touched.
+
 ### Q: What happens if I exit the TUI or press `Ctrl-C` while looking at an old commit?
-**A:** You are automatically returned home. The built-in Janitor trap catches `Ctrl-C`, `SIGTERM`, or normal `Esc` exits, attempts to return to the recorded starting branch or commit, and restores the session stash, including its staged state. If edits or collisions block the return, it reports the failure and retains the recovery ledger and stash.
+**A:** You are automatically returned home. The built-in Janitor trap catches `Ctrl-C`, `SIGTERM`, or normal `Esc` exits, disregards any ephemeral edits made while in the past, cleanly returns to the recorded starting branch or commit, and restores your original session stash, including its staged state.
 
 ### Q: How do I stay on an old commit after closing the TUI?
 **A:** Press **`Alt-S`** before exiting. The footer will display `ARMED (STAY)`. When you exit, the TUI leaves your terminal detached on that historical commit.
 
 ### Q: How do I return to the present after using Stay Mode?
-**A:** Simply re-open `dusky_time_machine_tui.sh` and press **`Ctrl-R`** (Return). It reads the saved target and stash identity from disk, switches back to the recorded starting branch or commit, and restores that stash. Edits made while traveling must be saved before returning.
+**A:** Simply re-open `dusky_time_machine_tui.sh` and press **`Ctrl-R`** (Return). It reads the saved target and stash identity from disk, switches back to the recorded starting branch or commit, and restores that stash.
 
 ### Q: Where are my settings and preferences stored?
 **A:** In `~/.config/dusky/settings/time_machine_state`. Your preferences for **`VIM_MODE`**, **`PREVIEW_LAYOUT`**, **`PREVIEW_MODE`**, and **`SCOPE`** are saved automatically and remembered across launches.
@@ -125,8 +128,8 @@ directories. Settings remain under `$XDG_CONFIG_HOME/dusky/settings` (default
 
 Travel uses non-forced switches with `--no-overwrite-ignore`. A collision with
 an untracked or ignored file blocks the switch. A failed first trip restores the
-session stash. If edits made while traveling block automatic return, save those
-edits and reopen the TUI to return; the recorded target and stash are retained.
+session stash. Any edits made while traveling in the past are automatically
+disregarded upon checkout or return to ensure reliable return to the starting branch.
 The lock coordinates the two Dusky tools; unrelated Git commands and editors do
 not participate in that lock.
 
