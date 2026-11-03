@@ -1259,6 +1259,223 @@ pub fn net_state() -> NetState {
     network_reading(counters, now, &mut sample)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BatteryStatus {
+    #[default]
+    Unknown,
+    Discharging,
+    Charging,
+    Full,
+    NotCharging,
+}
+
+impl BatteryStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Unknown => "Unknown",
+            Self::Discharging => "Discharging",
+            Self::Charging => "Charging",
+            Self::Full => "Full",
+            Self::NotCharging => "Not charging",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct BatteryState {
+    pub present: bool,
+    pub status: BatteryStatus,
+    pub watts: f64,
+    pub text: String,
+    pub tooltip: String,
+}
+
+impl BatteryState {
+    pub fn is_discharging(&self) -> bool {
+        self.status == BatteryStatus::Discharging
+    }
+
+    #[allow(dead_code)]
+    pub fn is_charging(&self) -> bool {
+        self.status == BatteryStatus::Charging
+    }
+}
+
+fn read_sysfs_u64(path: &Path, magnitude: bool) -> Option<u64> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    let token = raw.lines().next().unwrap_or("").trim();
+    let digits = if magnitude {
+        token.strip_prefix('-').unwrap_or(token)
+    } else {
+        token
+    };
+    if digits.is_empty() || digits.len() > 18 || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse::<u64>().ok()
+}
+
+pub fn format_watts(power_uw: u64) -> String {
+    // Convert µW to centiwatts with half-up rounding, capped at 999.99W (max 7 chars).
+    let cw = (power_uw.saturating_add(5_000) / 10_000).min(99_999);
+    format!("{}.{:02}W", cw / 100, cw % 100)
+}
+
+pub fn read_battery_state(power_supply: &Path) -> BatteryState {
+    let Ok(entries) = std::fs::read_dir(power_supply) else {
+        return BatteryState {
+            present: false,
+            status: BatteryStatus::Unknown,
+            watts: 0.0,
+            text: "--".into(),
+            tooltip: "No battery present".into(),
+        };
+    };
+
+    let mut nodes: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+    nodes.sort();
+
+    let mut n = 0usize;
+    let mut psum = 0u64;
+    let mut pcnt = 0usize;
+    let mut net = 0i128;
+    let mut charging = false;
+    let mut discharging = false;
+    let mut state = BatteryStatus::Unknown;
+
+    for path in nodes {
+        let Ok(kind) = std::fs::read_to_string(path.join("type")) else {
+            continue;
+        };
+        if kind.trim() != "Battery" {
+            continue;
+        }
+        if let Ok(scope) = std::fs::read_to_string(path.join("scope"))
+            && scope.trim().eq_ignore_ascii_case("Device")
+        {
+            continue;
+        }
+        if read_sysfs_u64(&path.join("present"), false) == Some(0) {
+            continue;
+        }
+
+        n += 1;
+
+        let status = std::fs::read_to_string(path.join("status"))
+            .ok()
+            .and_then(|s| s.lines().next().map(|l| l.trim().to_owned()))
+            .map(|s| match s.as_str() {
+                "Discharging" => BatteryStatus::Discharging,
+                "Charging" => BatteryStatus::Charging,
+                "Full" => BatteryStatus::Full,
+                "Not charging" => BatteryStatus::NotCharging,
+                _ => BatteryStatus::Unknown,
+            })
+            .unwrap_or(BatteryStatus::Unknown);
+
+        let volt = [
+            "voltage_now",
+            "voltage_avg",
+            "voltage_min_design",
+            "voltage_max_design",
+        ]
+        .into_iter()
+        .find_map(|f| read_sysfs_u64(&path.join(f), false).filter(|&v| v > 0));
+
+        // Keep an instantaneous zero instead of substituting a stale average.
+        let mut power_uw = ["power_now", "power_avg"]
+            .into_iter()
+            .find_map(|f| read_sysfs_u64(&path.join(f), true));
+
+        if power_uw.is_none()
+            && let Some(v) = volt
+        {
+            power_uw = ["current_now", "current_avg"]
+                .into_iter()
+                .find_map(|f| read_sysfs_u64(&path.join(f), true))
+                .map(|curr| ((curr as u128 * v as u128) / 1_000_000) as u64);
+        }
+
+        if let Some(p) = power_uw {
+            psum = psum.saturating_add(p);
+            pcnt += 1;
+            match status {
+                BatteryStatus::Charging => net += p as i128,
+                BatteryStatus::Discharging => net -= p as i128,
+                _ => {}
+            }
+        }
+
+        match status {
+            BatteryStatus::Charging => {
+                charging = true;
+                state = BatteryStatus::Charging;
+            }
+            BatteryStatus::Discharging => {
+                discharging = true;
+                if state != BatteryStatus::Charging {
+                    state = BatteryStatus::Discharging;
+                }
+            }
+            BatteryStatus::NotCharging => {
+                if !matches!(state, BatteryStatus::Charging | BatteryStatus::Discharging) {
+                    state = BatteryStatus::NotCharging;
+                }
+            }
+            BatteryStatus::Full => {
+                if !matches!(
+                    state,
+                    BatteryStatus::Charging
+                        | BatteryStatus::Discharging
+                        | BatteryStatus::NotCharging
+                ) {
+                    state = BatteryStatus::Full;
+                }
+            }
+            BatteryStatus::Unknown => {}
+        }
+    }
+
+    if n == 0 {
+        return BatteryState {
+            present: false,
+            status: BatteryStatus::Unknown,
+            watts: 0.0,
+            text: "--".into(),
+            tooltip: "No battery present".into(),
+        };
+    }
+
+    if charging && discharging && pcnt == n {
+        if net > 0 {
+            state = BatteryStatus::Charging;
+        } else if net < 0 {
+            state = BatteryStatus::Discharging;
+        }
+        psum = net.unsigned_abs() as u64;
+    }
+
+    let (watts, text) = if pcnt > 0 {
+        (psum as f64 / 1_000_000.0, format_watts(psum))
+    } else if matches!(state, BatteryStatus::Full | BatteryStatus::NotCharging) {
+        (0.0, format_watts(0))
+    } else {
+        (0.0, "--".into())
+    };
+
+    BatteryState {
+        present: true,
+        status: state,
+        watts,
+        tooltip: format!("Battery: {}\nPower: {text}", state.as_str()),
+        text,
+    }
+}
+
+pub fn battery_state() -> BatteryState {
+    read_battery_state(Path::new("/sys/class/power_supply"))
+}
+
 pub fn weather_text() -> Option<String> {
     let home = std::env::var("HOME").unwrap_or_default();
     let p = PathBuf::from(format!("{home}/.config/dusky/settings/waybar_weather"));
@@ -1815,5 +2032,75 @@ mod tests {
     fn cpu_ram_no_panic() {
         let (c, r) = cpu_ram();
         assert!(!c.is_empty() && !r.is_empty());
+    }
+
+    #[test]
+    fn battery_watts_formatting_never_exceeds_seven_characters() {
+        assert_eq!(format_watts(0), "0.00W");
+        assert_eq!(format_watts(6_420_000), "6.42W");
+        assert_eq!(format_watts(24_600_000), "24.60W");
+        assert_eq!(format_watts(102_340_000), "102.34W");
+        assert_eq!(format_watts(999_990_000), "999.99W");
+        assert_eq!(format_watts(1_500_000_000), "999.99W");
+        assert_eq!(format_watts(u64::MAX), "999.99W");
+        for uw in [0, 6_420_000, 24_600_000, 102_340_000, 999_990_000, u64::MAX] {
+            let formatted = format_watts(uw);
+            assert!(formatted.ends_with('W'));
+            assert!(formatted.len() <= 7, "{formatted} exceeded 7 chars");
+        }
+    }
+
+    #[test]
+    fn battery_sysfs_filters_nodes_and_computes_power_and_current_fallback() {
+        let root = runtime_dir().join(format!("battery-test-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+
+        // Ignored nodes: Mains, Device scope, present == 0
+        let ac = root.join("AC");
+        std::fs::create_dir_all(&ac).unwrap();
+        std::fs::write(ac.join("type"), "Mains\n").unwrap();
+
+        let mouse = root.join("hidpp_battery_0");
+        std::fs::create_dir_all(&mouse).unwrap();
+        std::fs::write(mouse.join("type"), "Battery\n").unwrap();
+        std::fs::write(mouse.join("scope"), "Device\n").unwrap();
+        std::fs::write(mouse.join("present"), "1\n").unwrap();
+        std::fs::write(mouse.join("status"), "Discharging\n").unwrap();
+        std::fs::write(mouse.join("power_now"), "50000000\n").unwrap();
+
+        let empty = root.join("BAT_EMPTY");
+        std::fs::create_dir_all(&empty).unwrap();
+        std::fs::write(empty.join("type"), "Battery\n").unwrap();
+        std::fs::write(empty.join("present"), "0\n").unwrap();
+        std::fs::write(empty.join("power_now"), "50000000\n").unwrap();
+
+        // Active system battery using power_now
+        let bat0 = root.join("BAT0");
+        std::fs::create_dir_all(&bat0).unwrap();
+        std::fs::write(bat0.join("type"), "Battery\n").unwrap();
+        std::fs::write(bat0.join("scope"), "System\n").unwrap();
+        std::fs::write(bat0.join("present"), "1\n").unwrap();
+        std::fs::write(bat0.join("status"), "Discharging\n").unwrap();
+        std::fs::write(bat0.join("power_now"), "24600000\n").unwrap();
+
+        let state = read_battery_state(&root);
+        assert!(state.present);
+        assert_eq!(state.status, BatteryStatus::Discharging);
+        assert_eq!(state.text, "24.60W");
+        assert!((state.watts - 24.6).abs() < 1e-6);
+
+        // Fallback to current_now (µA) * voltage_now (µV) / 1_000_000
+        std::fs::remove_file(bat0.join("power_now")).unwrap();
+        std::fs::write(bat0.join("status"), "Charging\n").unwrap();
+        std::fs::write(bat0.join("current_now"), "-535000\n").unwrap();
+        std::fs::write(bat0.join("voltage_now"), "12000000\n").unwrap();
+
+        let state = read_battery_state(&root);
+        assert!(state.present);
+        assert_eq!(state.status, BatteryStatus::Charging);
+        assert_eq!(state.text, "6.42W");
+        assert!((state.watts - 6.42).abs() < 1e-6);
+
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

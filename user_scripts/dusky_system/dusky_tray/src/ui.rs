@@ -42,7 +42,7 @@ pub enum Message {
     BlurConfigured,
     GlobalBlurLoaded(Option<bool>),
     WeatherLoaded(Option<String>),
-    MetricsLoaded((String, String, sys::NetState)),
+    MetricsLoaded((String, String, sys::NetState, sys::BatteryState)),
     TogglesLoaded(u64, ToggleSnapshot),
     RadioLoaded(u64, u64, (Option<bool>, Option<bool>)),
     PowerLoaded(u64, Option<String>),
@@ -161,6 +161,8 @@ pub struct TrayApp {
     cpu_text: String,
     ram_text: String,
     net: sys::NetState,
+    battery: sys::BatteryState,
+    show_battery_metric: Option<bool>,
     toggles: ToggleSnapshot,
     toggle_revision: u64,
     wifi_on: Option<bool>,
@@ -229,6 +231,8 @@ impl TrayApp {
             cpu_text: "--".into(),
             ram_text: "--".into(),
             net: Default::default(),
+            battery: Default::default(),
+            show_battery_metric: None,
             toggles: Default::default(),
             toggle_revision: 0,
             wifi_on: None,
@@ -304,7 +308,8 @@ impl TrayApp {
             RefreshKind::Metrics => worker::start(|| {
                 let (cpu, ram) = sys::cpu_ram();
                 let net = sys::net_state();
-                (cpu, ram, net)
+                let battery = sys::battery_state();
+                (cpu, ram, net, battery)
             })
             .map(Message::MetricsLoaded),
             RefreshKind::Toggles => {
@@ -441,10 +446,17 @@ impl TrayApp {
             Message::WeatherLoaded(w) => {
                 self.weather = w;
             }
-            Message::MetricsLoaded((cpu, ram, net)) => {
+            Message::MetricsLoaded((cpu, ram, net, battery)) => {
+                if !battery.present
+                    || (self.battery.present
+                        && self.battery.is_discharging() != battery.is_discharging())
+                {
+                    self.show_battery_metric = None;
+                }
                 self.cpu_text = cpu;
                 self.ram_text = ram;
                 self.net = net;
+                self.battery = battery;
             }
             Message::TogglesLoaded(revision, s) => {
                 if revision == self.toggle_revision {
@@ -689,6 +701,14 @@ impl TrayApp {
             }
             Message::MetricPressed(which) => {
                 match which.as_str() {
+                    "net" => {
+                        if self.battery.present {
+                            self.show_battery_metric = Some(!self.showing_battery());
+                        } else {
+                            self.show_battery_metric = None;
+                        }
+                        return Task::none();
+                    }
                     "ram" => execute_detached("kitty --class zramctl --hold zramctl"),
                     "cpu" => execute_detached("kitty --class btop btop"),
                     _ => return Task::none(),
@@ -954,10 +974,48 @@ impl TrayApp {
         .into()
     }
 
+    fn showing_battery(&self) -> bool {
+        self.battery.present
+            && self
+                .show_battery_metric
+                .unwrap_or_else(|| self.battery.is_discharging())
+    }
+
+    fn first_metric_display(&self) -> (String, Color, String) {
+        if self.showing_battery() {
+            let value = if self.battery.text.is_empty() {
+                "--".into()
+            } else {
+                self.battery.text.clone()
+            };
+            let color = match self.battery.status {
+                sys::BatteryStatus::Discharging => saturate(self.theme.profiles[2], 0.8),
+                sys::BatteryStatus::Charging
+                | sys::BatteryStatus::Full
+                | sys::BatteryStatus::NotCharging => saturate(self.theme.profiles[0], 0.8),
+                sys::BatteryStatus::Unknown => self.theme.fg,
+            };
+            let hint = if self.battery.tooltip.is_empty() {
+                "Battery power".into()
+            } else {
+                self.battery.tooltip.clone()
+            };
+            (value, color, hint)
+        } else {
+            let value = if self.net.text.is_empty() || self.net.disconnected {
+                "--".into()
+            } else {
+                self.net.text.clone()
+            };
+            (value, self.theme.fg, self.net.tooltip.clone())
+        }
+    }
+
     fn metric(
         &self,
         glyph: &'static str,
         value: String,
+        color: Color,
         kind: &'static str,
         hint: String,
     ) -> Element<'static, Message> {
@@ -965,7 +1023,7 @@ impl TrayApp {
         let label = text(value)
             .size(if kind == "net" { 10 } else { 12 })
             .font(Font::MONOSPACE)
-            .color(theme.fg);
+            .color(color);
         let contents: Element<'_, Message> = if kind == "net" {
             label.into()
         } else {
@@ -1002,7 +1060,7 @@ impl TrayApp {
                 };
                 style
             });
-        if kind != "net" {
+        if kind != "net" || self.battery.present {
             btn = btn.on_press(Message::MetricPressed(kind.into()));
         }
         Self::hint(btn, hint, theme)
@@ -1598,25 +1656,24 @@ impl TrayApp {
         let header = stack![clock, side_controls];
         let mut controls = column![header].spacing(12);
         if self.config.layout.show_metrics {
+            let (first_value, first_color, first_hint) = self.first_metric_display();
             controls = controls.push(
                 row![
-                    self.metric(
-                        "⇅",
-                        if self.net.text.is_empty() || self.net.disconnected {
-                            "--".into()
-                        } else {
-                            self.net.text.clone()
-                        },
-                        "net",
-                        self.net.tooltip.clone()
-                    ),
+                    self.metric("⇅", first_value, first_color, "net", first_hint),
                     self.metric(
                         "▤",
                         self.ram_text.clone(),
+                        theme.fg,
                         "ram",
                         "Memory · Open zramctl".into()
                     ),
-                    self.metric("▣", self.cpu_text.clone(), "cpu", "CPU · Open btop".into())
+                    self.metric(
+                        "▣",
+                        self.cpu_text.clone(),
+                        theme.fg,
+                        "cpu",
+                        "CPU · Open btop".into()
+                    )
                 ]
                 .spacing(10),
             );
@@ -2594,5 +2651,86 @@ mod tests {
         app.notifications.clear();
         let _ = app.update(Message::NotifsLoaded(0, (vec![n], None)));
         assert!(app.notifications.is_empty());
+    }
+
+    #[test]
+    fn first_metric_defaults_by_power_state_and_toggles_on_click() {
+        let mut app = app();
+        let net = sys::NetState {
+            text: "12 KB 34".into(),
+            tooltip: "Upload: 12.0 KB/s\nDownload: 34.0 KB/s".into(),
+            disconnected: false,
+        };
+
+        // Desktop / no battery present: always shows network meter, even if clicked
+        let no_battery = sys::BatteryState {
+            present: false,
+            status: sys::BatteryStatus::Unknown,
+            watts: 0.0,
+            text: "--".into(),
+            tooltip: "No battery present".into(),
+        };
+        let _ = app.update(Message::MetricsLoaded((
+            "10%".into(),
+            "4.0 GB".into(),
+            net.clone(),
+            no_battery,
+        )));
+        let (val, color, _) = app.first_metric_display();
+        assert_eq!(val, "12 KB 34");
+        assert_eq!(color, app.theme.fg);
+
+        let _ = app.update(Message::MetricPressed("net".into()));
+        let (val, color, _) = app.first_metric_display();
+        assert_eq!(val, "12 KB 34");
+        assert_eq!(color, app.theme.fg);
+        assert_eq!(app.show_battery_metric, None);
+
+        // Discharging defaults to battery wattage in performance red
+        let discharging = sys::BatteryState {
+            present: true,
+            status: sys::BatteryStatus::Discharging,
+            watts: 24.6,
+            text: "24.60W".into(),
+            tooltip: "Battery: Discharging\nPower: 24.60W".into(),
+        };
+        let _ = app.update(Message::MetricsLoaded((
+            "10%".into(),
+            "4.0 GB".into(),
+            net.clone(),
+            discharging,
+        )));
+        let (val, color, _) = app.first_metric_display();
+        assert_eq!(val, "24.60W");
+        assert_eq!(color, saturate(app.theme.profiles[2], 0.8));
+
+        // Clicking toggles to network traffic in normal theme.fg
+        let _ = app.update(Message::MetricPressed("net".into()));
+        let (val, color, _) = app.first_metric_display();
+        assert_eq!(val, "12 KB 34");
+        assert_eq!(color, app.theme.fg);
+
+        // Plugging in / charging defaults to network traffic, and toggles to green wattage
+        let charging = sys::BatteryState {
+            present: true,
+            status: sys::BatteryStatus::Charging,
+            watts: 6.42,
+            text: "6.42W".into(),
+            tooltip: "Battery: Charging\nPower: 6.42W".into(),
+        };
+        let _ = app.update(Message::MetricsLoaded((
+            "10%".into(),
+            "4.0 GB".into(),
+            net,
+            charging,
+        )));
+        let (val, color, _) = app.first_metric_display();
+        assert_eq!(val, "12 KB 34");
+        assert_eq!(color, app.theme.fg);
+
+        let _ = app.update(Message::MetricPressed("net".into()));
+        let (val, color, _) = app.first_metric_display();
+        assert_eq!(val, "6.42W");
+        assert_eq!(color, saturate(app.theme.profiles[0], 0.8));
     }
 }
