@@ -1014,19 +1014,43 @@
   const AUDIT_NONTEXT_INPUTS = new Set([
     "hidden", "checkbox", "radio", "range", "color", "file", "image",
   ]);
-  const AUDIT_BG_TOKENS = new Set([
-    "background", "surface", "surface_dim", "surface_bright", "surface_variant",
+  const AUDIT_BG_SURFACE_TOKENS = new Set([
+    "surface", "surface_dim", "surface_bright", "surface_variant",
     "surface_container_lowest", "surface_container_low", "surface_container",
-    "surface_container_high", "surface_container_highest", "inverse_on_surface",
-    "primary_container", "secondary_container", "tertiary_container", "error_container",
+    "surface_container_high", "surface_container_highest", "background",
+    "inverse_on_surface", "primary_container", "secondary_container",
+    "tertiary_container", "error_container", "scrim", "shadow",
   ]);
-  const AUDIT_FG_TOKENS = new Set([
-    "on_background", "on_surface", "on_surface_variant", "inverse_on_surface",
-    "primary", "on_primary", "on_primary_container", "primary_fixed", "primary_fixed_dim",
-    "secondary", "on_secondary", "on_secondary_container", "secondary_fixed_dim", "on_secondary_fixed_variant",
-    "tertiary", "on_tertiary", "on_tertiary_container",
-    "outline", "outline_variant", "error", "on_error", "on_error_container",
+  const AUDIT_BG_ACCENT_TOKENS = new Set([
+    "primary", "primary_fixed", "primary_fixed_dim",
+    "secondary", "secondary_fixed", "secondary_fixed_dim",
+    "tertiary", "tertiary_fixed", "tertiary_fixed_dim",
+    "error", "inverse_primary", "surface_tint", "source_color",
   ]);
+  const AUDIT_FG_ON_DARK_TOKENS = new Set([
+    "on_surface", "on_surface_variant", "on_background",
+    "primary", "primary_fixed", "primary_fixed_dim",
+    "secondary", "secondary_fixed", "secondary_fixed_dim",
+    "tertiary", "tertiary_fixed", "tertiary_fixed_dim",
+    "error", "on_primary_container", "on_secondary_container",
+    "on_tertiary_container", "on_error_container", "outline",
+  ]);
+  const AUDIT_FG_ON_LIGHT_TOKENS = new Set([
+    "on_primary", "on_primary_fixed", "on_primary_fixed_variant",
+    "on_secondary", "on_secondary_fixed", "on_secondary_fixed_variant",
+    "on_tertiary", "on_tertiary_fixed", "on_tertiary_fixed_variant",
+    "on_error", "inverse_on_surface", "inverse_primary",
+    "surface", "background", "surface_container_lowest",
+  ]);
+  const AUDIT_SECONDARY_TOKENS = new Set([
+    "background", "surface_dim", "surface_tint", "source_color", "scrim", "shadow",
+    "primary_fixed", "primary_fixed_dim", "on_primary_fixed", "on_primary_fixed_variant",
+    "secondary_fixed", "secondary_fixed_dim", "on_secondary_fixed", "on_secondary_fixed_variant",
+    "tertiary_fixed", "tertiary_fixed_dim", "on_tertiary_fixed", "on_tertiary_fixed_variant",
+  ]);
+  const AUDIT_DELTA_MAX = 14;
+  const AUDIT_ACCENT_BG_DELTA_MAX = 8;
+  const AUDIT_INVERSE_BG_DELTA_MAX = 3.5;
   const AUDIT_MAX_ELEMENTS = 6000;
   const AUDIT_MAX_FINDINGS = 100;
   const AUDIT_SHEET = new CSSStyleSheet();
@@ -1082,7 +1106,10 @@
     let best = null;
     for (const p of list) {
       const d = deltaE(lab, p.lab);
-      if (!best || d < best.delta) best = { token: p.token, delta: d };
+      if (!best || d < best.delta - 0.5 ||
+          (Math.abs(d - best.delta) <= 0.5 && p.rank < best.rank)) {
+        best = { token: p.token, delta: d, rank: p.rank };
+      }
     }
     return best;
   }
@@ -1090,22 +1117,25 @@
   function auditPalette(given) {
     const out = [];
     const rootCs = getComputedStyle(document.documentElement);
-    for (const [token] of TOKENS) {
+    for (const token of PALETTE_OWNED) {
       const raw = (given && given[`--${token}`]) || rootCs.getPropertyValue(`--${token}`).trim();
       if (!raw) continue;
       const col = parseCssColor(String(raw).trim(), document.documentElement);
       if (col && col.a > 0.5) {
         out.push({
           token, col, lab: toLab(col),
-          isBg: AUDIT_BG_TOKENS.has(token),
-          isFg: AUDIT_FG_TOKENS.has(token),
+          rank: AUDIT_SECONDARY_TOKENS.has(token) ? 2 : (token.includes("_container") ? 1 : 0),
+          isBgSurface: AUDIT_BG_SURFACE_TOKENS.has(token),
+          isBgAccent: AUDIT_BG_ACCENT_TOKENS.has(token),
+          isFgDark: AUDIT_FG_ON_DARK_TOKENS.has(token),
+          isFgLight: AUDIT_FG_ON_LIGHT_TOKENS.has(token),
         });
       }
     }
     return out;
   }
 
-  const COLOR_STOP_RE = /#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})\b|(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\([^()]+\)|\btransparent\b/gi;
+  const COLOR_STOP_RE = /#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})\b|(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color|color-mix)\((?:[^()]|\([^()]*\))+\)|\btransparent\b/gi;
 
   function parseGradientStops(bgImage, el) {
     const matches = bgImage.match(COLOR_STOP_RE);
@@ -1133,12 +1163,22 @@
     return { r: 255, g: 255, b: 255, a: 1 };
   }
 
-  function auditBackground(el, fallbackCanvas) {
-    const layers = [];
-    let imageOwner = null, bgOwner = null;
+  function auditBackground(el, fallbackCanvas, skipSelfBg = false) {
+    const allNodes = [];
+    let imageOwner = null, bgOwner = null, opaqueAt = -1;
     for (let n = el; n && n.nodeType === 1;
          n = n.parentElement || n.getRootNode?.()?.host || null) {
       const cs = getComputedStyle(n);
+      const op = Number(cs.opacity);
+      const opacity = Number.isFinite(op) ? Math.max(0, Math.min(1, op)) : 1;
+      if (skipSelfBg && n === el) {
+        if (opacity < 0.999) allNodes.push({ stops: null, opacity });
+        continue;
+      }
+      if (opaqueAt >= 0) {
+        if (opacity < 0.999) opaqueAt = -1;
+        else continue;
+      }
       const bgi = cs.backgroundImage;
       const col = parseCssColor(cs.backgroundColor, n);
       let stops = null;
@@ -1155,27 +1195,58 @@
             a: s.a + col.a * (1 - s.a),
           }));
         }
-        layers.push({ stops });
-        if (opaqueStops || (col && col.a >= 0.999)) break;
+        allNodes.push({ stops, opacity });
+        if ((opaqueStops || (col && col.a >= 0.999)) && opacity >= 0.999) opaqueAt = allNodes.length;
         continue;
       }
-      if (!col || col.a === 0) continue;
-      bgOwner ??= n;
-      layers.push({ stops: [col] });
-      if (col.a >= 0.999) break;
+      if (col && col.a > 0) {
+        bgOwner ??= n;
+        allNodes.push({ stops: [col], opacity });
+        if (col.a >= 0.999 && opacity >= 0.999) opaqueAt = allNodes.length;
+      } else if (opacity < 0.999) {
+        allNodes.push({ stops: null, opacity });
+      }
     }
-    let candidatesBg = [fallbackCanvas];
+    const layers = opaqueAt >= 0 ? allNodes.slice(0, opaqueAt) : allNodes;
+    let states = [{
+      rawBg: fallbackCanvas,
+      fgScale: 1,
+      fgOffset: { r: 0, g: 0, b: 0 },
+    }];
     for (let i = layers.length - 1; i >= 0; i--) {
+      const { stops, opacity } = layers[i];
       const next = [];
-      for (const s of layers[i].stops) {
-        for (const base of candidatesBg) {
-          next.push(s.a >= 1 ? { r: s.r, g: s.g, b: s.b, a: 1 } : blendOver(s, base));
+      for (const st of states) {
+        const fgScale = st.fgScale * opacity;
+        const fgOffset = {
+          r: st.fgScale * (1 - opacity) * st.rawBg.r + st.fgOffset.r,
+          g: st.fgScale * (1 - opacity) * st.rawBg.g + st.fgOffset.g,
+          b: st.fgScale * (1 - opacity) * st.rawBg.b + st.fgOffset.b,
+        };
+        if (!stops) {
+          next.push({ rawBg: st.rawBg, fgScale, fgOffset });
+          continue;
+        }
+        for (const s of stops) {
+          const rawBg = s.a >= 1 ? { r: s.r, g: s.g, b: s.b, a: 1 } : blendOver(s, st.rawBg);
+          next.push({ rawBg, fgScale, fgOffset });
         }
       }
-      candidatesBg = next.slice(0, 8);
+      states = next.slice(0, 8);
     }
+    const bgs = states.map((st) => ({
+      rawBg: st.rawBg,
+      screenBg: {
+        r: st.fgScale * st.rawBg.r + st.fgOffset.r,
+        g: st.fgScale * st.rawBg.g + st.fgOffset.g,
+        b: st.fgScale * st.rawBg.b + st.fgOffset.b,
+        a: 1,
+      },
+      fgScale: st.fgScale,
+      fgOffset: st.fgOffset,
+    }));
     return {
-      bgs: candidatesBg,
+      bgs,
       imageOwner,
       bgOwner: bgOwner || document.body || document.documentElement,
     };
@@ -1186,9 +1257,15 @@
     if (tag === "input") {
       const type = (el.getAttribute("type") || "text").toLowerCase();
       if (AUDIT_NONTEXT_INPUTS.has(type)) return "";
-      return String(el.value || el.placeholder || "").replace(/\s+/g, " ").trim();
+      const val = String(el.value || "").replace(/\s+/g, " ").trim();
+      if (val) return val;
+      return String(el.placeholder || "").replace(/\s+/g, " ").trim();
     }
-    if (tag === "textarea") return String(el.value || el.placeholder || "").replace(/\s+/g, " ").trim();
+    if (tag === "textarea") {
+      const val = String(el.value || "").replace(/\s+/g, " ").trim();
+      if (val) return val;
+      return String(el.placeholder || "").replace(/\s+/g, " ").trim();
+    }
     if (tag === "select") return String(el.selectedOptions?.[0]?.textContent || "").replace(/\s+/g, " ").trim();
     let text = "";
     for (const n of el.childNodes) if (n.nodeType === 3) text += n.textContent;
@@ -1220,15 +1297,18 @@
   function audit(msg) {
     clearAudit();
     const palette = auditPalette(msg?.palette);
-    const bgPalette = palette.filter((p) => p.isBg);
-    const fgPalette = palette.filter((p) => p.isFg);
+    const bgSurfacePalette = palette.filter((p) => p.isBgSurface);
+    const bgAccentPalette = palette.filter((p) => p.isBgAccent);
+    const bgAllValid = [...bgSurfacePalette, ...bgAccentPalette];
+    const fgDarkPalette = palette.filter((p) => p.isFgDark);
+    const fgLightPalette = palette.filter((p) => p.isFgLight);
     const inverseSurface = palette.find((p) => p.token === "inverse_surface") ?? null;
     const root = document.body || document.documentElement;
     if (!root) return { ok: false, error: "The page has no body to audit." };
 
     const fallbackCanvas = defaultCanvasColor();
     const seen = new Map();
-    const auditedSurfaces = new WeakSet();
+    const surfaceState = new WeakMap();
     const skippedImages = new WeakSet();
     const roots = [root];
     let scanned = 0, textCount = 0, imageSkipped = 0, shadowRoots = 0;
@@ -1237,9 +1317,31 @@
       acceptNode(node) {
         if (node === hostEl || node.localName === "dusky-picker") return NodeFilter.FILTER_REJECT;
         if (AUDIT_SKIP_TAGS.has(node.localName)) return NodeFilter.FILTER_REJECT;
+        if (node.matches?.(':disabled, [disabled], [aria-disabled="true"]')) return NodeFilter.FILTER_REJECT;
         if (!node.checkVisibility({ checkOpacity: true })) return NodeFilter.FILTER_REJECT;
         return NodeFilter.FILTER_ACCEPT;
       },
+    };
+
+    const classifyBgStop = (col) => {
+      const lab = toLab(col);
+      const surfMatch = nearestToken(lab, bgSurfacePalette);
+      if (surfMatch && surfMatch.delta <= AUDIT_DELTA_MAX) {
+        return { off: false, match: surfMatch, lab };
+      }
+      const accMatch = nearestToken(lab, bgAccentPalette);
+      if (accMatch && accMatch.delta <= AUDIT_ACCENT_BG_DELTA_MAX) {
+        return { off: false, match: accMatch, lab };
+      }
+      if (inverseSurface && deltaE(lab, inverseSurface.lab) <= AUDIT_INVERSE_BG_DELTA_MAX) {
+        return {
+          off: false,
+          match: { token: "inverse_surface", delta: deltaE(lab, inverseSurface.lab), rank: 1 },
+          lab,
+        };
+      }
+      const fallbackMatch = nearestToken(lab, bgSurfacePalette.length ? bgSurfacePalette : palette);
+      return { off: true, match: fallbackMatch, lab };
     };
 
     for (let rIdx = 0; rIdx < roots.length && scanned < AUDIT_MAX_ELEMENTS; rIdx++) {
@@ -1260,23 +1362,63 @@
         if (cs.visibility !== "visible") continue;
         if (el.getClientRects().length === 0) continue;
 
-        const fillRaw = cs.webkitTextFillColor;
-        const fillCol = fillRaw ? parseCssColor(fillRaw, el) : null;
-        const fg = (fillCol && fillCol.a > 0) ? fillCol : parseCssColor(cs.color, el);
-        if (!fg || fg.a < 0.05) continue;
+        const isPlaceholder = (el.localName === "input" || el.localName === "textarea") &&
+          !String(el.value || "").trim() && !!el.placeholder;
+        let fgStops = null;
+        let skipSelfBg = false;
+
+        if (isPlaceholder) {
+          const pcs = getComputedStyle(el, "::placeholder");
+          const pCol = parseCssColor(pcs.color, el);
+          const pOp = Number(pcs.opacity);
+          if (pCol) {
+            fgStops = [{
+              ...pCol,
+              a: pCol.a * (Number.isFinite(pOp) ? Math.max(0, Math.min(1, pOp)) : 1),
+            }];
+          }
+        } else {
+          const fillRaw = cs.webkitTextFillColor;
+          const fillCol = fillRaw ? parseCssColor(fillRaw, el) : null;
+          const rawFg = (fillCol && fillCol.a > 0) ? fillCol : parseCssColor(cs.color, el);
+          const bgClip = cs.backgroundClip || cs.webkitBackgroundClip || "";
+          if ((!rawFg || rawFg.a < 0.05) && bgClip === "text") {
+            const clipStops = cs.backgroundImage && cs.backgroundImage !== "none"
+              ? parseGradientStops(cs.backgroundImage, el)
+              : null;
+            const clipBg = parseCssColor(cs.backgroundColor, el);
+            fgStops = clipStops || (clipBg && clipBg.a >= 0.05 ? [clipBg] : null);
+            skipSelfBg = true;
+          } else if (rawFg) {
+            fgStops = [rawFg];
+          }
+        }
+
+        if (!fgStops || !fgStops.some((s) => s.a >= 0.05)) continue;
         textCount++;
 
-        const { bgs, imageOwner, bgOwner } = auditBackground(el, fallbackCanvas);
-        let bg = bgs[0], ink = fg.a >= 1 ? fg : blendOver(fg, bg);
-        let ratio = contrastRatio(ink, bg);
-        for (let i = 1; i < bgs.length; i++) {
-          const candBg = bgs[i];
-          const candInk = fg.a >= 1 ? fg : blendOver(fg, candBg);
-          const candRatio = contrastRatio(candInk, candBg);
-          if (candRatio < ratio) {
-            ratio = candRatio;
-            bg = candBg;
-            ink = candInk;
+        const { bgs, imageOwner, bgOwner } = auditBackground(el, fallbackCanvas, skipSelfBg);
+        let bg = bgs[0].screenBg, rawBg = bgs[0].rawBg;
+        let rawInk = fgStops[0], ink = fgStops[0], ratio = Infinity;
+
+        for (const st of bgs) {
+          for (const fStop of fgStops) {
+            if (fStop.a < 0.05) continue;
+            const candRawInk = fStop.a >= 1 ? fStop : blendOver(fStop, st.rawBg);
+            const candScreenInk = {
+              r: st.fgScale * candRawInk.r + st.fgOffset.r,
+              g: st.fgScale * candRawInk.g + st.fgOffset.g,
+              b: st.fgScale * candRawInk.b + st.fgOffset.b,
+              a: 1,
+            };
+            const candRatio = contrastRatio(candScreenInk, st.screenBg);
+            if (candRatio < ratio) {
+              ratio = candRatio;
+              bg = st.screenBg;
+              rawBg = st.rawBg;
+              rawInk = candRawInk;
+              ink = candScreenInk;
+            }
           }
         }
 
@@ -1295,19 +1437,38 @@
           reasons.push("low-contrast");
         }
 
-        const fgLab = toLab(ink);
-        const nearest = nearestToken(fgLab, fgPalette.length ? fgPalette : palette);
-        if (nearest && nearest.delta > 15) reasons.push("off-palette-text");
-
-        let bgNearest = null;
-        if (!imageOwner && bgPalette.length && bgOwner && !auditedSurfaces.has(bgOwner)) {
-          auditedSurfaces.add(bgOwner);
-          const bgLab = toLab(bg);
-          const isInverseBg = inverseSurface && deltaE(bgLab, inverseSurface.lab) <= 3;
-          if (!isInverseBg) {
-            bgNearest = nearestToken(bgLab, bgPalette);
-            if (bgNearest && bgNearest.delta > 14) reasons.push("off-palette-background");
+        let surfInfo = bgOwner ? surfaceState.get(bgOwner) : null;
+        if (!surfInfo && !imageOwner && bgAllValid.length && bgOwner) {
+          let worstStop = null;
+          for (const st of bgs) {
+            const res = classifyBgStop(st.rawBg);
+            if (!worstStop || (res.off && !worstStop.off) ||
+                (res.off === worstStop.off && (res.match?.delta ?? 0) > (worstStop.match?.delta ?? 0))) {
+              worstStop = res;
+            }
           }
+          surfInfo = {
+            off: !!worstStop?.off,
+            bgNearest: worstStop?.match ?? null,
+            reported: false,
+          };
+          surfaceState.set(bgOwner, surfInfo);
+        }
+
+        let bgNearest = surfInfo?.bgNearest ?? null;
+        if (surfInfo?.off && !surfInfo.reported) {
+          surfInfo.reported = true;
+          reasons.push("off-palette-background");
+        }
+
+        const bgLab = toLab(rawBg);
+        const activeFgPool = bgLab.L > 45
+          ? (fgLightPalette.length ? fgLightPalette : palette)
+          : (fgDarkPalette.length ? fgDarkPalette : palette);
+        const fgLab = toLab(rawInk);
+        const nearest = nearestToken(fgLab, activeFgPool);
+        if (!imageOwner && !surfInfo?.off && nearest && nearest.delta > AUDIT_DELTA_MAX) {
+          reasons.push("off-palette-text");
         }
 
         if (!reasons.length) continue;
@@ -1315,16 +1476,21 @@
         const sig = `${el.localName}.${[...el.classList].sort().join(".")}` +
           `|${rgbHex(ink)}|${rgbHex(bg)}|${reasons.join(",")}`;
         const selector = auditSelector(el);
+        const ownerSel = (reasons.includes("off-palette-background") && bgOwner && bgOwner !== el)
+          ? auditSelector(bgOwner) : "";
         const hit = seen.get(sig);
         if (hit) {
           hit.count++;
           if (selector && hit.selectors.size < 5) hit.selectors.add(selector);
+          if (ownerSel && hit.selectors.size < 5) hit.selectors.add(ownerSel);
           continue;
         }
         if (!selector) continue;
+        const selectors = new Set([selector]);
+        if (ownerSel) selectors.add(ownerSel);
         seen.set(sig, {
           selector,
-          selectors: new Set([selector]),
+          selectors,
           text: text.slice(0, 140),
           count: 1,
           reasons,
@@ -1342,15 +1508,24 @@
     }
 
     dropProbe();
-    const issues = [...seen.values()].sort((a, b) => {
+    const allIssues = [...seen.values()].sort((a, b) => {
       const rank = (x) => (x.reasons.includes("low-contrast") ? 0 : 1);
       return rank(a) - rank(b) || b.count - a.count || a.ratio - b.ratio;
     });
-    const shown = issues.slice(0, AUDIT_MAX_FINDINGS);
+    let shown;
+    if (allIssues.length <= AUDIT_MAX_FINDINGS) {
+      shown = allIssues;
+    } else {
+      const lowList = allIssues.filter((i) => i.reasons.includes("low-contrast"));
+      const offList = allIssues.filter((i) => !i.reasons.includes("low-contrast"));
+      const lowQuota = Math.min(lowList.length, Math.max(75, AUDIT_MAX_FINDINGS - offList.length));
+      const offQuota = Math.min(offList.length, AUDIT_MAX_FINDINGS - lowQuota);
+      shown = [...lowList.slice(0, lowQuota), ...offList.slice(0, offQuota)];
+    }
     showAudit([...new Set(shown.flatMap((i) => [...i.selectors]))]);
 
-    const low = issues.filter((i) => i.reasons.includes("low-contrast")).length;
-    const off = issues.filter((i) => i.reasons.some((r) => r.startsWith("off-palette"))).length;
+    const low = allIssues.filter((i) => i.reasons.includes("low-contrast")).length;
+    const off = allIssues.filter((i) => i.reasons.some((r) => r.startsWith("off-palette"))).length;
     const capHit = scanned >= AUDIT_MAX_ELEMENTS;
     const host = (location.hostname || "page").replace(/^www\./, "");
     const lines = [
@@ -1363,8 +1538,8 @@
         (shadowRoots ? ` across ${shadowRoots} shadow root(s)` : "") +
         `, ${textCount} with visible text` +
         (imageSkipped ? `, ${imageSkipped} url-image background(s) skipped` : ""),
-      `- Findings: ${issues.length} (${low} low contrast, ${off} off-palette)` +
-        (issues.length > shown.length ? ` — showing the first ${shown.length}` : ""),
+      `- Findings: ${allIssues.length} (${low} low contrast, ${off} off-palette)` +
+        (allIssues.length > shown.length ? ` — showing the first ${shown.length}` : ""),
       "",
     ];
 
@@ -1392,10 +1567,10 @@
       scanned,
       textCount,
       imageSkipped,
-      issues: issues.length,
+      issues: allIssues.length,
       lowContrast: low,
       offPalette: off,
-      truncated: issues.length > shown.length || capHit,
+      truncated: allIssues.length > shown.length || capHit,
       text: lines.join("\n"),
     };
   }
