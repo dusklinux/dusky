@@ -33,5 +33,5 @@ strip = true
 # The layer-shell crate enables window_clipboard defaults, including X11.
 # Keep its existing API with only the Wayland implementation.
 [patch.crates-io]
-fontdb = { path = "../../../rust_shared/fontdb" }
+fontdb = { path = "../../rust_shared/fontdb" }
 window_clipboard = { path = "src/wayland_clipboard" }

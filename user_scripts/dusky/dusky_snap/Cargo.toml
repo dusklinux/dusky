@@ -31,4 +31,4 @@ strip = true
 debug = 0
 
 [patch.crates-io]
-fontdb = { path = "../../../rust_shared/fontdb" }
+fontdb = { path = "../../rust_shared/fontdb" }

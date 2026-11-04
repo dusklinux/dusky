@@ -1,4 +1,4 @@
-#[path = "../../../../rust_shared/ui_fonts.rs"]
+#[path = "../../../rust_shared/ui_fonts.rs"]
 mod fonts;
 
 mod apply;
