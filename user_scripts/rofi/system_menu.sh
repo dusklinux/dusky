@@ -23,7 +23,7 @@
 set -uo pipefail
 
 declare -gr SCRIPTS_DIR="${HOME}/user_scripts"
-declare -gr DUSKY_CENTER_DIR="${SCRIPTS_DIR}/dusky_system/dusky_center"
+declare -gr DUSKY_CENTER_DIR="${SCRIPTS_DIR}/dusky/dusky_center"
 declare -gr TEXT_EDITOR_BIN="${DUSKY_CENTER_DIR}/dusky_text_editor.py"
 declare -gr HYPR_EDIT_DIR="${HOME}/.config/hypr/edit_here"
 declare -gr SEARCH_DIR="${HOME}/Documents/pensive/linux"

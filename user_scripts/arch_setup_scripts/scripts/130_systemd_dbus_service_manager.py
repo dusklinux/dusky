@@ -50,9 +50,9 @@ class SymlinkConfig:
 USER_SERVICES: list[ServiceConfig] = [
     # Dusky Polkit Authentication Agent (Default: Enable)
     # Replaces hyprpolkitagent (removed by 010_package_removal.sh).
-    ServiceConfig("$HOME/user_scripts/dusky_system/dusky_polkit/dusky_polkit.service", "enable"),
+    ServiceConfig("$HOME/user_scripts/dusky/dusky_polkit/dusky_polkit.service", "enable"),
     # Network Meter (Default: Enable)
-    ServiceConfig("$HOME/user_scripts/waybar/network/rust/dusky_network.service", "enable"),
+    ServiceConfig("$HOME/user_scripts/dusky/waybar/network/rust/dusky_network.service", "enable"),
     # Dusky Update Checker (enable its six-hour timer; service is timer-triggered)
     ServiceConfig("$HOME/user_scripts/update_dusky/update_checker/service/update_checker.service", "disable"),
     ServiceConfig("$HOME/user_scripts/update_dusky/update_checker/service/update_checker.timer", "enable"),
@@ -66,7 +66,7 @@ USER_SERVICES: list[ServiceConfig] = [
     ServiceConfig("$HOME/user_scripts/screentime/dusky_screentime.service", "disable"),
 
     # Dusky Notification Time Tracker Daemon (Default: Enable)
-    ServiceConfig("$HOME/user_scripts/dusky_system/dusky_tray/service/notification_time_service/dusky_notif_time.service", "enable"),
+    ServiceConfig("$HOME/user_scripts/dusky/dusky_tray/service/notification_time_service/dusky_notif_time.service", "enable"),
 
     # Dusky Wayland Clipboard Manager (History & Persistence) (Default: Enable)
     ServiceConfig("$HOME/user_scripts/clipboard/service/dusky_clipboard.service", "enable"),

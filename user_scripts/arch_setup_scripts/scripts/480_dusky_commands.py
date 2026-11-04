@@ -96,7 +96,7 @@ SETUP_COMMANDS: list[FleetCommand] = [
     FleetCommand(Mode.USER, 'mkdir -p "$HOME/Documents/dusky_backups/"', "Create Backups Directory"),
     FleetCommand(
         Mode.USER,
-        'TARGET="$HOME/user_scripts/dusky_system/click_away_to_dismiss" && '
+        'TARGET="$HOME/user_scripts/dusky/click_away_to_dismiss" && '
         'wayland-scanner client-header "$TARGET/hyprland_focus_grab_v1.xml" "$TARGET/hyprland_focus_grab_v1_client_protocol.h" && '
         'wayland-scanner private-code "$TARGET/hyprland_focus_grab_v1.xml" "$TARGET/hyprland_focus_grab_v1_client_protocol.c" && '
         'gcc -shared -fPIC -o "$TARGET/libwaylandgrab.so" "$TARGET/dusky.c" "$TARGET/hyprland_focus_grab_v1_client_protocol.c" -lwayland-client -lpthread -ldl',
@@ -147,7 +147,7 @@ AFTER_COMMANDS: list[FleetCommand] = [
     FleetCommand(Mode.SUDO, 'systemctl enable --now ufw.service || true', "Enable & Start UFW Firewall Service"),
     FleetCommand(
         Mode.USER,
-        'TARGET="$HOME/user_scripts/dusky_system/click_away_to_dismiss" && '
+        'TARGET="$HOME/user_scripts/dusky/click_away_to_dismiss" && '
         'wayland-scanner client-header "$TARGET/hyprland_focus_grab_v1.xml" "$TARGET/hyprland_focus_grab_v1_client_protocol.h" && '
         'wayland-scanner private-code "$TARGET/hyprland_focus_grab_v1.xml" "$TARGET/hyprland_focus_grab_v1_client_protocol.c" && '
         'gcc -shared -fPIC -o "$TARGET/libwaylandgrab.so" "$TARGET/dusky.c" "$TARGET/hyprland_focus_grab_v1_client_protocol.c" -lwayland-client -lpthread -ldl',

@@ -153,7 +153,7 @@ declare -a SCRIPT_SEARCH_DIRS=(
     "${WORK_TREE}/user_scripts/misc_extra"
     "${WORK_TREE}/user_scripts/misc_extra/delete_in_3_weeks"
     "${WORK_TREE}/user_scripts/update_dusky/update_checker"
-    "${WORK_TREE}/user_scripts/dusky_system/reload_cc"
+    "${WORK_TREE}/user_scripts/dusky/reload_cc"
     "${WORK_TREE}/user_scripts/services"
     "${WORK_TREE}/user_scripts/update_dusky"
     "${WORK_TREE}/user_scripts/rofi"

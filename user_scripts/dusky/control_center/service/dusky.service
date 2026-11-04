@@ -1,0 +1,36 @@
+[Unit]
+Description=Dusky Control Center Daemon
+After=graphical-session.target
+PartOf=graphical-session.target
+StartLimitIntervalSec=10
+StartLimitBurst=50
+
+[Service]
+Type=dbus
+BusName=com.github.dusky.controlcenter
+
+# Keep the window ready; limit allocator arenas used by background workers.
+Environment=PYTHONUNBUFFERED=1 PYTHONOPTIMIZE=2 MALLOC_ARENA_MAX=2
+ExecStart=%h/user_scripts/dusky/control_center/dusky_control_center.py --gapplication-service
+Slice=app-graphical.slice
+
+Restart=on-failure
+RestartMode=direct
+RestartSec=250ms
+RestartSteps=5
+RestartMaxDelaySec=4s
+RestartPreventExitStatus=5
+
+# SIGTERM drains pending settings writes before exit.
+TimeoutStopSec=2s
+TimeoutStopFailureMode=kill
+
+MemoryAccounting=yes
+OOMPolicy=kill
+OOMScoreAdjust=400
+MemoryHigh=350M
+MemoryMax=750M
+SyslogIdentifier=dusky
+
+[Install]
+WantedBy=graphical-session.target

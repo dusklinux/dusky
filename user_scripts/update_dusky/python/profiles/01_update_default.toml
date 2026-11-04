@@ -20,7 +20,7 @@ search_dirs = [
     "user_scripts/misc_extra",
     "user_scripts/misc_extra/delete_in_3_weeks",
     "user_scripts/update_dusky/update_checker",
-    "user_scripts/dusky_system/reload_cc",
+    "user_scripts/dusky/reload_cc",
     "user_scripts/services",
     "user_scripts/update_dusky",
     "user_scripts/rofi",

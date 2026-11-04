@@ -460,7 +460,7 @@ def main(argv: list[str] | None = None) -> int:
         log("ERR", "The Dusky ISO supports x86-64 only")
         return 1
     home = Path.home()
-    project = home / "user_scripts/images/dusky_snap"
+    project = home / "user_scripts/dusky/images/dusky_snap"
     install_dir = home / ".local/share/dusky/dusky_snap"
     install_dir.mkdir(parents=True, exist_ok=True)
     with (install_dir / ".build.lock").open("a") as lock:

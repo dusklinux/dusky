@@ -478,7 +478,7 @@ def build_native(project: Path, binary: Path, manifest_path: Path, version: str,
 
 def main(argv: list[str] | None = None) -> int:
     home = Path.home()
-    project = home / "user_scripts/images/dusky_papers"
+    project = home / "user_scripts/dusky/images/dusky_papers"
     source_available = (project / "Cargo.toml").is_file()
     try:
         project_ver = get_project_version(project) if source_available else None
