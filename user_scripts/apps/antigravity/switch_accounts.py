@@ -19,61 +19,132 @@ from pathlib import Path
 # ==========================================
 # 1. AUTONOMOUS FAIL-SAFE DEPENDENCY RESOLVER
 # ==========================================
-def resolve_dependencies() -> None:
-    """Iterative dependency resolver with TTY awareness and PIP/AUR fallbacks."""
-    requirements = {
-        "rich": {"pac": "python-rich", "pip": "rich"},
-        "keyring": {"pac": "python-keyring", "pip": "keyring"},
-        "questionary": {"pac": "python-questionary", "pip": "questionary"},
-        "psutil": {"pac": "python-psutil", "pip": "psutil"}
-    }
+# ==========================================
+# 1. AUTONOMOUS FAIL-SAFE DEPENDENCY RESOLVER
+# ==========================================
+# The only reliable signal is "can THIS interpreter import it". On a bleeding-edge
+# interpreter (3.15 here, while the repos are still built for 3.14) pacman installs
+# python-questionary into /usr/lib/python3.14/site-packages, exits 0, and the module
+# stays invisible - which turned the old resolver into an endless sudo/re-exec loop.
+# Never trust an installer's exit code, and never re-exec blindly.
+DEPS: dict[str, tuple[str, str]] = {
+    "rich": ("python-rich", "rich"),
+    "keyring": ("python-keyring", "keyring"),
+    "questionary": ("python-questionary", "questionary"),
+    "psutil": ("python-psutil", "psutil"),
+}
 
-    missing = [mod for mod in requirements if importlib.util.find_spec(mod) is None]
+
+def _importable(mod: str) -> bool:
+    """True when `mod` resolves for the running interpreter."""
+    importlib.invalidate_caches()
+    try:
+        return importlib.util.find_spec(mod) is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def _missing() -> list[str]:
+    return [mod for mod in DEPS if not _importable(mod)]
+
+
+def _run(cmd: list[str], timeout: int = 900) -> tuple[bool, str]:
+    """Run an installer quietly, keeping the tail of its output for diagnostics."""
+    try:
+        res = subprocess.run(
+            cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, str(exc)
+    output = (res.stderr or res.stdout or "").strip()
+    return res.returncode == 0, "\n".join(output.splitlines()[-4:])
+
+
+def _distro_python_matches() -> bool:
+    """True when distro python packages are usable by the running interpreter.
+
+    pacman builds python-* against the distro's default interpreter; when a newer
+    one is running they can never be imported, so pacman must be skipped entirely.
+    """
+    distro = shutil.which("python3", path="/usr/bin:/bin")
+    if not distro or Path(distro).resolve() == Path(sys.executable).resolve():
+        return True
+    ok, out = _run([distro, "-c", "import sys; print('%d.%d' % sys.version_info[:2])"], timeout=20)
+    current = "%d.%d" % sys.version_info[:2]
+    return ok and out.strip().splitlines()[-1:] == [current]
+
+
+def _privileges_available() -> bool:
+    """True when sudo is usable now (so non-interactive runs never hang on a prompt)."""
+    if shutil.which("sudo") is None:
+        return False
+    if sys.stdin.isatty():
+        return subprocess.run(["sudo", "-v"], check=False).returncode == 0
+    return subprocess.run(["sudo", "-n", "true"], capture_output=True).returncode == 0
+
+
+def resolve_dependencies() -> None:
+    """Satisfy missing deps for the running interpreter, in one bounded pass."""
+    missing = _missing()
     if not missing:
         return
 
-    if not sys.stdout.isatty():
-        print(f"\n[✗] FATAL: Missing dependencies ({', '.join(missing)}) in non-interactive shell.")
-        print("[✗] Cannot invoke pacman/sudo. Please run interactively to bootstrap.")
-        sys.exit(1)
-
     print(f"\n[*] Missing dependencies detected: {', '.join(missing)}")
-    print("[*] Engaging autonomous fail-safe resolver...\n")
+    print("[*] Engaging autonomous fail-safe resolver...")
 
-    subprocess.run(["sudo", "-v"], check=False)
-    aur_helper = next((h for h in ["paru", "yay"] if shutil.which(h)), None)
+    pacman_usable = _distro_python_matches()
+    aur_helper = next((h for h in ("paru", "yay") if shutil.which(h)), None)
+    can_install_pkgs = pacman_usable and _privileges_available()
+
+    if pacman_usable:
+        print("")
+    else:
+        print(f"[!] Repo python packages are built for the distro interpreter, not "
+              f"{sys.version.split()[0]}; resolving for {sys.executable} via pip.\n")
+
+    try:
+        import site as _site
+
+        user_site = _site.getusersitepackages()
+    except Exception:
+        user_site = ""
+    if user_site and user_site not in sys.path:
+        sys.path.append(user_site)
+
+    pip_flags = (
+        ["--disable-pip-version-check"]
+        if sys.prefix != sys.base_prefix
+        else ["--user", "--break-system-packages", "--disable-pip-version-check"]
+    )
 
     for mod in missing:
-        pkg_pac = requirements[mod]["pac"]
-        pkg_pip = requirements[mod]["pip"]
+        pkg_pac, pkg_pip = DEPS[mod]
         print(f" -> Resolving '{mod}'...")
-        
-        success = False
+        ok, detail = False, ""
 
-        if aur_helper:
-            res = subprocess.run([aur_helper, "-S", "--needed", "--noconfirm", pkg_pac], 
-                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            success = (res.returncode == 0)
+        if can_install_pkgs:
+            if aur_helper:
+                ok, detail = _run([aur_helper, "-S", "--needed", "--noconfirm", pkg_pac])
+            if not ok:
+                ok, detail = _run(["sudo", "pacman", "-S", "--needed", "--noconfirm", pkg_pac])
+            # An installer exit code proves nothing: verify the actual import.
+            ok = _importable(mod)
+            if not ok:
+                print(f"    [!] '{pkg_pac}' is installed but '{mod}' is still not importable here.")
 
-        if not success:
-            res = subprocess.run(["sudo", "pacman", "-S", "--needed", "--noconfirm", pkg_pac], 
-                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            success = (res.returncode == 0)
+        if not ok:
+            _, detail = _run([sys.executable, "-m", "pip", "install", *pip_flags, pkg_pip])
+            ok = _importable(mod)
 
-        if not success:
-            print(f"    [!] '{pkg_pac}' absent from repos. Injecting via pip bypass...")
-            res = subprocess.run(
-                [sys.executable, "-m", "pip", "install", "--user", "--break-system-packages", pkg_pip],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
-            success = (res.returncode == 0)
-
-        if not success:
-            print(f"\n[✗] FATAL: Absolute failure resolving '{mod}'.")
+        if not ok:
+            print(f"\n[✗] FATAL: Could not make '{mod}' importable for {sys.executable}.")
+            if detail:
+                print(f"    Installer output: {detail}")
+            print(f"    Manual fix: {sys.executable} -m pip install {' '.join(pip_flags)} {pkg_pip}")
             sys.exit(1)
 
     print("\n[✓] Dependencies successfully satisfied. Starting manager...\n")
-    os.execv(sys.executable, [sys.executable] + sys.argv)
+
 
 resolve_dependencies()
 
@@ -180,6 +251,8 @@ def is_token_expired(expiry: object) -> bool:
         exp_dt = datetime.fromisoformat(expiry.replace("Z", "+00:00"))
     except ValueError:
         return True
+    if exp_dt.tzinfo is None:
+        exp_dt = exp_dt.replace(tzinfo=timezone.utc)
     return datetime.now(timezone.utc) >= exp_dt - timedelta(seconds=60)
 
 
@@ -445,7 +518,7 @@ class ProfileManager:
     @staticmethod
     def is_valid_name(name: str) -> bool:
         """Strict alphanumeric, dash, and underscore validation."""
-        return bool(re.match(r"^[a-zA-Z0-9_-]+$", name))
+        return bool(re.match(r"^[a-zA-Z0-9_][a-zA-Z0-9_-]*$", name))
 
     def get_active(self) -> str | None:
         if self.active_profile_file.is_file():
@@ -550,17 +623,19 @@ class ProfileManager:
                 proc.terminate()
             except psutil.Error:
                 continue
-        
+
         gone, alive = psutil.wait_procs(processes, timeout=3.0)
         for proc in alive:
             try:
-                proc.kill() 
+                proc.kill()
             except psutil.Error:
                 pass
+        if alive:
+            psutil.wait_procs(alive, timeout=1.0)
         console.print(f"[success]✓ Closed {len(processes)} conflicting Antigravity process(es).[/success]")
         return True
 
-    def stash_keyring(self, profile_name: str) -> None:
+    def stash_keyring(self, profile_name: str) -> bool:
         """Save active keyring credentials to the profile directory."""
         try:
             token = keyring.get_password(self.service, self.account)
@@ -572,10 +647,12 @@ class ProfileManager:
                 console.print(f"[info]› Secured auth token to '{profile_name}'.[/info]")
             else:
                 console.print(f"[warning]! OS keyring returned no credentials for {self.service}/{self.account}; nothing stashed.[/warning]")
+            return True
         except Exception as e:
             console.print(f"[warning]! Credential stash failure: {e}[/warning]")
+            return False
 
-    def restore_keyring(self, profile_name: str) -> None:
+    def restore_keyring(self, profile_name: str) -> bool:
         """Inject stored profile credentials into OS keyring (instant local operation)."""
         token_file = self._get_token_path(profile_name)
         if token_file.is_file():
@@ -583,17 +660,20 @@ class ProfileManager:
                 token = token_file.read_text(encoding="utf-8").strip()
                 if not token:
                     console.print(f"[warning]! Empty credential payload in '{profile_name}'. Skipping restore.[/warning]")
-                    return
+                    return True
                 keyring.set_password(self.service, self.account, token)
                 console.print(f"[info]✓ Restored auth credentials for '{profile_name}'.[/info]")
+                return True
             except Exception as e:
                 console.print(f"[error]✗ Credential restore failure: {e}[/error]")
+                return False
         else:
             try:
                 keyring.delete_password(self.service, self.account)
                 console.print("[info]› Initialized fresh global auth state.[/info]")
             except Exception:
-                pass 
+                pass
+            return True
 
     def _maybe_refresh_token(self, profile_name: str, raw: str) -> str:
         """Helper used exclusively by check_profile to refresh expired tokens for diagnostics."""
@@ -618,6 +698,9 @@ class ProfileManager:
             return raw
         token["access_token"] = result["access_token"]
         token["expiry"] = format_token_expiry(result["expires_in"])
+        fresh_refresh = result.get("refresh_token")
+        if isinstance(fresh_refresh, str) and fresh_refresh:
+            token["refresh_token"] = fresh_refresh
         fresh_id = result.get("id_token")
         if isinstance(fresh_id, str) and fresh_id:
             payload["id_token"] = fresh_id
@@ -626,6 +709,9 @@ class ProfileManager:
 
     def check_profile(self, profile_name: str) -> bool:
         """Validate a profile's token against Google and display live model quota."""
+        if not self.is_valid_name(profile_name):
+            console.print(f"[error]✗ Error: Invalid profile syntax '{profile_name}'.[/error]")
+            return False
         token_file = self._get_token_path(profile_name)
         if not token_file.is_file():
             console.print(f"[error]✗ Profile '{profile_name}' has no stored credentials.[/error]")
@@ -683,6 +769,10 @@ class ProfileManager:
         if current_profile == target_profile:
             console.print(f"[info]› State unchanged. Already on '{target_profile}'.[/info]")
             if self.restart_mode:
+                running_procs = self.check_running_processes()
+                if running_procs:
+                    console.print(f"[warning]! {len(running_procs)} Antigravity process(es) running — closing for restart...[/warning]")
+                    self.kill_processes(running_procs)
                 start_antigravity()
             return True
 
@@ -727,13 +817,14 @@ class ProfileManager:
                     case "ignore":
                         console.print("[warning]Proceeding with collision risk...[/warning]")
 
-        if current_profile:
-            self.stash_keyring(current_profile)
+        if current_profile and not self.stash_keyring(current_profile):
+            return False
 
         target_path = self.profiles_dir / target_profile
         try:
             target_path.mkdir(parents=True, exist_ok=True)
-            self.restore_keyring(target_profile)
+            if not self.restore_keyring(target_profile):
+                return False
             self.active_profile_file.write_text(target_profile, encoding="utf-8")
         except IOError as e:
             console.print(f"[error]✗ IO fault during state switch: {e}[/error]")
