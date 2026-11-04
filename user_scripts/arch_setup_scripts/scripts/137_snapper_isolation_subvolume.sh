@@ -54,6 +54,12 @@ cleanup() {
     fi
 
     if [[ "$SETUP_COMPLETE" != true ]]; then
+        local snap_mp
+        for snap_mp in /.snapshots /home/.snapshots; do
+            if ! mountpoint -q "$snap_mp" 2>/dev/null && sudo findmnt --fstab -M "$snap_mp" >/dev/null 2>&1; then
+                sudo mount "$snap_mp" 2>/dev/null || true
+            fi
+        done
         if [[ "$DUSKY_SNAPSHOT_WAS_ACTIVE" == true ]] && ! systemctl is-active --quiet dusky_snapshot.timer; then
             sudo systemctl start dusky_snapshot.timer || warn "Could not restart the scheduled snapshot timer."
         fi
@@ -1087,7 +1093,8 @@ deploy_pair_helper() {
 set -euo pipefail
 export LC_ALL=C
 
-mkdir -p /run/dusky
+install -d -m 0700 /run/dusky
+umask 0077
 exec 9>/run/dusky/dusky.lock
 flock -x 9
 
@@ -1095,7 +1102,7 @@ pair="$(cat /proc/sys/kernel/random/uuid)"
 
 pair_ids() {
     local config="$1"
-    snapper --iso --jsonout -c "$config" list |
+    snapper --utc --iso --jsonout -c "$config" list |
         python3 -c 'import json, sys
 config, pair = sys.argv[1:]
 for row in json.load(sys.stdin)[config]:
@@ -1149,7 +1156,7 @@ limit = int(sys.argv[1])
 rows = {}
 for config in ("root", "home"):
     result = subprocess.run(
-        ["snapper", "--iso", "--jsonout", "-c", config, "list"],
+        ["snapper", "--utc", "--iso", "--jsonout", "-c", config, "list"],
         check=True, capture_output=True, text=True,
     )
     rows[config] = json.loads(result.stdout)[config]

@@ -2412,6 +2412,9 @@ def live_mount_of_subvolid(fs_uuid: str, subvolid: int) -> str | None:
             continue
         mounted_id = subvolid_from_options(str(entry.get("options") or ""))
         if mounted_id is None:
+            info = subvol_show(target)
+            mounted_id = info.subvolid if info is not None else None
+        if mounted_id is None:
             die(f"[!] Cannot identify the mounted subvolume at {target}.")
         if mounted_id == subvolid:
             return target
@@ -2736,27 +2739,27 @@ def cmd_undo(*, assume_yes: bool) -> None:
     it is exactly as atomic as the restore itself.
     """
     with dusky_lock():
-        candidates: list[tuple[Filesystem, Path, str, Subvolume]] = []
+        candidates: list[tuple[Filesystem, str, Subvolume]] = []
         for _fs_uuid, (fs, _mount) in btrfs_filesystems().items():
-            with top_level(fs, quiet=True) as top:
+            with top_level(fs, writable=False, quiet=True) as top:
                 for info in subvol_list(top):
                     if transient_kind(info.path) == "retired":
-                        candidates.append((fs, top, info.path, Subvolume(
+                        candidates.append((fs, info.path, Subvolume(
                             subvolid=info.subvolid, path=info.path, uuid=info.uuid,
                             received_uuid=info.received_uuid, fs_uuid=fs.uuid,
-                            readonly=info.readonly, mount_target=str(top))))
+                            readonly=info.readonly, mount_target="")))
         if not candidates:
             die("[!] Nothing to undo: no retired subvolume from a previous restore is on disk.")
     # Retired names embed an ISO-8601 UTC stamp, so lexical order is chronological.
-    candidates.sort(key=lambda c: c[2].rsplit(TAG_RETIRED, 1)[-1], reverse=True)
+    candidates.sort(key=lambda c: c[1].rsplit(TAG_RETIRED, 1)[-1], reverse=True)
 
     say(f"{C_WARN}[*] Retired subvolumes available for undo (most recent first):{C_RESET}")
-    for index, (fs, _top, rel, sub) in enumerate(candidates, 1):
+    for index, (fs, rel, sub) in enumerate(candidates, 1):
         say(f"  {index:>2}. UUID={fs.uuid} id={sub.subvolid} {rel}")
     choice = "1" if assume_yes else ask(f"{C_WARN}[*] Undo which one? [1]: {C_RESET}") or "1"
     if not choice.isdigit() or not 1 <= int(choice) <= len(candidates):
         die("[!] Invalid selection.")
-    fs, _top, rel, sub = candidates[int(choice) - 1]
+    fs, rel, sub = candidates[int(choice) - 1]
 
     live_name = rel.rsplit("/", 1)[-1].rsplit(TAG_RETIRED, 1)[0]
     parent_rel = rel.rpartition("/")[0]
@@ -2853,7 +2856,7 @@ def backup_subvolume(fs: Filesystem, src_rel: str, destination: str, *, parent_r
     mount_data = run("findmnt", "--json", "--target", str(dest),
                      "--output", "UUID,TARGET,FSROOT", check=True)
     try:
-        dest_mount = json.loads(mount_data.stdout)["filesystems"][0]
+        dest_mount = json.loads(mount_data.stdout)["filesystems"][-1]
         dest_uuid = dest_mount["uuid"]
         dest_relative = Path(dest_mount["fsroot"].lstrip("/")) / dest.relative_to(dest_mount["target"])
     except (ValueError, KeyError, IndexError, TypeError) as exc:
@@ -4189,9 +4192,9 @@ def main(argv: Sequence[str]) -> int:
         parser.error("--pair-threshold must be nonnegative")
     if args.expected_id is not None and not args.cleanup_subvol:
         parser.error("--expected-id requires --cleanup-subvol")
+    ensure_root()
     if args.backup:
         args.backup[1] = str(Path(args.backup[1]).resolve())
-    ensure_root()
     with suppress(OSError):
         os.chdir("/")
 

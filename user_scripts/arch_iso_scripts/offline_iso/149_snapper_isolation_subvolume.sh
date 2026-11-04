@@ -914,7 +914,8 @@ deploy_pair_helper() {
 set -euo pipefail
 export LC_ALL=C
 
-mkdir -p /run/dusky
+install -d -m 0700 /run/dusky
+umask 0077
 exec 9>/run/dusky/dusky.lock
 flock -x 9
 
@@ -922,7 +923,7 @@ pair="$(cat /proc/sys/kernel/random/uuid)"
 
 pair_ids() {
     local config="$1"
-    snapper --iso --jsonout -c "$config" list |
+    snapper --utc --iso --jsonout -c "$config" list |
         python3 -c 'import json, sys
 config, pair = sys.argv[1:]
 for row in json.load(sys.stdin)[config]:
@@ -976,7 +977,7 @@ limit = int(sys.argv[1])
 rows = {}
 for config in ("root", "home"):
     result = subprocess.run(
-        ["snapper", "--iso", "--jsonout", "-c", config, "list"],
+        ["snapper", "--utc", "--iso", "--jsonout", "-c", config, "list"],
         check=True, capture_output=True, text=True,
     )
     rows[config] = json.loads(result.stdout)[config]
