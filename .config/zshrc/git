@@ -52,7 +52,8 @@ function _git_dusky_have_head() {
 }
 
 # -----------------------------------------------------------------------------
-# 2. $HOME-relative path resolver -> REPLY.  rc 1 if the path is outside $HOME.
+# 2. $HOME-relative path resolver -> REPLY.  rc 1 if the path is outside $HOME
+#    or inside $DUSKY_GIT_DIR.
 #    Expands a leading ~/ or $HOME/, absolutises with :a (which does NOT
 #    resolve symlinks, so a symlinked dotfile keeps its logical path), then
 #    tests containment with a pattern-quoted prefix and slices by index.
@@ -60,13 +61,15 @@ function _git_dusky_have_head() {
 function _git_dusky_relpath() {
     emulate -L zsh
     setopt localoptions extendedglob
-    local p=$1 hp=${(b)HOME}
-    [[ $p == '~/'*     ]] && p=$HOME/${p#\~/}
-    [[ $p == '$HOME/'* ]] && p=$HOME/${p#\$HOME/}
-    [[ $p == /*        ]] || p=$HOME/$p
+    local p=$1 home=${HOME:a} gd=${DUSKY_GIT_DIR:a}
+    local hp=${(b)home} gp=${(b)gd}
+    [[ $p == '~/'*     ]] && p=$home/${p#\~/}
+    [[ $p == '$HOME/'* ]] && p=$home/${p#\$HOME/}
+    [[ $p == /*        ]] || p=$home/$p
     p=${p:a}
     [[ $p == $hp/* ]] || return 1
-    REPLY=${p[$(( ${#HOME} + 2 )),-1]}
+    [[ $p == $gd || $p == $gp/* ]] && return 1
+    REPLY=${p[$(( ${#home} + 2 )),-1]}
     [[ -n $REPLY ]] || return 1
     return 0
 }
@@ -93,7 +96,8 @@ function git_dusky_add_list() {
     }
     {
         () {
-            local line clean m REPLY
+            local line clean m abs_m gd=${DUSKY_GIT_DIR:a} REPLY
+            local gp=${(b)gd}
             local -a valid missing outside matches gone
 
             # $(<file) is read by the shell itself — no fork, no `cat`.
@@ -116,6 +120,8 @@ function git_dusky_add_list() {
                     fi
                 fi
                 for m in "${matches[@]}"; do
+                    abs_m=${m:a}
+                    [[ $abs_m == $gd || $abs_m == $gp/* ]] && continue
                     if _git_dusky_relpath "$m"; then
                         valid+=( "$REPLY" )
                     else
@@ -133,6 +139,7 @@ function git_dusky_add_list() {
                 for m in "${outside[@]}"; do print -ru2 -- "  ${CD}➔ $m${C0}"; done
             fi
 
+            valid=( "${(@u)valid}" )
             if (( $#valid )); then
                 # :(literal,top) — no pathspec magic, anchored at the work tree.
                 if ! printf ':(literal,top)%s\0' "${valid[@]}" |
@@ -173,7 +180,7 @@ function _git_dusky_restore() {
 alias git_dusky_restore='_git_dusky_restore'
 
 # -----------------------------------------------------------------------------
-# 5. Matugen colour lookup -> REPLY.  Pure zsh, mtime-memoised, zero forks.
+# 5. Matugen colour lookup & layout helper -> REPLY. Pure zsh, zero forks.
 # -----------------------------------------------------------------------------
 function _gitdelta_matugen() {
     emulate -L zsh
@@ -191,8 +198,8 @@ function _gitdelta_matugen() {
 
     if [[ -z $stamp || ${_DUSKY_MG_CACHE[__stamp]-} != "$stamp" ]]; then
         _DUSKY_MG_CACHE=( __stamp "$stamp" )
-        for line in ${(f)"$(<$mg)"}; do
-            if [[ $line == (#b)[[:space:]]#\"([^\"]##)\"[[:space:]]#:[[:space:]]#\"([^\"]##)\"* ]]; then
+        for line in ${(f)"${$(<$mg)//,/$'\n'}"}; do
+            if [[ $line == (#b)[[:space:]\{]#\"([^\"]##)\"[[:space:]]#:[[:space:]]#\"([^\"]##)\"* ]]; then
                 [[ -n ${_DUSKY_MG_CACHE[$match[1]]-} ]] || _DUSKY_MG_CACHE[$match[1]]=$match[2]
             fi
         done
@@ -200,6 +207,18 @@ function _gitdelta_matugen() {
 
     line=${_DUSKY_MG_CACHE[$key]-}
     [[ $line == '#'[0-9A-Fa-f](#c6) ]] && REPLY=$line
+    return 0
+}
+
+function _gitdelta_preview_layout() {
+    emulate -L zsh
+    setopt localoptions extendedglob
+    local f=$HOME/.config/dusky/settings/git_preview_layout val
+    REPLY="right,70%,border-left,wrap"
+    if [[ -r $f ]]; then
+        val=${${"$(<$f)"##[[:space:]]##}%%[[:space:]]##}
+        [[ $val == "hidden" || $val == *,* ]] && REPLY=$val
+    fi
     return 0
 }
 
@@ -241,7 +260,7 @@ function _gitdelta_render_stream() {
             typeset -A dir_color
             integer next_color_idx=0
             local base_dir sub_dir file_p c_base
-            local -a parts
+            local -a parts match mbegin mend
 
             # Selector identities come from machine-readable output, never
             # from Git's quoted, abbreviated or rename-formatted stat labels.
@@ -276,8 +295,8 @@ function _gitdelta_render_stream() {
                         else
                             base_dir="${parts[1]}/${parts[2]}/"
                             file_p="${parts[-1]}"
-                            sub_dir="${clean_p#$base_dir}"
-                            sub_dir="${sub_dir%$file_p}"
+                            sub_dir="${clean_p#${(b)base_dir}}"
+                            sub_dir="${sub_dir%${(b)file_p}}"
                         fi
 
                         if [[ -z ${dir_color[$base_dir]-} ]]; then
@@ -378,8 +397,8 @@ function _gitdelta_render_stream() {
                             else
                                 base_dir="${parts[1]}/${parts[2]}/"
                                 file_p="${parts[-1]}"
-                                sub_dir="${clean_p#$base_dir}"
-                                sub_dir="${sub_dir%$file_p}"
+                                sub_dir="${clean_p#${(b)base_dir}}"
+                                sub_dir="${sub_dir%${(b)file_p}}"
                             fi
 
                             if [[ -z ${dir_color[$base_dir]-} ]]; then
@@ -387,8 +406,8 @@ function _gitdelta_render_stream() {
                                 dir_color[$base_dir]=${dir_colors[ (( (next_color_idx - 1) % #dir_colors ) + 1) ]}
                             fi
                             c_base=${dir_color[$base_dir]}
-                            lead=${raw_p%%${clean_p}*}
-                            trail=${raw_p#*${clean_p}}
+                            lead=${raw_p%%${(b)clean_p}*}
+                            trail=${raw_p#*${(b)clean_p}}
                             if [[ -n $sub_dir ]]; then
                                 raw_p="${lead}${c_base}${base_dir}${C_DIM_CODE}${sub_dir}${C_RESET}${file_p}${trail}"
                             else
@@ -400,9 +419,17 @@ function _gitdelta_render_stream() {
                         w=${det_len[$clean_p]}
                         pad_det=$(( max_det_w - w ))
                         det_pad=${(l:pad_det:: :)}
-                        if [[ $cnt == <-> ]]; then
-                            cnt_part=${after_pipe%%${cnt}*}${cnt}
-                            gr=${after_pipe#*${cnt}}
+                        if [[ $cnt == <-> && $after_pipe == (#b)([[:space:]]#${(b)cnt})(.*) ]]; then
+                            cnt_part=$match[1]
+                            gr=${match[2]## #}
+                            if [[ -n $gr ]]; then
+                                formatted="${raw_p}|${cnt_part}  ${det}${det_pad}  ${gr}"
+                            else
+                                formatted="${raw_p}|${cnt_part}  ${det}"
+                            fi
+                        elif [[ $cnt == <-> ]]; then
+                            cnt_part=${after_pipe%%${(b)cnt}*}${cnt}
+                            gr=${after_pipe#*${(b)cnt}}
                             gr=${gr## #}
                             if [[ -n $gr ]]; then
                                 formatted="${raw_p}|${cnt_part}  ${det}${det_pad}  ${gr}"
@@ -454,7 +481,7 @@ function _gitdelta_save_diff() {
         local f safe_name out_file ts
         ts=${(%):-%D{%Y%m%d-%H%M%S}}
         if (( $#files == 0 )); then
-            out_file="${out_dir}/all_${target:-HEAD}_${ts}.diff"
+            out_file="${out_dir}/all_${${target:-HEAD}//\//_}_${ts}.diff"
             if [[ -n $target ]]; then
                 git_dusky show --patch --stat "$target" >| "$out_file" || return $?
             else
@@ -506,8 +533,8 @@ function _gitdelta_show() {
 function _gitdelta_browse() {
     emulate -L zsh
     setopt localoptions extendedglob
-    local c_bg c_fg c_acc c_mut c_ok sel hash preview REPLY raw_hash TAB=$'\t'
-    local -a fields
+    local c_bg c_fg c_acc c_mut c_ok sel hash preview cur_layout REPLY raw_hash TAB=$'\t'
+    local -a fields match mbegin mend
     local -i rc=0
 
     if (( ! $+commands[fzf] )); then
@@ -535,14 +562,12 @@ function _gitdelta_browse() {
 
     local helper=${(q)HOME}/user_scripts/git/git_dusky.py
     local layout_helper=${(q)HOME}/user_scripts/git/git_fzf_layout.sh
-    local cur_layout="right,70%,border-left,wrap"
-    [[ -f "$HOME/.config/dusky/settings/git_preview_layout" ]] && cur_layout=$(< "$HOME/.config/dusky/settings/git_preview_layout")
-    [[ $cur_layout == "hidden" ]] && cur_layout="hidden"
+    _gitdelta_preview_layout; cur_layout=$REPLY
 
     sel=$(git_dusky log --color=always \
             --date=format-local:'%Y-%m-%d %H:%M' \
             --format="%C(yellow)%<(48,trunc)%s%C(reset)${TAB}%C(green)%<(14,trunc)%cr%C(reset)${TAB}%C(dim)%ad%C(reset)${TAB}%C(bold green)%<(8,trunc)%an%C(reset)${TAB}%C(bold cyan)%h%C(reset)${TAB}%C(auto)%d%C(reset)" \
-        | FZF_DEFAULT_OPTS= FZF_DEFAULT_OPTS_FILE= fzf --ansi --with-shell='/bin/sh -c' \
+        | FZF_DEFAULT_OPTS= FZF_DEFAULT_OPTS_FILE= FZF_DEFAULT_COMMAND= fzf --ansi --with-shell='/bin/sh -c' \
             --delimiter="$TAB" \
             --tabstop=4 \
             --ellipsis='' \
@@ -604,7 +629,7 @@ function _gitdelta_browse() {
 function _gitdelta_select() {
     emulate -L zsh
     setopt localoptions extendedglob
-    local c_bg c_fg c_acc c_mut c_ok sel key file target line_num REPLY TAB=$'\t'
+    local c_bg c_fg c_acc c_mut c_ok sel key file target line_num cur_layout REPLY TAB=$'\t'
     local -a sel_lines lines
     local -i rc=0 save_on_enter=0
 
@@ -633,7 +658,7 @@ function _gitdelta_select() {
         fi
         target="HEAD~$(( n - 1 ))"
     else
-        git_dusky_add_list || return $?
+        git_dusky_add_list >/dev/null || return $?
         if ! _git_dusky_have_head; then
             print -ru2 -- 'gitdelta: no commits yet — nothing to diff against HEAD.'
             return 1
@@ -649,7 +674,7 @@ function _gitdelta_select() {
 
     local helper=${(q)HOME}/user_scripts/git/git_dusky.py
     local layout_helper=${(q)HOME}/user_scripts/git/git_fzf_layout.sh
-    local preview="DUSKY_GIT_DIR=${(q)DUSKY_GIT_DIR} ${helper} --diff-preview ${(q)target} {s2..} {+s2..}"
+    local preview="DUSKY_GIT_DIR=${(q)DUSKY_GIT_DIR} DUSKY_GIT_LIST=${(q)DUSKY_GIT_LIST} ${helper} --diff-preview ${(q)target} {s2..} {+s2..}"
 
     local raw_items
     raw_items=$(_gitdelta_render_stream "$target" "fzf_items") || return $?
@@ -659,12 +684,10 @@ function _gitdelta_select() {
         return 0
     fi
 
-    local cur_layout="right,70%,border-left,wrap"
-    [[ -f "$HOME/.config/dusky/settings/git_preview_layout" ]] && cur_layout=$(< "$HOME/.config/dusky/settings/git_preview_layout")
-    [[ $cur_layout == "hidden" ]] && cur_layout="hidden"
+    _gitdelta_preview_layout; cur_layout=$REPLY
 
     sel=$(printf '%s\0' "${lines[@]}" \
-        | FZF_DEFAULT_OPTS= FZF_DEFAULT_OPTS_FILE= fzf --ansi --read0 --print0 --with-shell='/bin/sh -c' \
+        | FZF_DEFAULT_OPTS= FZF_DEFAULT_OPTS_FILE= FZF_DEFAULT_COMMAND= fzf --ansi --read0 --print0 --with-shell='/bin/sh -c' \
             --multi \
             --delimiter="$TAB" \
             --with-nth=1 \
@@ -732,12 +755,13 @@ function _gitdelta_select() {
     if [[ $key == 'ctrl-e' ]]; then
         local -a editor=( ${(z)${EDITOR:-nvim}} )
         editor=( "${(@Q)editor}" )
-        local -a existing_paths
+        local -a existing_paths existing_rels
         local f fp
         for f in "${files[@]}"; do
             fp="$HOME/$f"
             if [[ -f $fp ]]; then
                 existing_paths+=( "$fp" )
+                existing_rels+=( "$f" )
             else
                 print -ru2 -- "gitdelta: cannot edit '$fp' (file not found on disk)."
             fi
@@ -746,10 +770,8 @@ function _gitdelta_select() {
 
         if (( $#existing_paths == 1 )); then
             line_num=0
-            local h
+            local h selected_path=${existing_rels[1]}
             local -a match mbegin mend
-            _git_dusky_relpath "${existing_paths[1]}" || return 1
-            local selected_path=$REPLY
             if [[ -n $target ]]; then
                 for h in ${(f)"$(git_dusky show -U0 --format='' "$target" -- ":(literal,top)${selected_path}" 2>/dev/null)"}; do
                     if [[ $h == (#b)@@\ -[0-9]#(,[0-9]#)#\ \+([0-9]##)* ]]; then
@@ -794,7 +816,7 @@ function gitdelta() {
     fi
 
     if (( $# == 0 )); then
-        git_dusky_add_list || return $?
+        git_dusky_add_list >/dev/null || return $?
         if ! _git_dusky_have_head; then
             print -ru2 -- 'gitdelta: no commits yet — nothing to diff against HEAD.'
             return 1
@@ -852,21 +874,32 @@ function gitdelta() {
         fi
         target="HEAD~$(( n - 1 ))"
         shift
-        if (( $# == 0 )); then
-            if (( save_mode )); then
-                _gitdelta_save_diff "$target"
-            else
-                _gitdelta_show "$target"
-            fi
-            return $?
-        fi
     else
-        git_dusky_add_list || return $?
+        git_dusky_add_list >/dev/null || return $?
         if ! _git_dusky_have_head; then
             print -ru2 -- 'gitdelta: no commits yet — nothing to diff against HEAD.'
             return 1
         fi
         target=""
+    fi
+
+    local -a file_queries
+    local arg
+    for arg in "$@"; do
+        if [[ $arg == '-s' || $arg == '--save' ]]; then
+            save_mode=1
+        else
+            file_queries+=( "$arg" )
+        fi
+    done
+
+    if (( $#file_queries == 0 )); then
+        if (( save_mode )); then
+            _gitdelta_save_diff "$target"
+        else
+            _gitdelta_show "$target"
+        fi
+        return $?
     fi
 
     # Handle file path or pattern arguments
@@ -883,29 +916,33 @@ function gitdelta() {
         return 0
     fi
 
-    local query abs REPLY
-    for query in "$@"; do
-        if [[ $query == '-s' || $query == '--save' ]]; then
-            save_mode=1
-            continue
-        fi
+    local query abs rel_q REPLY
+    for query in "${file_queries[@]}"; do
         # 1. Exact match
         if (( ${changed_files[(Ie)$query]} )); then
             matched_files+=( "$query" )
             continue
         fi
 
-        # 2. Path relative to $HOME
+        # 2. Path relative to $HOME (via $PWD resolution or $HOME prefix)
+        rel_q=""
         abs=${query:a}
-        if _git_dusky_relpath "$abs"; then
-            if (( ${changed_files[(Ie)$REPLY]} )); then
-                matched_files+=( "$REPLY" )
+        if _git_dusky_relpath "$abs" || _git_dusky_relpath "$query"; then
+            rel_q=$REPLY
+            if (( ${changed_files[(Ie)$rel_q]} )); then
+                matched_files+=( "$rel_q" )
+                continue
+            fi
+            matches=( ${(M)changed_files:#${(b)rel_q}/*} )
+            if (( $#matches >= 1 )); then
+                matched_files+=( "${matches[@]}" )
                 continue
             fi
         fi
 
         # 3. Substring / pattern match against changed files
-        matches=( ${(M)changed_files:#*$query*} )
+        matches=( ${(M)changed_files:#*${(b)${rel_q:-$query}}*} )
+        (( $#matches == 0 )) && matches=( ${(M)changed_files:#*${query}*} )
         if (( $#matches >= 1 )); then
             matched_files+=( "${matches[@]}" )
             continue
@@ -914,7 +951,7 @@ function gitdelta() {
         print -ru2 -- "gitdelta: no changed file matching '$query'."
     done
 
-    matched_files=( ${(u)matched_files} )
+    matched_files=( "${(@u)matched_files}" )
     if (( $#matched_files >= 1 )); then
         if (( save_mode )); then
             _gitdelta_save_diff "$target" "${matched_files[@]}"
@@ -928,7 +965,7 @@ function gitdelta() {
 }
 
 # -----------------------------------------------------------------------------
-# 9. Single-file push
+# 10. Single-file push
 # -----------------------------------------------------------------------------
 function git_dusky_push() {
     emulate -L zsh
@@ -1017,7 +1054,7 @@ function git_dusky_push() {
 }
 
 # -----------------------------------------------------------------------------
-# 10. Entry points  (inner quotes survive a $HOME that contains spaces)
+# 11. Entry points  (inner quotes survive a $HOME that contains spaces)
 # -----------------------------------------------------------------------------
 alias lazygit_dusky='lazygit --git-dir="$DUSKY_GIT_DIR" --work-tree="$HOME"'
 alias dusky='"$HOME/user_scripts/git/git_dusky.py"'
