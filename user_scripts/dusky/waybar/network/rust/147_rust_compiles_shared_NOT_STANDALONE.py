@@ -1,1 +1,0 @@
-../../../../arch_setup_scripts/scripts/147_rust_compiles_shared_NOT_STANDALONE.py

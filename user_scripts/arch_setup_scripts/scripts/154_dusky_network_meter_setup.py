@@ -8,5 +8,5 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 
 if __name__ == "__main__":
-    project = Path(__file__).resolve().parents[2] / "dusky/waybar/network/rust"
+    project = Path(__file__).resolve().parents[2] / "dusky/dusky_network"
     runpy.run_path(str(project / "setup.py"), run_name="__main__")

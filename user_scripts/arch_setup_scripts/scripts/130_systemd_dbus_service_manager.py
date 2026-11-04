@@ -52,7 +52,7 @@ USER_SERVICES: list[ServiceConfig] = [
     # Replaces hyprpolkitagent (removed by 010_package_removal.sh).
     ServiceConfig("$HOME/user_scripts/dusky/dusky_polkit/dusky_polkit.service", "enable"),
     # Network Meter (Default: Enable)
-    ServiceConfig("$HOME/user_scripts/dusky/waybar/network/rust/dusky_network.service", "enable"),
+    ServiceConfig("$HOME/user_scripts/dusky/dusky_network/dusky_network.service", "enable"),
     # Dusky Update Checker (enable its six-hour timer; service is timer-triggered)
     ServiceConfig("$HOME/user_scripts/update_dusky/update_checker/service/update_checker.service", "disable"),
     ServiceConfig("$HOME/user_scripts/update_dusky/update_checker/service/update_checker.timer", "enable"),
