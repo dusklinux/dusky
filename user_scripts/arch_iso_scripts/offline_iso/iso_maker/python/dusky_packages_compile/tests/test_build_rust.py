@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 sys.dont_write_bytecode = True
 BASE = Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location("factory_adapter_tests", BASE / "dusky-snap/build_rust.py")
+SPEC = importlib.util.spec_from_file_location("factory_adapter_tests", BASE / "build_rust.py")
 adapter = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(adapter)
 

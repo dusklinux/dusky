@@ -49,11 +49,13 @@ package includes its exact binary/source manifest and disables makepkg stripping
 because the builder already strips the executable. User setup step 154 reuses a
 matching package without a compiler, or builds natively after source edits.
 
-The five GUI recipes (`dusky-center`, `dusky_overview`, `dusky-papers`, `dusky-snap`, `dusky-tray`) use `build_rust.py` and the shared
-`147_rust_compiles_shared_NOT_STANDALONE.py` storage policy. Their recipe-local
-symlinks are declared as makepkg sources. The generator fingerprints their
-contents and copies them into each isolated recipe, so they remain available
-without the rest of the checkout. Keep these symlinks when copying `TEMPLATE`.
+The five GUI recipes (`dusky_center`, `dusky_overview`, `dusky_papers`, `dusky_snap`,
+`dusky_tray`) call the shared `build_rust.py` adapter and
+`147_rust_compiles_shared_NOT_STANDALONE.py` storage policy directly. The factory
+passes the canonical adapter path to `makepkg` as `DUSKY_BUILD_RUST`; the adapter
+locates the helper relative to its own path. The factory fingerprints both shared
+files, plus the overview font inputs, so shared changes invalidate affected
+packages. Recipe directories and `TEMPLATE` need no helper symlinks or copies.
 
 Compiler artifacts prefer executable tmpfs with sufficient available memory;
 otherwise they use temporary disk storage. Job counts follow the memory budget.

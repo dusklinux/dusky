@@ -11,6 +11,7 @@ import concurrent.futures as cf
 import fcntl
 import functools
 import hashlib
+import importlib.util
 import io
 import json
 import os
@@ -2275,6 +2276,12 @@ def build_local_packages(cfg: IsoConfig, user: RealUser) -> None:
         info(f"Preparing {len(recipes)} local ISO recipe(s)")
         config = write_factory_makepkg_conf(cfg.workspace / "local-makepkg.conf")
     repo = cfg.workspace / "local_repo"
+    build_rust_path = recipes_dir / "build_rust.py"
+    rust_shared_path = (
+        skel / "user_scripts" / "arch_setup_scripts" / "scripts"
+        / "147_rust_compiles_shared_NOT_STANDALONE.py"
+    )
+    rust_shared = None
     for recipe in recipes:
         if not (recipe / "PKGBUILD").is_file():
             die(f"{recipe}: recipe.toml requires a PKGBUILD")
@@ -2293,11 +2300,31 @@ def build_local_packages(cfg: IsoConfig, user: RealUser) -> None:
         source = (skel / source_rel).resolve()
         if not source.is_dir() or not source.is_relative_to(skel.resolve()):
             die(f"{recipe}: source {source_rel} is missing from the ISO dotfiles checkout")
+        active_lines = [
+            line.split("#", 1)[0]
+            for line in (recipe / "PKGBUILD").read_text(encoding="utf-8").splitlines()
+        ]
+        uses_build_rust = any("DUSKY_BUILD_RUST" in line for line in active_lines)
+        uses_font_files = any("font_source_files" in line for line in active_lines)
+        support_paths: set[Path] = set()
+        if uses_build_rust:
+            support_paths.update((build_rust_path, rust_shared_path))
+        if uses_font_files:
+            if rust_shared is None:
+                spec = importlib.util.spec_from_file_location("dusky_rust_build_shared", rust_shared_path)
+                if spec is None or spec.loader is None:
+                    die(f"could not load shared Rust build helper: {rust_shared_path}")
+                rust_shared = importlib.util.module_from_spec(spec)
+                sys.modules[spec.name] = rust_shared
+                spec.loader.exec_module(rust_shared)
+            support_paths.update(rust_shared.font_source_files())
 
         assert config is not None
         fingerprint = hashlib.sha256(
             b"dusky-local-build-v1\0" + bytes.fromhex(tree_digest(recipe))
-            + bytes.fromhex(tree_digest(source)) + config.read_bytes()
+            + bytes.fromhex(tree_digest(source))
+            + b"".join(bytes.fromhex(tree_digest(path)) for path in sorted(support_paths))
+            + config.read_bytes()
         ).hexdigest()
         fingerprints[name] = fingerprint
         record = cache.get(name, {})
@@ -2332,6 +2359,7 @@ def build_local_packages(cfg: IsoConfig, user: RealUser) -> None:
         env = makepkg_env(
             user, DUSKY_PACKAGE_SOURCE=str(work / "source"), PKGDEST=str(work / "packages"),
             BUILDDIR=str(work / "build"), CARGO_TARGET_DIR=str(work / "cargo-target"),
+            DUSKY_BUILD_RUST=str(build_rust_path),
         )
         log = work / "build.log"
         step(f"makepkg {name} (log: {log})")

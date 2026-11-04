@@ -8,13 +8,9 @@ depends=('glibc' 'libgcc' 'wayland' 'libxkbcommon' 'vulkan-icd-loader' 'mesa' 'l
          'hyprland' 'wl-clipboard' 'xdg-utils' 'xdg-user-dirs' 'tesseract' 'tesseract-data-eng')
 makedepends=('cargo' 'python')
 options=('!debug' '!strip')
-source=('build_rust.py' '147_rust_compiles_shared_NOT_STANDALONE.py')
-# Local sources are fingerprinted by the ISO generator together with this recipe.
-sha256sums=('SKIP' 'SKIP')
-
 build() {
   cp -aL -- "$DUSKY_PACKAGE_SOURCE" "$srcdir/project"
-  python "$srcdir/build_rust.py" "$srcdir/project" "$srcdir/binary-output/dusky_snap"
+  python "$DUSKY_BUILD_RUST" "$srcdir/project" "$srcdir/binary-output/dusky_snap"
 }
 
 package() {

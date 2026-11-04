@@ -11,9 +11,9 @@ from importlib import import_module
 from pathlib import Path
 
 sys.dont_write_bytecode = True
-# makepkg places both declared local sources in srcdir; keep that location even
-# when the build adapter itself is a symlink into the recipe directory.
-sys.path.insert(0, str(Path(__file__).absolute().parent))
+sys.path.insert(
+    0, str(Path(__file__).resolve().parents[5] / "arch_setup_scripts" / "scripts")
+)
 shared = import_module("147_rust_compiles_shared_NOT_STANDALONE")
 TARGET = "x86_64-unknown-linux-gnu"
 

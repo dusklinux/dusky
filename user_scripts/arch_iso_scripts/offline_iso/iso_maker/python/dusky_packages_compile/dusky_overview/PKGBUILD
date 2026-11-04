@@ -7,13 +7,9 @@ license=('MIT')
 depends=('glibc' 'gcc-libs' 'wayland' 'libxkbcommon' 'vulkan-icd-loader' 'mesa' 'libglvnd')
 makedepends=('cargo' 'python')
 options=('!debug')
-source=('build_rust.py' '147_rust_compiles_shared_NOT_STANDALONE.py')
-# Local sources are fingerprinted by the ISO generator together with this recipe.
-sha256sums=('SKIP' 'SKIP')
-
 build() {
   cp -aL -- "$DUSKY_PACKAGE_SOURCE" "$srcdir/project"
-  python "$srcdir/build_rust.py" "$srcdir/project" "$srcdir/binary-output/dusky_overview"
+  python "$DUSKY_BUILD_RUST" "$srcdir/project" "$srcdir/binary-output/dusky_overview"
 }
 
 package() {
@@ -24,15 +20,14 @@ package() {
   install -d "$pkgdir/usr/share/dusky-overview"
   install -d "$pkgdir/usr/share/dusky_overview"
 
-  python - "$srcdir/project" "$srcdir" > "$pkgdir/usr/share/dusky-overview/source.sha256" <<'PY'
+  python - "$srcdir/project" "$DUSKY_BUILD_RUST" > "$pkgdir/usr/share/dusky-overview/source.sha256" <<'PY'
 import hashlib
 import sys
 from pathlib import Path
-from importlib import import_module
 
 project = Path(sys.argv[1])
-sys.path.insert(0, sys.argv[2])
-build_support = import_module("147_rust_compiles_shared_NOT_STANDALONE")
+sys.path.insert(0, str(Path(sys.argv[2]).resolve().parent))
+from build_rust import shared
 
 files = [project / "Cargo.toml"]
 if (project / "Cargo.lock").is_file():
@@ -46,7 +41,7 @@ for relative in (
         files.append(path)
 if (project / "src").is_dir():
     files.extend(sorted(path for path in (project / "src").rglob("*") if path.is_file()))
-files.extend(build_support.font_source_files())
+files.extend(shared.font_source_files())
 
 digest = hashlib.sha256(b"overview-native-v2-fat-lto-tmpfs\0")
 for path in files:
