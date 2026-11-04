@@ -2322,7 +2322,7 @@ main() {
         --preview-window="${DUSKY_PREVIEW_WINDOW}" \
         --preview-label='  commit  ' \
         --preview-label-pos=center \
-        --margin=1 \
+        --margin=0 \
         --padding=0 \
         --bind="$start_bind" \
         --bind="resize:refresh-preview+transform-header(${w} header)+reload-sync(${w} list)" \
