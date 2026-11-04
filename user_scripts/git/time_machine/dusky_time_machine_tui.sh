@@ -255,6 +255,9 @@ _dusky_bind_paths() {
     mkdir -p "$DUSKY_PERSIST_DIR" || _dusky_die "cannot create recovery directory"
     export DUSKY_PERSIST_DIR
     export DUSKY_PRESENT_FILE="${DUSKY_PRESENT_FILE:-${DUSKY_PERSIST_DIR}/present.target}"
+    export DUSKY_DISPLACED_DIR="${DUSKY_DISPLACED_DIR:-${DUSKY_PERSIST_DIR}/displaced}"
+    export DUSKY_DISPLACED_TREE="${DUSKY_DISPLACED_TREE:-${DUSKY_DISPLACED_DIR}/tree}"
+    export DUSKY_DISPLACED_MANIFEST="${DUSKY_DISPLACED_MANIFEST:-${DUSKY_DISPLACED_DIR}/manifest.z}"
 
     local uid run_root
     uid="${UID:-$(id -u)}"
@@ -480,6 +483,7 @@ _dusky_state_init() {
     printf '%s\n' "online" >"${DUSKY_STATE_DIR}/last_detail"
     : >"${DUSKY_STATE_DIR}/head_line"
     rm -f -- "${DUSKY_STATE_DIR}/confirm_wipe"
+    rm -f -- "${DUSKY_STATE_DIR}/confirm_shield"
     rm -f -- "${DUSKY_STATE_DIR}/conflicts"
     rm -f -- "${DUSKY_STATE_DIR}/drill_sha" \
              "${DUSKY_STATE_DIR}/drill_short" \
@@ -498,9 +502,13 @@ _dusky_write() {
 }
 
 _dusky_note() {
-    _dusky_write last_action "$1"
-    _dusky_write last_detail "$2"
-    _dusky_journal "note $1 $2"
+    local act="$1" det="${2:-}"
+    det="${det//$'\n'/ }"
+    det="${det//$'\r'/ }"
+    det="${det//$'\t'/ }"
+    _dusky_write last_action "$act"
+    _dusky_write last_detail "$det"
+    _dusky_journal "note $act $det"
 }
 
 # -----------------------------------------------------------------------------
@@ -565,6 +573,168 @@ _dusky_apply_session_stash() {
     return 1
 }
 
+# -----------------------------------------------------------------------------
+# 10. Safety primitives — tracked-only stash, NUL-safe untracked vault
+# -----------------------------------------------------------------------------
+_dusky_worktree_dirty() {
+    # LAW: Tracked files only. --untracked-files=no is NON-NEGOTIABLE on $HOME.
+    local out=""
+    if ! out="$(_gr status --porcelain=v1 --untracked-files=no --ignore-submodules=all 2>/dev/null)"; then
+        _dusky_note "error" "cannot read Git status; refusing to treat the work tree as clean"
+        return 0
+    fi
+    [[ -n "$out" ]]
+}
+
+_dusky_blocking_unit_for_path() {
+    local rel="$1"
+    local cur="" part rest="$rel" abs
+    while [[ -n "$rest" ]]; do
+        if [[ "$rest" == */* ]]; then
+            part="${rest%%/*}"
+            rest="${rest#*/}"
+        else
+            part="$rest"
+            rest=""
+        fi
+        cur="${cur:+${cur}/}${part}"
+        abs="${GIT_WORK_TREE}/${cur}"
+        if [[ -n "$rest" ]]; then
+            # Intermediate path component: blocks if it is a file or symlink (not a real directory)
+            if [[ -L "$abs" || ( -e "$abs" && ! -d "$abs" ) ]]; then
+                printf '%s\0' "$cur"
+                return 0
+            fi
+        else
+            # Leaf path component in target tree: blocks if anything exists on disk
+            if [[ -e "$abs" || -L "$abs" ]]; then
+                printf '%s\0' "$cur"
+                return 0
+            fi
+        fi
+    done
+    return 1
+}
+
+_dusky_path_exists_blocking() {
+    _dusky_blocking_unit_for_path "$1" >/dev/null
+}
+
+_dusky_untracked_collisions() {
+    # comm -z -23: paths in the target tree that are not in the current index.
+    # Emits deduplicated NUL-terminated relative blocking paths in $GIT_WORK_TREE.
+    local -r target="$1"
+    local f
+    while IFS= read -r -d '' f; do
+        [[ -z "$f" ]] && continue
+        _dusky_blocking_unit_for_path "$f" || true
+    done < <(comm -z -23 \
+        <(_gr ls-tree -r --name-only -z "$target" | LC_ALL=C sort -z) \
+        <(_gr ls-files -z | LC_ALL=C sort -z)) \
+        | LC_ALL=C sort -z -u
+}
+
+_dusky_displaced_count() {
+    [[ -s "${DUSKY_DISPLACED_MANIFEST:-}" ]] || { printf '0\n'; return 0; }
+    local count=0 _
+    while IFS= read -r -d '' _; do
+        ((count++)) || true
+    done < "$DUSKY_DISPLACED_MANIFEST"
+    printf '%d\n' "$count"
+}
+
+_dusky_record_collisions() {
+    local -r target="$1"
+    local -a cols=()
+    local f
+    while IFS= read -r -d '' f; do
+        [[ -n "$f" ]] && cols+=("$f")
+    done < <(_dusky_untracked_collisions "$target")
+    (( ${#cols[@]} > 0 )) || return 1
+    printf '%s\n' "${cols[@]}" >"${DUSKY_STATE_DIR}/conflicts"
+    printf '%s\n' "$target" >"${DUSKY_STATE_DIR}/confirm_shield"
+    local summary="${cols[0]}"
+    (( ${#cols[@]} > 1 )) && summary+=" (+$(( ${#cols[@]} - 1 )) more)"
+    _dusky_note "blocked" "untracked ${summary} (press Enter again to shield & travel)"
+    return 0
+}
+
+_dusky_park_untracked_collisions() {
+    local -r target="$1"
+    local rel src dst existing
+    while IFS= read -r -d '' rel; do
+        [[ -n "$rel" ]] || continue
+        src="${GIT_WORK_TREE}/${rel}"
+        dst="${DUSKY_DISPLACED_TREE}/${rel}"
+        [[ -e "$src" || -L "$src" ]] || continue
+        [[ ! -e "$dst" && ! -L "$dst" ]] || return 1
+        mkdir -p -- "$(dirname -- "$dst")" || return 1
+        mv -f -- "$src" "$dst" || return 1
+        local seen=0
+        if [[ -s "$DUSKY_DISPLACED_MANIFEST" ]]; then
+            while IFS= read -r -d '' existing; do
+                [[ "$existing" == "$rel" ]] && { seen=1; break; }
+            done <"$DUSKY_DISPLACED_MANIFEST"
+        fi
+        (( seen )) || printf '%s\0' "$rel" >>"$DUSKY_DISPLACED_MANIFEST"
+        _dusky_journal "shielded-untracked ${rel}"
+    done < <(_dusky_untracked_collisions "$target")
+    return 0
+}
+
+_dusky_restore_displaced_untracked() {
+    [[ -f "${DUSKY_DISPLACED_MANIFEST:-}" ]] || return 0
+
+    local -a remaining=()
+    local rel src dst
+    while IFS= read -r -d '' rel; do
+        [[ -n "$rel" ]] || continue
+        src="${DUSKY_DISPLACED_TREE}/${rel}"
+        dst="${GIT_WORK_TREE}/${rel}"
+
+        if [[ ! -e "$src" && ! -L "$src" ]]; then
+            continue
+        fi
+
+        # Keep parked while the active commit tracks this path
+        if _gr ls-files --error-unmatch -- "$rel" >/dev/null 2>&1; then
+            remaining+=("$rel")
+            continue
+        fi
+
+        # Do not clobber if something else still occupies the destination path
+        if _dusky_blocking_unit_for_path "$rel" >/dev/null; then
+            remaining+=("$rel")
+            continue
+        fi
+
+        if mkdir -p -- "$(dirname -- "$dst")" 2>/dev/null && mv -f -- "$src" "$dst" 2>/dev/null; then
+            _dusky_journal "restored-untracked ${rel}"
+            local pdir
+            pdir="$(dirname -- "$src")"
+            while [[ "$pdir" != "$DUSKY_DISPLACED_TREE" && "$pdir" == "$DUSKY_DISPLACED_TREE"/* ]]; do
+                rmdir -- "$pdir" 2>/dev/null || break
+                pdir="$(dirname -- "$pdir")"
+            done
+        else
+            remaining+=("$rel")
+        fi
+    done < "$DUSKY_DISPLACED_MANIFEST"
+
+    if (( ${#remaining[@]} == 0 )); then
+        rm -f -- "$DUSKY_DISPLACED_MANIFEST"
+        rmdir -- "$DUSKY_DISPLACED_TREE" "$DUSKY_DISPLACED_DIR" 2>/dev/null || true
+    else
+        local tmp r
+        tmp="$(mktemp "${DUSKY_DISPLACED_MANIFEST}.XXXXXXXXXX")" || return 1
+        for r in "${remaining[@]}"; do
+            printf '%s\0' "$r" >> "$tmp"
+        done
+        mv -f -- "$tmp" "$DUSKY_DISPLACED_MANIFEST"
+    fi
+    return 0
+}
+
 _dusky_git_return() {
     _dusky_load_present_target
     rm -f -- "${DUSKY_STATE_DIR}/confirm_wipe"
@@ -582,7 +752,7 @@ _dusky_git_return() {
     local cur_br cur_sha
     cur_br="$(_gr branch --show-current 2>/dev/null || true)"
     cur_sha="$(_gr rev-parse HEAD 2>/dev/null || true)"
-    if [[ "$phase" == "present" && "$stay" != "1" && "$(_dusky_read stash)" != "stashed" ]] \
+    if [[ "$phase" == "present" && "$stay" != "1" && "$(_dusky_read stash)" != "stashed" && ! -f "$DUSKY_DISPLACED_MANIFEST" ]] \
         && [[ "$cur_br" == "${DUSKY_PRESENT_BRANCH:-}" && "$cur_sha" == "${DUSKY_PRESENT_SHA:-}" ]]; then
         _dusky_clear_present_target
         _dusky_note "present" "already on present timeline"
@@ -601,17 +771,25 @@ _dusky_git_return() {
         _gw reset --hard --quiet HEAD 2>/dev/null || true
     fi
 
+    if ! _dusky_park_untracked_collisions "$target"; then
+        return 1
+    fi
+
     if [[ -n "${DUSKY_PRESENT_BRANCH:-}" && "$target" == "$DUSKY_PRESENT_BRANCH" ]]; then
         err="$(_gw switch --quiet --no-overwrite-ignore "$target" 2>&1)" || {
+            _dusky_restore_displaced_untracked || true
             _dusky_note "error" "failed to switch to ${target}: ${err}"
             return 1
         }
     else
         err="$(_gw switch --quiet --no-overwrite-ignore --detach "$target" 2>&1)" || {
+            _dusky_restore_displaced_untracked || true
             _dusky_note "error" "failed to detach onto present SHA ${target:0:7}: ${err}"
             return 1
         }
     fi
+
+    _dusky_restore_displaced_untracked || true
 
     if ! _dusky_apply_session_stash; then
         return 1
@@ -640,9 +818,9 @@ _dusky_cleanup() {
     if [[ "$stay" == "1" ]]; then
         _dusky_write phase "stay"
         [[ -f "$DUSKY_PRESENT_FILE" ]] || _dusky_save_present_target
-    elif [[ "$phase" == "detached" || "$(_dusky_read stash)" == "stashed" ]]; then
+    elif [[ "$phase" == "detached" || "$(_dusky_read stash)" == "stashed" || -f "$DUSKY_DISPLACED_MANIFEST" ]]; then
         if ! _dusky_git_return; then
-            printf 'dusky-tm: return failed; edits, stash and present ledger retained.\n' >&2
+            printf 'dusky-tm: return failed; edits, stash, displaced vault and present ledger retained.\n' >&2
         fi
     fi
 
@@ -660,51 +838,6 @@ _dusky_cleanup() {
     if [[ -n "${DUSKY_SESSION_DIR:-}" && -d "${DUSKY_SESSION_DIR}" ]]; then
         rm -rf -- "$DUSKY_SESSION_DIR"
     fi
-}
-
-# -----------------------------------------------------------------------------
-# 10. Safety primitives — tracked-only stash, NUL-safe untracked probe
-# -----------------------------------------------------------------------------
-_dusky_worktree_dirty() {
-    # LAW: Tracked files only. --untracked-files=no is NON-NEGOTIABLE on $HOME.
-    local out=""
-    if ! out="$(_gr status --porcelain=v1 --untracked-files=no --ignore-submodules=all 2>/dev/null)"; then
-        _dusky_note "error" "cannot read Git status; refusing to treat the work tree as clean"
-        return 0
-    fi
-    [[ -n "$out" ]]
-}
-
-_dusky_path_exists_blocking() {
-    local rel="$1"
-    local abs="${GIT_WORK_TREE}/${rel}"
-    if [[ -e "$abs" || -L "$abs" ]]; then
-        return 0
-    fi
-    local parent
-    parent="$(dirname -- "$rel")"
-    while [[ "$parent" != "." && "$parent" != "/" && -n "$parent" ]]; do
-        if [[ -f "${GIT_WORK_TREE}/${parent}" || -L "${GIT_WORK_TREE}/${parent}" ]]; then
-            return 0
-        fi
-        parent="$(dirname -- "$parent")"
-    done
-    return 1
-}
-
-_dusky_untracked_collisions() {
-    # comm -z -23: paths in the target tree that are not in the current index.
-    # If any of those already exist on disk (untracked / leftover), travel is blocked.
-    local -r target="$1"
-    local f
-    while IFS= read -r -d '' f; do
-        [[ -z "$f" ]] && continue
-        if _dusky_path_exists_blocking "$f"; then
-            printf '%s\0' "$f"
-        fi
-    done < <(comm -z -23 \
-        <(_gr ls-tree -r --name-only -z "$target" | LC_ALL=C sort -z) \
-        <(_gr ls-files -z | LC_ALL=C sort -z))
 }
 
 _dusky_shield_present() {
@@ -1181,9 +1314,14 @@ _dusky_git_preview() {
     fi
 
     if [[ -s "${DUSKY_STATE_DIR}/conflicts" ]]; then
-        printf '%s⚠ Untracked collision paths blocking travel:%s\n' "$DUSKY_ANSI_ERROR" "$DUSKY_ANSI_RESET"
-        sed 's/^/    /' "${DUSKY_STATE_DIR}/conflicts"
-        printf '\n'
+        local armed_sha preview_sha
+        armed_sha="$(_dusky_read confirm_shield)"
+        preview_sha="$(_gr rev-parse --verify --quiet "${hash}^{commit}" 2>/dev/null || true)"
+        if [[ -z "$armed_sha" || "$preview_sha" == "$armed_sha" ]]; then
+            printf '%s⚠ Untracked collision paths blocking travel:%s\n' "$DUSKY_ANSI_ERROR" "$DUSKY_ANSI_RESET"
+            sed 's/^/    /' "${DUSKY_STATE_DIR}/conflicts"
+            printf '\n'
+        fi
     fi
 
     local width="${FZF_PREVIEW_COLUMNS:-120}"
@@ -1231,9 +1369,10 @@ _dusky_git_preview() {
 }
 
 _dusky_git_checkout() {
-    local hash="${1:-}"
+    local hash="${1:-}" allow_shield="${2:-0}"
     rm -f -- "${DUSKY_STATE_DIR}/confirm_wipe"
     rm -f -- "${DUSKY_STATE_DIR}/conflicts"
+    rm -f -- "${DUSKY_STATE_DIR}/confirm_shield"
     if ! _dusky_valid_hash "$hash"; then
         _dusky_note "skip" "no commit on this line"
         return 0
@@ -1245,6 +1384,14 @@ _dusky_git_checkout() {
         _dusky_note "error" "not a commit: ${hash}"
         return 1
     fi
+
+    # Pressing Enter on the ⌂ present commit while detached returns to present
+    _dusky_load_present_target
+    if [[ "$(_dusky_read phase)" == "detached" && -n "${DUSKY_PRESENT_SHA:-}" && "$target" == "${DUSKY_PRESENT_SHA}" ]]; then
+        _dusky_git_return
+        return $?
+    fi
+
     current="$(_gr rev-parse HEAD 2>/dev/null || true)"
     if [[ "$target" == "$current" ]]; then
         _dusky_note "here" "$(_gr rev-parse --short=7 HEAD 2>/dev/null || true)"
@@ -1266,9 +1413,21 @@ _dusky_git_checkout() {
     fi
 
     cd "$GIT_WORK_TREE" || return 1
+
+    if [[ "$allow_shield" == "1" ]]; then
+        _dusky_park_untracked_collisions "$target" || true
+    elif _dusky_record_collisions "$target"; then
+        if [[ "$(_dusky_read phase)" == "present" ]]; then
+            if _dusky_apply_session_stash; then
+                _dusky_clear_present_target
+            fi
+        fi
+        return 1
+    fi
+
     local err
     err="$(_gw switch --quiet --no-overwrite-ignore --detach "$target" 2>&1)" || {
-        # A failed first trip must put the original staged/unstaged work back.
+        _dusky_restore_displaced_untracked || true
         if [[ "$(_dusky_read phase)" == "present" ]]; then
             if _dusky_apply_session_stash; then
                 _dusky_clear_present_target
@@ -1276,10 +1435,11 @@ _dusky_git_checkout() {
                 return 1
             fi
         fi
-        _dusky_note "error" "git switch --detach failed for ${hash}: ${err}"
+        _dusky_record_collisions "$target" || _dusky_note "error" "git switch --detach failed for ${hash}: ${err}"
         return 1
     }
 
+    _dusky_restore_displaced_untracked || true
     _dusky_write phase "detached"
     _dusky_note "traveled" "$(_gr rev-parse --short=7 HEAD 2>/dev/null || true)"
     return 0
@@ -1288,8 +1448,7 @@ _dusky_git_checkout() {
 _dusky_git_restore() {
     rm -f -- "${DUSKY_STATE_DIR}/confirm_wipe"
     cd "$GIT_WORK_TREE" || return 1
-    local err
-    local collision=""
+    local err collision=""
     if IFS= read -r -d '' collision < <(_dusky_untracked_collisions HEAD); then
         _dusky_note "blocked" "untracked path obstructs reset: ${collision}"
         return 1
@@ -1561,6 +1720,12 @@ _dusky_footer_line() {
         extra="${extra}  │  TAB/ESC back to commits"
     fi
 
+    local displaced_n
+    displaced_n="$(_dusky_displaced_count)"
+    if (( displaced_n > 0 )); then
+        extra="${extra}  │  shielded:${displaced_n}"
+    fi
+
     printf 'HEAD %s  %s  stash:%s  scope:%s  preview:%s  stay:%s  present:%s%s' \
         "$head" "$br" "$stash" "$scope" "$mode" "$stay" \
         "${DUSKY_PRESENT_SHORT:-?}" "$extra"
@@ -1605,7 +1770,7 @@ _dusky_w() {
 _dusky_refresh_chain() {
     local w
     w="$(_dusky_w)"
-    printf 'reload-sync(%s list)+transform-prompt(%s prompt)+transform-footer(%s footer)+transform-preview-label(%s preview-label)' \
+    printf 'reload-sync(%s list)+transform-prompt(%s prompt)+transform-footer(%s footer)+transform-preview-label(%s preview-label)+refresh-preview' \
         "$w" "$w" "$w" "$w"
 }
 
@@ -1619,7 +1784,13 @@ _dusky_act_enter() {
         printf 'bell+transform-footer(%s footer)\n' "$(_dusky_w)"
         return 0
     fi
-    _dusky_git_checkout "$hash" || true
+    local target armed allow_shield=0
+    target="$(_gr rev-parse --verify --quiet "${hash}^{commit}" 2>/dev/null || true)"
+    armed="$(_dusky_read confirm_shield)"
+    if [[ -n "$target" && "$target" == "$armed" ]]; then
+        allow_shield=1
+    fi
+    _dusky_git_checkout "$hash" "$allow_shield" || true
     printf '%s\n' "$(_dusky_refresh_chain)"
 }
 
