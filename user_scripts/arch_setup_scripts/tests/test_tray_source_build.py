@@ -25,7 +25,7 @@ class TraySourceBuild(unittest.TestCase):
         helper = project.parent / 'click_away_to_dismiss'
         helper.mkdir()
         (helper / 'dusky.c').write_text('/* fixture */\n')
-        (helper / 'hyprland-focus-grab-v1.xml').write_text('<protocol name="fixture"/>\n')
+        (helper / 'hyprland_focus_grab_v1.xml').write_text('<protocol name="fixture"/>\n')
         return project, helper
 
     def digest(self, project):
@@ -41,7 +41,7 @@ class TraySourceBuild(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             project, helper = self.fixture(directory)
             before = self.digest(project)
-            (helper / 'hyprland-focus-grab-v1.xml').write_text('<protocol name="updated"/>\n')
+            (helper / 'hyprland_focus_grab_v1.xml').write_text('<protocol name="updated"/>\n')
             self.assertNotEqual(self.digest(project), before)
 
     def test_stale_generated_files_do_not_affect_the_source_digest(self):
@@ -49,7 +49,7 @@ class TraySourceBuild(unittest.TestCase):
             project, helper = self.fixture(directory)
             before = self.digest(project)
             for suffix in ('c', 'h'):
-                (helper / f'hyprland-focus-grab-v1-client-protocol.{suffix}').write_text('stale artifact')
+                (helper / f'hyprland_focus_grab_v1_client_protocol.{suffix}').write_text('stale artifact')
             self.assertEqual(self.digest(project), before)
 
 

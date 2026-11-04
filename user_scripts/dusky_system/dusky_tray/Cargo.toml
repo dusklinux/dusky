@@ -5,6 +5,10 @@ edition = "2024"
 authors = ["Dusk Linux"]
 description = "Dusky Tray: Rust-native control center for Arch Linux / Hyprland (Iced + Wayland window). Mirrors the compact tray layout."
 
+[[bin]]
+name = "dusky_tray"
+path = "src/main.rs"
+
 [dependencies]
 iced_graphics = "0.14.0"
 iced_core = "0.14.0"

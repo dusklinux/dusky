@@ -38,13 +38,13 @@ copy and only if the destination remains absent. Configuration edits do not
 trigger a binary rebuild. Change the canonical XDG file after setup.
 
 The ISO recipe lives at
-`user_scripts/arch_iso_scripts/offline_iso/iso_maker/python/dusky_packages_compile/dusky-center`.
+`user_scripts/arch_iso_scripts/offline_iso/iso_maker/python/dusky_packages_compile/dusky_center`.
 The factory discovers it automatically and builds one generic x86-64 pacman
-package, with `/usr/bin/dusky-center`, packaged TOML defaults and a source
+package, with `/usr/bin/dusky_center`, packaged TOML defaults and a source
 fingerprint. It explicitly overrides native Rust/C/C++ flags; local updates
 never replace that generic system binary.
 
-For development checks, use `./scripts/build-on-tmpfs.sh --check`, `--test`,
+For development checks, use `./scripts/build_on_tmpfs.sh --check`, `--test`,
 `--clippy` or `--release`. These use a reusable tmpfs target directory;
 installation selects its own verified package/native binary. Installer tests:
 `python3 -X dev -m unittest discover -s tests`.

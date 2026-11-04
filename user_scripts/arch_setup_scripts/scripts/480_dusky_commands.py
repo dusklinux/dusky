@@ -97,9 +97,9 @@ SETUP_COMMANDS: list[FleetCommand] = [
     FleetCommand(
         Mode.USER,
         'TARGET="$HOME/user_scripts/dusky_system/click_away_to_dismiss" && '
-        'wayland-scanner client-header "$TARGET/hyprland-focus-grab-v1.xml" "$TARGET/hyprland-focus-grab-v1-client-protocol.h" && '
-        'wayland-scanner private-code "$TARGET/hyprland-focus-grab-v1.xml" "$TARGET/hyprland-focus-grab-v1-client-protocol.c" && '
-        'gcc -shared -fPIC -o "$TARGET/libwaylandgrab.so" "$TARGET/dusky.c" "$TARGET/hyprland-focus-grab-v1-client-protocol.c" -lwayland-client -lpthread -ldl',
+        'wayland-scanner client-header "$TARGET/hyprland_focus_grab_v1.xml" "$TARGET/hyprland_focus_grab_v1_client_protocol.h" && '
+        'wayland-scanner private-code "$TARGET/hyprland_focus_grab_v1.xml" "$TARGET/hyprland_focus_grab_v1_client_protocol.c" && '
+        'gcc -shared -fPIC -o "$TARGET/libwaylandgrab.so" "$TARGET/dusky.c" "$TARGET/hyprland_focus_grab_v1_client_protocol.c" -lwayland-client -lpthread -ldl',
         "Compile Wayland Click-Away Shared Library"
     ),
     FleetCommand(Mode.USER, 'update-desktop-database "$HOME/.local/share/applications" || true', "Update Desktop Entry Database Cache"),
@@ -148,9 +148,9 @@ AFTER_COMMANDS: list[FleetCommand] = [
     FleetCommand(
         Mode.USER,
         'TARGET="$HOME/user_scripts/dusky_system/click_away_to_dismiss" && '
-        'wayland-scanner client-header "$TARGET/hyprland-focus-grab-v1.xml" "$TARGET/hyprland-focus-grab-v1-client-protocol.h" && '
-        'wayland-scanner private-code "$TARGET/hyprland-focus-grab-v1.xml" "$TARGET/hyprland-focus-grab-v1-client-protocol.c" && '
-        'gcc -shared -fPIC -o "$TARGET/libwaylandgrab.so" "$TARGET/dusky.c" "$TARGET/hyprland-focus-grab-v1-client-protocol.c" -lwayland-client -lpthread -ldl',
+        'wayland-scanner client-header "$TARGET/hyprland_focus_grab_v1.xml" "$TARGET/hyprland_focus_grab_v1_client_protocol.h" && '
+        'wayland-scanner private-code "$TARGET/hyprland_focus_grab_v1.xml" "$TARGET/hyprland_focus_grab_v1_client_protocol.c" && '
+        'gcc -shared -fPIC -o "$TARGET/libwaylandgrab.so" "$TARGET/dusky.c" "$TARGET/hyprland_focus_grab_v1_client_protocol.c" -lwayland-client -lpthread -ldl',
         "Recompile Wayland Click-Away Shared Library"
     ),
     FleetCommand(Mode.USER, 'systemctl --user daemon-reload || true', "Reload Systemd User Daemon"),

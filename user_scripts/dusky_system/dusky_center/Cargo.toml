@@ -5,6 +5,10 @@ edition = "2024"
 authors = ["Dusk Linux"]
 description = "Dusky Center: Native Rust control center for Arch Linux / Hyprland (Iced + Wayland xdg-toplevel). Data-driven from dusky_config.toml."
 
+[[bin]]
+name = "dusky_center"
+path = "src/main.rs"
+
 [dependencies]
 iced_graphics = "0.14.0"
 iced = { version = "0.14.0", default-features = false, features = ["wgpu", "wayland", "svg", "advanced", "thread-pool"] }

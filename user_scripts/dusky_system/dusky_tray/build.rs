@@ -1,13 +1,13 @@
 fn main() {
     let helper = std::path::Path::new("../click_away_to_dismiss");
     let output = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR is unset"));
-    let protocol = helper.join("hyprland-focus-grab-v1.xml");
-    for name in ["dusky.c", "hyprland-focus-grab-v1.xml"] {
+    let protocol = helper.join("hyprland_focus_grab_v1.xml");
+    for name in ["dusky.c", "hyprland_focus_grab_v1.xml"] {
         println!("cargo:rerun-if-changed={}", helper.join(name).display());
     }
     for (mode, name) in [
-        ("client-header", "hyprland-focus-grab-v1-client-protocol.h"),
-        ("private-code", "hyprland-focus-grab-v1-client-protocol.c"),
+        ("client-header", "hyprland_focus_grab_v1_client_protocol.h"),
+        ("private-code", "hyprland_focus_grab_v1_client_protocol.c"),
     ] {
         let status = std::process::Command::new("wayland-scanner")
             .arg(mode)
@@ -23,7 +23,7 @@ fn main() {
     std::fs::copy(helper.join("dusky.c"), &source).expect("Cannot stage click-away source");
     cc::Build::new()
         .file(source)
-        .file(output.join("hyprland-focus-grab-v1-client-protocol.c"))
+        .file(output.join("hyprland_focus_grab_v1_client_protocol.c"))
         .include(&output)
         .warnings(false)
         .compile("dusky_click_away");

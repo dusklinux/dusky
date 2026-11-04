@@ -46,7 +46,7 @@ impl iced_futures::Executor for BackgroundExecutor {
 
 fn print_help() {
     println!("Dusky Center (Rust)");
-    println!("Usage: dusky-center [OPTIONS]\n");
+    println!("Usage: dusky_center [OPTIONS]\n");
     println!("Options:");
     println!("  --version, -v        Show version and exit");
     println!("  --page, -p <PG>      Open directly to page PG (e.g. audio, system)");
@@ -56,7 +56,7 @@ fn print_help() {
     println!("\nBehavior:");
     println!("  Full system control center (Iced + Wayland xdg-toplevel).");
     println!("  Esc or window close exits and frees all memory.");
-    println!("  Build with scripts/build-on-tmpfs.sh to keep intermediates on RAM.");
+    println!("  Build with scripts/build_on_tmpfs.sh to keep intermediates on RAM.");
 }
 
 struct SingleInstanceGuard {
@@ -116,7 +116,7 @@ fn main() -> iced::Result {
                 return Ok(());
             }
             "--version" | "-v" | "-V" => {
-                println!("dusky-center {}", env!("CARGO_PKG_VERSION"));
+                println!("dusky_center {}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
             }
             "--page" | "-p" => {

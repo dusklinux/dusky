@@ -9,12 +9,12 @@ makedepends=('cargo' 'python')
 options=('!debug')
 build() {
   cp -aL -- "$DUSKY_PACKAGE_SOURCE" "$srcdir/project"
-  python "$DUSKY_BUILD_RUST" "$srcdir/project" "$srcdir/binary-output/dusky-center"
+  python "$DUSKY_BUILD_RUST" "$srcdir/project" "$srcdir/binary-output/dusky_center"
 }
 
 package() {
-  install -Dm755 "$srcdir/binary-output/dusky-center" \
-    "$pkgdir/usr/bin/dusky-center"
+  install -Dm755 "$srcdir/binary-output/dusky_center" \
+    "$pkgdir/usr/bin/dusky_center"
   install -Dm644 "$srcdir/project/dusky_config.toml" \
     "$pkgdir/usr/share/dusky-center/dusky_config.toml"
   python - "$srcdir/project" > "$pkgdir/usr/share/dusky-center/source.sha256" <<'PY'

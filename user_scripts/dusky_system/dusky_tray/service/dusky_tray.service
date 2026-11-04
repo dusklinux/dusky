@@ -1,4 +1,4 @@
-# Optional on-demand unit after scripts/build-on-tmpfs.sh --install.
+# Optional on-demand unit after scripts/build_on_tmpfs.sh --install.
 # Start explicitly with systemctl --user start dusky_tray.service.
 # No [Install] section: this panel must not start at login or restart on close.
 [Unit]

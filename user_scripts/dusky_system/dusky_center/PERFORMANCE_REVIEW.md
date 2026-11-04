@@ -187,14 +187,14 @@ worker becomes available. Existing command deadlines and close draining remain.
 No universal resource/latency guarantee under kernel-uninterruptible I/O is made.
 
 At the user's subsequent request, `./scripts/install.sh` built and installed
-a CPU-native release in `~/.local/share/dusky/dusky_center/dusky-center`, with
+a CPU-native release in `~/.local/share/dusky/dusky_center/dusky_center`, with
 `~/.local/bin/dusky-center` pointing to it. Its source, CPU and binary fingerprints
 were verified. The installed launcher rendered a frame, rejected a duplicate
 launch successfully and closed gracefully; its first-present trace was 64.9 ms
 in that single smoke run. This native build has different CPU flags from the
 earlier release measurements, so that timing is not a matched comparison.
 Existing configurations were preserved. A matching generic ISO package instead
-lives at `/usr/bin/dusky-center`, selected through the same local launcher.
+lives at `/usr/bin/dusky_center`, selected through the same local launcher.
 
 ## Interface references
 

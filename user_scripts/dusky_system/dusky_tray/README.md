@@ -6,7 +6,7 @@ exits the process. Nothing is kept running to prewarm the panel. No GTK GUI
 dependency is used.
 
 Sources stay in this directory. The executable lives at
-`~/.local/share/dusky/dusky_tray/dusky-tray`, with a launcher symlink at
+`~/.local/share/dusky/dusky_tray/dusky_tray`, with a launcher symlink at
 `~/.local/bin/dusky-tray`, matching Dusky Papers. GTK launchers and desktop
 keybinds are not replaced.
 
@@ -17,9 +17,9 @@ python3 ~/user_scripts/arch_setup_scripts/scripts/152_dusky_tray_setup.py
 ./scripts/reload_tray.sh
 ~/.local/bin/dusky-tray
 
-./scripts/build-on-tmpfs.sh --force-rebuild
-./scripts/build-on-tmpfs.sh --test
-./scripts/build-on-tmpfs.sh --clippy
+./scripts/build_on_tmpfs.sh --force-rebuild
+./scripts/build_on_tmpfs.sh --test
+./scripts/build_on_tmpfs.sh --clippy
 ```
 
 `--release` (the default) and `--install` both run setup. Native release builds
@@ -34,14 +34,14 @@ Dependencies are checked offline first; missing crates may be fetched with a
 bounded timeout unless `CARGO_NET_OFFLINE=true`. Compilation is frozen/offline.
 The smoke-tested binary atomically replaces the old executable, followed by
 its manifest and launcher. Failed builds retain a verified older native binary,
-or use the generic `/usr/bin/dusky-tray` package. Rerun setup to retry a build.
+or use the generic `/usr/bin/dusky_tray` package. Rerun setup to retry a build.
 
 Editable appearance and ignored-app defaults are copied beside the installed
 binary only when absent, preserving user edits. The obsolete source-directory
 executable is removed after successful installation.
 
 The separate ISO recipe lives at
-`user_scripts/arch_iso_scripts/offline_iso/iso_maker/python/dusky_packages_compile/dusky-tray/`.
+`user_scripts/arch_iso_scripts/offline_iso/iso_maker/python/dusky_packages_compile/dusky_tray/`.
 The factory discovers it automatically. It builds a generic x86-64 pacman
 package with `target-cpu=x86-64` and generic C/C++ flags, regardless of the
 builder's CPU. Compiler output stays on `/tmp` tmpfs; the package contains the
@@ -272,8 +272,8 @@ and [the window runner](https://docs.rs/iced_winit/0.14.1/iced_winit/).
 Run the checks without retaining generated screenshots or logs:
 
 ```sh
-./scripts/build-on-tmpfs.sh --test
-./scripts/build-on-tmpfs.sh --clippy
+./scripts/build_on_tmpfs.sh --test
+./scripts/build_on_tmpfs.sh --clippy
 cargo fmt --check
 ```
 

@@ -1,7 +1,7 @@
 //! dusky-tray: Rust-native control center (Iced + Wayland window).
 //!
 //! Layout parity with the original compact panel. Build + runtime caches stay
-//! on tmpfs (see `scripts/build-on-tmpfs.sh` and `backend::system::runtime_dir`)
+//! on tmpfs (see `scripts/build_on_tmpfs.sh` and `backend::system::runtime_dir`)
 //! to avoid SSD write amplification.
 
 #[path = "../../../rust_shared/ui_fonts.rs"]
@@ -56,7 +56,7 @@ fn print_help() {
     println!("  Borderless Wayland window with a bottom-right panel.");
     println!("  Esc closes the panel. All runtime caches live on tmpfs");
     println!("  ($XDG_RUNTIME_DIR/dusky_tray, /dev/shm, or /tmp).");
-    println!("  Build with scripts/build-on-tmpfs.sh to keep intermediates on RAM.");
+    println!("  Build with scripts/build_on_tmpfs.sh to keep intermediates on RAM.");
 }
 
 struct SingleInstanceGuard {

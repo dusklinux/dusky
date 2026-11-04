@@ -19,7 +19,7 @@
 #include <stdint.h>
 #include <sys/eventfd.h>
 #include <wayland-client.h>
-#include "hyprland-focus-grab-v1-client-protocol.h"
+#include "hyprland_focus_grab_v1_client_protocol.h"
 
 /* ── Global State & Synchronization ─────────────────────────────────── */
 

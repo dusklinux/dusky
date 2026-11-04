@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 build_support = import_module("147_rust_compiles_shared_NOT_STANDALONE")
 
 TARGET = "x86_64-unknown-linux-gnu"
-SYSTEM_BINARY = Path("/usr/bin/dusky-center")
+SYSTEM_BINARY = Path("/usr/bin/dusky_center")
 SYSTEM_SOURCE_DIGEST = Path("/usr/share/dusky-center/source.sha256")
 SYSTEM_DEFAULTS = Path("/usr/share/dusky-center/dusky_config.toml")
 BUILD_RECIPE = "center-native-v1-frozen-tmpfs"
@@ -100,7 +100,7 @@ def binary_runs(binary: Path) -> bool:
             timeout=10,
             check=False,
         )
-        return result.returncode == 0 and "dusky-center" in result.stdout
+        return result.returncode == 0 and "dusky_center" in result.stdout
     except (OSError, subprocess.TimeoutExpired):
         return False
 
@@ -305,7 +305,7 @@ def build_native(project: Path, binary: Path, manifest_path: Path, version: str,
         log("WARN", f"Cargo build failed:\n{stderr[-12000:]}")
         return False
 
-    built = target_dir / TARGET / "release" / "dusky-center"
+    built = target_dir / TARGET / "release" / "dusky_center"
     if not binary_runs(built):
         log("WARN", "Built binary failed its executable smoke test")
         return False
@@ -399,7 +399,7 @@ def packaged_source_matches(project: Path) -> bool:
 
 
 def setup(project: Path, install_dir: Path, force: bool) -> int:
-    binary = install_dir / "dusky-center"
+    binary = install_dir / "dusky_center"
     manifest_path = install_dir / "binary_manifest.json"
     version = get_project_version(project) if (project / "Cargo.toml").is_file() else None
     old_manifest = native_manifest(binary, manifest_path)

@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 build_support = import_module("147_rust_compiles_shared_NOT_STANDALONE")
 
 TARGET = "x86_64-unknown-linux-gnu"
-SYSTEM_BINARY = Path("/usr/bin/dusky-tray")
+SYSTEM_BINARY = Path("/usr/bin/dusky_tray")
 SYSTEM_SOURCE_DIGEST = Path("/usr/share/dusky-tray/source.sha256")
 BUILD_RECIPE = "tray-native-v1-frozen-tmpfs"
 
@@ -77,7 +77,7 @@ def source_digest(project: Path) -> str:
     helper = project.parent / "click_away_to_dismiss"
     files.extend(helper / name for name in (
         "dusky.c",
-        "hyprland-focus-grab-v1.xml",
+        "hyprland_focus_grab_v1.xml",
     ))
 
     digest = hashlib.sha256()
@@ -306,7 +306,7 @@ def build_native(project: Path, binary: Path, manifest_path: Path, version: str,
         log("WARN", f"Cargo build failed:\n{stderr[-12000:]}")
         return False
 
-    built = target_dir / TARGET / "release" / "dusky-tray"
+    built = target_dir / TARGET / "release" / "dusky_tray"
     if not binary_runs(built):
         log("WARN", "Built binary failed its executable smoke test")
         return False
@@ -399,7 +399,7 @@ def packaged_source_matches(project: Path) -> bool:
 
 
 def setup(project: Path, install_dir: Path, force: bool) -> int:
-    binary = install_dir / "dusky-tray"
+    binary = install_dir / "dusky_tray"
     manifest_path = install_dir / "binary_manifest.json"
     version = get_project_version(project) if (project / "Cargo.toml").is_file() else None
     old_manifest = native_manifest(binary, manifest_path)

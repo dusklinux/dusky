@@ -28,7 +28,7 @@ Linking directly to GTK at compile time creates rigid dependencies and separate 
 ## 📦 2. Source Code Reference (`dusky.c`)
 
 The maintained implementation is [dusky.c](../dusky.c). Compile it together with
-`hyprland-focus-grab-v1-client-protocol.c`, linking `wayland-client`, `dl`, and
+`hyprland_focus_grab_v1_client_protocol.c`, linking `wayland-client`, `dl`, and
 `pthread`. The protocol header is included from this directory.
 
 GTK callers retain `init_wayland_grab(gtk_window, callback)` and

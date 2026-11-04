@@ -9,13 +9,13 @@ makedepends=('cargo' 'python' 'gcc')
 build() {
   cp -aL -- "$DUSKY_PACKAGE_SOURCE/dusky_tray" "$srcdir/project"
   mkdir -- "$srcdir/click_away_to_dismiss"
-  cp -- "$DUSKY_PACKAGE_SOURCE/click_away_to_dismiss/"{dusky.c,hyprland-focus-grab-v1-client-protocol.c,hyprland-focus-grab-v1-client-protocol.h} "$srcdir/click_away_to_dismiss/"
-  python "$DUSKY_BUILD_RUST" "$srcdir/project" "$srcdir/binary-output/dusky-tray"
+  cp -- "$DUSKY_PACKAGE_SOURCE/click_away_to_dismiss/"{dusky.c,hyprland_focus_grab_v1_client_protocol.c,hyprland_focus_grab_v1_client_protocol.h} "$srcdir/click_away_to_dismiss/"
+  python "$DUSKY_BUILD_RUST" "$srcdir/project" "$srcdir/binary-output/dusky_tray"
 }
 
 package() {
-  install -Dm755 "$srcdir/binary-output/dusky-tray" \
-    "$pkgdir/usr/bin/dusky-tray"
+  install -Dm755 "$srcdir/binary-output/dusky_tray" \
+    "$pkgdir/usr/bin/dusky_tray"
   install -Dm644 "$srcdir/project/appearance.toml" \
     "$pkgdir/usr/share/dusky-tray/appearance.toml"
   install -Dm644 "$srcdir/project/ignored_apps.toml" \
@@ -42,8 +42,8 @@ if (project / "src").is_dir():
 
 files.extend(project.parent / "click_away_to_dismiss" / name for name in (
     "dusky.c",
-    "hyprland-focus-grab-v1-client-protocol.c",
-    "hyprland-focus-grab-v1-client-protocol.h",
+    "hyprland_focus_grab_v1_client_protocol.c",
+    "hyprland_focus_grab_v1_client_protocol.h",
 ))
 
 # Same inputs and recipe marker as 152_dusky_tray_setup.py.
