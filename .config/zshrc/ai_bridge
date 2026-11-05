@@ -1,5 +1,5 @@
 # ==============================================================================
-#  LOCAL AI WEB BRIDGE — INTERACTIVE REPL (`ask`) & FZF SESSION BROWSER (`ask_list`)
+#  LOCAL AI WEB BRIDGE — ZSH INTEGRATION (`ask`, `ask1`, `ask_new`, `ask_stop`, `ask_list`)
 # ==============================================================================
 
 _get_bridge_py() {
@@ -25,10 +25,8 @@ _ask_func() {
     local bridge_py
     bridge_py="$(_get_bridge_py)" || return 1
     if [[ ! -t 0 ]]; then
-        # Piped stdin (e.g. `git diff | ask "Summarize"`): run one-shot and exit
-        python3 "$bridge_py" "$@"
+        python3 "$bridge_py" --once "$@"
     else
-        # Interactive terminal: run initial prompt (if any) and remain in multi-turn REPL
         python3 "$bridge_py" --interactive "$@"
     fi
 }
@@ -39,13 +37,27 @@ _ask_once_func() {
     python3 "$bridge_py" --once "$@"
 }
 
+_ask_new_func() {
+    local bridge_py
+    bridge_py="$(_get_bridge_py)" || return 1
+    python3 "$bridge_py" --once --new-chat "$@"
+}
+
+_ask_stop_func() {
+    local bridge_py
+    bridge_py="$(_get_bridge_py)" || return 1
+    python3 "$bridge_py" --stop "$@"
+}
+
 alias ask='noglob _ask_func'
 alias ask1='noglob _ask_once_func'
+alias ask_new='noglob _ask_new_func'
+alias ask_stop='noglob _ask_stop_func'
 
 ask_list() {
     local bridge_py
     bridge_py="$(_get_bridge_py)" || return 1
-    local conv_dir="${XDG_RUNTIME_DIR:-/tmp}/localai_bridge/conversations"
+    local conv_dir="${XDG_RUNTIME_DIR:-/run/user/$UID}/localai_bridge/conversations"
 
     if ! command -v fzf >/dev/null 2>&1; then
         print -u2 "[ask_list] Error: fzf is required but not installed."
@@ -81,7 +93,7 @@ ask_list() {
             --margin=0 \
             --padding=0 \
             --border=rounded \
-            --border-label=' ⏎ View │ ^R Resume │ ^Y Copy │ ^E Edit │ ^X Delete │ Esc Quit ' \
+            --border-label=' ⏎ View │ ^E Edit in Neovim │ ^R Resume │ ^Y Copy │ ^X Delete │ Esc Quit ' \
             --border-label-pos=center:bottom \
             --prompt='AI Sessions ❯ ' \
             --pointer='❯' \
