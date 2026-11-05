@@ -30,18 +30,31 @@ def process(pid: int) -> tuple[int, str, Path | None]:
             path = Path(argument.partition("=")[2])
         elif argument == "--input-ipc-server" and index + 1 < len(arguments):
             path = Path(os.fsdecode(arguments[index + 1]))
-    if path is not None and not path.is_absolute():
+    if path is None:
+        runtime_dir = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+        for candidate in (Path(runtime_dir) / f"mpv-ipc-{pid}", Path(f"/tmp/mpv-ipc-{pid}")):
+            if candidate.is_socket():
+                path = candidate
+                break
+    elif not path.is_absolute():
         path = directory / "cwd" / path
     return int(fields[1]), fields[19], path
 
 
 def discover() -> list[dict]:
     players = []
+    uid = os.getuid()
+    runtime_dir = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{uid}")
     for directory in Path("/proc").glob("[0-9]*"):
         try:
-            if directory.stat().st_uid != os.getuid() or (directory / "comm").read_text().strip() != "mpv":
+            if directory.stat().st_uid != uid:
                 continue
             pid = int(directory.name)
+            if (
+                not (runtime_dir / f"mpv-ipc-{pid}").is_socket()
+                and (directory / "comm").read_text().strip() != "mpv"
+            ):
+                continue
             parent, started, path = process(pid)
             if path is None or not path.is_socket():
                 continue
@@ -105,11 +118,18 @@ class Client:
     def get(self, name):
         return self.command("get_property", name)
 
+    def has_dusky_player(self) -> bool:
+        try:
+            return bool(self.get("user-data/dusky_player/enabled"))
+        except CommandError:
+            return False
+
     def snapshot(self):
         idle = self.get("idle-active")
         paused = self.get("pause")
         count = self.get("playlist-count")
         index = self.get("playlist-pos")
+        dusky = self.has_dusky_player()
         title = ""
         if not idle:
             try:
@@ -126,8 +146,8 @@ class Client:
             "PlaybackStatus": value("s", status),
             "CanControl": value("b", True), "CanPlay": value("b", count > 0),
             "CanPause": value("b", not idle),
-            "CanGoNext": value("b", index >= 0 and index + 1 < count),
-            "CanGoPrevious": value("b", index > 0),
+            "CanGoNext": value("b", (not idle) if dusky else (index >= 0 and index + 1 < count)),
+            "CanGoPrevious": value("b", (not idle) if dusky else (index > 0)),
             "Metadata": value("a{sv}", {} if idle and count == 0 else {
                 "xesam:title": value("s", title),
                 "mpris:trackid": value("o", f"/ipc/track/{max(index, 0)}"),
@@ -153,9 +173,15 @@ class Client:
         elif action == "Pause":
             self.command("set_property", "pause", True)
         elif action == "Next":
-            self.command("playlist-next")
+            if self.has_dusky_player():
+                self.command("script-binding", "dusky_player/media-next")
+            else:
+                self.command("playlist-next")
         elif action == "Previous":
-            self.command("playlist-prev")
+            if self.has_dusky_player():
+                self.command("script-binding", "dusky_player/media-prev")
+            else:
+                self.command("playlist-prev")
         elif action == "Stop":
             index = self.get("playlist-pos")
             if index >= 0:
