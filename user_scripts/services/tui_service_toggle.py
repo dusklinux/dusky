@@ -155,6 +155,10 @@ CORE_USER_DEFS = {
         "LLM Service (dusky_llm)",
         "Local LLM inference daemon (Ollama / llama.cpp wrapper). Handles prompt completion and embeddings for Dusky AI features.",
     ),
+    "localai_bridge.service": (
+        "Local AI Web Bridge",
+        "WebSocket bridge daemon that connects the browser extension to the local AI backend (bridge.py --daemon). Enables the web_ai_bridge Firefox extension to send and receive messages from the local Python bridge over a local WebSocket.",
+    ),
     "dusky_firefox_cache.service": (
         "Firefox Profile RAM Sync",
         "Synchronizes Firefox profiles into RAM (tmpfs) to eliminate SSD write amplification from cookie and SQLite churn. Automatically restores to disk on shutdown, with periodic background resyncs.",
@@ -395,7 +399,7 @@ CORE_USER_SECTIONS = (
     )),
     ("Media & AI", (
         "pipewire.service", "pipewire-pulse.service", "wireplumber.service",
-        "dusky_llm.service",
+        "dusky_llm.service", "localai_bridge.service",
     )),
     ("Power & Monitoring", (
         "dusky_battery.service", "dusky_ram_monitor.service",
