@@ -182,6 +182,30 @@ end)
                     continue
                 self.assertIn(item.scope+'/'+item.key, engine.cache, item.uid)
                 self.assertEqual(item.deserialize(engine.cache[item.scope+'/'+item.key]), item.default, item.uid)
+        self.assertNotIn('region_size', self.path.read_text())
+        self.assertTrue(engine.write_value('1', 'input/tablet/region_size', '1920', 'float')[0])
+        self.assertIn('region_size = { 1920, 1 },', self.path.read_text())
+        self.assertTrue(engine.write_value('2', 'input/tablet/region_size', '1080', 'float')[0])
+        self.assertIn('region_size = { 1920, 1080 },', self.path.read_text())
+        self.assertTrue(engine.write_value('1', 'input/tablet/region_size', '0', 'float')[0])
+        self.assertNotIn('region_size', self.path.read_text())
+        self.assertEqual(engine.cache['input/tablet/region_size/1'], 0)
+        self.assertEqual(engine.cache['input/tablet/region_size/2'], 0)
+        self.assertTrue(engine.write_batch([
+            ('1', 'input/tablet/region_size', '2560', 'float'),
+            ('2', 'input/tablet/region_size', '1440', 'float'),
+        ])[0])
+        self.assertEqual(self.path.read_text().count('region_size'), 1)
+        self.assertEqual(engine.cache['input/tablet/region_size/1'], 2560)
+        self.assertEqual(engine.cache['input/tablet/region_size/2'], 1440)
+        self.assertTrue(engine.write_batch([
+            ('1', 'input/tablet/region_size', '0.0', 'float'),
+            ('2', 'input/tablet/region_size', '0.0', 'float'),
+        ])[0])
+        self.assertNotIn('region_size', self.path.read_text())
+        no_tablet = self.engine(HyprlandLuaEngine, 'hl.config({input={sensitivity=0.0}})\n')
+        self.assertFalse(no_tablet.write_value('1', 'input/tablet/region_size', '1920', 'float')[0])
+        self.assertNotIn('region_size', self.path.read_text())
         schema = runpy.run_path(str(ROOT / 'hypr/input/tui_trackpad.py'))
         self.assertTrue(all(i.preset_partial for i in schema['SCHEMA'][3]))
 

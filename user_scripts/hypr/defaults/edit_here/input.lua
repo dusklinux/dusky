@@ -81,7 +81,6 @@ hl.config({
             output = "",                     -- The monitor to bind tablets. Leave empty to map across all monitors.
             region_position = { 0, 0 },      -- Position of the mapped region in monitor layout relative to top left.
             absolute_region_position = false,-- Whether to treat the region_position as an absolute position in monitor layout.
-            region_size = { 0, 0 },          -- Size of the mapped region.
             relative_input = false,          -- Whether the input should be relative.
             left_handed = false,             -- If enabled, the tablet will be rotated 180 degrees.
             active_area_size = { 0, 0 },     -- Size of tablet’s active area in mm.

@@ -70,7 +70,6 @@ hl.config({
             output                   = "",           -- Monitor to bind tablet to (empty = all monitors).
             region_position          = { 0, 0 },     -- Mapped region position relative to top-left.
             absolute_region_position = false,        -- Treat region_position as absolute monitor coords.
-            region_size              = { 0, 0 },     -- Mapped region size (0,0 = full tablet area).
             relative_input           = false,        -- Use relative instead of absolute input.
             left_handed              = false,        -- Rotate tablet 180°.
             active_area_size         = { 0, 0 },     -- Tablet active area in mm (0,0 = full).

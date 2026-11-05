@@ -835,7 +835,7 @@ SCHEMA = {
             min_val=-20000,
             max_val=20000,
             step=1,
-            extended_help='Mapping coordinates are layout pixels; active area coordinates are tablet millimeters. Zero size keeps the full default area.'
+            extended_help='Layout pixels; { 0, 0 } is valid for the position. Leave Mapped Size at 0 to map across the full monitor layout.'
         ),
         ConfigItem(
             label='Mapped Position Y',
@@ -847,7 +847,7 @@ SCHEMA = {
             min_val=-20000,
             max_val=20000,
             step=1,
-            extended_help='Mapping coordinates are layout pixels; active area coordinates are tablet millimeters. Zero size keeps the full default area.'
+            extended_help='Layout pixels; { 0, 0 } is valid for the position. Leave Mapped Size at 0 to map across the full monitor layout.'
         ),
         ConfigItem(
             label='Mapped Size X',
@@ -856,10 +856,10 @@ SCHEMA = {
             type_='float',
             default=0.0,
             group='Mapping',
-            min_val=-100,
-            max_val=4000,
-            step=1,
-            extended_help='Mapping coordinates are layout pixels; active area coordinates are tablet millimeters. Zero size keeps the full default area.'
+            min_val=0,
+            max_val=100000,
+            step=10,
+            extended_help='Layout pixels; 0 omits region_size so Hyprland maps across the full monitor layout. Set 1–100000 for a fixed region width.'
         ),
         ConfigItem(
             label='Mapped Size Y',
@@ -868,10 +868,10 @@ SCHEMA = {
             type_='float',
             default=0.0,
             group='Mapping',
-            min_val=-100,
-            max_val=4000,
-            step=1,
-            extended_help='Mapping coordinates are layout pixels; active area coordinates are tablet millimeters. Zero size keeps the full default area.'
+            min_val=0,
+            max_val=100000,
+            step=10,
+            extended_help='Layout pixels; 0 omits region_size so Hyprland maps across the full monitor layout. Set 1–100000 for a fixed region height.'
         ),
         ConfigItem(
             label='Active Area Position X',
@@ -883,7 +883,7 @@ SCHEMA = {
             min_val=0,
             max_val=500,
             step=1,
-            extended_help='Mapping coordinates are layout pixels; active area coordinates are tablet millimeters. Zero size keeps the full default area.'
+            extended_help='Active area coordinates are tablet millimeters. { 0, 0 } keeps the full default area and is accepted by Hyprland.'
         ),
         ConfigItem(
             label='Active Area Position Y',
@@ -895,7 +895,7 @@ SCHEMA = {
             min_val=0,
             max_val=500,
             step=1,
-            extended_help='Mapping coordinates are layout pixels; active area coordinates are tablet millimeters. Zero size keeps the full default area.'
+            extended_help='Active area coordinates are tablet millimeters. { 0, 0 } keeps the full default area and is accepted by Hyprland.'
         ),
         ConfigItem(
             label='Active Area Size X',
@@ -907,7 +907,7 @@ SCHEMA = {
             min_val=0,
             max_val=500,
             step=1,
-            extended_help='Mapping coordinates are layout pixels; active area coordinates are tablet millimeters. Zero size keeps the full default area.'
+            extended_help='Active area coordinates are tablet millimeters. { 0, 0 } keeps the full default area and is accepted by Hyprland.'
         ),
         ConfigItem(
             label='Active Area Size Y',
@@ -919,7 +919,7 @@ SCHEMA = {
             min_val=0,
             max_val=500,
             step=1,
-            extended_help='Mapping coordinates are layout pixels; active area coordinates are tablet millimeters. Zero size keeps the full default area.'
+            extended_help='Active area coordinates are tablet millimeters. { 0, 0 } keeps the full default area and is accepted by Hyprland.'
         ),
         ConfigItem(
             label='Minimum Pen Pressure',

@@ -321,6 +321,16 @@ class HyprlandLuaEngine(BaseEngine):
             seen[t] = nil
         end
         walk(config_root, "")
+        if type(config_root.input) == "table" and type(config_root.input.tablet) == "table"
+           and config_root.input.tablet.region_size == nil then
+            for _, idx in ipairs({"1", "2"}) do
+                local k = "input/tablet/region_size/" .. idx
+                if not seen_keys[k] then
+                    seen_keys[k] = true
+                    table.insert(out_state, escape_str(k) .. ":0")
+                end
+            end
+        end
 
         -- SCANNER FOR EXPLICIT NIL ASSIGNMENTS (Lua runtime omits nil keys from tables)
         local function tokenize(text)
@@ -712,6 +722,7 @@ class HyprlandLuaEngine(BaseEngine):
             else:
                 value = self._lua_string(str(new_value))
             payload.append(f'  {{ key = {self._lua_string(key)}, scope = {self._lua_string(scope)}, val = {self._lua_string(value)} }},')
+        payload.append(f'  main_file = {self._lua_string(str(self.config_path))},')
         payload.append('  calls = {')
         for call in self._call_sites:
             payload.append('    {file = ' + self._lua_string(call['file'])
@@ -898,35 +909,103 @@ class HyprlandLuaEngine(BaseEngine):
 
             -- Unified pass scans for ALL batch items simultaneously
             local peek_identifier
-            local function parse_table(tokens, text, i, scope_parts, matches)
+            local REGION_K1 = "input/tablet/region_size\0" .. "1"
+            local REGION_K2 = "input/tablet/region_size\0" .. "2"
+            local tablet_tables = {}
+            local has_region_size_node = false
+
+            local function is_unset_region_val(v)
+                if not v then return false end
+                if v == "nil" or v == "__DELETE__" then return true end
+                local n = tonumber(v)
+                return n ~= nil and n <= 0
+            end
+
+            local function parse_table(tokens, text, i, scope_parts, matches, record_sites)
                 if not tokens[i] or tokens[i].type ~= "LBRACE" then return i end
+                local curr_table_scope = scope_string(scope_parts)
+                local tablet_info = nil
+                if record_sites and curr_table_scope == "input/tablet" then
+                    tablet_info = { lbrace = tokens[i], rbrace = nil, anchor = nil, first_key = nil, has_mapping = false }
+                end
                 i = i + 1
                 local array_index = 1
                 while i <= #tokens do
-                    if tokens[i].type == "RBRACE" then return i + 1 end
+                    if tokens[i].type == "RBRACE" then
+                        if tablet_info then
+                            tablet_info.rbrace = tokens[i]
+                            tablet_tables[#tablet_tables + 1] = tablet_info
+                        end
+                        return i + 1
+                    end
                     if tokens[i].type == "COMMA" or tokens[i].type == "SEMI" then i = i + 1 goto continue end
 
                     local key, rhs = key_at(tokens, i)
                     if key then
+                        if tablet_info then
+                            tablet_info.first_key = tablet_info.first_key or tokens[i]
+                            if key == "region_position" or key == "absolute_region_position" then
+                                tablet_info.has_mapping = true
+                            elseif key == "relative_input" then
+                                tablet_info.anchor = tablet_info.anchor or tokens[i]
+                            end
+                        end
                         local rhs_end, next_i = find_rhs_end(tokens, rhs)
                         local curr_scope = scope_string(scope_parts)
                         local lookup_key = curr_scope .. "\0" .. tostring(key)
                         local whole_gap = curr_scope:match("^workspace_rule/")
                             and (key == "gaps_in" or key == "gaps_out" or key == "float_gaps") and batch_lookup[lookup_key]
+                        if curr_scope == "input/tablet" and key == "region_size" and tokens[rhs] and tokens[rhs].type == "LBRACE" then
+                            if record_sites then has_region_size_node = true end
+                            local v1, v2 = batch_lookup[REGION_K1], batch_lookup[REGION_K2]
+                            if is_unset_region_val(v1) or is_unset_region_val(v2) then
+                                local req_keys = {}
+                                if v1 then req_keys[#req_keys + 1] = REGION_K1 end
+                                if v2 then req_keys[#req_keys + 1] = REGION_K2 end
+                                local has_sep = tokens[next_i] and (tokens[next_i].type == "COMMA" or tokens[next_i].type == "SEMI")
+                                local last_tok_idx = has_sep and next_i or rhs_end
+                                local field_end = tokens[last_tok_idx].e
+                                local ls = tokens[i].s
+                                while ls > 1 and (text:sub(ls - 1, ls - 1) == " " or text:sub(ls - 1, ls - 1) == "\t") do
+                                    ls = ls - 1
+                                end
+                                local is_bol = (ls == 1 or text:sub(ls - 1, ls - 1) == "\n")
+                                    and (i == 1 or tokens[i - 1].line < tokens[i].line)
+                                local next_tok = tokens[last_tok_idx + 1]
+                                local no_same_line_tok = (not next_tok or next_tok.line > tokens[last_tok_idx].line)
+                                local nl = text:find("\n", field_end + 1, true)
+                                local rest_of_line = text:sub(field_end + 1, nl and (nl - 1) or #text):gsub("\r$", "")
+                                local safe_eol = rest_of_line:match("^[ \t]*$")
+                                    or (rest_of_line:match("^[ \t]*%-%-") and not rest_of_line:match("^[ \t]*%-%-%[=*%["))
+                                local del_s, del_e
+                                if is_bol and no_same_line_tok and nl and safe_eol then
+                                    del_s, del_e = ls, nl
+                                else
+                                    local _, ws_end = text:find("^[ \t]*", field_end + 1)
+                                    del_s, del_e = tokens[i].s, ws_end or field_end
+                                end
+                                matches[#matches + 1] = {
+                                    s = del_s, e = del_e, raw = text:sub(tokens[i].s, field_end),
+                                    new_val = "", lookup_key = req_keys[1], lookup_keys = req_keys, literal = true
+                                }
+                                i = next_i
+                                goto continue
+                            end
+                        end
                         if tokens[rhs] and tokens[rhs].type == "LBRACE" and not whole_gap then
                             scope_parts[#scope_parts + 1] = key
-                            parse_table(tokens, text, rhs, scope_parts, matches)
+                            parse_table(tokens, text, rhs, scope_parts, matches, record_sites)
                             scope_parts[#scope_parts] = nil
                         else
                             local curr_scope = scope_string(scope_parts)
                             local lookup_key = curr_scope .. "\0" .. tostring(key)
                             local target_val = batch_lookup[lookup_key]
-                            
+
                             if target_val then
                                 local raw = text:sub(tokens[rhs].s, tokens[rhs_end].e)
-                                matches[#matches + 1] = { 
-                                    s = tokens[rhs].s, e = tokens[rhs_end].e, raw = raw, 
-                                    new_val = target_val, lookup_key = lookup_key 
+                                matches[#matches + 1] = {
+                                    s = tokens[rhs].s, e = tokens[rhs_end].e, raw = raw,
+                                    new_val = target_val, lookup_key = lookup_key
                                 }
                             end
                         end
@@ -934,25 +1013,25 @@ class HyprlandLuaEngine(BaseEngine):
                     else
                         local key_str = tokens[i].type == "LBRACE" and peek_identifier(tokens, i) or tostring(array_index)
                         local rhs_end, next_i = find_rhs_end(tokens, i)
-                        
+
                         if tokens[i] and tokens[i].type == "LBRACE" then
                             scope_parts[#scope_parts + 1] = key_str
-                            parse_table(tokens, text, i, scope_parts, matches)
+                            parse_table(tokens, text, i, scope_parts, matches, record_sites)
                             scope_parts[#scope_parts] = nil
                         else
                             local curr_scope = scope_string(scope_parts)
                             local lookup_key = curr_scope .. "\0" .. key_str
                             local target_val = batch_lookup[lookup_key]
-                            
+
                             if target_val then
                                 local raw = text:sub(tokens[i].s, tokens[rhs_end].e)
-                                matches[#matches + 1] = { 
-                                    s = tokens[i].s, e = tokens[rhs_end].e, raw = raw, 
-                                    new_val = target_val, lookup_key = lookup_key 
+                                matches[#matches + 1] = {
+                                    s = tokens[i].s, e = tokens[rhs_end].e, raw = raw,
+                                    new_val = target_val, lookup_key = lookup_key
                                 }
                             end
                         end
-                        
+
                         array_index = array_index + 1
                         i = next_i
                     end
@@ -1073,7 +1152,7 @@ class HyprlandLuaEngine(BaseEngine):
                 end
                 if arg_idx and ids and #ids == 1 then
                     if method == "config" then
-                        parse_table(target_tokens, target_text, arg_idx, {}, matches)
+                        parse_table(target_tokens, target_text, arg_idx, {}, matches, true)
                     elseif method == "env" then
                         local scope = { method, ids[1] }
                         local key_end, next_arg = find_rhs_end(target_tokens, arg_idx)
@@ -1125,21 +1204,72 @@ class HyprlandLuaEngine(BaseEngine):
                 idx = idx + 1
             end
 
+            if not has_region_size_node and #tablet_tables > 0
+               and (not batch.main_file or src_path == batch.main_file) then
+                local v1, v2 = batch_lookup[REGION_K1], batch_lookup[REGION_K2]
+                if v1 or v2 then
+                    local req_keys = {}
+                    if v1 then req_keys[#req_keys + 1] = REGION_K1 end
+                    if v2 then req_keys[#req_keys + 1] = REGION_K2 end
+                    if (not v1 or is_unset_region_val(v1)) and (not v2 or is_unset_region_val(v2)) then
+                        matches[#matches + 1] = {
+                            s = 1, e = 0, raw = "nil", new_val = "",
+                            lookup_key = req_keys[1], lookup_keys = req_keys, literal = true
+                        }
+                    else
+                        local target_tbl = tablet_tables[1]
+                        for _, tbl in ipairs(tablet_tables) do
+                            if tbl.has_mapping then target_tbl = tbl; break end
+                        end
+                        local x_val = (v1 and not is_unset_region_val(v1)) and v1 or "1"
+                        local y_val = (v2 and not is_unset_region_val(v2)) and v2 or "1"
+                        local anchor = target_tbl.anchor or target_tbl.first_key
+                        local ins_pos, ins_text
+                        if anchor then
+                            local ls = anchor.s
+                            while ls > 1 and (target_text:sub(ls - 1, ls - 1) == " " or target_text:sub(ls - 1, ls - 1) == "\t") do
+                                ls = ls - 1
+                            end
+                            if ls == 1 or target_text:sub(ls - 1, ls - 1) == "\n" then
+                                local indent = target_text:sub(ls, anchor.s - 1)
+                                ins_pos = anchor.s
+                                ins_text = "region_size = { " .. x_val .. ", " .. y_val .. " },\n" .. indent
+                            else
+                                ins_pos = anchor.s
+                                ins_text = "region_size = { " .. x_val .. ", " .. y_val .. " }, "
+                            end
+                        else
+                            ins_pos = target_tbl.rbrace.s
+                            ins_text = " region_size = { " .. x_val .. ", " .. y_val .. " } "
+                        end
+                        matches[#matches + 1] = {
+                            s = ins_pos, e = ins_pos - 1, raw = "nil", new_val = ins_text,
+                            lookup_key = req_keys[1], lookup_keys = req_keys, literal = true
+                        }
+                    end
+                end
+            end
+
             io.stderr:write("[Telemetry] Found " .. #matches .. " AST match(es) for batch.\n")
 
             if #matches == 0 then os.exit(1) end
             
             local matched_tracker = {}
-            
+
             table.sort(matches, function(a, b) return a.s < b.s end)
             -- Apply replacements in reverse order to preserve string indexing
             for j = #matches, 1, -1 do
                 local m = matches[j]
-                matched_tracker[m.lookup_key] = true
-                
+                for _, lk in ipairs(m.lookup_keys or { m.lookup_key }) do
+                    matched_tracker[lk] = true
+                end
+
                 io.stderr:write("[Telemetry] Match " .. j .. ": " .. m.raw .. " -> " .. tostring(m.new_val) .. "\n")
-                
-                local ok, repl_or_err = pcall(format_replacement, m.raw, m.new_val, m.lookup_key)
+
+                local ok, repl_or_err = true, m.new_val
+                if not m.literal then
+                    ok, repl_or_err = pcall(format_replacement, m.raw, m.new_val, m.lookup_key)
+                end
                 if not ok then
                     io.stderr:write(tostring(repl_or_err), "\n")
                     os.exit(3)
