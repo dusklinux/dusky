@@ -523,14 +523,35 @@ local function process_probe_queue()
 	end
 end
 
+---@param seconds number
+---@return string|nil
+function format_playlist_duration(seconds)
+	if type(seconds) ~= 'number' or seconds ~= seconds or seconds <= 0 or seconds >= math.huge then
+		return nil
+	end
+	local total_minutes = math.max(1, math.floor((seconds + 30) / 60))
+	local hours = math.floor(total_minutes / 60)
+	local mins = total_minutes % 60
+	return string.format('%dh %dm', hours, mins)
+end
+
 ---@param paths string[]
-function request_media_probe(paths)
-	for _, raw_path in ipairs(paths) do
+---@param high_priority? boolean
+function request_media_probe(paths, high_priority)
+	local count = #paths
+	for idx = 1, count do
+		local raw_path = high_priority and paths[count - idx + 1] or paths[idx]
 		local key = normalize_path(raw_path)
 		if key and media_meta_cache[key] == nil and not probe_in_flight[key] and not probe_queued_set[key] then
-			if not is_protocol(raw_path) and not has_any_extension(raw_path, config.types.image) then
+			if not is_protocol(raw_path)
+				and not has_any_extension(raw_path, config.types.image)
+				and not has_any_extension(raw_path, config.types.playlist) then
 				probe_queued_set[key] = true
-				probe_queue[#probe_queue + 1] = key
+				if high_priority then
+					table.insert(probe_queue, 1, key)
+				else
+					probe_queue[#probe_queue + 1] = key
+				end
 			else
 				media_meta_cache[key] = false
 			end
@@ -589,10 +610,10 @@ function update_playlist_duration(refresh_menu)
 		end
 	end
 
-	if #to_probe > 0 then request_media_probe(to_probe) end
+	if #to_probe > 0 then request_media_probe(to_probe, true) end
 
 	state.playlist_durations = item_durations
-	state.playlist_duration_human = total > 0 and format_time(total, total) or nil
+	state.playlist_duration_human = total > 0 and format_playlist_duration(total) or nil
 	set_state('playlist_duration', total > 0 and total or nil)
 
 	if refresh_menu and state.refresh_playlist_menu and Menu:is_open('playlist') then
@@ -892,11 +913,11 @@ mp.observe_property('playlist-pos-1', 'number', create_state_setter('playlist_po
 mp.observe_property('playlist-count', 'number', function(_, value)
 	set_state('playlist_count', value)
 	set_state('has_playlist', value > 1)
-	update_playlist_duration(false)
+	update_playlist_duration(true)
 	Elements:trigger('dispositions')
 end)
 mp.observe_property('playlist', 'native', function()
-	update_playlist_duration(false)
+	update_playlist_duration(true)
 end)
 mp.observe_property('fullscreen', 'bool', create_state_setter('fullscreen', update_fullormaxed))
 mp.observe_property('window-maximized', 'bool', create_state_setter('maximized', update_fullormaxed))
@@ -946,8 +967,10 @@ mp.observe_property('demuxer-cache-state', 'native', function(prop, cache_state)
 		}
 	end
 	table.sort(ranges, function(a, b) return a[1] < b[1] end)
-	if bof then ranges[1][1] = 0 end
-	if eof then ranges[#ranges][2] = state.duration end
+	if #ranges > 0 then
+		if bof then ranges[1][1] = 0 end
+		if eof then ranges[#ranges][2] = state.duration end
+	end
 	-- Invert cached ranges into uncached ranges, as that's what we're rendering
 	local inverted_ranges = {{0, state.duration}}
 	for _, cached in pairs(ranges) do
@@ -1215,8 +1238,9 @@ function open_clear_history_menu()
 				menu:close()
 			elseif event.value == 'toggle_save_on_quit' then
 				local cur = mp.get_property_bool('save-position-on-quit', true)
-				mp.set_property_bool('save-position-on-quit', not cur)
-				if not not cur == false and state.path then
+				local next_val = not cur
+				mp.set_property_bool('save-position-on-quit', next_val)
+				if not next_val and state.path and not is_protocol(state.path) then
 					mp.commandv('delete-watch-later-config', state.path)
 				end
 				menu:update_items(build_items())

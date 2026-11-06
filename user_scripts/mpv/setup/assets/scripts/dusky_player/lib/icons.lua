@@ -44,6 +44,51 @@ icons.volume_down = {speaker, line({15,7,18,10,18,14,15,17})}
 icons.volume_mute = {speaker}
 icons.volume_off = {speaker, line({16,8,23,16}), line({23,8,16,16})}
 icons.check = {line({3,12,9,18,21,5})}
+icons.history = {
+    line({5,7,8,4,13,3,18,5,21,10,20,16,16,20,10,21,5,18}),
+    polygon({2,1,2,7,9,7}),
+    line({12,7,12,13}),
+    line({12,12,16,15}),
+}
+icons.replay = {
+    line({5,7,8,4,13,3,18,5,21,10,20,16,16,20,10,21,5,18}),
+    polygon({2,1,2,7,9,7}),
+}
+icons.folder = {
+    line({2,6,2,20,22,20,22,8,12,8,9,6,2,6}),
+}
+icons.folder_delete = {
+    line({2,6,2,20,22,20,22,8,12,8,9,6,2,6}),
+    line({10,11,16,17}),
+    line({16,11,10,17}),
+}
+icons.playlist_remove = {
+    line({2,5,15,5}),
+    line({2,11,15,11}),
+    line({2,17,10,17}),
+    line({14,13,21,20}),
+    line({21,13,14,20}),
+}
+icons.delete_sweep = {
+    line({15,16,19,16}),
+    line({15,12,21,12}),
+    line({15,8,22,8}),
+    line({3,8,4,20,12,20,13,8}),
+    line({2,6,14,6}),
+    line({6,6,6,4,10,4,10,6}),
+}
+icons.delete_forever = {
+    line({5,6,6,21,18,21,19,6}),
+    line({3,5,21,5}),
+    line({8,5,8,2,16,2,16,5}),
+    line({9,10,15,16}),
+    line({15,10,9,16}),
+}
+icons.check_box_outline_blank = icons.crop_square
+icons.check_box = {
+    line({4,4,20,4,20,20,4,20,4,4}),
+    line({7,12,10,15,17,8}),
+}
 icons.help_outline = icons.help
 icons.help_center = icons.help
 icons.chevron_right = icons.arrow_forward_ios

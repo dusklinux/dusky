@@ -44,13 +44,18 @@ end
 local topology = discover_drm_topology()
 
 local function is_nvidia_primary_context()
+	if topology.has_nvidia and not topology.igpu_node then
+		return true
+	end
+	local egl_vendor = os.getenv('__EGL_VENDOR_LIBRARY_FILENAMES') or ''
 	return os.getenv('__GLX_VENDOR_LIBRARY_NAME') == 'nvidia'
 		or os.getenv('__NV_PRIME_RENDER_OFFLOAD') == '1'
 		or os.getenv('GBM_BACKEND') == 'nvidia-drm'
+		or egl_vendor:find('nvidia', 1, true) ~= nil
 end
 
 -- Apply topology once at startup before any file decoder initializes
-if is_nvidia_primary_context() and topology.has_nvidia then
+if topology.has_nvidia and is_nvidia_primary_context() then
 	if topology.igpu_node then
 		-- NVIDIA primary + secondary Intel/AMD GPU present:
 		-- Point vaapi-device explicitly at the discovered iGPU render node.

@@ -176,7 +176,13 @@ mp.add_hook('on_preloaded', 50, function()
     end
     apply(true)
 end)
-mp.register_event('file-loaded', function() apply() end)
+mp.register_event('file-loaded', function()
+    if not file_duration then
+        file_duration = mp.get_property_number('duration')
+        if file_duration and file_duration <= 0 then file_duration = nil end
+    end
+    apply()
+end)
 mp.register_event('end-file', function()
     loaded = false
     schedule()

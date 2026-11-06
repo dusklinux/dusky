@@ -277,8 +277,12 @@ local function spawn(time)
         "--ovc=rawvideo", "--of=image2", "--ofopts=update=1", "--o="..options.thumbnail
     }
 
-    table.insert(args, "--sws-allow-zimg=no")
-    table.insert(args, "--media-controls=no")
+    if mp.get_property_native("sws-allow-zimg") ~= nil then
+        table.insert(args, "--sws-allow-zimg=no")
+    end
+    if mp.get_property_native("media-controls") ~= nil then
+        table.insert(args, "--media-controls=no")
+    end
 
     if not script_written then
         local client_script_path = options.socket..".run"
@@ -389,8 +393,8 @@ seek_timer = mp.add_periodic_timer(seek_period, function()
         seek_period_counter = 1
     else
         if seek_period_counter == 2 then
+            seek_timer:kill()
             if allow_fast_seek then
-                seek_timer:kill()
                 seek()
             end
         else seek_period_counter = seek_period_counter + 1 end
