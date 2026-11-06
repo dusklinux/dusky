@@ -1321,6 +1321,16 @@ pub fn format_watts(power_uw: u64) -> String {
     format!("{}.{:02}W", cw / 100, cw % 100)
 }
 
+pub fn format_battery_time(secs: u64) -> String {
+    let mut hrs = secs / 3600;
+    let mut mins = (secs % 3600 + 30) / 60;
+    if mins >= 60 {
+        hrs += 1;
+        mins -= 60;
+    }
+    format!("{hrs}h {mins}m")
+}
+
 pub fn read_battery_state(power_supply: &Path) -> BatteryState {
     let Ok(entries) = std::fs::read_dir(power_supply) else {
         return BatteryState {
@@ -1336,11 +1346,16 @@ pub fn read_battery_state(power_supply: &Path) -> BatteryState {
     nodes.sort();
 
     let mut n = 0usize;
+    let mut esum = 0u64;
+    let mut ecnt = 0usize;
+    let mut efsum = 0u64;
+    let mut efcnt = 0usize;
     let mut psum = 0u64;
     let mut pcnt = 0usize;
     let mut net = 0i128;
     let mut charging = false;
     let mut discharging = false;
+    let mut time_ok = true;
     let mut state = BatteryStatus::Unknown;
 
     for path in nodes {
@@ -1381,6 +1396,35 @@ pub fn read_battery_state(power_supply: &Path) -> BatteryState {
         ]
         .into_iter()
         .find_map(|f| read_sysfs_u64(&path.join(f), false).filter(|&v| v > 0));
+
+        // Normalise energy to µWh using matching now/full attributes (zero is valid).
+        let (enow_uwh, efull_uwh) =
+            if let Some(enow) = read_sysfs_u64(&path.join("energy_now"), false) {
+                let efull = ["energy_full", "energy_full_design"]
+                    .into_iter()
+                    .find_map(|f| read_sysfs_u64(&path.join(f), false).filter(|&v| v > 0));
+                (Some(enow), efull)
+            } else if let Some(qnow) = read_sysfs_u64(&path.join("charge_now"), false) {
+                let enow = volt.map(|v| ((qnow as u128 * v as u128) / 1_000_000) as u64);
+                let efull = volt.and_then(|v| {
+                    ["charge_full", "charge_full_design"]
+                        .into_iter()
+                        .find_map(|f| read_sysfs_u64(&path.join(f), false).filter(|&q| q > 0))
+                        .map(|qfull| ((qfull as u128 * v as u128) / 1_000_000) as u64)
+                });
+                (enow, efull)
+            } else {
+                (None, None)
+            };
+
+        if let Some(e) = enow_uwh {
+            esum = esum.saturating_add(e);
+            ecnt += 1;
+        }
+        if let Some(ef) = efull_uwh.filter(|&ef| ef > 0) {
+            efsum = efsum.saturating_add(ef);
+            efcnt += 1;
+        }
 
         // Keep an instantaneous zero instead of substituting a stale average.
         let mut power_uw = ["power_now", "power_avg"]
@@ -1432,7 +1476,9 @@ pub fn read_battery_state(power_supply: &Path) -> BatteryState {
                     state = BatteryStatus::Full;
                 }
             }
-            BatteryStatus::Unknown => {}
+            BatteryStatus::Unknown => {
+                time_ok = false;
+            }
         }
     }
 
@@ -1446,13 +1492,21 @@ pub fn read_battery_state(power_supply: &Path) -> BatteryState {
         };
     }
 
-    if charging && discharging && pcnt == n {
-        if net > 0 {
-            state = BatteryStatus::Charging;
-        } else if net < 0 {
-            state = BatteryStatus::Discharging;
+    if charging && discharging {
+        if pcnt == n {
+            if net > 0 {
+                state = BatteryStatus::Charging;
+            } else if net < 0 {
+                state = BatteryStatus::Discharging;
+            } else {
+                state = BatteryStatus::Unknown;
+                time_ok = false;
+            }
+            psum = net.unsigned_abs() as u64;
+        } else {
+            state = BatteryStatus::Unknown;
+            time_ok = false;
         }
-        psum = net.unsigned_abs() as u64;
     }
 
     let (watts, text) = if pcnt > 0 {
@@ -1463,11 +1517,34 @@ pub fn read_battery_state(power_supply: &Path) -> BatteryState {
         (0.0, "--".into())
     };
 
+    let estimated_secs = if time_ok && pcnt == n && ecnt == n && psum > 0 {
+        match state {
+            BatteryStatus::Discharging => Some(((esum as u128 * 3600) / psum as u128) as u64),
+            BatteryStatus::Charging if efcnt == n => {
+                let rem_uwh = efsum.saturating_sub(esum);
+                Some(((rem_uwh as u128 * 3600) / psum as u128) as u64)
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
+
+    let remaining = if let Some(secs) = estimated_secs {
+        format_battery_time(secs)
+    } else {
+        match state {
+            BatteryStatus::Full => "Full".into(),
+            BatteryStatus::NotCharging => "Held".into(),
+            _ => "N/A".into(),
+        }
+    };
+
     BatteryState {
         present: true,
         status: state,
         watts,
-        tooltip: format!("Battery: {}\nPower: {text}", state.as_str()),
+        tooltip: format!("Battery: {}\nRemaining: {remaining}", state.as_str()),
         text,
     }
 }
@@ -2074,7 +2151,7 @@ mod tests {
         std::fs::write(empty.join("present"), "0\n").unwrap();
         std::fs::write(empty.join("power_now"), "50000000\n").unwrap();
 
-        // Active system battery using power_now
+        // Active system battery using power_now + energy_now (57.81 Wh / 24.6 W = 2h 21m)
         let bat0 = root.join("BAT0");
         std::fs::create_dir_all(&bat0).unwrap();
         std::fs::write(bat0.join("type"), "Battery\n").unwrap();
@@ -2082,23 +2159,33 @@ mod tests {
         std::fs::write(bat0.join("present"), "1\n").unwrap();
         std::fs::write(bat0.join("status"), "Discharging\n").unwrap();
         std::fs::write(bat0.join("power_now"), "24600000\n").unwrap();
+        std::fs::write(bat0.join("energy_now"), "57810000\n").unwrap();
+        std::fs::write(bat0.join("energy_full"), "80000000\n").unwrap();
 
         let state = read_battery_state(&root);
         assert!(state.present);
         assert_eq!(state.status, BatteryStatus::Discharging);
         assert_eq!(state.text, "24.60W");
+        assert_eq!(state.tooltip, "Battery: Discharging\nRemaining: 2h 21m");
         assert!((state.watts - 24.6).abs() < 1e-6);
 
-        // Fallback to current_now (µA) * voltage_now (µV) / 1_000_000
+        // Fallback to current_now (µA) * voltage_now (µV) / 1_000_000 and charge_now/charge_full
+        // Remaining to full: (6,000,000 - 375,350) µAh * 12V = 67,495,800 µWh
+        // at 535,000 µA * 12V = 6,420,000 µW -> 37,848.11s -> 10h 31m
         std::fs::remove_file(bat0.join("power_now")).unwrap();
+        std::fs::remove_file(bat0.join("energy_now")).unwrap();
+        std::fs::remove_file(bat0.join("energy_full")).unwrap();
         std::fs::write(bat0.join("status"), "Charging\n").unwrap();
         std::fs::write(bat0.join("current_now"), "-535000\n").unwrap();
         std::fs::write(bat0.join("voltage_now"), "12000000\n").unwrap();
+        std::fs::write(bat0.join("charge_now"), "375350\n").unwrap();
+        std::fs::write(bat0.join("charge_full"), "6000000\n").unwrap();
 
         let state = read_battery_state(&root);
         assert!(state.present);
         assert_eq!(state.status, BatteryStatus::Charging);
         assert_eq!(state.text, "6.42W");
+        assert_eq!(state.tooltip, "Battery: Charging\nRemaining: 10h 31m");
         assert!((state.watts - 6.42).abs() < 1e-6);
 
         std::fs::remove_dir_all(root).unwrap();

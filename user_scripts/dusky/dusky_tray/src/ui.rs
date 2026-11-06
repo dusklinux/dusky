@@ -995,11 +995,12 @@ impl TrayApp {
                 | sys::BatteryStatus::NotCharging => saturate(self.theme.profiles[0], 0.8),
                 sys::BatteryStatus::Unknown => self.theme.fg,
             };
-            let hint = if self.battery.tooltip.is_empty() {
+            let base = if self.battery.tooltip.is_empty() {
                 "Battery power".into()
             } else {
                 self.battery.tooltip.clone()
             };
+            let hint = format!("{base}\nLMB: Network traffic");
             (value, color, hint)
         } else {
             let value = if self.net.text.is_empty() || self.net.disconnected {
@@ -1007,7 +1008,12 @@ impl TrayApp {
             } else {
                 self.net.text.clone()
             };
-            (value, self.theme.fg, self.net.tooltip.clone())
+            let hint = if self.battery.present {
+                format!("{}\nLMB: Battery power", self.net.tooltip)
+            } else {
+                self.net.tooltip.clone()
+            };
+            (value, self.theme.fg, hint)
         }
     }
 
@@ -2676,23 +2682,25 @@ mod tests {
             net.clone(),
             no_battery,
         )));
-        let (val, color, _) = app.first_metric_display();
+        let (val, color, hint) = app.first_metric_display();
         assert_eq!(val, "12 KB 34");
         assert_eq!(color, app.theme.fg);
+        assert_eq!(hint, "Upload: 12.0 KB/s\nDownload: 34.0 KB/s");
 
         let _ = app.update(Message::MetricPressed("net".into()));
-        let (val, color, _) = app.first_metric_display();
+        let (val, color, hint) = app.first_metric_display();
         assert_eq!(val, "12 KB 34");
         assert_eq!(color, app.theme.fg);
+        assert_eq!(hint, "Upload: 12.0 KB/s\nDownload: 34.0 KB/s");
         assert_eq!(app.show_battery_metric, None);
 
-        // Discharging defaults to battery wattage in performance red
+        // Discharging defaults to battery wattage in performance red with remaining time
         let discharging = sys::BatteryState {
             present: true,
             status: sys::BatteryStatus::Discharging,
             watts: 24.6,
             text: "24.60W".into(),
-            tooltip: "Battery: Discharging\nPower: 24.60W".into(),
+            tooltip: "Battery: Discharging\nRemaining: 2h 21m".into(),
         };
         let _ = app.update(Message::MetricsLoaded((
             "10%".into(),
@@ -2700,15 +2708,23 @@ mod tests {
             net.clone(),
             discharging,
         )));
-        let (val, color, _) = app.first_metric_display();
+        let (val, color, hint) = app.first_metric_display();
         assert_eq!(val, "24.60W");
         assert_eq!(color, saturate(app.theme.profiles[2], 0.8));
+        assert_eq!(
+            hint,
+            "Battery: Discharging\nRemaining: 2h 21m\nLMB: Network traffic"
+        );
 
-        // Clicking toggles to network traffic in normal theme.fg
+        // Clicking toggles to network traffic in normal theme.fg with LMB: Battery power hint
         let _ = app.update(Message::MetricPressed("net".into()));
-        let (val, color, _) = app.first_metric_display();
+        let (val, color, hint) = app.first_metric_display();
         assert_eq!(val, "12 KB 34");
         assert_eq!(color, app.theme.fg);
+        assert_eq!(
+            hint,
+            "Upload: 12.0 KB/s\nDownload: 34.0 KB/s\nLMB: Battery power"
+        );
 
         // Plugging in / charging defaults to network traffic, and toggles to green wattage
         let charging = sys::BatteryState {
@@ -2716,7 +2732,7 @@ mod tests {
             status: sys::BatteryStatus::Charging,
             watts: 6.42,
             text: "6.42W".into(),
-            tooltip: "Battery: Charging\nPower: 6.42W".into(),
+            tooltip: "Battery: Charging\nRemaining: 10h 31m".into(),
         };
         let _ = app.update(Message::MetricsLoaded((
             "10%".into(),
@@ -2724,13 +2740,21 @@ mod tests {
             net,
             charging,
         )));
-        let (val, color, _) = app.first_metric_display();
+        let (val, color, hint) = app.first_metric_display();
         assert_eq!(val, "12 KB 34");
         assert_eq!(color, app.theme.fg);
+        assert_eq!(
+            hint,
+            "Upload: 12.0 KB/s\nDownload: 34.0 KB/s\nLMB: Battery power"
+        );
 
         let _ = app.update(Message::MetricPressed("net".into()));
-        let (val, color, _) = app.first_metric_display();
+        let (val, color, hint) = app.first_metric_display();
         assert_eq!(val, "6.42W");
         assert_eq!(color, saturate(app.theme.profiles[0], 0.8));
+        assert_eq!(
+            hint,
+            "Battery: Charging\nRemaining: 10h 31m\nLMB: Network traffic"
+        );
     }
 }
