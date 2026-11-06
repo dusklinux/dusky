@@ -69,7 +69,7 @@ pub struct ResolvedAppIcon {
 }
 
 impl ResolvedAppIcon {
-    pub fn resolve_color(&self, fallback_class_color: Color, palette: &ThemePalette) -> Color {
+    pub fn resolve_color(&self, palette: &ThemePalette) -> Color {
         match self.accent_slot {
             AccentSlot::Accent => palette.accent,
             AccentSlot::Secondary => palette.secondary,
@@ -91,7 +91,7 @@ impl ResolvedAppIcon {
                     b: (palette.secondary.b + palette.tertiary.b) * 0.5,
                     a: 1.0,
                 },
-                _ => fallback_class_color,
+                _ => palette.secondary,
             },
         }
     }
@@ -229,38 +229,54 @@ impl IconRegistry {
     }
 
     fn read_user_json() -> Option<Value> {
-        let mut candidates = Vec::with_capacity(6);
-        if let Some(custom_path) = env::var_os("DUSKY_ICON_CONFIG") {
-            candidates.push(PathBuf::from(custom_path));
-        }
-        if let Some(home) = env::var_os("HOME") {
-            let home_p = PathBuf::from(home);
-            let custom_dir = home_p.join("user_scripts/dusky/dusky_overview/custom_icons");
-            candidates.push(custom_dir.join("app_icons.json"));
-            if let Ok(entries) = fs::read_dir(&custom_dir) {
-                for entry in entries.flatten() {
-                    let p = entry.path();
-                    if p.extension().is_some_and(|ext| ext == "json")
-                        && p != custom_dir.join("app_icons.json")
-                    {
-                        candidates.push(p);
-                    }
-                }
-            }
-            candidates.push(home_p.join(".config/dusky/app_icons.json"));
-        }
-        if let Some(xdg) = env::var_os("XDG_CONFIG_HOME") {
-            candidates.push(PathBuf::from(xdg).join("dusky/app_icons.json"));
-        }
+        let parse_file = |path: &std::path::Path| -> Option<Value> {
+            let raw = fs::read_to_string(path).ok()?;
+            serde_json::from_str::<Value>(&raw).ok()
+        };
 
-        for path in candidates {
-            let Ok(raw) = fs::read_to_string(&path) else {
-                continue;
-            };
-            if let Ok(parsed) = serde_json::from_str::<Value>(&raw) {
+        if let Some(custom_path) = env::var_os("DUSKY_ICON_CONFIG") {
+            let path = PathBuf::from(custom_path);
+            if let Some(parsed) = parse_file(&path) {
                 return Some(parsed);
             }
         }
+
+        if let Some(home) = env::var_os("HOME") {
+            let home_p = PathBuf::from(home);
+            let custom_dir = home_p.join("user_scripts/dusky/dusky_overview/custom_icons");
+            let primary = custom_dir.join("app_icons.json");
+            if let Some(parsed) = parse_file(&primary) {
+                return Some(parsed);
+            }
+
+            if let Ok(entries) = fs::read_dir(&custom_dir) {
+                let mut extra_paths: Vec<PathBuf> = entries
+                    .flatten()
+                    .map(|entry| entry.path())
+                    .filter(|path| {
+                        path.extension().is_some_and(|ext| ext == "json") && *path != primary
+                    })
+                    .collect();
+                extra_paths.sort();
+                for path in extra_paths {
+                    if let Some(parsed) = parse_file(&path) {
+                        return Some(parsed);
+                    }
+                }
+            }
+
+            if let Some(parsed) = parse_file(&home_p.join(".config/dusky/app_icons.json")) {
+                return Some(parsed);
+            }
+        }
+
+        if let Some(xdg) = env::var_os("XDG_CONFIG_HOME") {
+            let xdg_path = PathBuf::from(xdg).join("dusky/app_icons.json");
+            if let Some(parsed) = parse_file(&xdg_path) {
+                return Some(parsed);
+            }
+        }
+
         None
     }
 
@@ -375,12 +391,11 @@ fn class_pattern_matches(pattern: &str, candidate: &str) -> bool {
     if candidate == pattern || last_rdns == pattern {
         return true;
     }
-    if pattern.len() >= 4 {
-        if let Some(first_seg) = last_rdns.split(['-', '_']).next()
-            && first_seg == pattern
-        {
-            return true;
-        }
+    if pattern.len() >= 4
+        && let Some(first_seg) = last_rdns.split(['-', '_']).next()
+        && first_seg == pattern
+    {
+        return true;
     }
     false
 }
