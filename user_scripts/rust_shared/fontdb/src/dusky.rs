@@ -1,66 +1,122 @@
-//! Select installed font faces using Fontconfig's metadata, without scanning
-//! and parsing the entire installed font collection.
+//! Load the fixed Dusky font set from hardcoded system paths without
+//! spawning Fontconfig subprocesses or scanning font directories.
 
 use crate::{DUSKY_FONT_FAMILY, Database};
-use std::{path::PathBuf, process::Command, sync::OnceLock};
+use std::{path::Path, sync::OnceLock};
 
-const FACES: &[(&str, &str)] = &[
-    (DUSKY_FONT_FAMILY, "Regular"),
-    (DUSKY_FONT_FAMILY, "Bold"),
-    (DUSKY_FONT_FAMILY, "Italic"),
-    (DUSKY_FONT_FAMILY, "Bold Italic"),
-    ("DejaVu Sans", "Book"),
-    ("DejaVu Sans", "Bold"),
-    ("DejaVu Sans Mono", "Book"),
+struct FaceSpec {
+    family: &'static str,
+    style: &'static str,
+    candidates: &'static [&'static str],
+}
+
+const FACES: &[FaceSpec] = &[
+    FaceSpec {
+        family: DUSKY_FONT_FAMILY,
+        style: "Regular",
+        candidates: &[
+            "/usr/share/fonts/OTF/AtkinsonHyperlegible-Regular.otf",
+            "/usr/share/fonts/TTF/AtkinsonHyperlegible-Regular.ttf",
+        ],
+    },
+    FaceSpec {
+        family: DUSKY_FONT_FAMILY,
+        style: "Bold",
+        candidates: &[
+            "/usr/share/fonts/OTF/AtkinsonHyperlegible-Bold.otf",
+            "/usr/share/fonts/TTF/AtkinsonHyperlegible-Bold.ttf",
+        ],
+    },
+    FaceSpec {
+        family: DUSKY_FONT_FAMILY,
+        style: "Italic",
+        candidates: &[
+            "/usr/share/fonts/OTF/AtkinsonHyperlegible-Italic.otf",
+            "/usr/share/fonts/TTF/AtkinsonHyperlegible-Italic.ttf",
+        ],
+    },
+    FaceSpec {
+        family: DUSKY_FONT_FAMILY,
+        style: "Bold Italic",
+        candidates: &[
+            "/usr/share/fonts/OTF/AtkinsonHyperlegible-BoldItalic.otf",
+            "/usr/share/fonts/TTF/AtkinsonHyperlegible-BoldItalic.ttf",
+        ],
+    },
+    FaceSpec {
+        family: "DejaVu Sans",
+        style: "Book",
+        candidates: &["/usr/share/fonts/TTF/DejaVuSans.ttf"],
+    },
+    FaceSpec {
+        family: "DejaVu Sans",
+        style: "Bold",
+        candidates: &["/usr/share/fonts/TTF/DejaVuSans-Bold.ttf"],
+    },
+    FaceSpec {
+        family: "DejaVu Sans Mono",
+        style: "Book",
+        candidates: &["/usr/share/fonts/TTF/DejaVuSansMono.ttf"],
+    },
 ];
 
-fn discover() -> Vec<PathBuf> {
-    let output = match Command::new("fc-list")
-        .args(["--format", "%{family[0]}\t%{style[0]}\t%{file}\n"])
-        .output()
-    {
-        Ok(output) if output.status.success() => output,
-        result => {
-            log::error!("Could not query selected fonts using fc-list: {result:?}");
-            return Vec::new();
-        }
-    };
-    let mut selected: Vec<Option<PathBuf>> = vec![None; FACES.len()];
-    for line in String::from_utf8_lossy(&output.stdout).lines() {
-        let mut fields = line.splitn(3, '\t');
-        let (Some(family), Some(style), Some(file)) = (fields.next(), fields.next(), fields.next())
-        else {
-            continue;
-        };
-        if let Some(index) = FACES.iter().position(|&(f, s)| f == family && s == style) {
-            let path = PathBuf::from(file);
-            // Both TTF and OTF packages can expose the same face. Pick one
-            // deterministically instead of loading duplicate families/styles.
-            if selected[index].as_ref().is_none_or(|old| path < *old) {
-                selected[index] = Some(path);
+struct ResolvedFonts {
+    files: Vec<&'static Path>,
+    has_primary_family: bool,
+}
+
+fn resolve_files() -> ResolvedFonts {
+    let mut files = Vec::with_capacity(FACES.len());
+    let mut has_primary_family = false;
+
+    for spec in FACES {
+        let resolved = spec
+            .candidates
+            .iter()
+            .map(|&raw| Path::new(raw))
+            .find(|path| path.is_file());
+
+        if let Some(path) = resolved {
+            if spec.family == DUSKY_FONT_FAMILY {
+                has_primary_family = true;
             }
+            files.push(path);
+        } else {
+            log::warn!(
+                "Selected font face is missing: {} {} (checked: {:?})",
+                spec.family,
+                spec.style,
+                spec.candidates
+            );
         }
     }
-    for (face, path) in FACES.iter().zip(&selected) {
-        if path.is_none() {
-            log::warn!("Selected font face is missing: {} {}", face.0, face.1);
-        }
+
+    ResolvedFonts {
+        files,
+        has_primary_family,
     }
-    selected.into_iter().flatten().collect()
 }
 
 pub(super) fn load(db: &mut Database) {
     // UI text, SVG text, and annotation rendering each own a database. Resolve
     // the small file list once per process; initialize each database normally.
-    static FILES: OnceLock<Vec<PathBuf>> = OnceLock::new();
-    for file in FILES.get_or_init(discover) {
+    static RESOLVED: OnceLock<ResolvedFonts> = OnceLock::new();
+    let resolved = RESOLVED.get_or_init(resolve_files);
+
+    for &file in &resolved.files {
         if let Err(error) = db.load_font_file(file) {
             log::warn!("Could not load {}: {error}", file.display());
         }
     }
-    db.set_sans_serif_family(DUSKY_FONT_FAMILY);
+
+    let primary = if resolved.has_primary_family {
+        DUSKY_FONT_FAMILY
+    } else {
+        "DejaVu Sans"
+    };
+    db.set_sans_serif_family(primary);
     db.set_serif_family("DejaVu Sans");
-    db.set_cursive_family(DUSKY_FONT_FAMILY);
-    db.set_fantasy_family(DUSKY_FONT_FAMILY);
+    db.set_cursive_family(primary);
+    db.set_fantasy_family(primary);
     db.set_monospace_family("DejaVu Sans Mono");
 }
