@@ -1,74 +1,92 @@
 {
+  "colors": {
+    "browser": "accent",
+    "terminal": "accent",
+    "files": "tertiary",
+    "code": "secondary",
+    "editor": "secondary",
+    "notes": "secondary",
+    "document": "secondary",
+    "media": "tertiary",
+    "chat": "accent",
+    "system": "secondary",
+    "gamepad": "tertiary"
+  },
+
   "terminal_classes": [
     "kitty",
     "foot",
+    "footclient",
     "alacritty",
+    "wezterm",
     "org.wezfurlong.wezterm",
-    "com.mitchellh.ghostty"
+    "ghostty",
+    "com.mitchellh.ghostty",
+    "konsole",
+    "org.kde.konsole",
+    "gnome-terminal",
+    "org.gnome.terminal"
   ],
+
   "custom_icons": {
     "gamepad": {
       "svg_path": "M6 12h4m-2-2v4m7-1h.01M18 11h.01M4 8h16a2 2 0 0 1 2 2v6a3 3 0 0 1-5.5 1.6L14 14h-4l-2.5 3.6A3 3 0 0 1 2 16v-6a2 2 0 0 1 2-2z"
+    },
+    "notes": {
+      "svg_path": "M12 2L4 7v10l8 5 8-5V7l-8-5zm0 2.3l5.5 3.4L12 11.1 6.5 7.7 12 4.3zm-6 5.2l5 3.1v6.3l-5-3.1V9.5zm7 9.4v-6.3l5-3.1v6.3l-5 3.1z"
     }
   },
-  "rules": [
-    {
-      "icon": "files",
-      "label": "yazi",
-      "accent": "tertiary",
-      "terminal_only": true,
-      "title": ["yazi", "ranger", "lf", "nnn"]
-    },
-    {
-      "icon": "code",
-      "label": "nvim",
-      "accent": "secondary",
-      "terminal_only": true,
-      "title": ["nvim", "neovim", "hx", "helix", "vim"]
-    },
-    {
-      "icon": "media",
-      "label": "cava",
-      "accent": "tertiary",
-      "terminal_only": true,
-      "title": ["cava", "mpv", "rmpc", "ncmpcpp"]
-    },
-    {
-      "icon": "system",
-      "label": "btop",
-      "accent": "secondary",
-      "terminal_only": true,
-      "title": ["btop", "htop", "nvtop", "lazygit"]
-    },
-    {
-      "icon": "gamepad",
-      "accent": "tertiary",
-      "class": ["steam", "lutris", "heroic", "gamescope"]
-    },
-    {
-      "icon": "browser",
-      "accent": "accent",
-      "class": ["firefox", "zen", "chromium", "brave-browser", "librewolf", "qutebrowser"]
-    },
-    {
-      "icon": "files",
-      "accent": "tertiary",
-      "class": ["thunar", "org.kde.dolphin", "dolphin", "org.gnome.nautilus", "nautilus", "nemo"]
-    },
-    {
-      "icon": "code",
-      "accent": "secondary",
-      "class": ["code", "codium", "vscodium", "dev.zed.zed", "neovide", "jetbrains-*"]
-    },
-    {
-      "icon": "editor",
-      "accent": "secondary",
-      "class": ["org.kde.kate", "kate", "mousepad", "org.gnome.texteditor"]
-    },
-    {
-      "icon": "terminal",
-      "accent": "accent",
-      "class": ["kitty", "foot", "alacritty", "org.wezfurlong.wezterm", "com.mitchellh.ghostty"]
-    }
-  ]
+
+  "tui": {
+    "yazi": "files:auto:yazi",
+    "superfile, spf": "files:auto:spf",
+    "ranger, lf, nnn": "files:auto:files",
+    "nvim, neovim, vim": "code:auto:nvim",
+    "hx, helix": "code:auto:hx",
+    "nano, micro": "editor:auto:edit",
+    "lynx": "browser:auto:lynx",
+    "cava, rmpc, mpv, ncmpcpp": "media:auto:media",
+    "btop, htop, nvtop, lazygit": "system:auto:sys"
+  },
+
+  "apps": {
+    "obsidian": "notes:auto",
+    "zathura, org.pwmt.zathura, okular, evince, foliate": "document:auto",
+
+    "firefox, firefox-esr, firefox-developer-edition": "browser:auto",
+    "chromium, google-chrome, google-chrome-stable": "browser:auto",
+    "zen, zen-browser, zen-alpha, zen-beta": "browser:auto",
+    "brave, brave-browser": "browser:auto",
+    "helium, helium-browser": "browser:auto",
+    "librewolf, waterfox, floorp": "browser:auto",
+    "microsoft-edge, microsoft-edge-stable, edge": "browser:auto",
+    "vivaldi, vivaldi-stable, qutebrowser, lynx": "browser:auto",
+
+    "yazi": "files:auto:yazi",
+    "superfile, spf": "files:auto:spf",
+    "ranger, lf, nnn": "files:auto:files",
+    "nemo, thunar, dolphin, org.kde.dolphin": "files:auto",
+    "nautilus, org.gnome.nautilus, pcmanfm, pcmanfm-qt": "files:auto",
+
+    "nvim, neovim": "code:auto:nvim",
+    "helix, hx": "code:auto:hx",
+    "code, code-oss, codium, vscodium": "code:auto",
+    "zed, zeditor, dev.zed.zed": "code:auto",
+    "neovide, emacs, jetbrains-*": "code:auto",
+    "nano, micro": "editor:auto:edit",
+    "org.gnome.texteditor, gnome-text-editor": "editor:auto",
+    "kate, org.kde.kate, mousepad, org.xfce.mousepad": "editor:auto",
+
+    "kitty": "terminal:auto",
+    "foot, footclient": "terminal:auto",
+    "alacritty": "terminal:auto",
+    "wezterm, org.wezfurlong.wezterm": "terminal:auto",
+    "ghostty, com.mitchellh.ghostty": "terminal:auto",
+    "konsole, org.kde.konsole, gnome-terminal, org.gnome.terminal": "terminal:auto",
+
+    "steam, lutris, heroic, gamescope": "gamepad:auto",
+    "mpv, vlc, spotify, obs, com.obsproject.studio, pavucontrol": "media:auto",
+    "discord, vesktop, telegram, org.telegram.desktop, signal": "chat:auto",
+    "btop, missioncenter, io.missioncenter.missioncenter": "system:auto"
+  }
 }

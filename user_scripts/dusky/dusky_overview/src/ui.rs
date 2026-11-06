@@ -1,5 +1,5 @@
 use crate::hyprland::{self, Client, OverviewSnapshot, WorkspaceKey, WorkspaceView};
-use crate::icons::{IconRegistry, ResolvedAppIcon};
+use crate::icons::{IconRegistry, IconVisual, ResolvedAppIcon};
 use iced::alignment::{Horizontal, Vertical};
 use iced::event::{self, Event};
 use iced::keyboard::{
@@ -156,6 +156,16 @@ fn mix_color(a: Color, b: Color, t: f32) -> Color {
         a.b + (b.b - a.b) * t,
         a.a + (b.a - a.a) * t,
     )
+}
+
+#[inline]
+fn contrast_text_color(bg: Color, dark_text: Color, light_text: Color) -> Color {
+    let luminance = 0.2126 * bg.r + 0.7152 * bg.g + 0.0722 * bg.b;
+    if luminance > 0.52 {
+        dark_text
+    } else {
+        light_text
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1750,6 +1760,7 @@ impl OverviewApp {
             None => raw_class.to_owned(),
         };
         let accent = resolved_icon.resolve_color(&p);
+        let has_custom_color = resolved_icon.accent_slot.is_custom();
 
         // Anchor `tab_bar_h` to static `base_h` so it never jumps across height thresholds mid-hover.
         let tab_bar_h = if is_grouped {
@@ -1798,7 +1809,9 @@ impl OverviewApp {
             String::new()
         };
 
-        let badge_color = if is_selected || is_grouped {
+        let badge_color = if has_custom_color {
+            mix_color(accent, p.fg, 0.18)
+        } else if is_selected || is_grouped {
             p.accent
         } else if is_hypr_focused || is_fullscreen {
             p.secondary
@@ -1806,17 +1819,24 @@ impl OverviewApp {
             with_alpha(p.secondary, 0.85)
         };
 
-        let titlebar_icon_col = mix_color(accent, p.fg, 0.35);
+        let titlebar_icon_col = mix_color(accent, p.fg, if has_custom_color { 0.16 } else { 0.35 });
 
         let label_content: Element<'a, Message> = if is_fullscreen && has_fullscreen_with_others {
             // Compact high-contrast layout for the docked fullscreen banner.
-            let banner_pill_bg = if is_selected { p.accent } else { p.secondary };
+            let banner_pill_bg = if has_custom_color {
+                accent
+            } else if is_selected {
+                p.accent
+            } else {
+                p.secondary
+            };
+            let banner_pill_fg = contrast_text_color(banner_pill_bg, p.bg, p.fg);
             row![
-                container(text(badge_str).size(9).color(p.bg))
+                container(text(badge_str).size(9).color(banner_pill_fg))
                     .padding([2, 6])
                     .style(move |_theme: &Theme| container::Style {
                         background: Some(Background::Color(banner_pill_bg)),
-                        text_color: Some(p.bg),
+                        text_color: Some(banner_pill_fg),
                         border: Border {
                             color: Color::TRANSPARENT,
                             width: 0.0,
@@ -1826,7 +1846,7 @@ impl OverviewApp {
                         ..Default::default()
                     }),
                 Space::new().width(Length::Fixed(6.0)),
-                render_svg_icon(resolved_icon.handle.clone(), 13.0, titlebar_icon_col),
+                render_app_icon(&resolved_icon.visual, 13.0, titlebar_icon_col),
                 Space::new().width(Length::Fixed(5.0)),
                 text(class_truncated).size(10).color(p.fg),
                 Space::new().width(Length::Fixed(6.0)),
@@ -1842,7 +1862,7 @@ impl OverviewApp {
         } else if body_h >= 42.0 {
             let titlebar = container(
                 row![
-                    render_svg_icon(resolved_icon.handle.clone(), 12.5, titlebar_icon_col),
+                    render_app_icon(&resolved_icon.visual, 12.5, titlebar_icon_col),
                     Space::new().width(Length::Fixed(5.0)),
                     text(class_truncated).size(10).color(p.fg),
                     Space::new().width(Length::Fill),
@@ -1852,32 +1872,42 @@ impl OverviewApp {
             )
             .padding([2, 6])
             .width(Length::Fill)
-            .style(move |_theme: &Theme| container::Style {
-                background: Some(Background::Color(with_alpha(
-                    mix_color(
-                        p.bg,
-                        if is_selected { p.accent } else { accent },
-                        if is_selected { 0.40 } else { 0.20 },
-                    ),
-                    if is_selected { 0.92 } else { 0.82 },
-                ))),
-                text_color: None,
-                border: Border {
-                    color: Color::TRANSPARENT,
-                    width: 0.0,
-                    radius: 4.0.into(),
-                },
-                shadow: Shadow::default(),
-                ..Default::default()
+            .style(move |_theme: &Theme| {
+                let header_tint = if is_selected && !has_custom_color {
+                    p.accent
+                } else {
+                    accent
+                };
+                let mix_t = if is_selected {
+                    0.42
+                } else if has_custom_color {
+                    0.28
+                } else {
+                    0.20
+                };
+                container::Style {
+                    background: Some(Background::Color(with_alpha(
+                        mix_color(p.bg, header_tint, mix_t),
+                        if is_selected { 0.94 } else { 0.84 },
+                    ))),
+                    text_color: None,
+                    border: Border {
+                        color: Color::TRANSPARENT,
+                        width: 0.0,
+                        radius: 4.0.into(),
+                    },
+                    shadow: Shadow::default(),
+                    ..Default::default()
+                }
             });
 
             let body_inner: Element<'a, Message> = if body_h >= 68.0 && w >= 76.0 {
                 let hero_icon_col = with_alpha(
-                    mix_color(accent, p.fg, 0.25),
+                    mix_color(accent, p.fg, if has_custom_color { 0.14 } else { 0.25 }),
                     lerp(0.82, 0.98, hover_t),
                 );
                 column![
-                    render_svg_icon(resolved_icon.handle.clone(), 20.0, hero_icon_col),
+                    render_app_icon(&resolved_icon.visual, 20.0, hero_icon_col),
                     Space::new().height(Length::Fixed(4.0)),
                     text(title_truncated)
                         .size(10)
@@ -1908,7 +1938,7 @@ impl OverviewApp {
             };
             container(
                 row![
-                    render_svg_icon(resolved_icon.handle.clone(), 11.5, titlebar_icon_col),
+                    render_app_icon(&resolved_icon.visual, 11.5, titlebar_icon_col),
                     Space::new().width(Length::Fixed(4.0)),
                     text(compact_text).size(10).color(p.fg),
                 ]
@@ -1928,6 +1958,7 @@ impl OverviewApp {
 
         let is_floating = client.floating;
         let body_radius = if is_grouped { 6.5 } else { 8.5 };
+        let active_tint = if has_custom_color { accent } else { p.accent };
 
         let win_button = button(centered_box)
             .width(Length::Fixed(w))
@@ -1943,7 +1974,9 @@ impl OverviewApp {
                 let eff_hover = if hovered { 1.0_f32 } else { hover_t };
 
                 let rest_bg = if is_selected {
-                    mix_color(p.bg, p.accent, 0.24)
+                    mix_color(p.bg, active_tint, 0.25)
+                } else if has_custom_color {
+                    mix_color(p.bg, accent, 0.13)
                 } else if is_floating {
                     mix_color(p.bg, p.secondary, 0.16)
                 } else {
@@ -1951,7 +1984,7 @@ impl OverviewApp {
                 };
                 let hover_bg = mix_color(
                     p.bg,
-                    p.accent,
+                    active_tint,
                     if is_selected && hovered { 0.36 } else { 0.30 },
                 );
                 let bg = lerp_color(rest_bg, hover_bg, eff_hover);
@@ -1963,7 +1996,10 @@ impl OverviewApp {
                 };
 
                 let rest_border_col = if is_selected {
-                    p.accent
+                    mix_color(active_tint, Color::WHITE, 0.14)
+                } else if has_custom_color {
+                    let muted_custom = mix_color(p.muted, accent, if is_hypr_focused { 0.78 } else { 0.62 });
+                    with_alpha(muted_custom, if is_hypr_focused { 0.90 } else { 0.72 })
                 } else if is_hypr_focused {
                     with_alpha(p.secondary, 0.88)
                 } else if is_fullscreen {
@@ -1974,7 +2010,7 @@ impl OverviewApp {
                     with_alpha(p.muted, if is_occluded_under_fs { 0.45 } else { 0.72 })
                 };
                 let hover_border_col = mix_color(
-                    p.accent,
+                    active_tint,
                     Color::WHITE,
                     if is_selected && hovered {
                         0.42
@@ -2014,7 +2050,7 @@ impl OverviewApp {
                         radius: body_radius.into(),
                     },
                     shadow: Shadow {
-                        color: with_alpha(p.accent, shadow_alpha.clamp(0.0, 0.65)),
+                        color: with_alpha(active_tint, shadow_alpha.clamp(0.0, 0.65)),
                         offset: Vector::new(
                             0.0,
                             4.5 * eff_hover + if is_selected { 2.0 } else { 0.0 },
@@ -2038,6 +2074,12 @@ impl OverviewApp {
                     "win"
                 };
                 let tab_accent = tab_resolved.resolve_color(&p);
+                let tab_has_custom_color = tab_resolved.accent_slot.is_custom();
+                let tab_active_tint = if tab_has_custom_color {
+                    tab_accent
+                } else {
+                    p.accent
+                };
 
                 let short_lead = tab_resolved.display_badge.as_deref().unwrap_or(tab_class);
                 let raw_tab_label = if !tab.client.title.is_empty() && per_tab_chars >= 8 {
@@ -2075,7 +2117,7 @@ impl OverviewApp {
                 let pill_btn = button(
                     container(
                         row![
-                            render_svg_icon(tab_resolved.handle.clone(), 10.5, tab_icon_col),
+                            render_app_icon(&tab_resolved.visual, 10.5, tab_icon_col),
                             Space::new().width(Length::Fixed(3.5)),
                             text(full_label).size(9),
                         ]
@@ -2099,26 +2141,46 @@ impl OverviewApp {
                     let hovered =
                         matches!(status, button::Status::Hovered | button::Status::Pressed);
                     let bg = if is_tab_sel {
-                        mix_color(p.bg, p.accent, if hovered { 0.58 } else { 0.48 })
+                        mix_color(p.bg, tab_active_tint, if hovered { 0.58 } else { 0.48 })
                     } else if is_tab_active {
-                        mix_color(p.bg, p.secondary, if hovered { 0.40 } else { 0.28 })
+                        let base = if tab_has_custom_color {
+                            tab_accent
+                        } else {
+                            p.secondary
+                        };
+                        mix_color(p.bg, base, if hovered { 0.40 } else { 0.28 })
                     } else if hovered {
-                        mix_color(p.bg, p.accent, 0.32)
+                        mix_color(p.bg, tab_active_tint, 0.32)
                     } else {
+                        let base = if tab_has_custom_color {
+                            mix_color(p.muted, tab_accent, 0.55)
+                        } else {
+                            p.muted
+                        };
                         with_alpha(
-                            mix_color(p.bg, p.muted, lerp(0.22, 0.30, hover_t)),
+                            mix_color(p.bg, base, lerp(0.22, 0.30, hover_t)),
                             lerp(0.88, 0.96, hover_t),
                         )
                     };
 
                     let border_col = if is_tab_sel {
-                        mix_color(p.accent, Color::WHITE, if hovered { 0.38 } else { 0.25 })
+                        mix_color(tab_active_tint, Color::WHITE, if hovered { 0.38 } else { 0.25 })
                     } else if hovered {
-                        p.accent
+                        tab_active_tint
                     } else if is_tab_active {
-                        with_alpha(p.secondary, 0.85)
+                        let base = if tab_has_custom_color {
+                            tab_accent
+                        } else {
+                            p.secondary
+                        };
+                        with_alpha(base, 0.85)
                     } else {
-                        with_alpha(p.muted, lerp(0.60, 0.80, hover_t))
+                        let base = if tab_has_custom_color {
+                            mix_color(p.muted, tab_accent, 0.55)
+                        } else {
+                            p.muted
+                        };
+                        with_alpha(base, lerp(0.60, 0.80, hover_t))
                     };
 
                     button::Style {
@@ -2141,7 +2203,7 @@ impl OverviewApp {
                         },
                         shadow: if is_tab_sel || hovered {
                             Shadow {
-                                color: with_alpha(p.accent, 0.28),
+                                color: with_alpha(tab_active_tint, 0.28),
                                 offset: Vector::new(0.0, 1.0),
                                 blur_radius: 4.0,
                             }
@@ -2221,12 +2283,28 @@ fn truncate_str(input: &str, max_chars: usize) -> String {
     }
 }
 
-fn render_svg_icon<'a>(handle: svg::Handle, size: f32, color: Color) -> Element<'a, Message> {
-    svg(handle)
+fn render_app_icon<'a>(visual: &'a IconVisual, size: f32, color: Color) -> Element<'a, Message> {
+    match visual {
+        IconVisual::Svg { handle, tint } => {
+            let icon_color = (*tint).then_some(color);
+            svg(handle.clone())
+                .width(Length::Fixed(size))
+                .height(Length::Fixed(size))
+                .style(move |_theme: &Theme, _status: svg::Status| svg::Style {
+                    color: icon_color,
+                })
+                .into()
+        }
+        IconVisual::Glyph(glyph) => container(
+            text(glyph.as_str())
+                .size((size * 0.95).round().max(9.0))
+                .line_height(1.0)
+                .color(color),
+        )
         .width(Length::Fixed(size))
         .height(Length::Fixed(size))
-        .style(move |_theme: &Theme, _status: svg::Status| svg::Style {
-            color: Some(color),
-        })
-        .into()
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
+        .into(),
+    }
 }
