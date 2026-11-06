@@ -56,6 +56,7 @@ function Controls:init_options()
 		['loop-file'] = 'cycle:repeat_one:loop-file:no/inf!?' .. t('Loop file'),
 		shuffle = 'toggle:shuffle:shuffle?' .. t('Shuffle'),
 		autoload = 'toggle:hdr_auto:autoload@dusky_player?' .. t('Autoload'),
+		['clear-history'] = 'command:history:script-binding dusky_player/clear-history?' .. t('Playback memory / Clear history'),
 		fullscreen = 'cycle:crop_free:fullscreen:no/yes=fullscreen_exit!?' .. t('Fullscreen'),
 	}
 

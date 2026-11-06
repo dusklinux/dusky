@@ -61,7 +61,19 @@ function create_self_updating_menu_opener(opts)
 		local active = opts.active_prop and mp.get_property_native(opts.active_prop) or nil
 		local menu
 
-		local function update() menu:update_items(opts.serializer(list, active)) end
+		local function update()
+			if not menu then return end
+			local items, _, custom_title = opts.serializer(list, active)
+			if custom_title and menu.root and menu.root.title ~= custom_title then
+				menu.root.title = custom_title
+				menu:update_dimensions()
+			end
+			menu:update_items(items)
+		end
+
+		if opts.type == 'playlist' then
+			state.refresh_playlist_menu = update
+		end
 
 		local ignore_initial_list = true
 		local function handle_list_prop_change(name, value)
@@ -84,12 +96,15 @@ function create_self_updating_menu_opener(opts)
 		end
 
 		local function cleanup_and_close()
+			if opts.type == 'playlist' then
+				state.refresh_playlist_menu = nil
+			end
 			mp.unobserve_property(handle_list_prop_change)
 			mp.unobserve_property(handle_active_prop_change)
 			menu:close()
 		end
 
-		local initial_items, selected_index = opts.serializer(list, active)
+		local initial_items, selected_index, initial_title = opts.serializer(list, active)
 
 		---@type MenuAction[]
 		local actions = opts.actions or {}
@@ -138,7 +153,7 @@ function create_self_updating_menu_opener(opts)
 		-- a property observer triggers its handler immediately, we just let that initialize the items.
 		menu = Menu:open({
 			type = opts.type,
-			title = opts.title,
+			title = initial_title or opts.title,
 			footnote = opts.footnote,
 			items = initial_items,
 			item_actions = actions,
@@ -371,6 +386,48 @@ function open_file_navigation_menu(directory_path, handle_activate, opts)
 	local back_path
 	local separator = path_separator(directory_path)
 
+	local sort_labels = {
+		natural = t('Natural (A-Z / 1-9)'),
+		filename = t('Filename (exact)'),
+		title = t('Media title'),
+		mtime = t('Date modified'),
+		size = t('File size'),
+		duration = t('Duration'),
+	}
+	local sort_modes = {'natural', 'filename', 'title', 'mtime', 'size', 'duration'}
+	local current_playable_files = {}
+
+	local function enqueue_directory_files()
+		if #current_playable_files == 0 then
+			mp.osd_message(t('No playable files in directory'))
+			return
+		end
+		local active_norm = state.path and normalize_path(state.path) or nil
+		local active_idx = active_norm and itable_index_of(current_playable_files, active_norm) or nil
+		local pl_count = mp.get_property_number('playlist-count', 0)
+
+		if active_idx and pl_count == 1 then
+			for i, fpath in ipairs(current_playable_files) do
+				if i ~= active_idx then
+					mp.commandv('loadfile', fpath, 'append')
+				end
+			end
+			if active_idx > 1 then
+				mp.commandv('playlist-move', '0', tostring(active_idx))
+			end
+		else
+			for _, fpath in ipairs(current_playable_files) do
+				mp.commandv('loadfile', fpath, 'append-play')
+			end
+		end
+		local sort_label = sort_labels[state.dir_sort_by] or state.dir_sort_by
+		mp.commandv(
+			'show-text',
+			string.format('%s (%s)', t('Enqueued %s files', #current_playable_files), sort_label),
+			3000
+		)
+	end
+
 	---@param path string Directory path.
 	---@param selected_path? string Marks item with this path as active.
 	---@return MenuStackChild[] menu_items
@@ -393,17 +450,62 @@ function open_file_navigation_menu(directory_path, handle_activate, opts)
 		if not files or not directories then return {}, 0 end
 
 		sort_strings(directories)
-		sort_strings(files)
+		sort_directory_files(serialized.path, files, state.dir_sort_by, state.dir_sort_asc)
+
+		current_playable_files = {}
+		for _, file in ipairs(files) do
+			if has_any_extension(file, config.types.load) then
+				current_playable_files[#current_playable_files + 1] = join_path(serialized.path, file)
+			end
+		end
+		if #current_playable_files == 0 then
+			for _, file in ipairs(files) do
+				current_playable_files[#current_playable_files + 1] = join_path(serialized.path, file)
+			end
+		end
 
 		-- Pre-populate items with parent directory selector if not at root
-		-- Each item value is a serialized path table it points to.
 		local items = {}
 
 		if not is_root then
 			items[#items + 1] = {title = '..', hint = t('parent dir'), value = serialized.dirname, separator = true, is_to_parent = true}
 		end
 
-		back_path = items[#items] and items[#items].value
+		back_path = not is_root and serialized.dirname or nil
+
+		if opts.type == 'open-file' and #files > 0 then
+			local arrow = state.dir_sort_asc and '↑' or '↓'
+			local sort_name = sort_labels[state.dir_sort_by] or state.dir_sort_by
+			items[#items + 1] = {
+				title = t('Enqueue all (%s files)', #current_playable_files),
+				hint = 'ctrl+a',
+				icon = 'playlist_add',
+				value = '{enqueue_all}',
+				bold = true,
+				is_header_action = true,
+			}
+			local sort_subitems = {}
+			for _, mode in ipairs(sort_modes) do
+				local is_cur = state.dir_sort_by == mode
+				sort_subitems[#sort_subitems + 1] = {
+					title = sort_labels[mode],
+					hint = is_cur and (state.dir_sort_asc and t('Ascending ↑') or t('Descending ↓')) or nil,
+					active = is_cur,
+					value = '{sort:' .. mode .. '}',
+					keep_open = true,
+				}
+			end
+			items[#items + 1] = {
+				id = '{sort_submenu}',
+				title = string.format('%s: %s %s', t('Sort'), sort_name, arrow),
+				hint = 'ctrl+s / ctrl+r',
+				bold = true,
+				separator = true,
+				is_header_action = true,
+				items = sort_subitems,
+			}
+		end
+
 		local selected_index = #items + 1
 
 		for _, dir in ipairs(directories) do
@@ -411,17 +513,44 @@ function open_file_navigation_menu(directory_path, handle_activate, opts)
 				title = dir .. ' ' .. separator,
 				value = join_path(path, dir),
 				bold = true,
-				actions = opts
-					.directory_actions,
+				actions = opts.directory_actions,
 			}
 		end
 
 		for _, file in ipairs(files) do
-			items[#items + 1] = {title = file, value = join_path(path, file), actions = opts.file_actions}
+			local full_path = join_path(path, file)
+			local meta = get_media_meta and get_media_meta(full_path) or nil
+			local stat = get_file_stat and get_file_stat(full_path) or nil
+			local hint = nil
+			local display_title = file
+
+			if state.dir_sort_by == 'size' and stat and stat.size > 0 then
+				hint = format_bytes(stat.size)
+			elseif state.dir_sort_by == 'mtime' and stat and stat.mtime > 0 then
+				hint = tostring(os.date('%Y-%m-%d %H:%M', stat.mtime))
+			elseif state.dir_sort_by == 'duration' then
+				local dur = type(meta) == 'table' and type(meta.duration) == 'number' and meta.duration or nil
+				hint = dur and format_time(dur, dur) or nil
+			elseif state.dir_sort_by == 'title' then
+				local mtitle = type(meta) == 'table' and type(meta.title) == 'string' and meta.title or nil
+				if mtitle and mtitle ~= file then
+					display_title = mtitle
+					hint = file
+				end
+			elseif type(meta) == 'table' and type(meta.duration) == 'number' then
+				hint = format_time(meta.duration, meta.duration)
+			end
+
+			items[#items + 1] = {
+				title = display_title,
+				hint = hint,
+				value = full_path,
+				actions = opts.file_actions,
+			}
 		end
 
 		for index, item in ipairs(items) do
-			if not item.is_to_parent then
+			if not item.is_to_parent and not item.is_header_action then
 				if opts.active_path == item.value then
 					item.active = true
 					if not selected_path then selected_index = index end
@@ -437,10 +566,29 @@ function open_file_navigation_menu(directory_path, handle_activate, opts)
 	local menu_data = {
 		type = opts.type,
 		title = opts.title or '',
-		footnote = t('%s to go up in tree.', 'alt+up') .. ' ' .. t('Paste path or url to open.'),
+		footnote = t('%s to go up.', 'alt+up') .. ' ' .. t('%s enqueue all.', 'ctrl+a') .. ' ' .. t('%s cycle sort.', 'ctrl+s'),
 		items = {},
+		bind_keys = {'ctrl+a', 'ctrl+s', 'ctrl+r'},
 		on_paste = 'callback',
 	}
+
+	local function refresh_current_directory()
+		if not current_directory or not menu or not menu:is_alive() then return end
+		local sel_item = menu.current and menu.current.selected_index and menu.current.items[menu.current.selected_index]
+		local sel_val = sel_item and sel_item.value or nil
+		local items, selected_index = serialize_items(current_directory, sel_val)
+		menu_data.items = items
+		menu:update(menu_data)
+		if menu.current and menu.current.id == '{root}' and sel_val then
+			menu:select_value(sel_val)
+		elseif menu.current and menu.current.id == '{root}' then
+			menu:select_index(selected_index)
+		end
+	end
+
+	if opts.type == 'open-file' then
+		state.refresh_open_file_menu = refresh_current_directory
+	end
 
 	---@param path string
 	local function open_directory(path)
@@ -470,6 +618,7 @@ function open_file_navigation_menu(directory_path, handle_activate, opts)
 	end
 
 	local function close()
+		if opts.type == 'open-file' then state.refresh_open_file_menu = nil end
 		menu:close()
 		if opts.on_close then opts.on_close() end
 	end
@@ -478,6 +627,23 @@ function open_file_navigation_menu(directory_path, handle_activate, opts)
 	---@param only_if_dir? boolean Activate item only if it's a directory.
 	local function activate(event, only_if_dir)
 		local path = event.value
+		if path == '{enqueue_all}' then
+			enqueue_directory_files()
+			if not event.alt then close() end
+			return
+		elseif type(path) == 'string' and path:match('^{sort:(.+)}$') then
+			local mode = path:match('^{sort:(.+)}$')
+			if state.dir_sort_by == mode then
+				state.dir_sort_asc = not state.dir_sort_asc
+			else
+				state.dir_sort_by = mode
+				state.dir_sort_asc = true
+			end
+			refresh_current_directory()
+			menu:activate_menu('{root}')
+			return
+		end
+
 		local is_drives = path == '{drives}'
 
 		if is_drives then
@@ -514,6 +680,16 @@ function open_file_navigation_menu(directory_path, handle_activate, opts)
 				end
 			elseif event.id == 'ctrl+c' and event.selected_item then
 				set_clipboard(event.selected_item.value)
+			elseif event.id == 'ctrl+a' and opts.type == 'open-file' then
+				enqueue_directory_files()
+				close()
+			elseif event.id == 'ctrl+s' and opts.type == 'open-file' then
+				local idx = itable_index_of(sort_modes, state.dir_sort_by) or 1
+				state.dir_sort_by = sort_modes[(idx % #sort_modes) + 1]
+				refresh_current_directory()
+			elseif event.id == 'ctrl+r' and opts.type == 'open-file' then
+				state.dir_sort_asc = not state.dir_sort_asc
+				refresh_current_directory()
 			end
 		elseif event.type == 'close' then
 			close()

@@ -271,11 +271,12 @@ function TopBar:render()
 		local left_aligned = options.top_bar_controls == 'left'
 		local title_ax, title_bx, title_ay = ax + margin, bx - margin, self.ay + margin
 
-		-- Playlist position
+		-- Playlist position & total duration
 		if state.has_playlist then
-			local text = state.playlist_pos .. '' .. state.playlist_count
+			local dur_suffix = state.playlist_duration_human and (' · ' .. state.playlist_duration_human) or ''
+			local text = state.playlist_pos .. '/' .. state.playlist_count .. dur_suffix
 			local formatted_text = '{\\b1}' .. state.playlist_pos .. '{\\b0\\fs' .. self.font_size * 0.9 .. '}/'
-				.. state.playlist_count
+				.. state.playlist_count .. dur_suffix
 			local opts = {size = self.font_size, wrap = 2, color = fgt, opacity = visibility}
 			local rect_width = round(text_width(text, opts) + padding * 2)
 			local ax = left_aligned and title_bx - rect_width or title_ax

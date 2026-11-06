@@ -66,8 +66,13 @@ defaults = {
 
 	window_border_size = 1,
 
-	autoload = false,
+	autoload = true,
 	shuffle = false,
+	media_keys_mode = 'seek',
+	media_keys_step = '30',
+	dir_sort = 'natural',
+	dir_sort_asc = true,
+	auto_clear_eof_watch_later = true,
 
 	scale = 1,
 	scale_fullscreen = 1.3,
@@ -238,6 +243,9 @@ config = {
 	cursor_leave_fadeout_elements = {'timeline', 'volume', 'top_bar', 'controls'},
 	timeline_step = 5,
 	timeline_step_flag = '',
+	media_keys_mode = 'seek',
+	media_keys_step = 30,
+	media_keys_step_flag = '',
 }
 
 function update_load_types()
@@ -247,6 +255,9 @@ function update_load_types()
 	if types.same then
 		types.same = nil
 		if state and state.type then types[state.type] = true end
+	elseif options.load_types == defaults.load_types and state and (state.is_video or state.is_audio) then
+		-- Prevent static images (e.g. cover.jpg) from halting video/audio directory auto-play
+		types.image = nil
 	end
 
 	for _, name in ipairs(table_keys(types)) do
@@ -300,6 +311,20 @@ function update_config()
 		local is_exact = options.timeline_step:sub(-1) == '!'
 		config.timeline_step = tonumber(is_exact and options.timeline_step:sub(1, -2) or options.timeline_step)
 		config.timeline_step_flag = is_exact and 'exact' or ''
+	end
+
+	-- Media keys step & mode
+	do
+		local mode = options.media_keys_mode or 'seek'
+		local step_str = tostring(options.media_keys_step or '30')
+		if mode:find('^seek:') then
+			step_str = mode:sub(6)
+			mode = 'seek'
+		end
+		config.media_keys_mode = mode
+		local is_exact = step_str:sub(-1) == '!'
+		config.media_keys_step = tonumber(is_exact and step_str:sub(1, -2) or step_str) or 30
+		config.media_keys_step_flag = is_exact and 'exact' or ''
 	end
 
 	-- Other
@@ -376,6 +401,13 @@ state = {
 	render_delay = config.render_delay,
 	playlist_count = 0,
 	playlist_pos = 0,
+	playlist_duration = nil,
+	playlist_duration_human = nil,
+	playlist_durations = {},
+	refresh_playlist_menu = nil,
+	refresh_open_file_menu = nil,
+	dir_sort_by = options.dir_sort or 'natural',
+	dir_sort_asc = options.dir_sort_asc ~= false,
 	margin_top = 0,
 	margin_bottom = 0,
 	margin_left = 0,
@@ -422,11 +454,166 @@ function update_fullormaxed()
 	cursor:leave()
 end
 
+-- Ensure MPV IPC socket is active so osd_router.sh / media_ipc.py can always reach dusky_player
+do
+	mp.set_property_native('user-data/dusky_player/enabled', true)
+	if mp.get_property('input-ipc-server', '') == '' then
+		local runtime_dir = os.getenv('XDG_RUNTIME_DIR') or '/tmp'
+		local ipc_path = join_path(runtime_dir, 'mpv-ipc-' .. tostring(utils.getpid()))
+		mp.set_property('input-ipc-server', ipc_path)
+		mp.register_event('shutdown', function() os.remove(ipc_path) end)
+	end
+end
+
+---@type table<string, {duration: number|false, title: string|false}|false>
+local media_meta_cache = {}
+local probe_queue = {}
+local probe_queued_set = {}
+local probe_in_flight = {}
+local active_probes = 0
+local MAX_CONCURRENT_PROBES = 4
+
+---@param path string
+---@return {duration: number|false, title: string|false}|false|nil
+function get_media_meta(path)
+	if not path then return nil end
+	return media_meta_cache[normalize_path(path)]
+end
+
+local function process_probe_queue()
+	while active_probes < MAX_CONCURRENT_PROBES and #probe_queue > 0 do
+		local path = table.remove(probe_queue, 1)
+		probe_queued_set[path] = nil
+		if media_meta_cache[path] == nil and not probe_in_flight[path] then
+			probe_in_flight[path] = true
+			active_probes = active_probes + 1
+			mp.command_native_async({
+				name = 'subprocess',
+				playback_only = false,
+				capture_stdout = true,
+				capture_stderr = false,
+				args = {
+					'ffprobe', '-v', 'error',
+					'-show_entries', 'format=duration:format_tags=title',
+					'-of', 'json',
+					'--', path,
+				},
+			}, function(success, res)
+				probe_in_flight[path] = nil
+				active_probes = active_probes - 1
+				local dur, title = false, false
+				if success and res and res.status == 0 and res.stdout then
+					local parsed = utils.parse_json(res.stdout)
+					local fmt = type(parsed) == 'table' and parsed.format or nil
+					if type(fmt) == 'table' then
+						local d = tonumber(fmt.duration)
+						if d and d > 0 then dur = d end
+						local t_tag = type(fmt.tags) == 'table' and (fmt.tags.title or fmt.tags.TITLE) or nil
+						if type(t_tag) == 'string' and #trim(t_tag) > 0 then title = trim(t_tag) end
+					end
+				end
+				media_meta_cache[path] = {duration = dur, title = title}
+				if state.has_playlist then update_playlist_duration(true) end
+				if state.refresh_open_file_menu and Menu:is_open('open-file') then
+					state.refresh_open_file_menu()
+				end
+				process_probe_queue()
+			end)
+		end
+	end
+end
+
+---@param paths string[]
+function request_media_probe(paths)
+	for _, raw_path in ipairs(paths) do
+		local key = normalize_path(raw_path)
+		if key and media_meta_cache[key] == nil and not probe_in_flight[key] and not probe_queued_set[key] then
+			if not is_protocol(raw_path) and not has_any_extension(raw_path, config.types.image) then
+				probe_queued_set[key] = true
+				probe_queue[#probe_queue + 1] = key
+			else
+				media_meta_cache[key] = false
+			end
+		end
+	end
+	process_probe_queue()
+end
+
+---@param refresh_menu? boolean
+function update_playlist_duration(refresh_menu)
+	if not state.has_playlist then
+		state.playlist_durations = {}
+		state.playlist_duration_human = nil
+		set_state('playlist_duration', nil)
+		return
+	end
+
+	local playlist = mp.get_property_native('playlist')
+	if type(playlist) ~= 'table' or #playlist <= 1 then
+		state.playlist_durations = {}
+		state.playlist_duration_human = nil
+		set_state('playlist_duration', nil)
+		return
+	end
+
+	local total = 0
+	local item_durations = {}
+	local to_probe = {}
+
+	for index, item in ipairs(playlist) do
+		local raw_path = item.filename
+		local key = raw_path and normalize_path(raw_path) or raw_path
+		local cached = key and media_meta_cache[key] or nil
+		local dur = nil
+
+		if item.current and state.duration and state.duration > 0 then
+			dur = state.duration
+			if key then
+				local prev_title = type(cached) == 'table' and cached.title or mp.get_property_native('media-title') or false
+				media_meta_cache[key] = {duration = dur, title = prev_title}
+			end
+		elseif type(item.duration) == 'number' and item.duration > 0 then
+			dur = item.duration
+			if key and type(cached) ~= 'table' then
+				media_meta_cache[key] = {duration = dur, title = item.title or false}
+			end
+		elseif type(cached) == 'table' and type(cached.duration) == 'number' then
+			dur = cached.duration
+		elseif key and cached == nil then
+			to_probe[#to_probe + 1] = key
+		end
+
+		if dur and dur > 0 then
+			total = total + dur
+			item_durations[index] = dur
+		end
+	end
+
+	if #to_probe > 0 then request_media_probe(to_probe) end
+
+	state.playlist_durations = item_durations
+	state.playlist_duration_human = total > 0 and format_time(total, total) or nil
+	set_state('playlist_duration', total > 0 and total or nil)
+
+	if refresh_menu and state.refresh_playlist_menu and Menu:is_open('playlist') then
+		state.refresh_playlist_menu()
+	end
+	request_render()
+end
+
 function update_duration()
 	local duration = state._duration and ((state.rebase_start_time == false and state.start_time)
 		and (state._duration + state.start_time) or state._duration)
+	if state.path and duration and duration > 0 then
+		local prev = media_meta_cache[state.path]
+		media_meta_cache[state.path] = {
+			duration = duration,
+			title = (type(prev) == 'table' and prev.title) or mp.get_property_native('media-title') or false,
+		}
+	end
 	set_state('duration', duration)
 	update_human_times()
+	if state.has_playlist then update_playlist_duration(true) end
 end
 
 function update_human_times()
@@ -521,7 +708,21 @@ function set_state(name, value)
 	Elements:trigger('prop_' .. name, value)
 end
 
+---@param path? string
+function clear_file_watch_later(path)
+	local target = path or state.path
+	if target and not is_protocol(target) then
+		mp.commandv('delete-watch-later-config', target)
+		itable_delete_value(state.history, target)
+	else
+		mp.commandv('delete-watch-later-config')
+	end
+end
+
 function handle_file_end()
+	if options.auto_clear_eof_watch_later and state.path then
+		clear_file_watch_later(state.path)
+	end
 	local resume = false
 	if not state.loop_file then
 		if state.has_playlist then
@@ -530,8 +731,12 @@ function handle_file_end()
 			resume = options.autoload and navigate_directory(1)
 		end
 	end
-	-- Resume only when navigation happened
-	if resume then mp.command('set pause no') end
+	-- Resume when navigation happened; otherwise pause cleanly if sitting at EOF
+	if resume then
+		mp.command('set pause no')
+	elseif state.eof_reached then
+		mp.command('set pause yes')
+	end
 end
 local file_end_timer = mp.add_timeout(1, handle_file_end)
 file_end_timer:kill()
@@ -551,7 +756,7 @@ function load_file_index_in_current_directory(index)
 			return
 		end
 
-		sort_strings(files)
+		sort_directory_files(serialized.dirname, files, state.dir_sort_by, state.dir_sort_asc)
 		if index < 0 then index = #files + index + 1 end
 
 		if files[index] then
@@ -580,6 +785,19 @@ mp.register_event('file-loaded', function()
 	state.history[#state.history + 1] = path
 	set_state('path', path)
 
+	-- Anti-cascade guard: if mpv restored a watch_later position at the very end of the file,
+	-- reset it to 00:00 and delete the stale watch-later entry so it plays from the start.
+	if options.auto_clear_eof_watch_later and path and not is_protocol(path) then
+		local pos = mp.get_property_number('time-pos')
+		local dur = mp.get_property_number('duration')
+		if (dur and dur > 10 and pos and pos >= dur - math.min(15, dur * 0.05))
+			or mp.get_property_bool('eof-reached') then
+			mp.commandv('delete-watch-later-config', path)
+			mp.commandv('seek', 0, 'absolute+exact')
+			mp.set_property_bool('pause', false)
+		end
+	end
+
 	-- Flash top bar on requested file types
 	for _, type in ipairs(config.top_bar_flash_on) do
 		if state['is_' .. type] then
@@ -588,17 +806,26 @@ mp.register_event('file-loaded', function()
 		end
 	end
 end)
+
+mp.add_hook('on_unload', 50, function()
+	if options.auto_clear_eof_watch_later and state.path and not is_protocol(state.path) then
+		if state.eof_reached or (state.duration and state.duration > 30 and state.time
+				and (state.duration - state.time) <= math.min(20, state.duration * 0.05)) then
+			mp.commandv('delete-watch-later-config', state.path)
+		end
+	end
+end)
 mp.register_event('end-file', function(event)
-	set_state('path', nil)
 	if event.reason == 'eof' then
 		file_end_timer:kill()
 		handle_file_end()
 	end
+	set_state('path', nil)
 end)
 mp.observe_property('playback-time', 'number', create_state_setter('time', function()
-	-- Create a file-end event that triggers right before file ends
+	-- Pre-EOF timer is only needed to intercept native sequential playlist progression when shuffle is active
 	file_end_timer:kill()
-	if state.duration and state.time and not state.pause then
+	if state.duration and state.time and not state.pause and (state.has_playlist and state.shuffle) then
 		local remaining = (state.duration - state.time) / state.speed
 		if remaining < 5 then
 			local timeout = remaining - 0.02
@@ -665,7 +892,11 @@ mp.observe_property('playlist-pos-1', 'number', create_state_setter('playlist_po
 mp.observe_property('playlist-count', 'number', function(_, value)
 	set_state('playlist_count', value)
 	set_state('has_playlist', value > 1)
+	update_playlist_duration(false)
 	Elements:trigger('dispositions')
+end)
+mp.observe_property('playlist', 'native', function()
+	update_playlist_duration(false)
 end)
 mp.observe_property('fullscreen', 'bool', create_state_setter('fullscreen', update_fullormaxed))
 mp.observe_property('window-maximized', 'bool', create_state_setter('maximized', update_fullormaxed))
@@ -740,7 +971,12 @@ mp.observe_property('demuxer-cache-state', 'native', function(prop, cache_state)
 end)
 mp.observe_property('display-fps', 'native', observe_display_fps)
 mp.observe_property('estimated-display-fps', 'native', update_render_delay)
-mp.observe_property('eof-reached', 'native', create_state_setter('eof_reached'))
+mp.observe_property('eof-reached', 'native', create_state_setter('eof_reached', function()
+	if state.eof_reached then
+		file_end_timer:kill()
+		handle_file_end()
+	end
+end))
 mp.observe_property('core-idle', 'native', create_state_setter('core_idle'))
 
 --[[ KEY BINDS ]]
@@ -822,15 +1058,22 @@ bind_command('playlist', create_self_updating_menu_opener({
 		local force_filename = mp.get_property_native('osd-playlist-entry') == 'filename'
 		for index, item in ipairs(playlist) do
 			local title = type(item.title) == 'string' and #item.title > 0 and item.title or false
+			local item_dur = state.playlist_durations and state.playlist_durations[index]
+				or (type(item.duration) == 'number' and item.duration > 0 and item.duration)
+				or nil
+			local dur_human = item_dur and format_time(item_dur, item_dur) or nil
 			items[index] = {
 				title = (not force_filename and title) and title
 					or (is_protocol(item.filename) and item.filename or serialize_path(item.filename).basename),
-				hint = tostring(index),
+				hint = dur_human and (index .. ' · ' .. dur_human) or tostring(index),
 				active = item.current,
 				value = index,
 			}
 		end
-		return items
+		local menu_title = state.playlist_duration_human
+			and (t('Playlist') .. ' (' .. state.playlist_duration_human .. ')')
+			or t('Playlist')
+		return items, nil, menu_title
 	end,
 	on_activate = function(event) mp.commandv('set', 'playlist-pos-1', tostring(event.value)) end,
 	on_paste = function(event) mp.commandv('loadfile', tostring(event.value), 'append') end,
@@ -846,6 +1089,144 @@ bind_command('playlist', create_self_updating_menu_opener({
 	end,
 	on_remove = function(event) mp.commandv('playlist-remove', tostring(event.value - 1)) end,
 }))
+
+function clear_directory_watch_later(dir_path)
+	local target_dir = dir_path
+	if not target_dir and state.path and not is_protocol(state.path) then
+		local s = serialize_path(state.path)
+		target_dir = s and s.dirname or nil
+	end
+	if not target_dir then
+		mp.osd_message(t('No local directory active'))
+		return
+	end
+	local files = read_directory(target_dir, {types = config.types.media, hidden = options.show_hidden_files})
+	local count = 0
+	for _, file in ipairs(files or {}) do
+		local full_path = join_path(target_dir, file)
+		mp.commandv('delete-watch-later-config', full_path)
+		itable_delete_value(state.history, full_path)
+		count = count + 1
+	end
+	state.shuffle_history = nil
+	if state.path and not is_protocol(state.path) then
+		mp.commandv('delete-watch-later-config', state.path)
+		mp.commandv('seek', 0, 'absolute+exact')
+	end
+	mp.osd_message(t('Cleared playback memory for %s files in folder', count), 3)
+end
+
+function clear_all_watch_later()
+	local wl_dir = mp.get_property_native('watch-later-directory')
+	if not wl_dir or wl_dir == '' then
+		wl_dir = mp.command_native({'expand-path', '~~state/watch_later'})
+	else
+		wl_dir = mp.command_native({'expand-path', wl_dir})
+	end
+	local count = 0
+	if wl_dir and wl_dir ~= '' then
+		local entries = utils.readdir(wl_dir, 'files')
+		for _, entry in ipairs(entries or {}) do
+			if os.remove(join_path(wl_dir, entry)) then count = count + 1 end
+		end
+	end
+	if state.path then mp.commandv('delete-watch-later-config', state.path) end
+	state.history = state.path and {state.path} or {}
+	state.shuffle_history = nil
+	mp.osd_message(t('Cleared all watch-later history (%s entries)', count), 3)
+end
+
+function open_clear_history_menu()
+	if Menu:is_open('clear-history') then
+		Menu:close()
+		return
+	end
+	local menu
+	local function build_items()
+		local save_on_quit = mp.get_property_bool('save-position-on-quit', true)
+		local items = {
+			{
+				title = t('Clear folder memory & restart from 00:00'),
+				hint = t('current directory'),
+				icon = 'folder_delete',
+				value = 'clear_dir',
+				bold = true,
+			},
+			{
+				title = t('Clear current file & restart from 00:00'),
+				hint = t('current track'),
+				icon = 'replay',
+				value = 'clear_current',
+			},
+		}
+		if state.has_playlist then
+			items[#items + 1] = {
+				title = t('Clear playlist memory'),
+				hint = tostring(state.playlist_count) .. ' ' .. t('items'),
+				icon = 'playlist_remove',
+				value = 'clear_playlist',
+			}
+		end
+		items[#items + 1] = {
+			title = t('Clear ALL saved watch-later history'),
+			hint = t('entire player'),
+			icon = 'delete_sweep',
+			value = 'clear_all',
+			separator = true,
+		}
+		items[#items + 1] = {
+			title = t('Remember position on quit'),
+			hint = save_on_quit and t('ON') or t('OFF'),
+			icon = save_on_quit and 'check_box' or 'check_box_outline_blank',
+			value = 'toggle_save_on_quit',
+			active = save_on_quit,
+			keep_open = true,
+		}
+		return items
+	end
+
+	menu = Menu:open({
+		type = 'clear-history',
+		title = t('Playback Memory & History'),
+		items = build_items(),
+		selected_index = 1,
+	}, function(event)
+		if event.type == 'activate' then
+			if event.value == 'clear_dir' then
+				clear_directory_watch_later()
+				menu:close()
+			elseif event.value == 'clear_current' then
+				if state.path then
+					clear_file_watch_later(state.path)
+					mp.commandv('seek', 0, 'absolute+exact')
+					mp.osd_message(t('Cleared saved position & restarted from 00:00'), 2)
+				end
+				menu:close()
+			elseif event.value == 'clear_playlist' then
+				local playlist = mp.get_property_native('playlist') or {}
+				for _, item in ipairs(playlist) do
+					if item.filename then clear_file_watch_later(normalize_path(item.filename)) end
+				end
+				if state.path then mp.commandv('seek', 0, 'absolute+exact') end
+				mp.osd_message(t('Cleared saved positions for playlist (%s items)', #playlist), 3)
+				menu:close()
+			elseif event.value == 'clear_all' then
+				clear_all_watch_later()
+				menu:close()
+			elseif event.value == 'toggle_save_on_quit' then
+				local cur = mp.get_property_bool('save-position-on-quit', true)
+				mp.set_property_bool('save-position-on-quit', not cur)
+				if not not cur == false and state.path then
+					mp.commandv('delete-watch-later-config', state.path)
+				end
+				menu:update_items(build_items())
+			end
+		end
+	end)
+end
+
+bind_command('clear-history', open_clear_history_menu)
+bind_command('clear-directory-history', function() clear_directory_watch_later() end)
 bind_command('chapters', create_self_updating_menu_opener({
 	title = t('Chapters'),
 	type = 'chapters',
@@ -912,6 +1293,47 @@ bind_command('next', function() navigate_item(1) end)
 bind_command('prev', function() navigate_item(-1) end)
 bind_command('next-file', function() navigate_directory(1) end)
 bind_command('prev-file', function() navigate_directory(-1) end)
+
+local function handle_media_key(delta)
+	if config.media_keys_mode == 'seek' and state.duration and state.duration > 0 then
+		local step = config.media_keys_step * delta
+		if config.media_keys_step_flag ~= '' then
+			mp.commandv('seek', step, config.media_keys_step_flag)
+		else
+			mp.commandv('seek', step)
+		end
+		Elements:flash({'timeline'})
+	else
+		navigate_item(delta)
+	end
+end
+bind_command('media-next', function() handle_media_key(1) end, 'repeatable')
+bind_command('media-prev', function() handle_media_key(-1) end, 'repeatable')
+bind_command('cycle-media-keys-mode', function()
+	options.media_keys_mode = config.media_keys_mode == 'seek' and 'navigate' or 'seek'
+	update_config()
+	mp.osd_message(config.media_keys_mode == 'seek'
+		and t('Media keys: Seek (%ss)', config.media_keys_step)
+		or t('Media keys: Next/Prev item'))
+end)
+for _, key in ipairs({'NEXT', 'XF86_NEXT', 'FORWARD'}) do
+	mp.add_forced_key_binding(key, 'media-key-' .. key:lower(), function()
+		if key_binding_overwrites['media-next'] then
+			mp.command(key_binding_overwrites['media-next'])
+		else
+			handle_media_key(1)
+		end
+	end, 'repeatable')
+end
+for _, key in ipairs({'PREV', 'XF86_PREV', 'REWIND'}) do
+	mp.add_forced_key_binding(key, 'media-key-' .. key:lower(), function()
+		if key_binding_overwrites['media-prev'] then
+			mp.command(key_binding_overwrites['media-prev'])
+		else
+			handle_media_key(-1)
+		end
+	end, 'repeatable')
+end
 bind_command('first', function()
 	if state.has_playlist then
 		mp.commandv('set', 'playlist-pos-1', '1')

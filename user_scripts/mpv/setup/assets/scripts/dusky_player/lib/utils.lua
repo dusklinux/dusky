@@ -6,28 +6,131 @@
 ---@alias Hitbox Rect|Circle
 ---@alias ComplexBindingInfo {event: 'down' | 'repeat' | 'up' | 'press'; is_mouse: boolean; canceled: boolean; key_name?: string; key_text?: string;}
 
--- String sorting
+-- String & multi-criteria sorting
+file_stat_cache = {}
+
+---@param bytes number|nil
+---@return string
+function format_bytes(bytes)
+	if not bytes or bytes <= 0 then return '0 B' end
+	if bytes < 1024 then return string.format('%d B', bytes) end
+	if bytes < 1048576 then return string.format('%.1f KB', bytes / 1024) end
+	if bytes < 1073741824 then return string.format('%.1f MB', bytes / 1048576) end
+	return string.format('%.2f GB', bytes / 1073741824)
+end
+
+---@param path string
+---@return {size: number, mtime: number}
+function get_file_stat(path)
+	local cached = file_stat_cache[path]
+	if cached then return cached end
+	local info = utils.file_info(path)
+	cached = {size = info and info.size or 0, mtime = info and info.mtime or 0}
+	file_stat_cache[path] = cached
+	return cached
+end
+
 do
 	-- alphanum sorting for humans in Lua
 	local function padnum(n)
 		return ("%03d%s"):format(#n, n)
 	end
 
-	local function sort_lua(strings)
+	function natural_key(str)
+		return tostring(str or ''):lower():gsub('0*(%d+)', padnum)
+	end
+
+	local function sort_lua(strings, asc)
+		if asc == nil then asc = true end
 		local tuples = {}
 		for i, f in ipairs(strings) do
-			tuples[i] = {f:lower():gsub('0*(%d+)', padnum), f}
+			tuples[i] = {natural_key(f), f}
 		end
 		table.sort(tuples, function(a, b)
-			return a[1] == b[1] and #b[2] < #a[2] or a[1] < b[1]
+			if a[1] == b[1] then
+				if asc then
+					return a[2] < b[2]
+				else
+					return a[2] > b[2]
+				end
+			end
+			if asc then
+				return a[1] < b[1]
+			else
+				return a[1] > b[1]
+			end
 		end)
 		for i, tuple in ipairs(tuples) do strings[i] = tuple[2] end
 		return strings
 	end
 
 	---@param strings string[]
-	function sort_strings(strings)
-		return sort_lua(strings)
+	---@param asc? boolean
+	function sort_strings(strings, asc)
+		return sort_lua(strings, asc)
+	end
+
+	---@param dirname string
+	---@param files string[]
+	---@param sort_by? string 'natural'|'filename'|'title'|'mtime'|'size'|'duration'
+	---@param asc? boolean
+	function sort_directory_files(dirname, files, sort_by, asc)
+		sort_by = sort_by or (state and state.dir_sort_by) or 'natural'
+		if asc == nil then asc = (state and state.dir_sort_asc ~= nil) and state.dir_sort_asc or true end
+
+		if sort_by == 'natural' then
+			return sort_lua(files, asc)
+		end
+
+		local tuples = {}
+		local unprobed = {}
+		for i, file in ipairs(files) do
+			local full_path = join_path(dirname, file)
+			local nkey = natural_key(file)
+			local key = nkey
+			if sort_by == 'filename' then
+				key = file:lower()
+			elseif sort_by == 'mtime' then
+				key = get_file_stat(full_path).mtime
+			elseif sort_by == 'size' then
+				key = get_file_stat(full_path).size
+			elseif sort_by == 'duration' then
+				local meta = get_media_meta and get_media_meta(full_path) or nil
+				if meta == nil and not has_any_extension(file, config.types.image) then
+					unprobed[#unprobed + 1] = full_path
+				end
+				key = (meta and type(meta.duration) == 'number') and meta.duration or -1
+			elseif sort_by == 'title' then
+				local meta = get_media_meta and get_media_meta(full_path) or nil
+				if meta == nil and not has_any_extension(file, config.types.image) then
+					unprobed[#unprobed + 1] = full_path
+				end
+				local title = meta and meta.title or file
+				key = natural_key(title)
+			end
+			tuples[i] = {key = key, nkey = nkey, file = file}
+		end
+
+		if #unprobed > 0 and request_media_probe then
+			request_media_probe(unprobed)
+		end
+
+		table.sort(tuples, function(a, b)
+			if a.key ~= b.key then
+				if asc then return a.key < b.key else return a.key > b.key end
+			end
+			if a.nkey ~= b.nkey then
+				if asc then return a.nkey < b.nkey else return a.nkey > b.nkey end
+			end
+			if asc then
+				return a.file < b.file
+			else
+				return a.file > b.file
+			end
+		end)
+
+		for i, tuple in ipairs(tuples) do files[i] = tuple.file end
+		return files
 	end
 end
 
@@ -389,9 +492,11 @@ function read_directory(path, opts)
 
 	for _, item in ipairs(items) do
 		if item ~= '.' and item ~= '..' and not system_files[item] and (opts.hidden or item:sub(1, 1) ~= '.') then
-			local info = utils.file_info(join_path(path, item))
+			local full_path = join_path(path, item)
+			local info = utils.file_info(full_path)
 			if info then
 				if info.is_file then
+					file_stat_cache[full_path] = {size = info.size or 0, mtime = info.mtime or 0}
 					if not opts.types or has_any_extension(item, opts.types) then
 						files[#files + 1] = item
 					end
@@ -419,7 +524,7 @@ function get_adjacent_files(file_path, opts)
 		msg.error(error)
 		return
 	end
-	sort_strings(files)
+	sort_directory_files(current_meta.dirname, files, state.dir_sort_by, state.dir_sort_asc)
 	local current_file_index
 	local paths = {}
 	for _, file in ipairs(files) do
