@@ -263,14 +263,22 @@ media() {
             fi
             # Previous may restart the same track; repeat can keep the same ID.
             # A successful method reply alone cannot confirm a track change.
-            media_remember
-            exec {lock_fd}>&-
-            return
+            break
         fi
         sleep 0.025
     done
     media_remember
-    exec {lock_fd}>&-
+    case $status in
+        Playing) icon=media-playback-start ;;
+        Paused) icon=media-playback-pause ;;
+        *) icon=media-playback-stop ;;
+    esac
+    if [[ -n $metadata ]]; then
+        title="$status: $metadata"
+    else
+        title=$status
+    fi
+    publish media
 }
 
 main() {
