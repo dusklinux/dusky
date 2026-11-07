@@ -313,7 +313,11 @@ def set_shadow(marker: dict, enabled: bool, tx: Transaction) -> None:
             if exists(link):
                 if not link.is_symlink():
                     die(f"Refusing to overwrite real file: {link}")
-                backups[name] = os.readlink(link)
+                dest = os.readlink(link)
+                # Only record as external backup if target exists and is not our own binary
+                target_resolved = link.parent / dest if not os.path.isabs(dest) else Path(dest)
+                if not ours and exists(target_resolved) and target_resolved.resolve() != WANT_BIN.resolve():
+                    backups[name] = dest
             if not ours:
                 tx.link(link, target)
         else:
@@ -321,8 +325,11 @@ def set_shadow(marker: dict, enabled: bool, tx: Transaction) -> None:
                 continue
             if ours or (not exists(link) and name in backups):
                 tx.save(link)
-                if name in backups:
-                    tx.link(link, backups[name])
+                backup_dest = backups.get(name)
+                if backup_dest:
+                    target_resolved = link.parent / backup_dest if not os.path.isabs(backup_dest) else Path(backup_dest)
+                    if exists(target_resolved):
+                        tx.link(link, backup_dest)
             backups.pop(name, None)
     marker["shadow"] = {"links": list(SHADOW_LINKS) if enabled else [], "backed_up": backups}
 
@@ -410,7 +417,7 @@ def cmd_install(args: argparse.Namespace) -> int:
     if os.uname().machine != "x86_64":
         die("This release asset supports x86-64 only.")
     marker = read_marker()
-    if marker and tuple(map(int, re.match(r"(\d+)\.(\d+)\.(\d+)", marker["version"]).groups())) > tuple(map(int, VERSION.split('.'))):
+    if marker and tuple(map(int, re.match(r"(\d+)\.(\d+)\.(\d+)", marker["version"]).groups())) > tuple(map(int, re.match(r"(\d+)\.(\d+)\.(\d+)", VERSION).groups())):
         die(f"Managed Python {marker['version']} is newer than {VERSION}; update this installer instead of downgrading.")
     if marker is None and not (args.reinstall or args.force or args.no_default or args.tarball):
         selected = shutil.which("python3")
@@ -424,12 +431,16 @@ def cmd_install(args: argparse.Namespace) -> int:
                 (level == "final" or (level == "candidate" and int(serial) >= 3))
             )
             if compatible:
-                run_python(Path(selected), STDLIB_PROBE)
-                run_python(Path(selected), DESKTOP_PROBE)
-                run_python(Path(selected), UPDATER_PROBE)
-                log.info("Selected Python %s is already compatible; leaving it unchanged.",
-                         ".".join(map(str, parts)))
-                return 0
+                try:
+                    run_python(Path(selected), STDLIB_PROBE)
+                    run_python(Path(selected), DESKTOP_PROBE)
+                    run_python(Path(selected), UPDATER_PROBE)
+                except (OSError, subprocess.SubprocessError):
+                    log.warning("Selected Python %s failed runtime probes; proceeding with managed install.", selected)
+                else:
+                    log.info("Selected Python %s is already compatible; leaving it unchanged.",
+                             ".".join(map(str, parts)))
+                    return 0
     info = run_python(SYSTEM_PYTHON,
                       "import sys; print(*sys.version_info[:2], sys.version_info.releaselevel)")
     major, minor, level = info.split()
@@ -541,6 +552,7 @@ def cmd_install(args: argparse.Namespace) -> int:
             set_shadow(new_marker, not args.no_default, tx)
             write_marker(new_marker, tx)
         prune_dirs(list(old_files - set(files)))
+    subprocess.run(["/usr/bin/ldconfig"], check=False)
     if not args.no_default:
         check_path()
     log.info("Installed %s. Distro Python untouched.", VERSION)
@@ -578,6 +590,19 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
                 if link.is_symlink() and os.readlink(link) == target:
                     tx.save(link)
         if purge:
+            # Clean up pip wrapper scripts in /usr/local/bin pointing to our python3.15
+            bin_dir = PREFIX / "bin"
+            if bin_dir.is_dir():
+                target_shebang = f"#!{WANT_BIN}".encode("utf-8")
+                for item in bin_dir.iterdir():
+                    if item.is_file() and not item.is_symlink() and item.name not in SHARED_DIRS:
+                        try:
+                            with item.open("rb") as f:
+                                line = f.readline().strip()
+                                if line.startswith(target_shebang) or line.startswith(f"#!/usr/local/bin/python{PY_XY}".encode("utf-8")):
+                                    tx.save(item)
+                        except OSError:
+                            pass
             # Save whole trees first; never save their individual children too.
             for tree in OWNED_TREES:
                 path = managed_path(str(tree))
@@ -599,6 +624,7 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
         for tree in OWNED_TREES:
             if exists(PREFIX / tree):
                 log.info("Retained unrecorded files under %s (pass --purge to remove).", PREFIX / tree)
+    subprocess.run(["/usr/bin/ldconfig"], check=False)
     log.info("Undo complete. Distro Python untouched.")
     log.info("Note: Restart your user session or reboot so running services pick up changes.")
     return 0
@@ -624,8 +650,11 @@ def cmd_check(_args: argparse.Namespace) -> int:
         gi_status = "missing"
     print(f"desktop_gi: {gi_status}")
     if marker is not None or exists(WANT_BIN):
-        verify_runtime(WANT_BIN)
-        print("runtime: verified")
+        try:
+            verify_runtime(WANT_BIN)
+            print("runtime: verified")
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+            print(f"runtime: unverified ({exc})")
     if marker:
         for name in marker.get("shadow", {}).get("links", []):
             link = PREFIX / "bin" / name
