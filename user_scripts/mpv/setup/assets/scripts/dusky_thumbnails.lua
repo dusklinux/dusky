@@ -235,6 +235,7 @@ local function remove_thumbnail_files()
         file = nil
     end
     os.remove(options.thumbnail)
+    os.remove(options.thumbnail..".tmp")
     os.remove(options.thumbnail..".bgra")
 end
 
@@ -437,6 +438,7 @@ local function check_new_thumb()
         return true
     end
 
+    os.remove(tmp)
     return false
 end
 

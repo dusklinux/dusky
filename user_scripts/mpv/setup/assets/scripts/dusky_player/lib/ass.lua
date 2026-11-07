@@ -163,7 +163,7 @@ end
 ---@param opts {size: number; opacity?: number|{primary?: number; border?: number, shadow?: number, main?: number}}
 function ass_mt:timestamp(x, y, align, timestamp, opts)
 	local widths, width_total = {}, 0
-	zero_rep = timestamp_zero_rep(timestamp)
+	local zero_rep = timestamp_zero_rep(timestamp)
 	for i = 1, #zero_rep do
 		local width = text_width(zero_rep:sub(i, i), opts)
 		widths[i] = width

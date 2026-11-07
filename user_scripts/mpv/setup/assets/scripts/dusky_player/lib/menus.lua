@@ -133,7 +133,7 @@ function create_self_updating_menu_opener(opts)
 			actions[#actions + 1] = {name = 'remove', icon = 'delete', label = label}
 		end
 
-		function remove_or_delete(index, value, menu_id, modifiers)
+		local function remove_or_delete(index, value, menu_id, modifiers)
 			if opts.on_remove and opts.on_delete then
 				local method = modifiers == 'ctrl' and 'delete' or 'remove'
 				local handler = method == 'delete' and opts.on_delete or opts.on_remove
@@ -592,6 +592,7 @@ function open_file_navigation_menu(directory_path, handle_activate, opts)
 
 	---@param path string
 	local function open_directory(path)
+		if clear_media_probe_queue then clear_media_probe_queue() end
 		local items, selected_index, error = serialize_items(path, current_directory)
 		if error then
 			msg.error(error)
@@ -618,7 +619,10 @@ function open_file_navigation_menu(directory_path, handle_activate, opts)
 	end
 
 	local function close()
-		if opts.type == 'open-file' then state.refresh_open_file_menu = nil end
+		if opts.type == 'open-file' then
+			state.refresh_open_file_menu = nil
+			if clear_media_probe_queue then clear_media_probe_queue() end
+		end
 		menu:close()
 		if opts.on_close then opts.on_close() end
 	end

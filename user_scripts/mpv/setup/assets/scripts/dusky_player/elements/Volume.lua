@@ -74,7 +74,7 @@ function VolumeSlider:render()
 	---@param p number Padding from slider edges.
 	---@param r number Border radius.
 	---@param cy? number A y coordinate where to clip the path from the bottom.
-	function create_nudged_path(p, r, cy)
+	local function create_nudged_path(p, r, cy)
 		cy = cy or ay + p
 		local ax, bx, by = ax + p, bx - p, by - p
 		local d, rh = r * 2, r / 2

@@ -562,6 +562,7 @@ end
 function Menu:activate_one_value(value, menu_id)
 	local menu = self:get_menu(menu_id)
 	if not menu then return end
+	self:deactivate_items(menu_id)
 	local index = itable_find(menu.items, function(item) return item.value == value end)
 	self:activate_index(index, menu_id)
 end
@@ -577,7 +578,7 @@ function Menu:activate_menu(id)
 		local parent = menu.parent_menu
 		while parent do
 			parent.selected_index = itable_index_of(parent.items, menu)
-			self:scroll_to_index(parent.selected_index, parent)
+			self:scroll_to_index(parent.selected_index, parent.id)
 			menu, parent = parent, parent.parent_menu
 		end
 		request_render()
@@ -818,6 +819,8 @@ end
 
 ---@param menu_id string
 ---@param no_select_first? boolean
+local search_items
+
 function Menu:search_internal(menu_id, no_select_first)
 	local menu = self:get_menu(menu_id)
 	if not menu then return end
@@ -846,7 +849,7 @@ end
 ---@param recursive? boolean
 ---@param prefix? string
 ---@return MenuStackChild[]
-function search_items(items, query, recursive, prefix)
+search_items = function(items, query, recursive, prefix)
 	local result = {}
 	local haystacks = {}
 	local flat_items = {}
@@ -969,6 +972,7 @@ function Menu:search_query_replace(query, menu_id, immediate)
 	menu.search.cursor = #query
 	self:search_trigger(menu_id, immediate)
 end
+Menu.search_query_update = Menu.search_query_replace
 
 -- Insert string into search query at cursor.
 ---@param str string
@@ -1152,7 +1156,7 @@ end
 function Menu:search_clear_query(menu_id)
 	local menu = self:get_menu(menu_id)
 	if not menu then return end
-	if not self.current.search_style == 'palette' and self.type_to_search then
+	if self.current.search_style ~= 'palette' and self.type_to_search then
 		self:search_cancel(menu_id)
 	else
 		self:search_query_replace('', menu_id)
@@ -1230,7 +1234,7 @@ function Menu:handle_shortcut(shortcut, info)
 
 	if info.event == 'up' then return end
 
-	function trigger_shortcut(shortcut)
+	local function trigger_shortcut(shortcut)
 		self.callback(table_assign({}, shortcut, {
 			type = 'key',
 			menu_id = menu.id,

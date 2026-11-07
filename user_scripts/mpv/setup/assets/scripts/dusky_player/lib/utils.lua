@@ -8,6 +8,7 @@
 
 -- String & multi-criteria sorting
 file_stat_cache = {}
+math.randomseed(os.time())
 
 ---@param bytes number|nil
 ---@return string
@@ -576,7 +577,6 @@ function decide_navigation_in_list(paths, current_index, delta)
 			end
 		end
 
-		math.randomseed(os.time())
 		local next_index = shuffle_pool[math.random(#shuffle_pool)]
 		local next_path = paths[next_index]
 		table.insert(state.shuffle_history.paths, state.shuffle_history.pos, next_path)
@@ -585,11 +585,7 @@ function decide_navigation_in_list(paths, current_index, delta)
 
 	local new_index = current_index + delta
 	if mp.get_property_native('loop-playlist') then
-		if new_index > #paths then
-			new_index = new_index % #paths
-		elseif new_index < 1 then
-			new_index = #paths - new_index
-		end
+		new_index = ((new_index - 1) % #paths) + 1
 	elseif new_index < 1 or new_index > #paths then
 		return
 	end

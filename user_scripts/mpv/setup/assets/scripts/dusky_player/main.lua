@@ -472,6 +472,18 @@ local probe_queued_set = {}
 local probe_in_flight = {}
 local active_probes = 0
 local MAX_CONCURRENT_PROBES = 4
+local probe_refresh_timer = mp.add_timeout(0.08, function()
+	if state.has_playlist then update_playlist_duration(true) end
+	if state.refresh_open_file_menu and Menu:is_open('open-file') then
+		state.refresh_open_file_menu()
+	end
+end)
+probe_refresh_timer:kill()
+
+function clear_media_probe_queue()
+	itable_clear(probe_queue)
+	probe_queued_set = {}
+end
 
 ---@param path string
 ---@return {duration: number|false, title: string|false}|false|nil
@@ -513,9 +525,8 @@ local function process_probe_queue()
 					end
 				end
 				media_meta_cache[path] = {duration = dur, title = title}
-				if state.has_playlist then update_playlist_duration(true) end
-				if state.refresh_open_file_menu and Menu:is_open('open-file') then
-					state.refresh_open_file_menu()
+				if not probe_refresh_timer:is_enabled() then
+					probe_refresh_timer:resume()
 				end
 				process_probe_queue()
 			end)
@@ -637,9 +648,20 @@ function update_duration()
 	if state.has_playlist then update_playlist_duration(true) end
 end
 
+local last_human_sec, last_human_dur, last_human_speed, last_human_mode = nil, nil, nil, nil
 function update_human_times()
 	state.speed = state.speed or 1
-	if state.time then
+	if type(state.time) == 'number' then
+		if options.time_precision == 0 then
+			local sec = math.floor(state.time)
+			local dur = state.duration and math.floor(state.duration) or nil
+			if sec == last_human_sec and dur == last_human_dur
+				and state.speed == last_human_speed and options.destination_time == last_human_mode then
+				return false
+			end
+			last_human_sec, last_human_dur, last_human_speed, last_human_mode =
+				sec, dur, state.speed, options.destination_time
+		end
 		if state.duration then
 			if options.destination_time == 'playtime-remaining' then
 				state.destination_time_human = format_time((state.time - state.duration) / state.speed, state.duration)
@@ -652,8 +674,11 @@ function update_human_times()
 			state.destination_time_human = nil
 		end
 		state.time_human = format_time(state.time, state.duration or state.time)
+		return true
 	else
+		last_human_sec = nil
 		state.time_human, state.destination_time_human = nil, nil
+		return true
 	end
 end
 
@@ -843,7 +868,9 @@ mp.register_event('end-file', function(event)
 	end
 	set_state('path', nil)
 end)
-mp.observe_property('playback-time', 'number', create_state_setter('time', function()
+local last_rendered_time = -math.huge
+mp.observe_property('playback-time', 'number', function(_, value)
+	state.time = value
 	-- Pre-EOF timer is only needed to intercept native sequential playlist progression when shuffle is active
 	file_end_timer:kill()
 	if state.duration and state.time and not state.pause and (state.has_playlist and state.shuffle) then
@@ -859,8 +886,23 @@ mp.observe_property('playback-time', 'number', create_state_setter('time', funct
 		end
 	end
 
-	update_human_times()
-end))
+	local text_changed = update_human_times()
+	if Elements.top_bar then Elements.top_bar:select_current_chapter() end
+	if Elements.timeline then Elements.timeline:decide_enabled() end
+
+	local tl = Elements.timeline
+	local tb = Elements.top_bar
+	local tl_size = tl and tl.enabled and tl:get_effective_size() or 0
+	local tl_vis = tl and tl.enabled and tl:get_visibility() or 0
+	local tb_vis = tb and tb.enabled and tb:get_visibility() or 0
+	local step_px = (tl and state.duration and state.duration > 0 and value)
+		and (math.abs(value - last_rendered_time) / state.duration * tl.width) or math.huge
+	if (tl_size >= 1 and (tl_vis > 0 or text_changed or step_px >= 0.25))
+		or (tb_vis > 0 and tb.current_chapter and text_changed) then
+		last_rendered_time = value or -math.huge
+		request_render()
+	end
+end)
 mp.observe_property('rebase-start-time', 'bool', create_state_setter('rebase_start_time', update_duration))
 mp.observe_property('demuxer-start-time', 'number', create_state_setter('start_time', update_duration))
 mp.observe_property('duration', 'number', create_state_setter('_duration', update_duration))

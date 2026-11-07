@@ -185,7 +185,7 @@ function cursor:trigger(event, shortcut)
 				if meta.is_end then
 					local start_event = self.last_events[meta.start_event]
 					if start_event and point_collides_with(start_event, parent_zone.hitbox) and shortcut then
-						parent_zone.handler(create_shortcut('primary_click', shortcut.modifiers))
+						parent_zone.handler(create_shortcut(meta.trigger_event, shortcut.modifiers))
 					end
 				end
 			end
@@ -233,7 +233,7 @@ function cursor:decide_keybinds()
 	self.is_dragging_prevented = false
 
 	-- Check global events.
-	for name, handlers in ipairs(self.handlers) do
+	for name, handlers in pairs(self.handlers) do
 		local binding = self.event_binding_map[name]
 		if binding then
 			new_levels[binding] = math.max(new_levels[binding], #handlers > 0 and 1 or 0)

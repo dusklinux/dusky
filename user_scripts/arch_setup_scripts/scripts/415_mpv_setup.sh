@@ -7,6 +7,9 @@ shopt -s globstar nullglob
 SCRIPT_PATH=$(readlink -f -- "${BASH_SOURCE[0]}")
 SETUP_DIR=$(cd -- "${SCRIPT_PATH%/*}/../../mpv/setup" && pwd)
 readonly SETUP_DIR
+if (( EUID == 0 )) && [[ -n "${SUDO_USER:-}" && -z "${XDG_CONFIG_HOME:-}" ]]; then
+    die 'Run this script as your regular user (it will invoke sudo only if packages are missing).'
+fi
 readonly ASSETS_DIR="$SETUP_DIR/assets"
 readonly MPV_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/mpv"
 readonly DEPENDENCIES=(mpv yt-dlp mpv-mpris ffmpeg)
@@ -50,6 +53,9 @@ install_file() {
         backup="$MPV_CONFIG_DIR/setup-backups/$BACKUP_ID/$relative"
         mkdir -p -- "${backup%/*}"
         cp -a -- "$target" "$backup"
+        if [[ -d "$target" && ! -L "$target" ]]; then
+            rm -rf -- "$target"
+        fi
         log_warn "Backed up $relative to setup-backups/$BACKUP_ID/$relative"
     fi
 
@@ -61,7 +67,23 @@ install_file() {
 log_info 'Starting Dusky Player setup.'
 
 # Detect an incomplete ISO bundle before changing the installed configuration.
-for relative in scripts/dusky_player/main.lua scripts/dusky_player/lib/icons.lua scripts/dusky_player/lib/waveform.lua scripts/dusky_player/lib/theme.lua scripts/dusky_thumbnails.lua scripts/dusky_silence.lua scripts/hwdec_topology.lua; do
+for relative in \
+    scripts/dusky_player/main.lua \
+    scripts/dusky_player/lib/ass.lua scripts/dusky_player/lib/buttons.lua \
+    scripts/dusky_player/lib/cursor.lua scripts/dusky_player/lib/fzy.lua \
+    scripts/dusky_player/lib/icons.lua scripts/dusky_player/lib/menus.lua \
+    scripts/dusky_player/lib/std.lua scripts/dusky_player/lib/text.lua \
+    scripts/dusky_player/lib/theme.lua scripts/dusky_player/lib/utils.lua \
+    scripts/dusky_player/lib/waveform.lua \
+    scripts/dusky_player/elements/BufferingIndicator.lua scripts/dusky_player/elements/Button.lua \
+    scripts/dusky_player/elements/Controls.lua scripts/dusky_player/elements/Curtain.lua \
+    scripts/dusky_player/elements/CycleButton.lua scripts/dusky_player/elements/Element.lua \
+    scripts/dusky_player/elements/Elements.lua scripts/dusky_player/elements/ManagedButton.lua \
+    scripts/dusky_player/elements/Menu.lua scripts/dusky_player/elements/PauseIndicator.lua \
+    scripts/dusky_player/elements/Speed.lua scripts/dusky_player/elements/Timeline.lua \
+    scripts/dusky_player/elements/TopBar.lua scripts/dusky_player/elements/Volume.lua \
+    scripts/dusky_player/elements/WindowBorder.lua \
+    scripts/dusky_thumbnails.lua scripts/dusky_silence.lua scripts/hwdec_topology.lua; do
     [[ -s "$ASSETS_DIR/$relative" ]] || die "Missing bundled asset: $relative"
 done
 for relative in mpv.conf input.conf script-opts/dusky_player.conf script-opts/dusky_silence.conf; do
