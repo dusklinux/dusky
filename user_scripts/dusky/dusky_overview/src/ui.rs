@@ -22,7 +22,7 @@ use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
-const PREVIEW_BASE_HEIGHT: f32 = 220.0;
+const PREVIEW_BASE_HEIGHT: f32 = 260.0;
 const MAX_COLUMNS: usize = 3;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_millis(25);
 const HOLD_INITIAL_DELAY: Duration = Duration::from_millis(325);
@@ -667,6 +667,82 @@ impl OverviewApp {
         }
     }
 
+    fn step_workspace_vertical(&mut self, down: bool) -> Task<Message> {
+        let count = self.snapshot.workspaces.len();
+        let total_rows = count.div_ceil(MAX_COLUMNS);
+
+        if total_rows > 1 {
+            let cur = self.current_ws_index().min(count.saturating_sub(1));
+            let cur_row = cur / MAX_COLUMNS;
+            let cur_col = cur % MAX_COLUMNS;
+            let cur_row_len = (count - cur_row * MAX_COLUMNS).min(MAX_COLUMNS);
+            // Account for horizontal centering of shorter rows (< MAX_COLUMNS)
+            let cur_visual_x =
+                (cur_col as f32) + ((MAX_COLUMNS - cur_row_len) as f32) * 0.5;
+
+            let target_row = if down {
+                (cur_row + 1) % total_rows
+            } else if cur_row == 0 {
+                total_rows - 1
+            } else {
+                cur_row - 1
+            };
+
+            let target_row_start = target_row * MAX_COLUMNS;
+            let target_row_len = (count - target_row_start).min(MAX_COLUMNS);
+
+            let mut best_ws = target_row_start;
+            let mut best_dist = f32::MAX;
+            for col in 0..target_row_len {
+                let cand_x =
+                    (col as f32) + ((MAX_COLUMNS - target_row_len) as f32) * 0.5;
+                let dist = (cand_x - cur_visual_x).abs();
+                if dist < best_dist {
+                    best_dist = dist;
+                    best_ws = target_row_start + col;
+                }
+            }
+
+            self.select_workspace_by_index(best_ws);
+            self.sync_selection_springs();
+            Task::none()
+        } else {
+            let ws_idx = self.current_ws_index();
+            let win_len = self
+                .snapshot
+                .workspaces
+                .get(ws_idx)
+                .map_or(0, |ws| ws.clients.len());
+
+            if win_len > 1 {
+                let next_win = match self.selected {
+                    SelectionTarget::Window { win_idx, .. } => {
+                        if down {
+                            (win_idx + 1) % win_len
+                        } else if win_idx == 0 {
+                            win_len - 1
+                        } else {
+                            win_idx - 1
+                        }
+                    }
+                    SelectionTarget::Workspace(_) => {
+                        if down { 0 } else { win_len - 1 }
+                    }
+                };
+                self.selected = SelectionTarget::Window {
+                    ws_idx,
+                    win_idx: next_win,
+                };
+                self.sync_selection_springs();
+                Task::none()
+            } else if down {
+                self.update(Message::SelectNextWorkspace)
+            } else {
+                self.update(Message::SelectPrevWorkspace)
+            }
+        }
+    }
+
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::AnimationFrame(now) => {
@@ -923,63 +999,8 @@ impl OverviewApp {
                     self.update(Message::SelectPrevItem)
                 }
             }
-            Message::SelectNextWindowInWorkspace => {
-                let ws_idx = self.current_ws_index();
-                if let Some(ws) = self.snapshot.workspaces.get(ws_idx) {
-                    let len = ws.clients.len();
-                    if len == 0 {
-                        self.selected = SelectionTarget::Workspace(ws_idx);
-                    } else {
-                        match self.selected {
-                            SelectionTarget::Workspace(_) => {
-                                self.selected = SelectionTarget::Window { ws_idx, win_idx: 0 };
-                            }
-                            SelectionTarget::Window { win_idx, .. } => {
-                                if win_idx + 1 < len {
-                                    self.selected = SelectionTarget::Window {
-                                        ws_idx,
-                                        win_idx: win_idx + 1,
-                                    };
-                                } else {
-                                    self.selected = SelectionTarget::Workspace(ws_idx);
-                                }
-                            }
-                        }
-                    }
-                }
-                self.sync_selection_springs();
-                Task::none()
-            }
-            Message::SelectPrevWindowInWorkspace => {
-                let ws_idx = self.current_ws_index();
-                if let Some(ws) = self.snapshot.workspaces.get(ws_idx) {
-                    let len = ws.clients.len();
-                    if len == 0 {
-                        self.selected = SelectionTarget::Workspace(ws_idx);
-                    } else {
-                        match self.selected {
-                            SelectionTarget::Workspace(_) => {
-                                self.selected = SelectionTarget::Window {
-                                    ws_idx,
-                                    win_idx: len - 1,
-                                };
-                            }
-                            SelectionTarget::Window { win_idx, .. } => {
-                                if win_idx > 0 {
-                                    self.selected = SelectionTarget::Window {
-                                        ws_idx,
-                                        win_idx: win_idx - 1,
-                                    };
-                                } else {
-                                    self.selected = SelectionTarget::Workspace(ws_idx);
-                                }
-                            }
-                        }
-                    }
-                }
-                self.sync_selection_springs();
-                Task::none()
-            }
+            Message::SelectNextWindowInWorkspace => self.step_workspace_vertical(true),
+            Message::SelectPrevWindowInWorkspace => self.step_workspace_vertical(false),
             Message::QuickWorkspace(id) => {
                 let _ = POST_EXIT_ACTION
                     .set(PostExitAction::FocusWorkspace(WorkspaceKey::Normal(id)));
@@ -1179,9 +1200,9 @@ impl OverviewApp {
 
         let ws_count = self.snapshot.workspaces.len();
         let preview_height = if ws_count > 6 {
-            175.0
-        } else if ws_count > 3 {
             195.0
+        } else if ws_count > 3 {
+            230.0
         } else {
             PREVIEW_BASE_HEIGHT
         };
@@ -1194,7 +1215,7 @@ impl OverviewApp {
             if current_row.len() == MAX_COLUMNS {
                 grid_rows.push(
                     Row::with_children(std::mem::take(&mut current_row))
-                        .spacing(24)
+                        .spacing(28)
                         .align_y(Vertical::Center)
                         .into(),
                 );
@@ -1204,14 +1225,14 @@ impl OverviewApp {
         if !current_row.is_empty() {
             grid_rows.push(
                 Row::with_children(current_row)
-                    .spacing(24)
+                    .spacing(28)
                     .align_y(Vertical::Center)
                     .into(),
             );
         }
 
         let cards_grid = Column::with_children(grid_rows)
-            .spacing(24)
+            .spacing(28)
             .align_x(Horizontal::Center);
 
         let centered_grid = container(cards_grid)
@@ -1301,8 +1322,8 @@ impl OverviewApp {
         let empty_label: Element<'a, Message> = if ws.clients.is_empty() {
             container(
                 text("Empty")
-                    .size(12)
-                    .color(with_alpha(p.muted, 0.80)),
+                    .size(15)
+                    .color(with_alpha(p.muted, 0.85)),
             )
             .width(Length::Fill)
             .height(Length::Fill)
@@ -1500,13 +1521,16 @@ impl OverviewApp {
             );
         }
 
-        // Render unselected windows first, then promote the selected window to the top.
-        // Do NOT reorder layers based on `hover_progress`, as changing `Stack` child indices
-        // mid-animation swaps `MouseArea` hover states across sibling widgets in Iced.
+        // Partition windows deterministically into (1) unselected tiled, (2) unselected floating,
+        // and (3) selected windows so floating windows always sit above tiled windows while
+        // keeping `Stack` child indices invariant across hover frames.
+        let mut tiled_layers: Vec<Element<'a, Message>> = Vec::new();
+        let mut floating_layers: Vec<Element<'a, Message>> = Vec::new();
         let mut promoted_layers: Vec<Element<'a, Message>> = Vec::new();
         for (rep_win_idx, group_tabs) in &render_units {
             let client = &ws.clients[*rep_win_idx];
             let is_win_selected = group_tabs.iter().any(|t| t.is_selected);
+            let is_unit_floating = group_tabs.iter().any(|t| t.client.floating);
             let is_hypr_focused = group_tabs.iter().any(|t| {
                 self.snapshot.focused_address.as_deref() == Some(t.client.address.as_str())
             });
@@ -1535,10 +1559,14 @@ impl OverviewApp {
             );
             if is_win_selected {
                 promoted_layers.push(layer);
+            } else if is_unit_floating {
+                floating_layers.push(layer);
             } else {
-                card_layers.push(layer);
+                tiled_layers.push(layer);
             }
         }
+        card_layers.extend(tiled_layers);
+        card_layers.extend(floating_layers);
         card_layers.extend(promoted_layers);
 
         // High-contrast workspace indicator badge overlaid in the bottom-right corner.
@@ -1550,8 +1578,8 @@ impl OverviewApp {
 
         let badge_fg = if is_ws_selected { p.bg } else { p.fg };
 
-        let badge_pill = button(text(badge_text).size(11).color(badge_fg))
-            .padding([3, 9])
+        let badge_pill = button(text(badge_text).size(13).color(badge_fg))
+            .padding([4, 11])
             .on_press(Message::ActivateWorkspace(ws.key.clone()))
             .style(move |_theme: &Theme, status: button::Status| {
                 let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
@@ -1618,7 +1646,7 @@ impl OverviewApp {
             .height(Length::Fixed(preview_h))
             .align_x(Horizontal::Right)
             .align_y(Vertical::Bottom)
-            .padding([8, 10]);
+            .padding([10, 12]);
 
         card_layers.push(badge_overlay.into());
 
@@ -1634,6 +1662,7 @@ impl OverviewApp {
     }
 
     #[allow(clippy::too_many_arguments)]
+            #[allow(clippy::too_many_arguments)]
     fn render_window_miniature<'a>(
         &'a self,
         ws_idx: usize,
@@ -1653,21 +1682,26 @@ impl OverviewApp {
             .iter()
             .any(|t| t.client.fullscreen > 0 || t.client.fullscreen_client > 0);
         let is_grouped = group_tabs.len() > 1;
+        let is_floating = group_tabs.iter().any(|t| t.client.floating);
+        let is_pinned = group_tabs.iter().any(|t| t.client.pinned);
         let is_occluded_under_fs = has_fullscreen_with_others && !is_fullscreen;
 
         let mon_w = ws.monitor_w.max(1.0);
         let mon_h = ws.monitor_h.max(1.0);
 
         let inset = 4.5_f32;
-        let fs_banner_h = 40.0_f32;
+        let fs_banner_h = 44.0_f32;
         let sub_top = if is_occluded_under_fs {
             fs_banner_h + inset + 2.0
         } else {
             inset
         };
-        let avail_h = (preview_h - sub_top - inset).max(28.0);
+        let avail_h = (preview_h - sub_top - inset).max(32.0);
         let scale_x = preview_w / mon_w;
         let scale_y = avail_h / mon_h;
+
+        let min_win_w = if is_floating { 56.0 } else { 46.0 };
+        let min_win_h = if is_floating { 36.0 } else { 30.0 };
 
         // 1. Compute static resting geometry (100% independent of hover_progress).
         let (base_x, mut base_y, base_w, base_h) = if is_fullscreen && has_fullscreen_with_others {
@@ -1676,7 +1710,7 @@ impl OverviewApp {
             (
                 inset,
                 inset,
-                (preview_w - inset * 2.0).max(48.0),
+                (preview_w - inset * 2.0).max(56.0),
                 fs_banner_h,
             )
         } else {
@@ -1697,8 +1731,8 @@ impl OverviewApp {
             let mut bw = (raw_w * scale_x).round() - (inset * 2.0);
             let mut bh = (raw_h * scale_y).round() - inset;
 
-            bw = bw.clamp(42.0, (preview_w - inset * 2.0).max(42.0));
-            bh = bh.clamp(28.0, avail_h.max(28.0));
+            bw = bw.clamp(min_win_w, (preview_w - inset * 2.0).max(min_win_w));
+            bh = bh.clamp(min_win_h, avail_h.max(min_win_h));
 
             if bx + bw > preview_w - inset {
                 bx = (preview_w - inset - bw).max(inset);
@@ -1710,14 +1744,14 @@ impl OverviewApp {
         };
 
         // Nudge small floating windows out of the bottom-right workspace badge zone.
-        if client.floating
+        if is_floating
             && !is_fullscreen
-            && base_w <= 96.0
-            && base_h <= 48.0
-            && base_x + base_w > preview_w - 48.0
-            && base_y + base_h > preview_h - 34.0
+            && base_w <= 116.0
+            && base_h <= 56.0
+            && base_x + base_w > preview_w - 64.0
+            && base_y + base_h > preview_h - 40.0
         {
-            base_y = (preview_h - 34.0 - base_h).max(sub_top);
+            base_y = (preview_h - 40.0 - base_h).max(sub_top);
         }
 
         // 2. Compute the fixed, invariant outer hit-test slot (`slot_x, slot_y, slot_w, slot_h`).
@@ -1742,10 +1776,10 @@ impl OverviewApp {
         let inner_y = (rest_pad_top * (1.0 - hover_t)).round();
         let w = lerp(base_w, slot_w, hover_t)
             .round()
-            .clamp(42.0, (slot_w - inner_x).max(42.0));
+            .clamp(min_win_w, (slot_w - inner_x).max(min_win_w));
         let h = lerp(base_h, slot_h, hover_t)
             .round()
-            .clamp(28.0, (slot_h - inner_y).max(28.0));
+            .clamp(min_win_h, (slot_h - inner_y).max(min_win_h));
 
         let resolved_icon = &self.window_icons[ws_idx][rep_win_idx];
         let raw_class = if !client.class.is_empty() {
@@ -1755,25 +1789,30 @@ impl OverviewApp {
         } else {
             "Window"
         };
-        let effective_class_label = match resolved_icon.display_badge.as_deref() {
-            Some(tui_badge) => format!("{raw_class} · {tui_badge}"),
-            None => raw_class.to_owned(),
-        };
+        let display_class = format_display_class(raw_class, resolved_icon.display_badge.as_deref());
+        let clean_subtitle = clean_window_subtitle(
+            &client.title,
+            raw_class,
+            resolved_icon.display_badge.as_deref(),
+        );
+
         let accent = resolved_icon.resolve_color(&p);
         let has_custom_color = resolved_icon.accent_slot.is_custom();
+        let active_tint = accent;
+        let title_fg = mix_color(p.fg, Color::WHITE, 0.18);
 
         // Anchor `tab_bar_h` to static `base_h` so it never jumps across height thresholds mid-hover.
         let tab_bar_h = if is_grouped {
-            if base_h >= 48.0 {
-                20.0
+            if base_h >= 54.0 {
+                24.0
             } else {
-                (base_h * 0.44).round().clamp(14.0, 18.0)
+                (base_h * 0.44).round().clamp(16.0, 20.0)
             }
         } else {
             0.0
         };
         let body_h = if is_grouped {
-            (h - tab_bar_h - 2.0).max(14.0)
+            (h - tab_bar_h - 2.0).max(16.0)
         } else {
             h
         };
@@ -1785,170 +1824,312 @@ impl OverviewApp {
             .unwrap_or(1);
         let tab_count = group_tabs.len();
 
-        let class_truncated = truncate_str(
-            &effective_class_label,
-            ((base_w - 22.0) / 7.2).max(4.0) as usize,
+        let icon_fg = mix_color(
+            accent,
+            p.fg,
+            if has_custom_color { 0.14 } else { 0.24 },
         );
-        let title_truncated = truncate_str(&client.title, (base_w / 5.8).max(6.0) as usize);
 
-        let badge_str = if is_fullscreen {
-            if is_grouped {
+        let label_content: Element<'a, Message> = if is_fullscreen && has_fullscreen_with_others {
+            // Tier 4: Docked Fullscreen Banner
+            let banner_badge = if is_grouped {
                 format!("⛶ FULLSCREEN · {active_tab_pos}/{tab_count}")
             } else if is_selected || is_hypr_focused {
                 String::from("● ⛶ FULLSCREEN")
             } else {
                 String::from("⛶ FULLSCREEN")
-            }
-        } else if is_grouped {
-            format!("⇥ {active_tab_pos}/{tab_count} TABS")
-        } else if is_selected || is_hypr_focused {
-            String::from("●")
-        } else if client.floating {
-            String::from("FLT")
-        } else {
-            String::new()
-        };
-
-        let badge_color = if has_custom_color {
-            mix_color(accent, p.fg, 0.18)
-        } else if is_selected || is_grouped {
-            p.accent
-        } else if is_hypr_focused || is_fullscreen {
-            p.secondary
-        } else {
-            with_alpha(p.secondary, 0.85)
-        };
-
-        let titlebar_icon_col = mix_color(accent, p.fg, if has_custom_color { 0.16 } else { 0.35 });
-
-        let label_content: Element<'a, Message> = if is_fullscreen && has_fullscreen_with_others {
-            // Compact high-contrast layout for the docked fullscreen banner.
-            let banner_pill_bg = if has_custom_color {
-                accent
-            } else if is_selected {
-                p.accent
+            };
+            let banner_pill_bg = if is_selected || has_custom_color {
+                active_tint
             } else {
-                p.secondary
+                mix_color(active_tint, p.secondary, 0.35)
             };
             let banner_pill_fg = contrast_text_color(banner_pill_bg, p.bg, p.fg);
+                        let banner_class = truncate_str(
+                &display_class,
+                ((base_w * 0.36) / 8.0).max(6.0) as usize,
+            );
+            let banner_sub = clean_subtitle
+                .map(|s| truncate_str(s, ((base_w * 0.44) / 6.6).max(8.0) as usize))
+                .unwrap_or_default();
+
             row![
-                container(text(badge_str).size(9).color(banner_pill_fg))
-                    .padding([2, 6])
+                container(text(banner_badge).size(10.5).color(banner_pill_fg))
+                    .padding([3, 7])
                     .style(move |_theme: &Theme| container::Style {
                         background: Some(Background::Color(banner_pill_bg)),
                         text_color: Some(banner_pill_fg),
                         border: Border {
                             color: Color::TRANSPARENT,
                             width: 0.0,
-                            radius: 4.0.into(),
+                            radius: 5.0.into(),
                         },
                         shadow: Shadow::default(),
                         ..Default::default()
                     }),
+                Space::new().width(Length::Fixed(8.0)),
+                render_app_icon(&resolved_icon.visual, 16.0, icon_fg),
                 Space::new().width(Length::Fixed(6.0)),
-                render_app_icon(&resolved_icon.visual, 13.0, titlebar_icon_col),
-                Space::new().width(Length::Fixed(5.0)),
-                text(class_truncated).size(10).color(p.fg),
-                Space::new().width(Length::Fixed(6.0)),
-                text(title_truncated)
-                    .size(10)
-                    .color(with_alpha(p.fg, 0.85)),
+                text(banner_class)
+                    .size(14.5)
+                    .font(bold_font())
+                    .color(title_fg),
+                Space::new().width(Length::Fixed(8.0)),
+                text(banner_sub)
+                    .size(12)
+                    .color(with_alpha(p.fg, 0.82)),
                 Space::new().width(Length::Fill),
             ]
-            .padding([0, 6])
+            .padding([0, 8])
             .align_y(Vertical::Center)
             .height(Length::Fill)
             .into()
-        } else if body_h >= 42.0 {
-            let titlebar = container(
-                row![
-                    render_app_icon(&resolved_icon.visual, 12.5, titlebar_icon_col),
-                    Space::new().width(Length::Fixed(5.0)),
-                    text(class_truncated).size(10).color(p.fg),
-                    Space::new().width(Length::Fill),
-                    text(badge_str).size(9).color(badge_color),
-                ]
-                .align_y(Vertical::Center),
-            )
-            .padding([2, 6])
-            .width(Length::Fill)
-            .style(move |_theme: &Theme| {
-                let header_tint = if is_selected && !has_custom_color {
-                    p.accent
+        } else {
+            // Standalone / Grouped Window Interior Canvas (No redundant top titlebar)
+            let main_canvas: Element<'a, Message> = if body_h >= 76.0 && w >= 96.0 {
+                // Tier 1: Hero Vertical Stack Canvas (Compact fixed icon badge + Bold title + Subtitle)
+                let is_large_hero = w >= 170.0 && body_h >= 105.0;
+                let primary_font_size = if is_large_hero { 20.0 } else { 18.5 };
+                let (badge_box_sz, icon_sz, badge_radius) = if is_large_hero {
+                    (48.0, 30.0, 12.0)
                 } else {
-                    accent
+                    (44.0, 28.0, 11.0)
                 };
-                let mix_t = if is_selected {
-                    0.42
-                } else if has_custom_color {
-                    0.28
-                } else {
-                    0.20
-                };
-                container::Style {
+
+                let primary_chars =
+                    ((base_w - 20.0) / (primary_font_size * 0.52)).max(5.0) as usize;
+                let sub_chars = ((base_w - 16.0) / 6.5).max(6.0) as usize;
+                let primary_str = truncate_str(&display_class, primary_chars);
+
+                let hero_icon_col = with_alpha(icon_fg, lerp(0.90, 1.0, hover_t));
+                let icon_badge = container(render_app_icon(
+                    &resolved_icon.visual,
+                    icon_sz,
+                    hero_icon_col,
+                ))
+                .width(Length::Fixed(badge_box_sz))
+                .height(Length::Fixed(badge_box_sz))
+                .align_x(Horizontal::Center)
+                .align_y(Vertical::Center)
+                .style(move |_theme: &Theme| container::Style {
                     background: Some(Background::Color(with_alpha(
-                        mix_color(p.bg, header_tint, mix_t),
-                        if is_selected { 0.94 } else { 0.84 },
+                        mix_color(p.bg, accent, if is_selected { 0.34 } else { 0.22 }),
+                        0.94,
                     ))),
                     text_color: None,
                     border: Border {
-                        color: Color::TRANSPARENT,
-                        width: 0.0,
-                        radius: 4.0.into(),
+                        color: with_alpha(accent, if is_selected { 0.62 } else { 0.36 }),
+                        width: 1.0,
+                        radius: badge_radius.into(),
                     },
                     shadow: Shadow::default(),
                     ..Default::default()
-                }
-            });
+                });
 
-            let body_inner: Element<'a, Message> = if body_h >= 68.0 && w >= 76.0 {
-                let hero_icon_col = with_alpha(
-                    mix_color(accent, p.fg, if has_custom_color { 0.14 } else { 0.25 }),
-                    lerp(0.82, 0.98, hover_t),
+                let mut col_items: Vec<Element<'a, Message>> = Vec::with_capacity(5);
+                col_items.push(icon_badge.into());
+                col_items.push(Space::new().height(Length::Fixed(7.0)).into());
+                col_items.push(
+                    text(primary_str)
+                        .size(primary_font_size)
+                        .font(bold_font())
+                        .color(title_fg)
+                        .into(),
                 );
-                column![
-                    render_app_icon(&resolved_icon.visual, 20.0, hero_icon_col),
-                    Space::new().height(Length::Fixed(4.0)),
-                    text(title_truncated)
-                        .size(10)
-                        .color(with_alpha(p.fg, 0.90)),
-                ]
-                .align_x(Horizontal::Center)
+
+                if let Some(sub) = clean_subtitle {
+                    let sub_str = truncate_str(sub, sub_chars);
+                    col_items.push(Space::new().height(Length::Fixed(3.0)).into());
+                    col_items.push(
+                        text(sub_str)
+                            .size(12)
+                            .color(with_alpha(p.fg, 0.78))
+                            .into(),
+                    );
+                }
+
+                container(
+                    Column::with_children(col_items)
+                        .width(Length::Shrink)
+                        .align_x(Horizontal::Center),
+                )
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .padding([6, 8])
+                .center_x(Length::Fill)
+                .center_y(Length::Fill)
+                .into()
+            } else if body_h >= 44.0 {
+                // Tier 2: Balanced Horizontal Icon + Two-Line Label Canvas
+                let avail_text_w = (base_w - 58.0).max(28.0);
+                let primary_chars = (avail_text_w / 8.4).max(4.0) as usize;
+                let sub_chars = (avail_text_w / 6.4).max(5.0) as usize;
+                let primary_str = truncate_str(&display_class, primary_chars);
+
+                let icon_box = container(render_app_icon(&resolved_icon.visual, 22.0, icon_fg))
+                    .width(Length::Fixed(34.0))
+                    .height(Length::Fixed(34.0))
+                    .align_x(Horizontal::Center)
+                    .align_y(Vertical::Center)
+                    .style(move |_theme: &Theme| container::Style {
+                        background: Some(Background::Color(with_alpha(
+                            mix_color(p.bg, accent, if is_selected { 0.32 } else { 0.20 }),
+                            0.92,
+                        ))),
+                        text_color: None,
+                        border: Border {
+                            color: with_alpha(accent, if is_selected { 0.55 } else { 0.32 }),
+                            width: 1.0,
+                            radius: 8.5.into(),
+                        },
+                        shadow: Shadow::default(),
+                        ..Default::default()
+                    });
+
+                let text_col: Element<'a, Message> = if let Some(sub) = clean_subtitle {
+                    let sub_str = truncate_str(sub, sub_chars);
+                    column![
+                        text(primary_str)
+                            .size(16)
+                            .font(bold_font())
+                            .color(title_fg),
+                        Space::new().height(Length::Fixed(2.0)),
+                        text(sub_str).size(11.5).color(with_alpha(p.fg, 0.76)),
+                    ]
+                    .align_x(Horizontal::Left)
+                    .into()
+                } else {
+                    text(primary_str)
+                        .size(16)
+                        .font(bold_font())
+                        .color(title_fg)
+                        .into()
+                };
+
+                container(
+                    row![
+                        icon_box,
+                        Space::new().width(Length::Fixed(9.0)),
+                        text_col,
+                    ]
+                    .align_y(Vertical::Center),
+                )
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .padding([4, 8])
+                .center_x(Length::Fill)
+                .center_y(Length::Fill)
                 .into()
             } else {
-                text(title_truncated)
-                    .size(10)
-                    .color(with_alpha(p.fg, 0.88))
+                // Tier 3: Compact Strip Canvas
+                let primary_chars = ((base_w - 30.0) / 7.8).max(4.0) as usize;
+                let primary_str = truncate_str(&display_class, primary_chars);
+
+                let mut strip_row: Vec<Element<'a, Message>> = Vec::with_capacity(5);
+                strip_row.push(render_app_icon(&resolved_icon.visual, 16.0, icon_fg));
+                strip_row.push(Space::new().width(Length::Fixed(5.5)).into());
+                strip_row.push(
+                    text(primary_str)
+                        .size(14)
+                        .font(bold_font())
+                        .color(title_fg)
+                        .into(),
+                );
+
+                if w >= 160.0
+                    && let Some(sub) = clean_subtitle
+                {
+                    let sub_chars = ((base_w - 104.0) / 6.5).max(5.0) as usize;
+                    let sub_str = truncate_str(sub, sub_chars);
+                    strip_row.push(Space::new().width(Length::Fixed(6.0)).into());
+                    strip_row.push(
+                        text(sub_str)
+                            .size(11)
+                            .color(with_alpha(p.fg, 0.72))
+                            .into(),
+                    );
+                }
+
+
+                container(Row::with_children(strip_row).align_y(Vertical::Center))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .padding([2, 6])
+                    .center_x(Length::Fill)
+                    .center_y(Length::Fill)
                     .into()
             };
 
-            let body = container(body_inner)
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .padding([2, 6])
-                .center_x(Length::Fill)
-                .center_y(Length::Fill);
-
-            column![titlebar, body].into()
-        } else {
-            let compact_text = if is_fullscreen {
-                format!("⛶ {class_truncated}")
+            // Optional Top-Right Corner Status / Floating Pill Overlay
+            let corner_badge_text: Option<String> = if is_fullscreen {
+                if is_grouped {
+                    Some(format!("⛶ FULL · {active_tab_pos}/{tab_count}"))
+                } else if is_selected || is_hypr_focused {
+                    Some(String::from("● ⛶ FULL"))
+                } else {
+                    Some(String::from("⛶ FULL"))
+                }
+            } else if is_floating {
+                let flt_tag = if is_pinned { "📌 PIN" } else { "❐ FLOAT" };
+                if is_grouped {
+                    Some(format!("{flt_tag} · {active_tab_pos}/{tab_count}"))
+                } else if is_selected || is_hypr_focused {
+                    Some(format!("● {flt_tag}"))
+                } else {
+                    Some(String::from(flt_tag))
+                }
+            } else if is_grouped && body_h >= 48.0 {
+                Some(format!("⇥ {active_tab_pos}/{tab_count}"))
+            } else if is_selected || is_hypr_focused {
+                Some(String::from("●"))
             } else {
-                class_truncated
+                None
             };
-            container(
-                row![
-                    render_app_icon(&resolved_icon.visual, 11.5, titlebar_icon_col),
-                    Space::new().width(Length::Fixed(4.0)),
-                    text(compact_text).size(10).color(p.fg),
-                ]
-                .align_y(Vertical::Center),
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center_x(Length::Fill)
-            .center_y(Length::Fill)
-            .into()
+
+            if let Some(pill_label) = corner_badge_text
+                && body_h >= 34.0
+                && w >= 64.0
+            {
+                let pill_tint = if is_floating {
+                    if has_custom_color { accent } else { p.tertiary }
+                } else {
+                    active_tint
+                };
+                let pill_bg = with_alpha(
+                    mix_color(p.bg, pill_tint, if is_selected || is_floating { 0.42 } else { 0.28 }),
+                    0.94,
+                );
+                let pill_fg = mix_color(pill_tint, p.fg, 0.55);
+                let pill_border = with_alpha(pill_tint, if is_selected || is_floating { 0.82 } else { 0.55 });
+
+                let corner_pill = container(text(pill_label).size(10).color(pill_fg))
+                    .padding([2, 6])
+                    .style(move |_theme: &Theme| container::Style {
+                        background: Some(Background::Color(pill_bg)),
+                        text_color: Some(pill_fg),
+                        border: Border {
+                            color: pill_border,
+                            width: 1.0,
+                            radius: 6.0.into(),
+                        },
+                        shadow: Shadow::default(),
+                        ..Default::default()
+                    });
+
+                let badge_layer = container(corner_pill)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .align_x(Horizontal::Right)
+                    .align_y(Vertical::Top)
+                    .padding([5, 6]);
+
+                stack![main_canvas, badge_layer]
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .into()
+            } else {
+                main_canvas
+            }
         };
 
         let centered_box = container(label_content)
@@ -1956,9 +2137,13 @@ impl OverviewApp {
             .height(Length::Fill)
             .clip(true);
 
-        let is_floating = client.floating;
-        let body_radius = if is_grouped { 6.5 } else { 8.5 };
-        let active_tint = if has_custom_color { accent } else { p.accent };
+        let body_radius = if is_grouped {
+            7.5
+        } else if is_floating {
+            10.5
+        } else {
+            8.5
+        };
 
         let win_button = button(centered_box)
             .width(Length::Fixed(w))
@@ -1973,14 +2158,15 @@ impl OverviewApp {
                 let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
                 let eff_hover = if hovered { 1.0_f32 } else { hover_t };
 
+                let floating_tint = if has_custom_color { accent } else { p.tertiary };
                 let rest_bg = if is_selected {
                     mix_color(p.bg, active_tint, 0.25)
-                } else if has_custom_color {
-                    mix_color(p.bg, accent, 0.13)
                 } else if is_floating {
-                    mix_color(p.bg, p.secondary, 0.16)
+                    mix_color(p.bg, floating_tint, 0.20)
+                } else if has_custom_color {
+                    mix_color(p.bg, accent, 0.14)
                 } else {
-                    mix_color(p.bg, p.muted, 0.26)
+                    mix_color(p.bg, mix_color(p.muted, active_tint, 0.18), 0.25)
                 };
                 let hover_bg = mix_color(
                     p.bg,
@@ -1989,25 +2175,37 @@ impl OverviewApp {
                 );
                 let bg = lerp_color(rest_bg, hover_bg, eff_hover);
 
-                let base_alpha = if is_occluded_under_fs && !is_selected {
+                let base_alpha = if is_floating {
+                    lerp(0.97, 1.0, eff_hover)
+                } else if is_occluded_under_fs && !is_selected {
                     lerp(0.78, 0.97, eff_hover)
                 } else {
                     lerp(0.94, 0.99, eff_hover)
                 };
 
                 let rest_border_col = if is_selected {
-                    mix_color(active_tint, Color::WHITE, 0.14)
+                    mix_color(active_tint, Color::WHITE, 0.16)
+                } else if is_floating {
+                    with_alpha(
+                        mix_color(p.secondary, floating_tint, 0.55),
+                        if is_hypr_focused { 0.94 } else { 0.86 },
+                    )
                 } else if has_custom_color {
-                    let muted_custom = mix_color(p.muted, accent, if is_hypr_focused { 0.78 } else { 0.62 });
+                    let muted_custom = mix_color(
+                        p.muted,
+                        accent,
+                        if is_hypr_focused { 0.78 } else { 0.62 },
+                    );
                     with_alpha(muted_custom, if is_hypr_focused { 0.90 } else { 0.72 })
                 } else if is_hypr_focused {
-                    with_alpha(p.secondary, 0.88)
+                    with_alpha(mix_color(p.secondary, active_tint, 0.55), 0.88)
                 } else if is_fullscreen {
-                    with_alpha(p.secondary, 0.72)
-                } else if is_floating {
-                    with_alpha(p.secondary, 0.60)
+                    with_alpha(mix_color(p.secondary, active_tint, 0.45), 0.74)
                 } else {
-                    with_alpha(p.muted, if is_occluded_under_fs { 0.45 } else { 0.72 })
+                    with_alpha(
+                        mix_color(p.muted, active_tint, 0.28),
+                        if is_occluded_under_fs { 0.45 } else { 0.72 },
+                    )
                 };
                 let hover_border_col = mix_color(
                     active_tint,
@@ -2023,6 +2221,8 @@ impl OverviewApp {
                 let border_color = lerp_color(rest_border_col, hover_border_col, eff_hover);
                 let rest_border_w = if is_selected {
                     2.4
+                } else if is_floating {
+                    1.6
                 } else if is_hypr_focused {
                     1.5
                 } else if is_fullscreen {
@@ -2039,7 +2239,29 @@ impl OverviewApp {
                 };
                 let border_width = lerp(rest_border_w, target_border_w, eff_hover);
 
-                let shadow_alpha = 0.40 * eff_hover + if is_selected { 0.26 } else { 0.0 };
+                let shadow = if is_floating && !is_selected && eff_hover <= 0.05 {
+                    Shadow {
+                        color: with_alpha(Color::BLACK, 0.48),
+                        offset: Vector::new(0.0, 4.0),
+                        blur_radius: 12.0,
+                    }
+                } else {
+                    let glow_alpha = 0.40 * eff_hover
+                        + if is_selected { 0.28 } else { 0.0 }
+                        + if is_floating { 0.14 } else { 0.0 };
+                    Shadow {
+                        color: with_alpha(active_tint, glow_alpha.clamp(0.0, 0.68)),
+                        offset: Vector::new(
+                            0.0,
+                            4.5 * eff_hover
+                                + if is_selected { 2.0 } else { 0.0 }
+                                + if is_floating { 1.5 } else { 0.0 },
+                        ),
+                        blur_radius: 14.0 * eff_hover
+                            + if is_selected { 6.0 } else { 0.0 }
+                            + if is_floating { 4.0 } else { 0.0 },
+                    }
+                };
 
                 button::Style {
                     background: Some(Background::Color(with_alpha(bg, base_alpha))),
@@ -2049,21 +2271,14 @@ impl OverviewApp {
                         width: border_width,
                         radius: body_radius.into(),
                     },
-                    shadow: Shadow {
-                        color: with_alpha(active_tint, shadow_alpha.clamp(0.0, 0.65)),
-                        offset: Vector::new(
-                            0.0,
-                            4.5 * eff_hover + if is_selected { 2.0 } else { 0.0 },
-                        ),
-                        blur_radius: 14.0 * eff_hover + if is_selected { 6.0 } else { 0.0 },
-                    },
+                    shadow,
                     ..Default::default()
                 }
             });
 
         let visual_unit: Element<'a, Message> = if is_grouped {
             let per_tab_chars =
-                (((base_w / (tab_count as f32)) - 18.0) / 6.6).max(3.0) as usize;
+                (((base_w / (tab_count as f32)) - 22.0) / 7.2).max(3.0) as usize;
             let mut tab_pills: Vec<Element<'a, Message>> = Vec::with_capacity(tab_count);
 
             for tab in group_tabs {
@@ -2075,13 +2290,12 @@ impl OverviewApp {
                 };
                 let tab_accent = tab_resolved.resolve_color(&p);
                 let tab_has_custom_color = tab_resolved.accent_slot.is_custom();
-                let tab_active_tint = if tab_has_custom_color {
-                    tab_accent
-                } else {
-                    p.accent
-                };
+                let tab_active_tint = tab_accent;
 
-                let short_lead = tab_resolved.display_badge.as_deref().unwrap_or(tab_class);
+                let short_lead = tab_resolved
+                    .display_badge
+                    .as_deref()
+                    .unwrap_or(tab_class);
                 let raw_tab_label = if !tab.client.title.is_empty() && per_tab_chars >= 8 {
                     if tab
                         .client
@@ -2117,9 +2331,9 @@ impl OverviewApp {
                 let pill_btn = button(
                     container(
                         row![
-                            render_app_icon(&tab_resolved.visual, 10.5, tab_icon_col),
-                            Space::new().width(Length::Fixed(3.5)),
-                            text(full_label).size(9),
+                            render_app_icon(&tab_resolved.visual, 12.5, tab_icon_col),
+                            Space::new().width(Length::Fixed(4.0)),
+                            text(full_label).size(11),
                         ]
                         .align_y(Vertical::Center),
                     )
@@ -2131,7 +2345,7 @@ impl OverviewApp {
                 )
                 .width(Length::FillPortion(1))
                 .height(Length::Fixed(tab_bar_h))
-                .padding([1, 4])
+                .padding([2, 5])
                 .on_press(Message::ActivateWindow {
                     workspace: ws.key.clone(),
                     address: tab.client.address.clone(),
@@ -2199,7 +2413,7 @@ impl OverviewApp {
                             } else {
                                 1.0
                             },
-                            radius: 5.0.into(),
+                            radius: 6.0.into(),
                         },
                         shadow: if is_tab_sel || hovered {
                             Shadow {
@@ -2265,6 +2479,61 @@ impl OverviewApp {
         ]
         .into()
     }
+}
+
+#[inline]
+fn bold_font() -> iced::Font {
+    iced::Font {
+        weight: iced::font::Weight::Bold,
+        ..iced::Font::with_name(crate::fonts::DEFAULT_FAMILY)
+    }
+}
+
+fn format_display_class(raw_class: &str, badge: Option<&str>) -> String {
+    let base = raw_class
+        .trim()
+        .rsplit('.')
+        .next()
+        .unwrap_or(raw_class)
+        .trim();
+    let mut chars = base.chars();
+    let pretty_base = match chars.next() {
+        Some(first) if first.is_ascii_lowercase() => {
+            let mut s = String::with_capacity(base.len());
+            s.push(first.to_ascii_uppercase());
+            s.push_str(chars.as_str());
+            s
+        }
+        _ => base.to_owned(),
+    };
+
+    match badge {
+        Some(b) if !b.is_empty() && !pretty_base.eq_ignore_ascii_case(b) => {
+            format!("{pretty_base} · {b}")
+        }
+        _ => pretty_base,
+    }
+}
+
+fn clean_window_subtitle<'a>(
+    title: &'a str,
+    raw_class: &str,
+    badge: Option<&str>,
+) -> Option<&'a str> {
+    let trimmed = title.trim();
+    if trimmed.is_empty() || matches!(trimmed, "~" | "-" | "zsh" | "bash" | "fish") {
+        return None;
+    }
+    let short_class = raw_class.trim().rsplit('.').next().unwrap_or(raw_class);
+    if trimmed.eq_ignore_ascii_case(raw_class.trim()) || trimmed.eq_ignore_ascii_case(short_class) {
+        return None;
+    }
+    if let Some(b) = badge
+        && trimmed.eq_ignore_ascii_case(b.trim())
+    {
+        return None;
+    }
+    Some(trimmed)
 }
 
 fn truncate_str(input: &str, max_chars: usize) -> String {

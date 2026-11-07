@@ -485,6 +485,12 @@ impl IconRegistry {
             };
             let accent_slot = match rule_slot {
                 Some(slot) if slot != AccentSlot::Auto => slot,
+                _ if rule.terminal_only => self
+                    .category_accents
+                    .get("tui")
+                    .or_else(|| self.category_accents.get("terminal"))
+                    .copied()
+                    .unwrap_or(AccentSlot::Accent),
                 _ => self
                     .category_accents
                     .get(&category_key)
@@ -1000,11 +1006,13 @@ fn builtin_rules() -> Vec<IconRule> {
     };
 
     vec![
-        // 1. Terminal-hosted TUI applications (inspected via title inside terminals)
+        // 1. Terminal-hosted TUI applications (inspected via title inside terminals).
+        //    Default to AccentSlot::Auto so TUI windows inherit the consistent terminal
+        //    accent unless overridden in `app_icons.json`.
         rule(
             "files",
             Some("yazi"),
-            AccentSlot::Tertiary,
+            AccentSlot::Auto,
             true,
             &[],
             &["yazi", "superfile", "spf", "ranger", "nnn", "lf", "broot", "mc"],
@@ -1012,7 +1020,7 @@ fn builtin_rules() -> Vec<IconRule> {
         rule(
             "code",
             Some("nvim"),
-            AccentSlot::Secondary,
+            AccentSlot::Auto,
             true,
             &[],
             &["nvim", "neovim", "vim", "helix", "hx", "kakoune", "emacs"],
@@ -1020,7 +1028,7 @@ fn builtin_rules() -> Vec<IconRule> {
         rule(
             "editor",
             Some("edit"),
-            AccentSlot::Secondary,
+            AccentSlot::Auto,
             true,
             &[],
             &["nano", "micro"],
@@ -1028,7 +1036,7 @@ fn builtin_rules() -> Vec<IconRule> {
         rule(
             "browser",
             Some("lynx"),
-            AccentSlot::Accent,
+            AccentSlot::Auto,
             true,
             &[],
             &["lynx"],
@@ -1036,7 +1044,7 @@ fn builtin_rules() -> Vec<IconRule> {
         rule(
             "media",
             Some("media"),
-            AccentSlot::Tertiary,
+            AccentSlot::Auto,
             true,
             &[],
             &["cava", "ncmpcpp", "cmus", "rmpc", "mpv", "musikcube"],
@@ -1044,7 +1052,7 @@ fn builtin_rules() -> Vec<IconRule> {
         rule(
             "system",
             Some("sys"),
-            AccentSlot::Secondary,
+            AccentSlot::Auto,
             true,
             &[],
             &["btop", "htop", "nvtop", "btm", "atop", "lazygit", "gitui"],
