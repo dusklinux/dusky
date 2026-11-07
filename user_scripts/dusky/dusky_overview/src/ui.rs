@@ -1662,7 +1662,6 @@ impl OverviewApp {
     }
 
     #[allow(clippy::too_many_arguments)]
-            #[allow(clippy::too_many_arguments)]
     fn render_window_miniature<'a>(
         &'a self,
         ws_idx: usize,
@@ -1845,13 +1844,14 @@ impl OverviewApp {
                 mix_color(active_tint, p.secondary, 0.35)
             };
             let banner_pill_fg = contrast_text_color(banner_pill_bg, p.bg, p.fg);
-                        let banner_class = truncate_str(
+            let banner_class = truncate_str(
                 &display_class,
-                ((base_w * 0.36) / 8.0).max(6.0) as usize,
+                ((base_w * 0.36) / 8.2).max(6.0) as usize,
             );
             let banner_sub = clean_subtitle
-                .map(|s| truncate_str(s, ((base_w * 0.44) / 6.6).max(8.0) as usize))
+                .map(|s| truncate_str(s, ((base_w * 0.44) / 7.5).max(8.0) as usize))
                 .unwrap_or_default();
+            let sub_fg = with_alpha(mix_color(p.fg, Color::WHITE, 0.12), 0.95);
 
             row![
                 container(text(banner_badge).size(10.5).color(banner_pill_fg))
@@ -1871,13 +1871,14 @@ impl OverviewApp {
                 render_app_icon(&resolved_icon.visual, 16.0, icon_fg),
                 Space::new().width(Length::Fixed(6.0)),
                 text(banner_class)
-                    .size(14.5)
+                    .size(15)
                     .font(bold_font())
                     .color(title_fg),
                 Space::new().width(Length::Fixed(8.0)),
                 text(banner_sub)
-                    .size(12)
-                    .color(with_alpha(p.fg, 0.82)),
+                    .size(13.5)
+                    .font(semibold_font())
+                    .color(sub_fg),
                 Space::new().width(Length::Fill),
             ]
             .padding([0, 8])
@@ -1886,19 +1887,22 @@ impl OverviewApp {
             .into()
         } else {
             // Standalone / Grouped Window Interior Canvas (No redundant top titlebar)
+            let sub_fg = with_alpha(mix_color(p.fg, Color::WHITE, 0.12), 0.95);
+
             let main_canvas: Element<'a, Message> = if body_h >= 76.0 && w >= 96.0 {
-                // Tier 1: Hero Vertical Stack Canvas (Compact fixed icon badge + Bold title + Subtitle)
+                // Tier 1: Hero Vertical Stack Canvas (Compact fixed icon badge + Bold title + Framed Subtitle)
                 let is_large_hero = w >= 170.0 && body_h >= 105.0;
-                let primary_font_size = if is_large_hero { 20.0 } else { 18.5 };
+                let primary_font_size = if is_large_hero { 20.5 } else { 19.0 };
+                let sub_font_size = if is_large_hero { 16.0 } else { 15.0 };
                 let (badge_box_sz, icon_sz, badge_radius) = if is_large_hero {
-                    (48.0, 30.0, 12.0)
+                    (46.0, 29.0, 12.0)
                 } else {
-                    (44.0, 28.0, 11.0)
+                    (42.0, 26.0, 10.5)
                 };
 
                 let primary_chars =
                     ((base_w - 20.0) / (primary_font_size * 0.52)).max(5.0) as usize;
-                let sub_chars = ((base_w - 16.0) / 6.5).max(6.0) as usize;
+                let sub_chars = ((base_w - 26.0) / (sub_font_size * 0.54)).max(6.0) as usize;
                 let primary_str = truncate_str(&display_class, primary_chars);
 
                 let hero_icon_col = with_alpha(icon_fg, lerp(0.90, 1.0, hover_t));
@@ -1928,7 +1932,7 @@ impl OverviewApp {
 
                 let mut col_items: Vec<Element<'a, Message>> = Vec::with_capacity(5);
                 col_items.push(icon_badge.into());
-                col_items.push(Space::new().height(Length::Fixed(7.0)).into());
+                col_items.push(Space::new().height(Length::Fixed(6.0)).into());
                 col_items.push(
                     text(primary_str)
                         .size(primary_font_size)
@@ -1939,13 +1943,30 @@ impl OverviewApp {
 
                 if let Some(sub) = clean_subtitle {
                     let sub_str = truncate_str(sub, sub_chars);
-                    col_items.push(Space::new().height(Length::Fixed(3.0)).into());
-                    col_items.push(
+                    let sub_pill = container(
                         text(sub_str)
-                            .size(12)
-                            .color(with_alpha(p.fg, 0.78))
-                            .into(),
-                    );
+                            .size(sub_font_size)
+                            .font(semibold_font())
+                            .color(sub_fg),
+                    )
+                    .padding([3, 10])
+                    .style(move |_theme: &Theme| container::Style {
+                        background: Some(Background::Color(with_alpha(
+                            mix_color(p.bg, accent, if is_selected { 0.24 } else { 0.15 }),
+                            0.90,
+                        ))),
+                        text_color: None,
+                        border: Border {
+                            color: with_alpha(accent, if is_selected { 0.42 } else { 0.24 }),
+                            width: 1.0,
+                            radius: 6.5.into(),
+                        },
+                        shadow: Shadow::default(),
+                        ..Default::default()
+                    });
+
+                    col_items.push(Space::new().height(Length::Fixed(4.0)).into());
+                    col_items.push(sub_pill.into());
                 }
 
                 container(
@@ -1962,8 +1983,8 @@ impl OverviewApp {
             } else if body_h >= 44.0 {
                 // Tier 2: Balanced Horizontal Icon + Two-Line Label Canvas
                 let avail_text_w = (base_w - 58.0).max(28.0);
-                let primary_chars = (avail_text_w / 8.4).max(4.0) as usize;
-                let sub_chars = (avail_text_w / 6.4).max(5.0) as usize;
+                let primary_chars = (avail_text_w / 8.6).max(4.0) as usize;
+                let sub_chars = (avail_text_w / 7.5).max(5.0) as usize;
                 let primary_str = truncate_str(&display_class, primary_chars);
 
                 let icon_box = container(render_app_icon(&resolved_icon.visual, 22.0, icon_fg))
@@ -1990,17 +2011,20 @@ impl OverviewApp {
                     let sub_str = truncate_str(sub, sub_chars);
                     column![
                         text(primary_str)
-                            .size(16)
+                            .size(16.5)
                             .font(bold_font())
                             .color(title_fg),
-                        Space::new().height(Length::Fixed(2.0)),
-                        text(sub_str).size(11.5).color(with_alpha(p.fg, 0.76)),
+                        Space::new().height(Length::Fixed(2.5)),
+                        text(sub_str)
+                            .size(14)
+                            .font(semibold_font())
+                            .color(sub_fg),
                     ]
                     .align_x(Horizontal::Left)
                     .into()
                 } else {
                     text(primary_str)
-                        .size(16)
+                        .size(16.5)
                         .font(bold_font())
                         .color(title_fg)
                         .into()
@@ -2022,7 +2046,7 @@ impl OverviewApp {
                 .into()
             } else {
                 // Tier 3: Compact Strip Canvas
-                let primary_chars = ((base_w - 30.0) / 7.8).max(4.0) as usize;
+                let primary_chars = ((base_w - 30.0) / 8.0).max(4.0) as usize;
                 let primary_str = truncate_str(&display_class, primary_chars);
 
                 let mut strip_row: Vec<Element<'a, Message>> = Vec::with_capacity(5);
@@ -2030,7 +2054,7 @@ impl OverviewApp {
                 strip_row.push(Space::new().width(Length::Fixed(5.5)).into());
                 strip_row.push(
                     text(primary_str)
-                        .size(14)
+                        .size(14.5)
                         .font(bold_font())
                         .color(title_fg)
                         .into(),
@@ -2039,13 +2063,14 @@ impl OverviewApp {
                 if w >= 160.0
                     && let Some(sub) = clean_subtitle
                 {
-                    let sub_chars = ((base_w - 104.0) / 6.5).max(5.0) as usize;
+                    let sub_chars = ((base_w - 108.0) / 7.4).max(5.0) as usize;
                     let sub_str = truncate_str(sub, sub_chars);
                     strip_row.push(Space::new().width(Length::Fixed(6.0)).into());
                     strip_row.push(
                         text(sub_str)
-                            .size(11)
-                            .color(with_alpha(p.fg, 0.72))
+                            .size(13)
+                            .font(semibold_font())
+                            .color(sub_fg)
                             .into(),
                     );
                 }
@@ -2489,6 +2514,22 @@ fn bold_font() -> iced::Font {
     }
 }
 
+#[inline]
+fn semibold_font() -> iced::Font {
+    iced::Font {
+        weight: iced::font::Weight::Semibold,
+        ..iced::Font::with_name(crate::fonts::DEFAULT_FAMILY)
+    }
+}
+
+#[inline]
+fn medium_font() -> iced::Font {
+    iced::Font {
+        weight: iced::font::Weight::Medium,
+        ..iced::Font::with_name(crate::fonts::DEFAULT_FAMILY)
+    }
+}
+
 fn format_display_class(raw_class: &str, badge: Option<&str>) -> String {
     let base = raw_class
         .trim()
@@ -2520,7 +2561,30 @@ fn clean_window_subtitle<'a>(
     raw_class: &str,
     badge: Option<&str>,
 ) -> Option<&'a str> {
-    let trimmed = title.trim();
+    let mut trimmed = title.trim();
+    for suffix in [
+        " — Mozilla Firefox",
+        " - Mozilla Firefox",
+        " — Firefox",
+        " - Firefox",
+        " — Zen Browser",
+        " - Zen Browser",
+        " - Google Chrome",
+        " - Chromium",
+        " - Brave",
+        " - Vivaldi",
+        " - Visual Studio Code",
+        " - VSCodium",
+    ] {
+        if let Some(stripped) = trimmed.strip_suffix(suffix) {
+            let candidate = stripped.trim();
+            if !candidate.is_empty() {
+                trimmed = candidate;
+            }
+            break;
+        }
+    }
+
     if trimmed.is_empty() || matches!(trimmed, "~" | "-" | "zsh" | "bash" | "fish") {
         return None;
     }
