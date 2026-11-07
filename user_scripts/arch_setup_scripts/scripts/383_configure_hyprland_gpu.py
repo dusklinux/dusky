@@ -365,16 +365,17 @@ def probe_connectors(card_name: str) -> tuple[int, int, bool]:
         for conn in drm_root.glob(f"{card_name}-*"):
             if conn.name.startswith(f"{card_name}-Writeback"):
                 continue
-            total += 1
-            if INTERNAL_PANEL_RE.prefixmatch(conn.name):
-                has_internal = True
             status_file = conn / "status"
-            if status_file.exists():
-                try:
-                    if status_file.read_text(encoding="utf-8").strip().lower() == "connected":
-                        connected += 1
-                except OSError:
-                    pass
+            if not status_file.exists():
+                continue
+            total += 1
+            try:
+                if status_file.read_text(encoding="utf-8").strip().lower() == "connected":
+                    connected += 1
+                    if INTERNAL_PANEL_RE.prefixmatch(conn.name):
+                        has_internal = True
+            except OSError:
+                pass
     except OSError:
         return 1, 0, False
     return total, connected, has_internal
@@ -580,7 +581,7 @@ def select_gpu(cards: list[Gpu], auto: bool) -> tuple[Gpu, str]:
         )
     console.print(tbl)
     if len(cards) == 1 or auto or not os.isatty(0):
-        return def_card, "auto" if auto else "single"
+        return def_card, "single" if len(cards) == 1 else "auto"
     idx = str(cards.index(def_card) + 1)
     ans = Prompt.ask("Primary GPU", choices=[str(i) for i in range(1, len(cards) + 1)], default=idx)
     try:
@@ -635,6 +636,7 @@ def gen_lua(primary: Gpu, ordered: list[Gpu], mode: str) -> str:
     L.append(
         '  local cmd = "for d in /dev/dri/by-path/pci-"..pci_address.."-card '
         '/dev/dri/by-path/pci-"..pci_address.."*card '
+        '/dev/dri/by-path/"..pci_address.."-card '
         '/dev/dri/by-path/*"..pci_address.."*card; '
         'do [ -e \\"$d\\" ] && readlink -f \\"$d\\" 2>/dev/null && break; done"'
     )
@@ -829,21 +831,11 @@ def nvidia_modeset_confirmed(cards: list[Gpu] | None = None) -> bool:
         except OSError:
             pass
 
-    try:
-        ver_p = Path("/sys/module/nvidia/version")
-        if ver_p.exists():
-            ver_str = ver_p.read_text(encoding="utf-8").strip()
-            m = re.prefixmatch(r"^(\d+)", ver_str)
-            if m and int(m.group(1)) >= 560:
-                return True
-    except OSError:
-        pass
-
     if cards:
         for c in cards:
             if (
                 c.vendor_id.lower() == "0x10de"
-                and c.driver.lower() == "nvidia"
+                and c.driver.lower() in ("nvidia", "nvidia_drm")
                 and c.dev_node.startswith("/dev/dri/card")
                 and c.total_outputs > 0
             ):
@@ -970,7 +962,7 @@ def main() -> None:
             console.print(f" {line}")
 
     wire_gpu_require(out)
-    console.print(f"File: [cyan]{out}[/] -> [bold]hyprctl reload[/] or relogin")
+    console.print(f"File: [cyan]{out}[/] -> [bold]Restart Hyprland (relogin)[/] to apply AQ_DRM_DEVICES")
 
 
 if __name__ == "__main__":
