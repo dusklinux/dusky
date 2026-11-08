@@ -759,6 +759,10 @@ EXAMPLES:
             ]
             return GSettingsEngine(config_path=config_path, items=items)
 
+        elif e_type in ("hypr_shader", "shader", "dusky_shader"):
+            from python.engines.hypr_shader import HyprShaderEngine
+            return HyprShaderEngine(config_path=config_path)
+
         else:
             print(f"[-] Fatal: Unknown ENGINE_TYPE '{e_type}' specified in schema '{schema_path.name}'.")
             print(

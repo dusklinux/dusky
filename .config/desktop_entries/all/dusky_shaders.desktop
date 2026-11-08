@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Dusky Shaders
+GenericName=Hyprland Screen Shader Picker
+Comment=Interactive screen shader selector with live preview and rendering policy controls
+Exec=foot --app-id=dusky_tui python3 /home/dusk/user_scripts/hypr/shaders/tui_shader.py
+Terminal=false
+Categories=Settings;DesktopSettings;Utility;
+Keywords=dusky;shader;hyprland;glsl;screen;preview;filter;effects;tui;
+Icon=preferences-desktop-display
+StartupNotify=true
+StartupWMClass=dusky_tui
