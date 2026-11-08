@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Hyprland shader picker with Up/Down live preview.
+# Hyprland categorized shader picker with Up/Down live preview.
 # Requires: rofi, hyprctl, flock, python3.
 # Uses glslangValidator for preflight when installed.
 #
@@ -20,12 +20,21 @@ declare -ra ROFI_CMD=(
     -no-markup-rows
     -no-custom
     -no-sort
-    -theme-str 'window { width: 400px; }'
+    -theme-str 'window { width: 440px; } listview { lines: 12; }'
 )
 
-# Empty path represents "Turn Off"; real shader entries retain full paths.
+# Global shader catalog: index 0 is Turn Off (""); 1..N are real shader paths.
 declare -a SHADERS=("")
-declare -a MENU_LINES=("Turn Off")
+declare -a MENU_LINES=("󰜺  Turn Off")
+declare -a SHADER_CATS=("off")
+
+# Category index lists (indices into SHADERS / MENU_LINES)
+declare -a CAT_ALL=(0)
+declare -a CAT_COLOR=()
+declare -a CAT_RETRO=()
+declare -a CAT_CURSOR=()
+declare -a CAT_AMBIENT=()
+declare -a CAT_EXTREME=()
 
 declare ORIGINAL_SHADER=""
 declare LIVE_SHADER=""
@@ -39,10 +48,14 @@ declare BASE_VFR=""
 declare TARGET_DAMAGE=""
 declare TARGET_VFR=""
 declare SEARCH_QUERY=""
+declare REMEMBERED_SHADER=""
+declare REMEMBERED_CATEGORY=""
 declare LOCK_FD=""
 
-declare -i CURRENT_IDX=0
+declare -i CURRENT_IDX=-1
+declare -i ORIGINAL_ACTIVE_IDX=-1
 declare -i ACTIVE_IDX=-1
+declare -i REMEMBERED_IDX=-1
 declare -i MATCH_IDX=-1
 declare -i RESTORE_NEEDED=0
 
@@ -166,8 +179,6 @@ shader_policy() {
     while IFS= read -r line || [[ -n "$line" ]]; do
         case "$line" in
             '// dusky: full-redraw')
-                # Monitor damage mode repaints the entire output only
-                # when needed; keep a deliberate no-tracking setting.
                 ((TARGET_DAMAGE == 0)) || TARGET_DAMAGE=1
                 ;;
             '// dusky: animated')
@@ -178,8 +189,6 @@ shader_policy() {
     done < "$path"
 }
 
-# Exact configured-path matches take priority. Filesystem aliases may
-# identify the same shader when Hyprland reports another path spelling.
 find_shader_index() {
     local wanted="$1"
     local i
@@ -222,15 +231,12 @@ apply_shader() {
     fi
 
     if (($# == 3)); then
-        # Cleanup restores entry settings without revalidating the shader.
         TARGET_DAMAGE=$2
         TARGET_VFR=$3
     else
         shader_policy "$path" || return 1
     fi
 
-    # Lua decimal byte escapes preserve the filesystem path without
-    # relying on JSON escapes being valid Lua escapes.
     lua=$(python3 - "$path" "$TARGET_DAMAGE" "$TARGET_VFR" <<'PY'
 import os
 import sys
@@ -252,113 +258,137 @@ PY
     return 0
 }
 
-# Output the remembered value followed by NUL.
-# New values are JSON strings; old plain stem values remain readable.
+restore_original_if_needed() {
+    if ((RESTORE_NEEDED)); then
+        if ! apply_shader "$ORIGINAL_SHADER" "$ORIGINAL_DAMAGE" "$ORIGINAL_VFR"; then
+            err "Failed to restore the original screen shader."
+            return 1
+        fi
+        RESTORE_NEEDED=0
+        ACTIVE_IDX=$ORIGINAL_ACTIVE_IDX
+    fi
+    return 0
+}
+
+# Read both shader_menu and shader_category from MEMORY_FILE.
 read_memory() {
-    python3 - "$MEMORY_FILE" <<'PY'
+    local -a values=()
+    mapfile -d '' -t values < <(
+        python3 - "$MEMORY_FILE" <<'PY'
 import json
 import sys
 from pathlib import Path
 
+shader_val = ""
+cat_val = ""
+
 try:
-    lines = Path(sys.argv[1]).read_text().splitlines()
+    lines = Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
 except OSError:
+    sys.stdout.write("\0\0")
     sys.exit(0)
 
-raw = None
 for line in lines:
     if line.startswith("shader_menu="):
         raw = line[len("shader_menu="):]
+        if raw == "off":
+            shader_val = ""
+        else:
+            try:
+                parsed = json.loads(raw)
+                shader_val = parsed if isinstance(parsed, str) else raw
+            except ValueError:
+                shader_val = raw
+    elif line.startswith("shader_category="):
+        cat_val = line[len("shader_category="):].strip()
 
-if raw is None:
-    sys.exit(0)
-
-try:
-    value = json.loads(raw)
-except ValueError:
-    value = raw
-
-if not isinstance(value, str):
-    value = raw
-
-if raw == "off":
-    value = ""
-
-sys.stdout.write(value + "\0")
+sys.stdout.write(shader_val + "\0" + cat_val + "\0")
 PY
+    )
+    if ((${#values[@]} >= 2)); then
+        REMEMBERED_SHADER="${values[0]}"
+        REMEMBERED_CATEGORY="${values[1]}"
+    fi
 }
 
 write_memory() {
     local path="$1"
+    local category="${2:-}"
 
     mkdir -p -- "${MEMORY_FILE%/*}" || return 1
 
-    python3 - "$MEMORY_FILE" "$path" <<'PY'
+    python3 - "$MEMORY_FILE" "$path" "$category" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 path = Path(sys.argv[1])
+shader_path = sys.argv[2]
+category = sys.argv[3]
 
 try:
-    lines = path.read_text().splitlines()
+    lines = path.read_text(encoding="utf-8").splitlines()
 except FileNotFoundError:
     lines = []
 
-lines = [line for line in lines if not line.startswith("shader_menu=")]
-lines.append("shader_menu=" + json.dumps(sys.argv[2], ensure_ascii=True))
-path.write_text("\n".join(lines) + "\n")
+lines = [
+    line for line in lines
+    if not line.startswith("shader_menu=") and not line.startswith("shader_category=")
+]
+lines.append("shader_menu=" + json.dumps(shader_path, ensure_ascii=True))
+if category:
+    lines.append(f"shader_category={category}")
+path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 PY
 }
 
-choose_initial_row() {
-    local remembered
-    local name
-    local i
-    local -i legacy_idx=-1
-    local -i legacy_count=0
-    local -a values=()
+classify_shader_category() {
+    local filename="$1"
+    local stem="${filename%.*}"
+    local lower="${stem,,}"
+    local num_str=""
+    local -i num=0
 
-    find_shader_index "$ORIGINAL_SHADER"
-    ACTIVE_IDX=$MATCH_IDX
-
-    if ((ACTIVE_IDX >= 0)); then
-        CURRENT_IDX=$ACTIVE_IDX
-        return 0
-    fi
-
-    CURRENT_IDX=0
-    mapfile -d '' -t values < <(read_memory)
-    ((${#values[@]} == 1)) || return 0
-    remembered="${values[0]}"
-
-    find_shader_index "$remembered"
-    if ((MATCH_IDX >= 0)); then
-        CURRENT_IDX=$MATCH_IDX
-        return 0
-    fi
-
-    # Migrate a legacy basename-without-extension only if unambiguous.
-    for i in "${!SHADERS[@]}"; do
-        [[ -n "${SHADERS[i]}" ]] || continue
-        name="${SHADERS[i]##*/}"
-
-        if [[ "${name%.*}" == "$remembered" ]]; then
-            legacy_idx=$i
-            legacy_count=$((legacy_count + 1))
+    if [[ "$lower" =~ ^([0-9]+)[_-] ]]; then
+        num_str="${BASH_REMATCH[1]}"
+        num=$((10#$num_str))
+        if ((num >= 1 && num <= 15)); then
+            printf 'color'
+            return 0
+        elif ((num >= 16 && num <= 22)); then
+            printf 'retro'
+            return 0
+        elif ((num >= 23 && num <= 33)); then
+            printf 'cursor'
+            return 0
+        elif ((num >= 34 && num <= 44)); then
+            printf 'ambient'
+            return 0
+        elif ((num >= 45)); then
+            printf 'extreme'
+            return 0
         fi
-    done
-
-    if ((legacy_count == 1)); then
-        CURRENT_IDX=$legacy_idx
     fi
 
-    return 0
+    case "$lower" in
+        *tint*|*kelvin*|*phosphor*|*sepia*|*gray*|*grey*|*invert*|*poster*|*vibrance*|*saturat*|*contrast*)
+            printf 'color' ;;
+        *click*|*shockwave*|*pulse*|*bubble*|*cursor*|*pointer*|*spotlight*|*ferrofluid*|*kaleidoscope*)
+            printf 'cursor' ;;
+        *wormhole*|*black_hole*|*tear*|*fracture*|*glitch_storm*|*melt*|*sphere*|*mirror*)
+            printf 'extreme' ;;
+        *canopy*|*komorebi*|*rain*|*glass*|*haze*|*aurora*|*wobble*|*ripple*|*warp*|*water*|*marble*|*tide*)
+            printf 'ambient' ;;
+        *)
+            printf 'retro' ;;
+    esac
 }
 
 build_menu() {
     local file
     local label
+    local cat
+    local -i idx
 
     shopt -s nullglob dotglob
 
@@ -366,17 +396,60 @@ build_menu() {
         [[ -f "$file" ]] || continue
 
         SHADERS+=("$file")
-        label="${file##*/}"
+        idx=$((${#SHADERS[@]} - 1))
 
-        # Keep every filename on one rofi row. Escape backslash first
-        # so literal "\n" and a real newline remain distinguishable.
+        label="${file##*/}"
+        cat=$(classify_shader_category "$label")
+
         label=${label//\\/\\\\}
         label=${label//$'\n'/'\n'}
         label=${label//$'\r'/'\r'}
         label=${label//$'\t'/'\t'}
 
         MENU_LINES+=("$label")
+        SHADER_CATS+=("$cat")
+        CAT_ALL+=("$idx")
+
+        case "$cat" in
+            color)   CAT_COLOR+=("$idx") ;;
+            retro)   CAT_RETRO+=("$idx") ;;
+            cursor)  CAT_CURSOR+=("$idx") ;;
+            ambient) CAT_AMBIENT+=("$idx") ;;
+            extreme) CAT_EXTREME+=("$idx") ;;
+        esac
     done
+}
+
+resolve_initial_state() {
+    local i
+    local name
+    local -i legacy_idx=-1
+    local -i legacy_count=0
+
+    find_shader_index "$ORIGINAL_SHADER"
+    ORIGINAL_ACTIVE_IDX=$MATCH_IDX
+    ACTIVE_IDX=$MATCH_IDX
+
+    read_memory
+
+    if [[ -n "$REMEMBERED_SHADER" ]]; then
+        find_shader_index "$REMEMBERED_SHADER"
+        if ((MATCH_IDX >= 0)); then
+            REMEMBERED_IDX=$MATCH_IDX
+        else
+            for i in "${!SHADERS[@]}"; do
+                [[ -n "${SHADERS[i]}" ]] || continue
+                name="${SHADERS[i]##*/}"
+                if [[ "${name%.*}" == "$REMEMBERED_SHADER" ]]; then
+                    legacy_idx=$i
+                    legacy_count=$((legacy_count + 1))
+                fi
+            done
+            if ((legacy_count == 1)); then
+                REMEMBERED_IDX=$legacy_idx
+            fi
+        fi
+    fi
 }
 
 notify_applied() {
@@ -393,10 +466,33 @@ notify_applied() {
     fi
 }
 
+commit_and_exit() {
+    local target="$1"
+    local category="$2"
+
+    RESTORE_NEEDED=1
+    if ! apply_shader "$target"; then
+        err "Failed to apply the selected shader."
+        exit 1
+    fi
+
+    if ! write_state; then
+        err "Could not save rendering settings; restoring the previous shader."
+        exit 1
+    fi
+    RESTORE_NEEDED=0
+
+    if ! write_memory "$target" "$category"; then
+        err "Shader applied, but selection memory could not be saved."
+    fi
+
+    notify_applied "$target"
+    exit 0
+}
+
 cleanup() {
     local status=$?
 
-    # Cleanup keeps the existing session lock; it never reacquires it.
     trap '' INT TERM HUP
 
     if ((RESTORE_NEEDED)); then
@@ -408,49 +504,50 @@ cleanup() {
         fi
     fi
 
-    # Process exit releases the session lock descriptor.
     exit "$status"
 }
 
-# Build the currently visible rows for SEARCH_QUERY.
-# view_idx[k] is the index into SHADERS/MENU_LINES for visible row k.
-#
-# Filtering is done here instead of via rofi's -filter flag because
-# rofi 2.x parses a filter value that is exactly one color keyword
-# (red, blue, green, ...) as a Color option and aborts with
-# "Option: filter needs to be set with a string not a Color."
-# Feeding rofi only the matching rows avoids -filter (and -dump) entirely.
-build_view() {
-    local -n _idx=$1
-    local -n _lines=$2
-    local row label hay tok
+# Build the currently visible rows for a category submenu and SEARCH_QUERY.
+# Index -1 represents "  Back"; index >= 0 indexes into SHADERS/MENU_LINES.
+build_sub_view() {
+    local -n _sub_source=$1
+    local -n _idx=$2
+    local -n _lines=$3
+    local item_idx label hay tok
     local -a tokens=()
 
     _idx=()
     _lines=()
 
     if [[ -z "${SEARCH_QUERY//[[:space:]]/}" ]]; then
-        for row in "${!SHADERS[@]}"; do
-            _idx+=("$row")
-            _lines+=("${MENU_LINES[row]}")
+        _idx+=(-1)
+        _lines+=("  Back")
+        for item_idx in "${_sub_source[@]}"; do
+            _idx+=("$item_idx")
+            _lines+=("${MENU_LINES[item_idx]}")
         done
         return 0
     fi
 
     read -ra tokens <<< "${SEARCH_QUERY,,}" || true
 
-    for row in "${!SHADERS[@]}"; do
-        label="${MENU_LINES[row]}"
+    for item_idx in "${_sub_source[@]}"; do
+        label="${MENU_LINES[item_idx]}"
         hay="${label,,}"
         for tok in "${tokens[@]}"; do
             [[ "$hay" == *"$tok"* ]] || continue 2
         done
-        _idx+=("$row")
+        _idx+=("$item_idx")
         _lines+=("$label")
     done
 }
 
-main_loop() {
+# Run a live-preview shader submenu for a specific category array.
+submenu_shaders() {
+    local cat_id="$1"
+    local cat_title="$2"
+    local -n _cat_items=$3
+
     local raw_output
     local selection
     local target
@@ -467,8 +564,20 @@ main_loop() {
     local -a view_idx=()
     local -a view_lines=()
 
+    SEARCH_QUERY=""
+    CURRENT_IDX=-1
+
+    # If the currently active shader is in this category, start on it;
+    # otherwise start on "  Back" so pressing Down previews the first shader.
+    for i in "${_cat_items[@]}"; do
+        if ((i > 0 && i == ACTIVE_IDX)); then
+            CURRENT_IDX=$i
+            break
+        fi
+    done
+
     while true; do
-        build_view view_idx view_lines
+        build_sub_view "$3" view_idx view_lines
         view_count=${#view_idx[@]}
 
         if ((view_count > 0)); then
@@ -478,7 +587,6 @@ main_loop() {
             view_text=""
         fi
 
-        # Cursor follows CURRENT_IDX when it is visible, else first row.
         sel_row=0
         for i in "${!view_idx[@]}"; do
             if ((view_idx[i] == CURRENT_IDX)); then
@@ -488,9 +596,9 @@ main_loop() {
         done
 
         if [[ -n "$SEARCH_QUERY" ]]; then
-            query_display="Shader [$SEARCH_QUERY]"
+            query_display="$cat_title [$SEARCH_QUERY]"
         else
-            query_display="Shader Preview"
+            query_display="$cat_title"
         fi
 
         flags=(
@@ -517,7 +625,6 @@ main_loop() {
             flags+=(-a "$act_row")
         fi
 
-        # No producer pipeline: capture rofi's status directly.
         if raw_output=$(
             "${ROFI_CMD[@]}" "${flags[@]}" <<< "$view_text"
         ); then
@@ -535,46 +642,29 @@ main_loop() {
 
         case "$exit_code" in
             0)
-                # view positions map back through view_idx; rofi only
-                # ever sees the pre-filtered rows, so no -dump lookup.
                 if [[ "$selection" =~ ^[0-9]+$ ]] && ((selection >= 0 && selection < view_count)); then
-                    target="${SHADERS[view_idx[selection]]}"
+                    selected_idx=${view_idx[selection]}
                 else
-                    # e.g. Enter on an empty view: keep browsing.
                     continue
                 fi
 
-                # Even a partially failed apply requires rollback.
-                RESTORE_NEEDED=1
-                if ! apply_shader "$target"; then
-                    err "Failed to apply the selected shader."
-                    exit 1
+                # "  Back" selected -> restore baseline preview and return to Category Menu
+                if ((selected_idx == -1)); then
+                    restore_original_if_needed || exit 1
+                    return 0
                 fi
 
-                if ! write_state; then
-                    err "Could not save rendering settings; restoring the previous shader."
-                    exit 1
-                fi
-                RESTORE_NEEDED=0
-
-                if ! write_memory "$target"; then
-                    err "Shader applied, but selection memory could not be saved."
-                fi
-
-                notify_applied "$target"
-                exit 0
+                target="${SHADERS[selected_idx]}"
+                commit_and_exit "$target" "$cat_id"
                 ;;
 
             10|11)
-                # Rofi reports an index in the rows it was given, even
-                # after typing a filter. Map it before rebuilding the view.
-                selected_idx=-1
+                selected_idx=-2
                 if [[ "$selection" =~ ^[0-9]+$ ]] && ((selection < view_count)); then
                     selected_idx=${view_idx[selection]}
                 fi
-                build_view view_idx view_lines
+                build_sub_view "$3" view_idx view_lines
                 view_count=${#view_idx[@]}
-                # No matches: preserve the query and preview nothing.
                 ((view_count == 0)) && continue
 
                 view_pos=-1
@@ -584,6 +674,7 @@ main_loop() {
                         break
                     fi
                 done
+
                 if ((view_pos >= 0)); then
                     if ((exit_code == 10)); then
                         view_pos=$(((view_pos + 1) % view_count))
@@ -597,26 +688,113 @@ main_loop() {
                 fi
 
                 CURRENT_IDX=${view_idx[view_pos]}
-                target="${SHADERS[CURRENT_IDX]}"
 
+                # Highlighting "  Back" restores baseline shader so you can A/B compare
+                if ((CURRENT_IDX == -1)); then
+                    restore_original_if_needed || exit 1
+                    continue
+                fi
+
+                target="${SHADERS[CURRENT_IDX]}"
                 RESTORE_NEEDED=1
                 if ! apply_shader "$target"; then
                     err "Failed to preview the selected shader."
                     exit 1
                 fi
-
                 ACTIVE_IDX=$CURRENT_IDX
                 ;;
 
             1)
-                # EXIT cleanup restores only if an apply was attempted.
-                exit 0
+                # First Esc clears an active search filter; second Esc returns to Category Menu
+                if [[ -n "${SEARCH_QUERY//[[:space:]]/}" ]]; then
+                    SEARCH_QUERY=""
+                    continue
+                fi
+                restore_original_if_needed || exit 1
+                return 0
                 ;;
 
             *)
                 err "Rofi exited with unexpected code: $exit_code"
                 exit 1
                 ;;
+        esac
+    done
+}
+
+category_to_row() {
+    case "${1:-}" in
+        off)     printf '0' ;;
+        all)     printf '1' ;;
+        color)   printf '2' ;;
+        retro)   printf '3' ;;
+        cursor)  printf '4' ;;
+        ambient) printf '5' ;;
+        extreme) printf '6' ;;
+        *)       printf '1' ;;
+    esac
+}
+
+category_menu_loop() {
+    local choice=""
+    local active_cat=""
+    local -i sel_row=1
+    local -i act_row=-1
+    local -i exit_code=0
+    local -i total_shaders=$((${#SHADERS[@]} - 1))
+
+    # Determine initial highlighted category row
+    if ((ORIGINAL_ACTIVE_IDX > 0)); then
+        active_cat="${SHADER_CATS[ORIGINAL_ACTIVE_IDX]}"
+        sel_row=$(category_to_row "$active_cat")
+    elif [[ -n "$REMEMBERED_CATEGORY" ]]; then
+        sel_row=$(category_to_row "$REMEMBERED_CATEGORY")
+    elif ((REMEMBERED_IDX > 0)); then
+        sel_row=$(category_to_row "${SHADER_CATS[REMEMBERED_IDX]}")
+    fi
+
+    while true; do
+        local -a cat_options=(
+            "󰜺  Turn Off"
+            "󰸉  All Shaders ($total_shaders)"
+            "󰏘  Color & Tone (${#CAT_COLOR[@]})"
+            "󰄄  Retro & Optics (${#CAT_RETRO[@]})"
+            "󰇀  Cursor & Click (${#CAT_CURSOR[@]})"
+            "󰖌  Ambient & Fluid (${#CAT_AMBIENT[@]})"
+            "󱄄  Extreme & Surreal (${#CAT_EXTREME[@]})"
+            "  Cancel"
+        )
+
+        local -a flags=(
+            -p "Shaders"
+            -format 'i'
+            -selected-row "$sel_row"
+        )
+
+        if ((ORIGINAL_ACTIVE_IDX > 0)); then
+            act_row=$(category_to_row "${SHADER_CATS[ORIGINAL_ACTIVE_IDX]}")
+            flags+=(-a "$act_row")
+        fi
+
+        exit_code=0
+        choice=$(printf '%s\n' "${cat_options[@]}" | "${ROFI_CMD[@]}" "${flags[@]}") || exit_code=$?
+
+        if ((exit_code != 0)); then
+            exit 0
+        fi
+
+        [[ "$choice" =~ ^[0-9]+$ ]] || continue
+        sel_row=$choice
+
+        case "$choice" in
+            0) commit_and_exit "" "off" ;;
+            1) submenu_shaders "all"     "All Shaders"       CAT_ALL ;;
+            2) submenu_shaders "color"   "Color & Tone"      CAT_COLOR ;;
+            3) submenu_shaders "retro"   "Retro & Optics"    CAT_RETRO ;;
+            4) submenu_shaders "cursor"  "Cursor & Click"    CAT_CURSOR ;;
+            5) submenu_shaders "ambient" "Ambient & Fluid"   CAT_AMBIENT ;;
+            6) submenu_shaders "extreme" "Extreme & Surreal" CAT_EXTREME ;;
+            7) exit 0 ;;
         esac
     done
 }
@@ -632,8 +810,6 @@ main() {
     if (($# == 1)); then
         if [[ -d "$1" ]]; then
             SHADER_DIR="$1"
-            # Hyprland resolves relative shader paths against its config,
-            # whereas the caller's directory argument is relative to PWD.
             [[ "$SHADER_DIR" == /* ]] || SHADER_DIR="$PWD/$SHADER_DIR"
         else
             err "Shader directory not found: $1"
@@ -651,8 +827,6 @@ main() {
     runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
     STATE_FILE="$runtime_dir/dusky-shader-${HYPRLAND_INSTANCE_SIGNATURE:-default}.json"
 
-    # Serialize entire sessions so one picker's cancel cannot undo
-    # another picker's accepted selection.
     exec {LOCK_FD}>"$runtime_dir/dusky-shader-menu.lock"
 
     if ! flock -n "$LOCK_FD"; then
@@ -676,8 +850,8 @@ main() {
     read_baseline
 
     build_menu
-    choose_initial_row
-    main_loop
+    resolve_initial_state
+    category_menu_loop
 }
 
 main "$@"
