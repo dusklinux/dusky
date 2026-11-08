@@ -17,12 +17,54 @@ from python.shared.lua_source import fields, replace_field, string_value, tokens
 # -----------------------------------------------------------------------------
 # TRANSLATION MAP: UI Friendly Labels <-> Lua Backend Code
 # -----------------------------------------------------------------------------
+def _build_continuous_lua(prefix: str, up_flag: str, down_flag: str, delta_expr: str) -> str:
+    return f"""{{
+        start = function(e)
+            _G.{prefix}_acc = ({delta_expr}) * 0.25
+            _G.{prefix}_ms  = e.time_ms or 0
+        end,
+        update = function(e)
+            local d = ({delta_expr}) * 0.25
+            local acc = (_G.{prefix}_acc or 0)
+            if (d > 0 and acc < 0) or (d < 0 and acc > 0) then
+                acc = acc * 0.25
+            end
+            acc = acc + d
+            local step = math.floor(math.abs(acc))
+            local now = e.time_ms or 0
+            local last = _G.{prefix}_ms or 0
+            if step >= 2 and (now < last or (now - last) >= 25) then
+                if step > 100 then step = 100 end
+                local flag = acc > 0 and "{up_flag} " or "{down_flag} "
+                _G.{prefix}_acc = acc - (acc > 0 and step or -step)
+                _G.{prefix}_ms  = now
+                hl.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh " .. flag .. step)
+            else
+                _G.{prefix}_acc = acc
+            end
+        end,
+        finish = function(e)
+            local acc = (_G.{prefix}_acc or 0)
+            _G.{prefix}_acc = 0
+            if not (e and e.cancelled) then
+                local step = math.floor(math.abs(acc))
+                if step >= 1 then
+                    if step > 100 then step = 100 end
+                    local flag = acc > 0 and "{up_flag} " or "{down_flag} "
+                    hl.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh " .. flag .. step)
+                end
+            end
+        end,
+    }}"""
+
 ACTION_MAP = {
     "Native Workspace Swipe": '"workspace"',
-    "Open Dusky Tray": 'function()\n        hl.exec_cmd([["$HOME/.local/bin/dusky-tray"]])\n    end',
+    "Open Dusky Tray": 'function()\n        hl.exec_cmd([["$HOME/.local/bin/dusky_tray"]])\n    end',
     "Toggle Waybar": 'function()\n        hl.exec_cmd(dusky_scripts .. "waybar/waybar_toggle.sh")\n    end',
     "Toggle Blur & Opacity": 'function()\n        hl.exec_cmd(dusky_scripts .. "hypr/hypr_blur_opacity_shadow_toggle.sh")\n    end',
     "Media: Play / Pause": 'function()\n        hl.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --play-pause")\n    end',
+    "Media: Volume (Continuous)": _build_continuous_lua("_dusky_vol", "--vol-up", "--vol-down", "-e.delta.y"),
+    "Screen: Brightness (Continuous)": _build_continuous_lua("_dusky_bright", "--bright-up", "--bright-down", "e.delta.x"),
     "Media: Volume Up (+10%)": 'function()\n        hl.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --vol-up 10")\n    end',
     "Media: Volume Down (-10%)": 'function()\n        hl.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --vol-down 10")\n    end',
     "Screen: Brightness Up (+10%)": 'function()\n        hl.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh --bright-up 10")\n    end',
@@ -58,10 +100,12 @@ def get_friendly_name(block_str: str) -> str:
             return "Custom Lua Action"
         return next((label for label, code in ACTION_MAP.items() if code == '"'+native+'"'), "Custom Lua Action")
     block_str = ' '.join(t[1] for t in tokens(action))
-    if "dusky-tray" in block_str: return "Open Dusky Tray"
+    if "dusky-tray" in block_str or "dusky_tray" in block_str: return "Open Dusky Tray"
     if "waybar_toggle.sh" in block_str: return "Toggle Waybar"
     if "hypr_blur_opacity_shadow_toggle.sh" in block_str: return "Toggle Blur & Opacity"
     if "--play-pause" in block_str: return "Media: Play / Pause"
+    if "--vol-up" in block_str and "--vol-down" in block_str: return "Media: Volume (Continuous)"
+    if "--bright-up" in block_str and "--bright-down" in block_str: return "Screen: Brightness (Continuous)"
     if "--vol-up" in block_str: return "Media: Volume Up (+10%)"
     if "--vol-down" in block_str: return "Media: Volume Down (-10%)"
     if "--bright-up" in block_str: return "Screen: Brightness Up (+10%)"
@@ -129,7 +173,7 @@ class TrackpadLuaEngine(HyprlandLuaEngine):
 
         # ---------------------------------------------------------------------
         # STATE VIRTUALIZATION:
-        # Pre-fill standard Hyprland 0.55 physics variables and unbound gestures.
+        # Pre-fill standard Hyprland physics variables and unbound gestures.
         # This prevents the UI from marking them as `[Missing]` while keeping
         # the config uncluttered until the user actively edits them.
         # ---------------------------------------------------------------------
@@ -206,7 +250,13 @@ class TrackpadLuaEngine(HyprlandLuaEngine):
                     continue
                 if value not in ACTION_MAP:
                     raise ValueError(f'Unknown gesture action: {value}')
-                raw = ACTION_MAP[value]
+                delta_expr = "e.delta.x" if d in {"horizontal", "left", "right"} else "-e.delta.y"
+                if value == "Media: Volume (Continuous)":
+                    raw = _build_continuous_lua("_dusky_vol", "--vol-up", "--vol-down", delta_expr)
+                elif value == "Screen: Brightness (Continuous)":
+                    raw = _build_continuous_lua("_dusky_bright", "--bright-up", "--bright-down", delta_expr)
+                else:
+                    raw = ACTION_MAP[value]
                 if value == 'Disabled / Unbound':
                     if matches:
                         edits.append((matches[0][0], matches[0][1], ''))

@@ -50,6 +50,8 @@ GESTURE_OPTIONS = [
     "Toggle Waybar",
     "Toggle Blur & Opacity",
     "Media: Play / Pause",
+    "Media: Volume (Continuous)",
+    "Screen: Brightness (Continuous)",
     "Media: Volume Up (+10%)",
     "Media: Volume Down (-10%)",
     "Screen: Brightness Up (+10%)",
@@ -72,6 +74,8 @@ GESTURE_HINTS = [
     "Toggles the Waybar panel",
     "Toggles Hyprland visual effects",
     "Play/Pause current media",
+    "Smooth 1:1 continuous volume control along swipe axis",
+    "Smooth 1:1 continuous brightness control along swipe axis",
     "Increases volume by 10%",
     "Decreases volume by 10%",
     "Increases brightness by 10%",
@@ -307,59 +311,70 @@ SCHEMA = {
             extended_help="**3-Finger Swipe Down**\n\nAssigns an executable script or action to the downward swipe gesture using three fingers."
         ),
         ConfigItem(
-            label="4-Finger Swipe Left",
+            label="4-Finger Swipe (Vertical 1:1)",
+            key="action",
+            scope="gesture/4/vertical",
+            type_="picker",
+            default="Media: Volume (Continuous)",
+            options=GESTURE_OPTIONS,
+            hints=GESTURE_HINTS,
+            group="Quad",
+            extended_help="**4-Finger Vertical Swipe (Continuous)**\n\nSmooth 1:1 vertical tracking. Disable discrete 4-finger Up/Down actions when using this."
+        ),
+        ConfigItem(
+            label="4-Finger Swipe (Horizontal 1:1)",
+            key="action",
+            scope="gesture/4/horizontal",
+            type_="picker",
+            default="Screen: Brightness (Continuous)",
+            options=GESTURE_OPTIONS,
+            hints=GESTURE_HINTS,
+            group="Quad",
+            extended_help="**4-Finger Horizontal Swipe (Continuous)**\n\nSmooth 1:1 horizontal tracking. Disable discrete 4-finger Left/Right actions when using this."
+        ),
+        ConfigItem(
+            label="4-Finger Swipe Left (Discrete)",
             key="action",
             scope="gesture/4/left",
             type_="picker",
-            default="Screen: Brightness Down (-10%)",
+            default="Disabled / Unbound",
             options=GESTURE_OPTIONS,
             hints=GESTURE_HINTS,
             group="Quad",
-            extended_help="**4-Finger Swipe Left**\n\nAssigns an executable script or action to the left swipe gesture using four fingers."
+            extended_help="**4-Finger Swipe Left**\n\nAssigns a discrete action to the left swipe gesture using four fingers."
         ),
         ConfigItem(
-            label="4-Finger Swipe Right",
+            label="4-Finger Swipe Right (Discrete)",
             key="action",
             scope="gesture/4/right",
             type_="picker",
-            default="Screen: Brightness Up (+10%)",
+            default="Disabled / Unbound",
             options=GESTURE_OPTIONS,
             hints=GESTURE_HINTS,
             group="Quad",
-            extended_help="**4-Finger Swipe Right**\n\nAssigns an executable script or action to the right swipe gesture using four fingers."
+            extended_help="**4-Finger Swipe Right**\n\nAssigns a discrete action to the right swipe gesture using four fingers."
         ),
         ConfigItem(
-            label="4-Finger Swipe Up",
+            label="4-Finger Swipe Up (Discrete)",
             key="action",
             scope="gesture/4/up",
             type_="picker",
-            default="Media: Volume Up (+10%)",
+            default="Disabled / Unbound",
             options=GESTURE_OPTIONS,
             hints=GESTURE_HINTS,
             group="Quad",
-            extended_help="**4-Finger Swipe Up**\n\nAssigns an executable script or action to the upward swipe gesture using four fingers."
+            extended_help="**4-Finger Swipe Up**\n\nAssigns a discrete action to the upward swipe gesture using four fingers."
         ),
         ConfigItem(
-            label="4-Finger Swipe Down",
+            label="4-Finger Swipe Down (Discrete)",
             key="action",
             scope="gesture/4/down",
             type_="picker",
-            default="Media: Volume Down (-10%)",
+            default="Disabled / Unbound",
             options=GESTURE_OPTIONS,
             hints=GESTURE_HINTS,
             group="Quad",
-            extended_help="**4-Finger Swipe Down**\n\nAssigns an executable script or action to the downward swipe gesture using four fingers."
-        ),
-        ConfigItem(
-            label='4-Finger Swipe (Horizontal 1:1)',
-            key='action',
-            scope='gesture/4/horizontal',
-            type_='picker',
-            default='Disabled / Unbound',
-            group='Quad',
-            options=GESTURE_OPTIONS,
-            hints=GESTURE_HINTS,
-            extended_help='Optional continuous horizontal gesture. Disable discrete left/right actions when using it.'
+            extended_help="**4-Finger Swipe Down**\n\nAssigns a discrete action to the downward swipe gesture using four fingers."
         ),
     ],
 
@@ -405,7 +420,7 @@ SCHEMA = {
 
 
 # Additional native gesture directions; existing bindings keep their defaults.
-for fingers, direction in ((3, "vertical"), (4, "vertical"), (2, "pinch")):
+for fingers, direction in ((3, "vertical"), (2, "pinch")):
     SCHEMA[2].append(ConfigItem(label=f"{fingers}-Finger {direction.title()}", key="action",
                                 scope=f"gesture/{fingers}/{direction}", type_="picker",
                                 default="Disabled / Unbound", options=GESTURE_OPTIONS, hints=GESTURE_HINTS,

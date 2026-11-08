@@ -81,31 +81,137 @@ parse_brightness() {
     value=$(( (current * 100 + maximum / 2) / maximum ))
 }
 
+# Discover the primary internal display backlight directly via sysfs (zero forks).
+# Ranks kernel backlight types (raw > firmware > platform) + driver priority, breaking ties by max_brightness.
+backlight_device() {
+    local dir b_type name rank drv_rank best_rank=0 best_max=0 cur max
+    for dir in /sys/class/backlight/*; do
+        [[ -e $dir/brightness && -e $dir/max_brightness ]] || continue
+        cur=$(< "$dir/brightness")
+        max=$(< "$dir/max_brightness")
+        [[ $cur =~ ^[0-9]+$ && $max =~ ^[1-9][0-9]*$ ]] || continue
+        b_type=''
+        [[ -r $dir/type ]] && b_type=$(< "$dir/type")
+        case $b_type in
+            raw)      rank=3000 ;;
+            firmware) rank=2000 ;;
+            *)        rank=1000 ;;
+        esac
+        name=${dir##*/}
+        case ${name,,} in
+            intel_backlight*) drv_rank=400 ;;
+            amdgpu_bl*)       drv_rank=350 ;;
+            nvidia*)          drv_rank=300 ;;
+            apple*)           drv_rank=280 ;;
+            ddcci*)           drv_rank=250 ;;
+            *backlight*)      drv_rank=200 ;;
+            acpi_video*)      drv_rank=100 ;;
+            *)                drv_rank=150 ;;
+        esac
+        rank=$(( rank + drv_rank ))
+        if (( rank > best_rank || (rank == best_rank && max > best_max) )); then
+            best_rank=$rank
+            best_max=$max
+            device=$name
+            current=$cur
+            maximum=$max
+        fi
+    done
+    (( best_rank > 0 )) || return 1
+    value=$(( (current * 100 + maximum / 2) / maximum ))
+}
+
+write_backlight() {
+    local target=$1 sys_path="/sys/class/backlight/$device/brightness"
+    if [[ -w $sys_path ]] && printf '%s\n' "$target" > "$sys_path" 2>/dev/null; then
+        current=$target
+        value=$(( (current * 100 + maximum / 2) / maximum ))
+        return 0
+    fi
+    if command -v brightnessctl >/dev/null 2>&1 &&
+       brightnessctl -q -c backlight -d "$device" set "$target" >/dev/null 2>&1; then
+        current=$target
+        value=$(( (current * 100 + maximum / 2) / maximum ))
+        return 0
+    fi
+    if command -v busctl >/dev/null 2>&1 &&
+       busctl --system call org.freedesktop.login1 /org/freedesktop/login1/session/auto \
+           org.freedesktop.login1.Session SetBrightness ssu backlight "$device" "$target" >/dev/null 2>&1; then
+        current=$target
+        value=$(( (current * 100 + maximum / 2) / maximum ))
+        return 0
+    fi
+    return 1
+}
+
 keyboard_device() {
+    local dir cur max
+    for dir in /sys/class/leds/*kbd_backlight*; do
+        [[ -e $dir/brightness && -e $dir/max_brightness ]] || continue
+        cur=$(< "$dir/brightness")
+        max=$(< "$dir/max_brightness")
+        [[ $cur =~ ^[0-9]+$ && $max =~ ^[1-9][0-9]*$ ]] || continue
+        device=${dir##*/}
+        current=$cur
+        maximum=$max
+        value=$(( (current * 100 + maximum / 2) / maximum ))
+        return 0
+    done
     local devices
-    devices=$(brightnessctl -m -l -c leds)
+    devices=$(brightnessctl -m -l -c leds 2>/dev/null) || return 1
     while IFS= read -r row; do
         if [[ ${row%%,*} == *kbd_backlight* ]]; then
             parse_brightness "$row"
-            return
+            return 0
         fi
     done <<< "$devices"
     return 1
 }
 
+write_kbd_backlight() {
+    local target=$1 sys_path="/sys/class/leds/$device/brightness"
+    if [[ -w $sys_path ]] && printf '%s\n' "$target" > "$sys_path" 2>/dev/null; then
+        current=$target
+        value=$(( (current * 100 + maximum / 2) / maximum ))
+        return 0
+    fi
+    if command -v brightnessctl >/dev/null 2>&1 &&
+       brightnessctl -q -c leds -d "$device" set "$target" >/dev/null 2>&1; then
+        current=$target
+        value=$(( (current * 100 + maximum / 2) / maximum ))
+        return 0
+    fi
+    if command -v busctl >/dev/null 2>&1 &&
+       busctl --system call org.freedesktop.login1 /org/freedesktop/login1/session/auto \
+           org.freedesktop.login1.Session SetBrightness ssu leds "$device" "$target" >/dev/null 2>&1; then
+        current=$target
+        value=$(( (current * 100 + maximum / 2) / maximum ))
+        return 0
+    fi
+    return 1
+}
+
 get_dpms() {
-    local monitors
-    # The documented request socket avoids hyprctl's ~20 ms response wait on
-    # every repeat. The instance and runtime paths come from this session.
-    monitors=$(socat - "UNIX-CONNECT:$RUNTIME_DIR/hypr/${HYPRLAND_INSTANCE_SIGNATURE:?}/.socket.sock" <<< /monitors) || return
-    # Active outputs only: disabled connectors must not trigger wake/off handling.
+    local monitors='' sock="$RUNTIME_DIR/hypr/${HYPRLAND_INSTANCE_SIGNATURE:-}/.socket.sock"
     dpms_off=0
+    if [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} && -S $sock ]]; then
+        monitors=$(socat - "UNIX-CONNECT:$sock" <<< /monitors 2>/dev/null) || monitors=''
+    fi
+    if [[ -z $monitors ]]; then
+        monitors=$(hyprctl monitors 2>/dev/null) || return 0
+    fi
+    # Active outputs only: disabled connectors must not trigger wake/off handling.
     if [[ $monitors =~ dpmsStatus:[[:space:]]*(0|false) ]]; then dpms_off=1; fi
 }
 
 set_dpms() {
     local result
-    result=$(hyprctl eval "hl.dispatch(hl.dsp.dpms({ action = \"$1\" }))")
+    result=$(hyprctl eval "hl.dispatch(hl.dsp.dpms({ action = \"$1\" }))" 2>/dev/null) || result=''
+    if [[ $result != ok ]]; then
+        local arg=on
+        [[ $1 == disable ]] && arg=off
+        result=$(hyprctl dispatch dpms "$arg" 2>/dev/null) || result=''
+    fi
     [[ $result == ok ]] || { printf 'DPMS failed: %s\n' "$result" >&2; return 1; }
 }
 
@@ -292,24 +398,55 @@ main() {
     case $action in
         --vol-up|--vol-down|--vol-mute|--mic-mute)
             local group=audio
-            local -a mixer=(pamixer)
             if [[ $action == --mic-mute ]]; then
                 group=mic
-                mixer+=(--default-source)
             fi
             lock_control "$group"
-            case $action in
-                --vol-up) mixer+=(--increase "$step") ;;
-                --vol-down) mixer+=(--decrease "$step") ;;
-                *) mixer+=(--toggle-mute) ;;
-            esac
-            volume=$("${mixer[@]}" --get-volume-human)
-            if [[ $volume == muted ]]; then
-                value=0
-            elif [[ $volume =~ ^([0-9]+)%$ ]]; then
-                value=$((10#${BASH_REMATCH[1]}))
+            if command -v pamixer >/dev/null 2>&1; then
+                local -a mixer=(pamixer)
+                [[ $group == mic ]] && mixer+=(--default-source)
+                case $action in
+                    --vol-up)   mixer+=(-u --increase "$step") ;;
+                    --vol-down) mixer+=(--decrease "$step") ;;
+                    *)          mixer+=(--toggle-mute) ;;
+                esac
+                volume=$("${mixer[@]}" --get-volume-human)
+                if [[ $volume == muted ]]; then
+                    value=0
+                elif [[ $volume =~ ^([0-9]+)%$ ]]; then
+                    value=$((10#${BASH_REMATCH[1]}))
+                else
+                    printf 'Invalid pamixer output: %s\n' "$volume" >&2
+                    return 1
+                fi
+            elif command -v wpctl >/dev/null 2>&1; then
+                local target='@DEFAULT_AUDIO_SINK@' wp_out
+                [[ $group == mic ]] && target='@DEFAULT_AUDIO_SOURCE@'
+                case $action in
+                    --vol-up)
+                        wpctl set-mute "$target" 0
+                        wpctl set-volume -l 1.0 "$target" "${step}%+"
+                        ;;
+                    --vol-down)
+                        wpctl set-volume -l 1.0 "$target" "${step}%-"
+                        ;;
+                    *)
+                        wpctl set-mute "$target" toggle
+                        ;;
+                esac
+                wp_out=$(wpctl get-volume "$target")
+                if [[ $wp_out == *'[MUTED]'* ]]; then
+                    volume=muted
+                    value=0
+                elif [[ $wp_out =~ ([0-9]+)\.([0-9]{2}) ]]; then
+                    value=$(( 10#${BASH_REMATCH[1]} * 100 + 10#${BASH_REMATCH[2]} ))
+                    volume="${value}%"
+                else
+                    printf 'Invalid wpctl output: %s\n' "$wp_out" >&2
+                    return 1
+                fi
             else
-                printf 'Invalid pamixer output: %s\n' "$volume" >&2
+                printf 'Neither pamixer nor wpctl found.\n' >&2
                 return 1
             fi
             icon=audio-volume-high
@@ -331,42 +468,78 @@ main() {
             ;;
         --bright-up|--bright-down)
             lock_control display
-            local last_title='' _ignored floor woke=0 dpms_off
-            if [[ -f $state_file ]]; then
-                IFS='|' read -r _ignored last_title _ignored < "$state_file"
+            # Exit cleanly on desktop systems or external-only monitors with no internal backlight
+            if ! backlight_device; then
+                return 0
             fi
-            row=$(brightnessctl -m -c backlight)
-            parse_brightness "$row"
+            local last_title='' _ignored floor woke=0 dpms_off=0 delta target
+            local floor_ts_file=$RUNTIME_DIR/osd_display_floor_ts.txt
+            local off_ts_file=$RUNTIME_DIR/osd_display_off_ts.txt
+            local active_ts_file=$RUNTIME_DIR/osd_display_active_ts.txt
+            local now_us=${EPOCHREALTIME/./} last_floor_us=0 last_off_us=0 last_active_us=0
+            if [[ -f $state_file ]]; then
+                IFS='|' read -r _ignored last_title _ignored < "$state_file" || true
+            fi
+            if [[ -f $floor_ts_file ]]; then
+                last_floor_us=$(< "$floor_ts_file")
+                [[ $last_floor_us =~ ^[0-9]+$ ]] || last_floor_us=0
+            fi
+            if [[ -f $off_ts_file ]]; then
+                last_off_us=$(< "$off_ts_file")
+                [[ $last_off_us =~ ^[0-9]+$ ]] || last_off_us=0
+            fi
             floor=$(( (maximum + 99) / 100 ))
+            (( floor < 1 )) && floor=1
+            delta=$(( (step * maximum + 50) / 100 ))
+            (( delta < 1 )) && delta=1
             icon=gpm-brightness-lcd
             if [[ $action == --bright-down ]]; then
                 if (( current <= floor )); then
+                    printf '%s\n' "$now_us" > "$floor_ts_file"
                     get_dpms
                     if (( dpms_off )); then
                         icon=display-brightness-off title='Screen Off' value=0
-                    elif [[ $last_title == 'Swipe again to turn off' ]]; then
+                    elif [[ $last_title == 'Swipe again to turn off' ]] && (( now_us - last_floor_us > 400000 )); then
                         set_dpms disable
+                        printf '%s\n' "$now_us" > "$off_ts_file"
+                        rm -f "$active_ts_file"
                         icon=display-brightness-off title='Screen Off' value=0
-                    else
-                        row=$(brightnessctl -m -c backlight -d "$device" set "$floor")
-                        parse_brightness "$row"
+else
+                        write_backlight "$floor"
                         icon=display-brightness-warning title='Swipe again to turn off'
                     fi
                 else
-                    row=$(brightnessctl -m -c backlight -d "$device" --min-value="$floor" set "${step}%-")
-                    parse_brightness "$row"
+                    target=$(( current - delta ))
+                    (( target < floor )) && target=$floor
+                    write_backlight "$target"
+                    if (( current <= floor )); then
+                        printf '%s\n' "$now_us" > "$floor_ts_file"
+                    fi
                     title="Brightness: $value%"
                 fi
             else
-                # Query on every upward action: idle DPMS can turn off at any brightness.
-                get_dpms
-                if (( dpms_off )); then
-                    set_dpms enable
-                    sleep 0.15
-                    woke=1
+                # Ignore lift-off rebound for 600ms immediately after turning screen off
+                if (( last_off_us > 0 && now_us - last_off_us < 600000 )); then
+                    return 0
                 fi
-                row=$(brightnessctl -m -c backlight -d "$device" set "+${step}%")
-                parse_brightness "$row"
+                rm -f "$floor_ts_file" "$off_ts_file"
+                if [[ -f $active_ts_file ]]; then
+                    last_active_us=$(< "$active_ts_file")
+                    [[ $last_active_us =~ ^[0-9]+$ ]] || last_active_us=0
+                fi
+                # Query DPMS if outside the 2-second active window or if previously off
+                if (( now_us - last_active_us > 2000000 )) || [[ $last_title == 'Screen Off' ]]; then
+                    get_dpms
+                    if (( dpms_off )); then
+                        set_dpms enable
+                        sleep 0.15
+                        woke=1
+                    fi
+                fi
+                printf '%s\n' "$now_us" > "$active_ts_file"
+                target=$(( current + delta ))
+                (( target > maximum )) && target=$maximum
+                write_backlight "$target"
                 title="Brightness: $value%"
                 if (( woke )); then title="Screen On: $value%"; fi
             fi
@@ -379,18 +552,28 @@ main() {
                 notify dialog-error 'No Kbd Backlight Found'
                 return 1
             fi
+            local delta=$(( (step * maximum + 50) / 100 )) target
+            (( delta < 1 )) && delta=1
             case $action in
-                --kbd-bright-up) row=$(brightnessctl -m -c leds -d "$device" set "+${step}%") ;;
-                --kbd-bright-down) row=$(brightnessctl -m -c leds -d "$device" --min-value=0 set "${step}%-") ;;
+                --kbd-bright-up)
+                    target=$(( current + delta ))
+                    (( target > maximum )) && target=$maximum
+                    write_kbd_backlight "$target"
+                    ;;
+                --kbd-bright-down)
+                    target=$(( current - delta ))
+                    (( target < 0 )) && target=0
+                    write_kbd_backlight "$target"
+                    ;;
                 --kbd-bright-toggle)
-                    if (( current )); then value=0; else value=100; fi
-                    row=$(brightnessctl -m -c leds -d "$device" set "$value%") ;;
+                    if (( current )); then target=0; else target=$maximum; fi
+                    write_kbd_backlight "$target"
+                    ;;
             esac
-            parse_brightness "$row"
             icon=keyboard-brightness title="Kbd Brightness: $value%"
             publish kbd
             ;;
-        --play-pause|--play|--pause|--next|--prev|--stop)
+                --play-pause|--play|--pause|--next|--prev|--stop)
             lock_control media
             media "$action"
             ;;
