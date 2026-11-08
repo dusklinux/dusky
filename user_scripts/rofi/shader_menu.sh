@@ -349,6 +349,8 @@ classify_shader_category() {
     local num_str=""
     local -i num=0
 
+    [[ "$lower" == *billiard* ]] && { printf 'cursor'; return 0; }
+
     if [[ "$lower" =~ ^([0-9]+)[_-] ]]; then
         num_str="${BASH_REMATCH[1]}"
         num=$((10#$num_str))

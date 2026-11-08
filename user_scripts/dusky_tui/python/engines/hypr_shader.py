@@ -71,6 +71,7 @@ SHADER_CATALOG: dict[str, tuple[int, str, str]] = {
     "click_shockwaves": (3, "Click Reactive", "Expanding concentric wave packets triggered by the six most recent clicks."),
     "interactive_bubble_pop": (3, "Click Reactive", "Buoyant iridescent bubbles that deflect off the cursor and pop on click or poke."),
     "click_chromatic_pulse": (3, "Click Reactive", "High-velocity RGB prism shock-rings launched from recent click positions."),
+    "glass_billiards": (3, "Click Reactive", "Interactive thick-glass billiard spheres that bounce, collide, and scatter on cursor or click."),
     # Tab 4: Ambient & Fluid (34..44)
     "forest_canopy_komorebi": (4, "Floating Glass & Atmosphere", "Dappled wind-swayed tree leaf shadows and warm diagonal sunbeams."),
     "raindrops_on_glass": (4, "Floating Glass & Atmosphere", "Refractive trickling raindrops, wake trails, and condensation micro-beads."),
