@@ -175,6 +175,8 @@ impl Workspace {
     }
 }
 
+const HYPRLAND_SCALE_STEPS: f64 = 120.0;
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Monitor {
     pub id: i32,
@@ -191,6 +193,10 @@ pub struct Monitor {
     pub transform: u8,
     #[serde(default)]
     pub focused: bool,
+    #[serde(default)]
+    pub disabled: bool,
+    #[serde(rename = "dpmsStatus", default = "default_dpms")]
+    pub dpms_status: bool,
     #[serde(rename = "activeWorkspace")]
     pub active_workspace: WorkspaceRef,
     #[serde(rename = "specialWorkspace", default)]
@@ -201,25 +207,47 @@ fn default_scale() -> f64 {
     1.0
 }
 
+fn default_dpms() -> bool {
+    true
+}
+
 impl Monitor {
+    pub fn is_usable(&self) -> bool {
+        !self.disabled
+            && !self.name.trim().eq_ignore_ascii_case("FALLBACK")
+            && self.width > 0
+            && self.height > 0
+    }
+
+    #[inline]
+    fn logical_dim(raw_px: i32, scale: f64) -> f32 {
+        let s = if scale.is_finite() && scale > 0.0 {
+            scale
+        } else {
+            1.0
+        };
+        let numerator = (s * HYPRLAND_SCALE_STEPS).round().max(1.0);
+        (((raw_px as f64) * HYPRLAND_SCALE_STEPS) / numerator)
+            .round()
+            .max(1.0) as f32
+    }
+
     pub fn logical_width(&self) -> f32 {
-        let s = if self.scale > 0.0 { self.scale } else { 1.0 };
-        let raw = if self.transform % 2 == 1 {
+        let raw = if matches!(self.transform, 1 | 3 | 5 | 7) {
             self.height
         } else {
             self.width
         };
-        (raw as f64 / s).round().max(1.0) as f32
+        Self::logical_dim(raw, self.scale)
     }
 
     pub fn logical_height(&self) -> f32 {
-        let s = if self.scale > 0.0 { self.scale } else { 1.0 };
-        let raw = if self.transform % 2 == 1 {
+        let raw = if matches!(self.transform, 1 | 3 | 5 | 7) {
             self.width
         } else {
             self.height
         };
-        (raw as f64 / s).round().max(1.0) as f32
+        Self::logical_dim(raw, self.scale)
     }
 
     pub fn active_special_key(&self) -> Option<WorkspaceKey> {
@@ -262,6 +290,8 @@ pub struct WorkspaceView {
 pub struct OverviewSnapshot {
     pub workspaces: Vec<WorkspaceView>,
     pub focused_address: Option<String>,
+    pub screen_w: f32,
+    pub screen_h: f32,
 }
 
 static SOCKET_PATH: OnceLock<PathBuf> = OnceLock::new();
@@ -377,9 +407,18 @@ pub fn fetch_snapshot() -> Result<OverviewSnapshot, HyprError> {
 
     let primary_monitor = monitors
         .iter()
-        .find(|m| m.focused)
+        .find(|m| m.is_usable() && m.focused && m.dpms_status)
+        .or_else(|| monitors.iter().find(|m| m.is_usable() && m.focused))
+        .or_else(|| monitors.iter().find(|m| m.is_usable() && m.dpms_status))
+        .or_else(|| monitors.iter().find(|m| m.is_usable()))
         .or_else(|| monitors.first())
         .cloned();
+
+    let (screen_w, screen_h) = primary_monitor
+        .as_ref()
+        .filter(|m| m.is_usable())
+        .map(|m| (m.logical_width(), m.logical_height()))
+        .unwrap_or((1920.0, 1080.0));
 
     let active_ws_key = primary_monitor
         .as_ref()
@@ -442,8 +481,8 @@ pub fn fetch_snapshot() -> Result<OverviewSnapshot, HyprError> {
         grouped.entry(active_key.clone()).or_default();
     }
 
-    // Also include active normal and open special workspaces across all monitors.
-    for mon in &monitors {
+    // Also include active normal and open special workspaces across all usable monitors.
+    for mon in monitors.iter().filter(|m| m.is_usable()) {
         grouped.entry(mon.active_workspace.key()).or_default();
         if let Some(sp_key) = mon.active_special_key() {
             grouped.entry(sp_key).or_default();
@@ -547,6 +586,8 @@ pub fn fetch_snapshot() -> Result<OverviewSnapshot, HyprError> {
     Ok(OverviewSnapshot {
         workspaces: views,
         focused_address,
+        screen_w,
+        screen_h,
     })
 }
 

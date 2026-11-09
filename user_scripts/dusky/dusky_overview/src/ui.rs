@@ -23,11 +23,170 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const PREVIEW_BASE_HEIGHT: f32 = 260.0;
-const MAX_COLUMNS: usize = 3;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_millis(25);
 const HOLD_INITIAL_DELAY: Duration = Duration::from_millis(325);
 const HOLD_REPEAT_INTERVAL: Duration = Duration::from_millis(150);
 const IPC_STREAM_THRESHOLD: Duration = Duration::from_millis(95);
+
+#[derive(Debug, Clone, Copy)]
+pub struct LayoutMetrics {
+    pub columns: usize,
+    pub preview_h: f32,
+    pub grid_spacing: f32,
+    pub pad_x: f32,
+    pub pad_y: f32,
+    pub ui_scale: f32,
+}
+
+impl LayoutMetrics {
+    pub fn compute(snapshot: &OverviewSnapshot) -> Self {
+        let screen_w = snapshot.screen_w.max(320.0);
+        let screen_h = snapshot.screen_h.max(240.0);
+        let ws_count = snapshot.workspaces.len().max(1);
+
+        // Adapt outer margins and grid gaps smoothly on low-res or high-scale outputs
+        // while preserving 40px / 32px / 28px on standard 1080p+ (1.0x) screens.
+        let pad_x = if screen_w >= 1600.0 {
+            40.0
+        } else {
+            (screen_w * 0.026).round().clamp(10.0, 36.0)
+        };
+        let pad_y = if screen_h >= 960.0 {
+            32.0
+        } else {
+            (screen_h * 0.032).round().clamp(10.0, 28.0)
+        };
+        let grid_spacing = if screen_w >= 1600.0 && screen_h >= 960.0 {
+            28.0
+        } else {
+            (screen_w.min(screen_h) * 0.025).round().clamp(10.0, 24.0)
+        };
+
+        // Reserve 18px horizontally for the 6px+4px scrollbar rail and selection border glow.
+        let avail_w = (screen_w - pad_x * 2.0 - 18.0).max(180.0);
+        let avail_h = (screen_h - pad_y * 2.0).max(140.0);
+
+        let target_base_h = if ws_count > 6 {
+            195.0
+        } else if ws_count > 3 {
+            230.0
+        } else {
+            PREVIEW_BASE_HEIGHT
+        };
+        let max_card_h = target_base_h.min((screen_h * 0.42).round().max(110.0));
+
+        let max_cols_cap = if ws_count >= 7 && screen_w >= 2200.0 {
+            4
+        } else {
+            3
+        };
+        let max_cols = ws_count.min(max_cols_cap).max(1);
+
+        let eval_cols = |cols: usize| -> (f32, f32) {
+            let rows = ws_count.div_ceil(cols);
+            let max_row_aspect: f32 = snapshot
+                .workspaces
+                .chunks(cols)
+                .map(|row| {
+                    row.iter()
+                        .map(workspace_aspect)
+                        .sum::<f32>()
+                })
+                .fold(1.0_f32, f32::max);
+
+            let total_gap_w = grid_spacing * (cols.saturating_sub(1) as f32);
+            let h_max_w = ((avail_w - total_gap_w).max(80.0) / max_row_aspect).min(max_card_h);
+
+            let total_gap_h = grid_spacing * (rows.saturating_sub(1) as f32);
+            // Subtract 4.0px per row for the vertical selection lift Space widgets.
+            let h_max_h = (((avail_h - total_gap_h).max(80.0) / (rows as f32)) - 4.0).max(72.0);
+
+            let h_fit = h_max_w.min(h_max_h);
+            (h_fit, h_max_w)
+        };
+
+        let mut best_cols = max_cols;
+        let mut best_score = f32::MIN;
+
+        for cols in 1..=max_cols {
+            let (h_fit, h_max_w) = eval_cols(cols);
+            let mut score = h_fit;
+            if cols == 4 && h_max_w >= 175.0 && h_fit >= 165.0 {
+                score += 56.0;
+            } else if cols == 3 && h_max_w >= 158.0 && h_fit >= 150.0 {
+                score += 48.0;
+            } else if cols == 2 && h_max_w >= 140.0 && h_fit >= 135.0 {
+                score += 18.0;
+            }
+            if score >= best_score {
+                best_score = score;
+                best_cols = cols;
+            }
+        }
+
+        let (h_fit, h_max_w) = eval_cols(best_cols);
+        // When many workspaces require vertical scrolling, maintain a readable card height floor
+        // while strictly respecting the horizontal non-overflow bound `h_max_w`.
+        let min_scroll_h = (screen_h * 0.24).round().clamp(105.0, 175.0);
+        let mut preview_h = h_fit.max(min_scroll_h).min(h_max_w).floor().max(76.0);
+
+        // Exact integer-pixel verification: ensure summed `.round()` card widths never exceed `avail_w`.
+        while preview_h > 76.0
+            && max_row_pixel_width(&snapshot.workspaces, best_cols, preview_h, grid_spacing)
+                > avail_w
+        {
+            preview_h -= 1.0;
+        }
+
+        let ui_scale = (preview_h / PREVIEW_BASE_HEIGHT).clamp(0.50, 1.0);
+
+        Self {
+            columns: best_cols,
+            preview_h,
+            grid_spacing,
+            pad_x,
+            pad_y,
+            ui_scale,
+        }
+    }
+}
+
+#[inline]
+fn workspace_aspect(ws: &WorkspaceView) -> f32 {
+    let w = if ws.monitor_w.is_finite() {
+        ws.monitor_w.max(1.0)
+    } else {
+        1920.0
+    };
+    let h = if ws.monitor_h.is_finite() {
+        ws.monitor_h.max(1.0)
+    } else {
+        1080.0
+    };
+    (w / h).clamp(0.55, 3.6)
+}
+
+fn max_row_pixel_width(
+    workspaces: &[WorkspaceView],
+    cols: usize,
+    preview_h: f32,
+    spacing: f32,
+) -> f32 {
+    workspaces
+        .chunks(cols.max(1))
+        .map(|row| {
+            let cards_w: f32 = row
+                .iter()
+                .map(|ws| {
+                    let aspect = workspace_aspect(ws);
+                    (preview_h * aspect).round()
+                })
+                .sum();
+            let gaps_w = spacing * (row.len().saturating_sub(1) as f32);
+            cards_w + gaps_w
+        })
+        .fold(0.0_f32, f32::max)
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct ThemePalette {
@@ -371,6 +530,7 @@ struct GroupTabInfo<'a> {
 
 pub struct OverviewApp {
     snapshot: OverviewSnapshot,
+    layout: LayoutMetrics,
     selected: SelectionTarget,
     hovered_window: Option<(usize, usize)>,
     palette: ThemePalette,
@@ -402,6 +562,7 @@ impl OverviewApp {
         if let Ok(mut queue) = PENDING_IPC.lock() {
             queue.clear();
         }
+        let layout = LayoutMetrics::compute(&snapshot);
         let selected = Self::initial_selection(&snapshot, reverse, detailed);
         let custom_theme = Theme::custom(
             String::from("DuskyMatugen"),
@@ -462,6 +623,7 @@ impl OverviewApp {
         (
             Self {
                 snapshot,
+                layout,
                 selected,
                 hovered_window: None,
                 palette,
@@ -669,16 +831,16 @@ impl OverviewApp {
 
     fn step_workspace_vertical(&mut self, down: bool) -> Task<Message> {
         let count = self.snapshot.workspaces.len();
-        let total_rows = count.div_ceil(MAX_COLUMNS);
+        let cols = self.layout.columns.max(1);
+        let total_rows = count.div_ceil(cols);
 
         if total_rows > 1 {
             let cur = self.current_ws_index().min(count.saturating_sub(1));
-            let cur_row = cur / MAX_COLUMNS;
-            let cur_col = cur % MAX_COLUMNS;
-            let cur_row_len = (count - cur_row * MAX_COLUMNS).min(MAX_COLUMNS);
-            // Account for horizontal centering of shorter rows (< MAX_COLUMNS)
-            let cur_visual_x =
-                (cur_col as f32) + ((MAX_COLUMNS - cur_row_len) as f32) * 0.5;
+            let cur_row = cur / cols;
+            let cur_col = cur % cols;
+            let cur_row_len = (count - cur_row * cols).min(cols);
+            // Account for horizontal centering of shorter rows (< cols)
+            let cur_visual_x = (cur_col as f32) + ((cols - cur_row_len) as f32) * 0.5;
 
             let target_row = if down {
                 (cur_row + 1) % total_rows
@@ -688,14 +850,13 @@ impl OverviewApp {
                 cur_row - 1
             };
 
-            let target_row_start = target_row * MAX_COLUMNS;
-            let target_row_len = (count - target_row_start).min(MAX_COLUMNS);
+            let target_row_start = target_row * cols;
+            let target_row_len = (count - target_row_start).min(cols);
 
             let mut best_ws = target_row_start;
             let mut best_dist = f32::MAX;
             for col in 0..target_row_len {
-                let cand_x =
-                    (col as f32) + ((MAX_COLUMNS - target_row_len) as f32) * 0.5;
+                let cand_x = (col as f32) + ((cols - target_row_len) as f32) * 0.5;
                 let dist = (cand_x - cur_visual_x).abs();
                 if dist < best_dist {
                     best_dist = dist;
@@ -1181,10 +1342,11 @@ impl OverviewApp {
         }
     }
 
-    pub fn view(&self) -> Element<'_, Message> {
+pub fn view(&self) -> Element<'_, Message> {
         let p = self.palette;
         let entrance = self.entrance_pos.clamp(0.0, 1.0);
-        let entrance_offset = (16.5 * (1.0 - entrance)).round();
+        let max_slide = (self.layout.pad_y - 4.0).clamp(4.0, 16.5);
+        let entrance_offset = (max_slide * (1.0 - entrance)).round();
 
         let backdrop = button(Space::new().width(Length::Fill).height(Length::Fill))
             .width(Length::Fill)
@@ -1198,24 +1360,19 @@ impl OverviewApp {
                 ..Default::default()
             });
 
-        let ws_count = self.snapshot.workspaces.len();
-        let preview_height = if ws_count > 6 {
-            195.0
-        } else if ws_count > 3 {
-            230.0
-        } else {
-            PREVIEW_BASE_HEIGHT
-        };
+        let cols = self.layout.columns.max(1);
+        let preview_height = self.layout.preview_h;
+        let spacing = self.layout.grid_spacing;
 
         let mut grid_rows: Vec<Element<'_, Message>> = Vec::new();
-        let mut current_row: Vec<Element<'_, Message>> = Vec::with_capacity(MAX_COLUMNS);
+        let mut current_row: Vec<Element<'_, Message>> = Vec::with_capacity(cols);
 
         for (ws_idx, ws) in self.snapshot.workspaces.iter().enumerate() {
             current_row.push(self.render_workspace_card(ws_idx, ws, preview_height));
-            if current_row.len() == MAX_COLUMNS {
+            if current_row.len() == cols {
                 grid_rows.push(
                     Row::with_children(std::mem::take(&mut current_row))
-                        .spacing(28)
+                        .spacing(spacing)
                         .align_y(Vertical::Center)
                         .into(),
                 );
@@ -1225,24 +1382,24 @@ impl OverviewApp {
         if !current_row.is_empty() {
             grid_rows.push(
                 Row::with_children(current_row)
-                    .spacing(28)
+                    .spacing(spacing)
                     .align_y(Vertical::Center)
                     .into(),
             );
         }
 
         let cards_grid = Column::with_children(grid_rows)
-            .spacing(28)
+            .spacing(spacing)
             .align_x(Horizontal::Center);
 
         let centered_grid = container(cards_grid)
             .width(Length::Fill)
             .center_x(Length::Fill)
             .padding(iced::Padding {
-                top: 32.0 + entrance_offset,
-                right: 40.0,
-                bottom: (32.0 - entrance_offset).max(8.0),
-                left: 40.0,
+                top: self.layout.pad_y + entrance_offset,
+                right: self.layout.pad_x,
+                bottom: (self.layout.pad_y - entrance_offset).max(4.0),
+                left: self.layout.pad_x,
             });
 
         let scroll_view = scrollable(centered_grid)
@@ -1264,7 +1421,10 @@ impl OverviewApp {
                     radius: 999.0.into(),
                 };
                 let scroller_color = match status {
-                    scrollable::Status::Hovered { is_vertical_scrollbar_hovered: true, .. }
+                    scrollable::Status::Hovered {
+                        is_vertical_scrollbar_hovered: true,
+                        ..
+                    }
                     | scrollable::Status::Dragged { .. } => p.accent,
                     scrollable::Status::Hovered { .. } => with_alpha(p.secondary, 0.75),
                     scrollable::Status::Active { .. } => with_alpha(p.muted, 0.50),
@@ -1297,7 +1457,9 @@ impl OverviewApp {
         preview_h: f32,
     ) -> Element<'a, Message> {
         let p = self.palette;
-        let aspect = (ws.monitor_w / ws.monitor_h).clamp(0.55, 3.6);
+        let ui_scale = self.layout.ui_scale;
+        let font_scale = ui_scale.sqrt().clamp(0.74, 1.0);
+        let aspect = workspace_aspect(ws);
         let preview_w = (preview_h * aspect).round();
 
         let is_ws_selected = self.selected == SelectionTarget::Workspace(ws_idx);
@@ -1318,11 +1480,12 @@ impl OverviewApp {
             .copied()
             .unwrap_or(if is_highlighted { 1.0 } else { 0.0 });
         let entrance = self.entrance_pos.clamp(0.0, 1.0);
+        let card_radius = (12.0 * ui_scale).clamp(8.0, 12.0);
 
         let empty_label: Element<'a, Message> = if ws.clients.is_empty() {
             container(
                 text("Empty")
-                    .size(15)
+                    .size((15.0 * font_scale).round().max(11.0))
                     .color(with_alpha(p.muted, 0.85)),
             )
             .width(Length::Fill)
@@ -1406,7 +1569,7 @@ impl OverviewApp {
                     border: Border {
                         color: border_color,
                         width: border_width,
-                        radius: 12.0.into(),
+                        radius: card_radius.into(),
                     },
                     shadow,
                     ..Default::default()
@@ -1507,7 +1670,7 @@ impl OverviewApp {
                     border: Border {
                         color: with_alpha(p.tertiary, 0.55),
                         width: 1.5,
-                        radius: 10.0.into(),
+                        radius: (card_radius - 2.0).max(6.0).into(),
                     },
                     shadow: Shadow::default(),
                     ..Default::default()
@@ -1577,9 +1740,14 @@ impl OverviewApp {
         };
 
         let badge_fg = if is_ws_selected { p.bg } else { p.fg };
+        let badge_font_sz = (13.0 * font_scale).round().max(10.0);
+        let badge_pad_v = (4.0 * ui_scale).round().max(2.0);
+        let badge_pad_h = (11.0 * ui_scale).round().max(6.0);
+        let badge_margin_v = (10.0 * ui_scale).round().max(5.0);
+        let badge_margin_h = (12.0 * ui_scale).round().max(6.0);
 
-        let badge_pill = button(text(badge_text).size(13).color(badge_fg))
-            .padding([4, 11])
+        let badge_pill = button(text(badge_text).size(badge_font_sz).color(badge_fg))
+            .padding([badge_pad_v, badge_pad_h])
             .on_press(Message::ActivateWorkspace(ws.key.clone()))
             .style(move |_theme: &Theme, status: button::Status| {
                 let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
@@ -1646,7 +1814,7 @@ impl OverviewApp {
             .height(Length::Fixed(preview_h))
             .align_x(Horizontal::Right)
             .align_y(Vertical::Bottom)
-            .padding([10, 12]);
+            .padding([badge_margin_v, badge_margin_h]);
 
         card_layers.push(badge_overlay.into());
 
@@ -1677,6 +1845,9 @@ impl OverviewApp {
         hover_progress: f32,
     ) -> Element<'a, Message> {
         let p = self.palette;
+        let ui_scale = self.layout.ui_scale;
+        let font_scale = ui_scale.sqrt().clamp(0.74, 1.0);
+
         let is_fullscreen = group_tabs
             .iter()
             .any(|t| t.client.fullscreen > 0 || t.client.fullscreen_client > 0);
@@ -1688,19 +1859,30 @@ impl OverviewApp {
         let mon_w = ws.monitor_w.max(1.0);
         let mon_h = ws.monitor_h.max(1.0);
 
-        let inset = 4.5_f32;
-        let fs_banner_h = 44.0_f32;
+        let inset = (4.5 * ui_scale).clamp(2.5, 4.5);
+        let fs_banner_h = (44.0 * ui_scale).round().clamp(26.0, 44.0);
         let sub_top = if is_occluded_under_fs {
             fs_banner_h + inset + 2.0
         } else {
             inset
         };
-        let avail_h = (preview_h - sub_top - inset).max(32.0);
+        let avail_h = (preview_h - sub_top - inset).max(24.0);
         let scale_x = preview_w / mon_w;
         let scale_y = avail_h / mon_h;
 
-        let min_win_w = if is_floating { 56.0 } else { 46.0 };
-        let min_win_h = if is_floating { 36.0 } else { 30.0 };
+        let min_win_w = ((if is_floating { 56.0 } else { 46.0 }) * ui_scale)
+            .round()
+            .max(30.0);
+        let base_min_win_h = if is_grouped {
+            42.0
+        } else if is_floating {
+            36.0
+        } else {
+            30.0
+        };
+        let min_win_h = (base_min_win_h * ui_scale)
+            .round()
+            .max(if is_grouped { 30.0 } else { 20.0 });
 
         // 1. Compute static resting geometry (100% independent of hover_progress).
         let (base_x, mut base_y, base_w, base_h) = if is_fullscreen && has_fullscreen_with_others {
@@ -1709,7 +1891,7 @@ impl OverviewApp {
             (
                 inset,
                 inset,
-                (preview_w - inset * 2.0).max(56.0),
+                (preview_w - inset * 2.0).max(min_win_w),
                 fs_banner_h,
             )
         } else {
@@ -1743,14 +1925,16 @@ impl OverviewApp {
         };
 
         // Nudge small floating windows out of the bottom-right workspace badge zone.
+        let badge_zone_w = (64.0 * ui_scale).round();
+        let badge_zone_h = (40.0 * ui_scale).round();
         if is_floating
             && !is_fullscreen
-            && base_w <= 116.0
-            && base_h <= 56.0
-            && base_x + base_w > preview_w - 64.0
-            && base_y + base_h > preview_h - 40.0
+            && base_w <= (116.0 * ui_scale).round()
+            && base_h <= (56.0 * ui_scale).round()
+            && base_x + base_w > preview_w - badge_zone_w
+            && base_y + base_h > preview_h - badge_zone_h
         {
-            base_y = (preview_h - 40.0 - base_h).max(sub_top);
+            base_y = (preview_h - badge_zone_h - base_h).max(sub_top);
         }
 
         // 2. Compute the fixed, invariant outer hit-test slot (`slot_x, slot_y, slot_w, slot_h`).
@@ -1802,16 +1986,16 @@ impl OverviewApp {
 
         // Anchor `tab_bar_h` to static `base_h` so it never jumps across height thresholds mid-hover.
         let tab_bar_h = if is_grouped {
-            if base_h >= 54.0 {
-                24.0
+            if base_h >= (54.0 * ui_scale).round() {
+                (24.0 * ui_scale).round().clamp(16.0, 24.0)
             } else {
-                (base_h * 0.44).round().clamp(16.0, 20.0)
+                (base_h * 0.44).round().clamp(14.0, (20.0 * ui_scale).round().max(15.0))
             }
         } else {
             0.0
         };
         let body_h = if is_grouped {
-            (h - tab_bar_h - 2.0).max(16.0)
+            (h - tab_bar_h - 2.0).max(14.0)
         } else {
             h
         };
@@ -1828,6 +2012,10 @@ impl OverviewApp {
             p.fg,
             if has_custom_color { 0.14 } else { 0.24 },
         );
+
+        let tier1_min_h = (76.0 * ui_scale).round().max(48.0);
+        let tier1_min_w = (96.0 * ui_scale).round().max(62.0);
+        let tier2_min_h = (44.0 * ui_scale).round().max(28.0);
 
         let label_content: Element<'a, Message> = if is_fullscreen && has_fullscreen_with_others {
             // Tier 4: Docked Fullscreen Banner
@@ -1846,42 +2034,55 @@ impl OverviewApp {
             let banner_pill_fg = contrast_text_color(banner_pill_bg, p.bg, p.fg);
             let banner_class = truncate_str(
                 &display_class,
-                ((base_w * 0.36) / 8.2).max(6.0) as usize,
+                ((base_w * 0.36) / (8.2 * font_scale)).max(6.0) as usize,
             );
             let banner_sub = clean_subtitle
-                .map(|s| truncate_str(s, ((base_w * 0.44) / 7.5).max(8.0) as usize))
+                .map(|s| {
+                    truncate_str(
+                        s,
+                        ((base_w * 0.44) / (7.5 * font_scale)).max(8.0) as usize,
+                    )
+                })
                 .unwrap_or_default();
             let sub_fg = with_alpha(mix_color(p.fg, Color::WHITE, 0.12), 0.95);
+            let banner_icon_sz = (16.0 * ui_scale).round().max(12.0);
 
             row![
-                container(text(banner_badge).size(10.5).color(banner_pill_fg))
-                    .padding([3, 7])
-                    .style(move |_theme: &Theme| container::Style {
-                        background: Some(Background::Color(banner_pill_bg)),
-                        text_color: Some(banner_pill_fg),
-                        border: Border {
-                            color: Color::TRANSPARENT,
-                            width: 0.0,
-                            radius: 5.0.into(),
-                        },
-                        shadow: Shadow::default(),
-                        ..Default::default()
-                    }),
-                Space::new().width(Length::Fixed(8.0)),
-                render_app_icon(&resolved_icon.visual, 16.0, icon_fg),
-                Space::new().width(Length::Fixed(6.0)),
+                container(
+                    text(banner_badge)
+                        .size((10.5 * font_scale).max(8.5))
+                        .color(banner_pill_fg)
+                )
+                .padding([
+                    (3.0 * ui_scale).round().max(2.0),
+                    (7.0 * ui_scale).round().max(4.0)
+                ])
+                .style(move |_theme: &Theme| container::Style {
+                    background: Some(Background::Color(banner_pill_bg)),
+                    text_color: Some(banner_pill_fg),
+                    border: Border {
+                        color: Color::TRANSPARENT,
+                        width: 0.0,
+                        radius: 5.0.into(),
+                    },
+                    shadow: Shadow::default(),
+                    ..Default::default()
+                }),
+                Space::new().width(Length::Fixed((8.0 * ui_scale).round().max(4.0))),
+                render_app_icon(&resolved_icon.visual, banner_icon_sz, icon_fg),
+                Space::new().width(Length::Fixed((6.0 * ui_scale).round().max(3.0))),
                 text(banner_class)
-                    .size(15)
+                    .size((15.0 * font_scale).max(11.0))
                     .font(bold_font())
                     .color(title_fg),
-                Space::new().width(Length::Fixed(8.0)),
+                Space::new().width(Length::Fixed((8.0 * ui_scale).round().max(4.0))),
                 text(banner_sub)
-                    .size(13.5)
+                    .size((13.5 * font_scale).max(10.0))
                     .font(semibold_font())
                     .color(sub_fg),
                 Space::new().width(Length::Fill),
             ]
-            .padding([0, 8])
+            .padding([0.0, (8.0 * ui_scale).round().max(4.0)])
             .align_y(Vertical::Center)
             .height(Length::Fill)
             .into()
@@ -1889,20 +2090,34 @@ impl OverviewApp {
             // Standalone / Grouped Window Interior Canvas (No redundant top titlebar)
             let sub_fg = with_alpha(mix_color(p.fg, Color::WHITE, 0.12), 0.95);
 
-            let main_canvas: Element<'a, Message> = if body_h >= 76.0 && w >= 96.0 {
+            let main_canvas: Element<'a, Message> = if body_h >= tier1_min_h && w >= tier1_min_w {
                 // Tier 1: Hero Vertical Stack Canvas (Compact fixed icon badge + Bold title + Framed Subtitle)
-                let is_large_hero = w >= 170.0 && body_h >= 105.0;
-                let primary_font_size = if is_large_hero { 20.5 } else { 19.0 };
-                let sub_font_size = if is_large_hero { 16.0 } else { 15.0 };
+                let is_large_hero =
+                    w >= (170.0 * ui_scale).round() && body_h >= (105.0 * ui_scale).round();
+                let primary_font_size =
+                    ((if is_large_hero { 20.5 } else { 19.0 }) * font_scale).max(12.5);
+                let sub_font_size =
+                    ((if is_large_hero { 16.0 } else { 15.0 }) * font_scale).max(10.5);
                 let (badge_box_sz, icon_sz, badge_radius) = if is_large_hero {
-                    (46.0, 29.0, 12.0)
+                    (
+                        (46.0 * ui_scale).round().max(26.0),
+                        (29.0 * ui_scale).round().max(17.0),
+                        (12.0 * ui_scale).clamp(7.0, 12.0),
+                    )
                 } else {
-                    (42.0, 26.0, 10.5)
+                    (
+                        (42.0 * ui_scale).round().max(24.0),
+                        (26.0 * ui_scale).round().max(15.0),
+                        (10.5 * ui_scale).clamp(6.5, 10.5),
+                    )
                 };
 
-                let primary_chars =
-                    ((base_w - 20.0) / (primary_font_size * 0.52)).max(5.0) as usize;
-                let sub_chars = ((base_w - 26.0) / (sub_font_size * 0.54)).max(6.0) as usize;
+                let pad_h = (8.0 * ui_scale).round().max(4.0);
+                let pad_v = (6.0 * ui_scale).round().max(3.0);
+                let primary_chars = ((base_w - pad_h * 2.0 - 4.0) / (primary_font_size * 0.52))
+                    .max(5.0) as usize;
+                let sub_chars =
+                    ((base_w - pad_h * 2.0 - 10.0) / (sub_font_size * 0.54)).max(6.0) as usize;
                 let primary_str = truncate_str(&display_class, primary_chars);
 
                 let hero_icon_col = with_alpha(icon_fg, lerp(0.90, 1.0, hover_t));
@@ -1932,7 +2147,11 @@ impl OverviewApp {
 
                 let mut col_items: Vec<Element<'a, Message>> = Vec::with_capacity(5);
                 col_items.push(icon_badge.into());
-                col_items.push(Space::new().height(Length::Fixed(6.0)).into());
+                col_items.push(
+                    Space::new()
+                        .height(Length::Fixed((6.0 * ui_scale).round().max(2.0)))
+                        .into(),
+                );
                 col_items.push(
                     text(primary_str)
                         .size(primary_font_size)
@@ -1941,7 +2160,10 @@ impl OverviewApp {
                         .into(),
                 );
 
-                if let Some(sub) = clean_subtitle {
+                // Only include the framed subtitle pill when vertical height comfortably fits it
+                if let Some(sub) = clean_subtitle
+                    && body_h >= (92.0 * ui_scale).round().max(58.0)
+                {
                     let sub_str = truncate_str(sub, sub_chars);
                     let sub_pill = container(
                         text(sub_str)
@@ -1949,7 +2171,10 @@ impl OverviewApp {
                             .font(semibold_font())
                             .color(sub_fg),
                     )
-                    .padding([3, 10])
+                    .padding([
+                        (3.0 * ui_scale).round().max(1.5),
+                        (10.0 * ui_scale).round().max(5.0),
+                    ])
                     .style(move |_theme: &Theme| container::Style {
                         background: Some(Background::Color(with_alpha(
                             mix_color(p.bg, accent, if is_selected { 0.24 } else { 0.15 }),
@@ -1959,13 +2184,17 @@ impl OverviewApp {
                         border: Border {
                             color: with_alpha(accent, if is_selected { 0.42 } else { 0.24 }),
                             width: 1.0,
-                            radius: 6.5.into(),
+                            radius: (6.5 * ui_scale).clamp(4.5, 6.5).into(),
                         },
                         shadow: Shadow::default(),
                         ..Default::default()
                     });
 
-                    col_items.push(Space::new().height(Length::Fixed(4.0)).into());
+                    col_items.push(
+                        Space::new()
+                            .height(Length::Fixed((4.0 * ui_scale).round().max(2.0)))
+                            .into(),
+                    );
                     col_items.push(sub_pill.into());
                 }
 
@@ -1976,20 +2205,26 @@ impl OverviewApp {
                 )
                 .width(Length::Fill)
                 .height(Length::Fill)
-                .padding([6, 8])
+                .padding([pad_v, pad_h])
                 .center_x(Length::Fill)
                 .center_y(Length::Fill)
                 .into()
-            } else if body_h >= 44.0 {
+            } else if body_h >= tier2_min_h {
                 // Tier 2: Balanced Horizontal Icon + Two-Line Label Canvas
-                let avail_text_w = (base_w - 58.0).max(28.0);
-                let primary_chars = (avail_text_w / 8.6).max(4.0) as usize;
-                let sub_chars = (avail_text_w / 7.5).max(5.0) as usize;
+                let icon_box_sz = (34.0 * ui_scale).round().max(22.0);
+                let icon_sz = (22.0 * ui_scale).round().max(14.0);
+                let icon_gap = (9.0 * ui_scale).round().max(5.0);
+                let pad_h = (8.0 * ui_scale).round().max(4.0);
+                let pad_v = (4.0 * ui_scale).round().max(2.0);
+
+                let avail_text_w = (base_w - icon_box_sz - icon_gap - pad_h * 2.0).max(24.0);
+                let primary_chars = (avail_text_w / (8.6 * font_scale)).max(4.0) as usize;
+                let sub_chars = (avail_text_w / (7.5 * font_scale)).max(5.0) as usize;
                 let primary_str = truncate_str(&display_class, primary_chars);
 
-                let icon_box = container(render_app_icon(&resolved_icon.visual, 22.0, icon_fg))
-                    .width(Length::Fixed(34.0))
-                    .height(Length::Fixed(34.0))
+                let icon_box = container(render_app_icon(&resolved_icon.visual, icon_sz, icon_fg))
+                    .width(Length::Fixed(icon_box_sz))
+                    .height(Length::Fixed(icon_box_sz))
                     .align_x(Horizontal::Center)
                     .align_y(Vertical::Center)
                     .style(move |_theme: &Theme| container::Style {
@@ -2001,22 +2236,25 @@ impl OverviewApp {
                         border: Border {
                             color: with_alpha(accent, if is_selected { 0.55 } else { 0.32 }),
                             width: 1.0,
-                            radius: 8.5.into(),
+                            radius: (8.5 * ui_scale).clamp(5.5, 8.5).into(),
                         },
                         shadow: Shadow::default(),
                         ..Default::default()
                     });
 
+                let primary_font_sz = (16.5 * font_scale).max(11.5);
+                let sub_font_sz = (14.0 * font_scale).max(10.0);
+
                 let text_col: Element<'a, Message> = if let Some(sub) = clean_subtitle {
                     let sub_str = truncate_str(sub, sub_chars);
                     column![
                         text(primary_str)
-                            .size(16.5)
+                            .size(primary_font_sz)
                             .font(bold_font())
                             .color(title_fg),
-                        Space::new().height(Length::Fixed(2.5)),
+                        Space::new().height(Length::Fixed((2.5 * ui_scale).max(1.0))),
                         text(sub_str)
-                            .size(14)
+                            .size(sub_font_sz)
                             .font(semibold_font())
                             .color(sub_fg),
                     ]
@@ -2024,62 +2262,71 @@ impl OverviewApp {
                     .into()
                 } else {
                     text(primary_str)
-                        .size(16.5)
+                        .size(primary_font_sz)
                         .font(bold_font())
                         .color(title_fg)
                         .into()
                 };
 
                 container(
-                    row![
-                        icon_box,
-                        Space::new().width(Length::Fixed(9.0)),
-                        text_col,
-                    ]
-                    .align_y(Vertical::Center),
+                    row![icon_box, Space::new().width(Length::Fixed(icon_gap)), text_col]
+                        .align_y(Vertical::Center),
                 )
                 .width(Length::Fill)
                 .height(Length::Fill)
-                .padding([4, 8])
+                .padding([pad_v, pad_h])
                 .center_x(Length::Fill)
                 .center_y(Length::Fill)
                 .into()
             } else {
                 // Tier 3: Compact Strip Canvas
-                let primary_chars = ((base_w - 30.0) / 8.0).max(4.0) as usize;
+                let strip_icon_sz = (16.0 * ui_scale).round().max(11.0);
+                let primary_chars =
+                    ((base_w - 30.0 * ui_scale) / (8.0 * font_scale)).max(4.0) as usize;
                 let primary_str = truncate_str(&display_class, primary_chars);
 
                 let mut strip_row: Vec<Element<'a, Message>> = Vec::with_capacity(5);
-                strip_row.push(render_app_icon(&resolved_icon.visual, 16.0, icon_fg));
-                strip_row.push(Space::new().width(Length::Fixed(5.5)).into());
+                strip_row.push(render_app_icon(&resolved_icon.visual, strip_icon_sz, icon_fg));
+                strip_row.push(
+                    Space::new()
+                        .width(Length::Fixed((5.5 * ui_scale).max(3.0)))
+                        .into(),
+                );
                 strip_row.push(
                     text(primary_str)
-                        .size(14.5)
+                        .size((14.5 * font_scale).max(10.5))
                         .font(bold_font())
                         .color(title_fg)
                         .into(),
                 );
 
-                if w >= 160.0
+                if w >= (160.0 * ui_scale).round()
                     && let Some(sub) = clean_subtitle
                 {
-                    let sub_chars = ((base_w - 108.0) / 7.4).max(5.0) as usize;
+                    let sub_chars =
+                        ((base_w - 108.0 * ui_scale) / (7.4 * font_scale)).max(5.0) as usize;
                     let sub_str = truncate_str(sub, sub_chars);
-                    strip_row.push(Space::new().width(Length::Fixed(6.0)).into());
+                    strip_row.push(
+                        Space::new()
+                            .width(Length::Fixed((6.0 * ui_scale).max(3.0)))
+                            .into(),
+                    );
                     strip_row.push(
                         text(sub_str)
-                            .size(13)
+                            .size((13.0 * font_scale).max(9.5))
                             .font(semibold_font())
                             .color(sub_fg)
                             .into(),
                     );
                 }
 
-
                 container(Row::with_children(strip_row).align_y(Vertical::Center))
                     .width(Length::Fill)
                     .height(Length::Fill)
-                    .padding([2, 6])
+                    .padding([
+                        (2.0 * ui_scale).round().max(1.0),
+                        (6.0 * ui_scale).round().max(3.0),
+                    ])
                     .center_x(Length::Fill)
                     .center_y(Length::Fill)
                     .into()
@@ -2103,7 +2350,7 @@ impl OverviewApp {
                 } else {
                     Some(String::from(flt_tag))
                 }
-            } else if is_grouped && body_h >= 48.0 {
+            } else if is_grouped && body_h >= (48.0 * ui_scale).round().max(32.0) {
                 Some(format!("⇥ {active_tab_pos}/{tab_count}"))
             } else if is_selected || is_hypr_focused {
                 Some(String::from("●"))
@@ -2112,8 +2359,8 @@ impl OverviewApp {
             };
 
             if let Some(pill_label) = corner_badge_text
-                && body_h >= 34.0
-                && w >= 64.0
+                && body_h >= (34.0 * ui_scale).round().max(22.0)
+                && w >= (64.0 * ui_scale).round().max(42.0)
             {
                 let pill_tint = if is_floating {
                     if has_custom_color { accent } else { p.tertiary }
@@ -2121,32 +2368,47 @@ impl OverviewApp {
                     active_tint
                 };
                 let pill_bg = with_alpha(
-                    mix_color(p.bg, pill_tint, if is_selected || is_floating { 0.42 } else { 0.28 }),
+                    mix_color(
+                        p.bg,
+                        pill_tint,
+                        if is_selected || is_floating { 0.42 } else { 0.28 },
+                    ),
                     0.94,
                 );
                 let pill_fg = mix_color(pill_tint, p.fg, 0.55);
-                let pill_border = with_alpha(pill_tint, if is_selected || is_floating { 0.82 } else { 0.55 });
+                let pill_border =
+                    with_alpha(pill_tint, if is_selected || is_floating { 0.82 } else { 0.55 });
 
-                let corner_pill = container(text(pill_label).size(10).color(pill_fg))
-                    .padding([2, 6])
-                    .style(move |_theme: &Theme| container::Style {
-                        background: Some(Background::Color(pill_bg)),
-                        text_color: Some(pill_fg),
-                        border: Border {
-                            color: pill_border,
-                            width: 1.0,
-                            radius: 6.0.into(),
-                        },
-                        shadow: Shadow::default(),
-                        ..Default::default()
-                    });
+                let corner_pill = container(
+                    text(pill_label)
+                        .size((10.0 * font_scale).max(8.5))
+                        .color(pill_fg),
+                )
+                .padding([
+                    (2.0 * ui_scale).round().max(1.0),
+                    (6.0 * ui_scale).round().max(3.5),
+                ])
+                .style(move |_theme: &Theme| container::Style {
+                    background: Some(Background::Color(pill_bg)),
+                    text_color: Some(pill_fg),
+                    border: Border {
+                        color: pill_border,
+                        width: 1.0,
+                        radius: (6.0 * ui_scale).clamp(4.0, 6.0).into(),
+                    },
+                    shadow: Shadow::default(),
+                    ..Default::default()
+                });
 
                 let badge_layer = container(corner_pill)
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .align_x(Horizontal::Right)
                     .align_y(Vertical::Top)
-                    .padding([5, 6]);
+                    .padding([
+                        (5.0 * ui_scale).round().max(2.5),
+                        (6.0 * ui_scale).round().max(3.0),
+                    ]);
 
                 stack![main_canvas, badge_layer]
                     .width(Length::Fill)
@@ -2162,13 +2424,14 @@ impl OverviewApp {
             .height(Length::Fill)
             .clip(true);
 
-        let body_radius = if is_grouped {
+        let body_radius = (if is_grouped {
             7.5
         } else if is_floating {
             10.5
         } else {
             8.5
-        };
+        } * ui_scale)
+            .clamp(5.0, 10.5);
 
         let win_button = button(centered_box)
             .width(Length::Fixed(w))
@@ -2302,9 +2565,12 @@ impl OverviewApp {
             });
 
         let visual_unit: Element<'a, Message> = if is_grouped {
-            let per_tab_chars =
-                (((base_w / (tab_count as f32)) - 22.0) / 7.2).max(3.0) as usize;
+            let per_tab_chars = (((base_w / (tab_count as f32)) - 22.0 * ui_scale)
+                / (7.2 * font_scale))
+                .max(3.0) as usize;
             let mut tab_pills: Vec<Element<'a, Message>> = Vec::with_capacity(tab_count);
+            let tab_icon_sz = (12.5 * ui_scale).max(9.5);
+            let tab_font_sz = (11.0 * font_scale).max(9.0);
 
             for tab in group_tabs {
                 let tab_resolved = &self.window_icons[ws_idx][tab.win_idx];
@@ -2356,9 +2622,9 @@ impl OverviewApp {
                 let pill_btn = button(
                     container(
                         row![
-                            render_app_icon(&tab_resolved.visual, 12.5, tab_icon_col),
-                            Space::new().width(Length::Fixed(4.0)),
-                            text(full_label).size(11),
+                            render_app_icon(&tab_resolved.visual, tab_icon_sz, tab_icon_col),
+                            Space::new().width(Length::Fixed((4.0 * ui_scale).max(2.0))),
+                            text(full_label).size(tab_font_sz),
                         ]
                         .align_y(Vertical::Center),
                     )
@@ -2370,7 +2636,10 @@ impl OverviewApp {
                 )
                 .width(Length::FillPortion(1))
                 .height(Length::Fixed(tab_bar_h))
-                .padding([2, 5])
+                .padding([
+                    (2.0 * ui_scale).round().max(1.0),
+                    (5.0 * ui_scale).round().max(3.0),
+                ])
                 .on_press(Message::ActivateWindow {
                     workspace: ws.key.clone(),
                     address: tab.client.address.clone(),
@@ -2438,7 +2707,7 @@ impl OverviewApp {
                             } else {
                                 1.0
                             },
-                            radius: 6.0.into(),
+                            radius: (6.0 * ui_scale).clamp(4.0, 6.0).into(),
                         },
                         shadow: if is_tab_sel || hovered {
                             Shadow {
