@@ -34,6 +34,20 @@ enum Phase {
     Preview,
     Scroll,
 }
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum ScrollMode {
+    #[default]
+    Manual,
+    Auto,
+    Paused,
+}
+#[derive(Clone, Default)]
+struct ScrollProgress {
+    frames: usize,
+    extent: usize,
+    status: String,
+    crop: Option<Rect>,
+}
 #[derive(Clone, Copy, Debug)]
 enum Motion {
     Down,
@@ -67,6 +81,7 @@ enum Action {
     Close,
     ScrollFrame,
     ScrollAuto,
+    ScrollAxis,
     ScrollStop,
     ScrollDone,
 }
@@ -102,8 +117,9 @@ enum Message {
     SelectionReady(std::result::Result<(Document, Option<picture::Handle>), String>),
     Ocr(std::result::Result<String, String>),
     Notice(std::result::Result<(), String>),
-    ScrollFrame(std::result::Result<::image::RgbaImage, String>),
-    AutoEnded(std::result::Result<Document, String>),
+    ScrollTick,
+    ScrollFrame(std::result::Result<(capture::stitch::ManualCapture, String), String>),
+    AutoEnded(std::result::Result<(capture::stitch::AutoCapture, String), String>),
     Expire(u64),
     Hover(bool),
     Platform(Platform),
@@ -176,8 +192,16 @@ struct App {
     expiry: u64,
     remaining: Duration,
     expiry_start: Instant,
-    stitcher: Option<capture::Stitcher>,
+    scroll_manual: Option<capture::stitch::ManualCapture>,
+    scroll_auto: Option<capture::stitch::AutoCapture>,
+    scroll_mode: ScrollMode,
+    scroll_axis: capture::stitch::Axis,
+    scroll_frames: usize,
+    scroll_extent: usize,
     scroll_stop: Arc<AtomicBool>,
+    scroll_handshake: Option<Arc<capture::stitch::CaptureHandshake>>,
+    scroll_live: Arc<std::sync::Mutex<ScrollProgress>>,
+    scroll_pending: Option<Action>,
     scroll_origin: Option<Rect>,
 }
 struct SharedPixels(Arc<::image::RgbaImage>);
@@ -402,7 +426,7 @@ pub fn run(options: Options, start: Instant) -> Result<()> {
             (if phase == Phase::Preview {
                 100.0_f32
             } else {
-                220.0_f32
+                148.0_f32
             })
             .min((mh - 32).max(1) as f32),
         )),
@@ -461,7 +485,11 @@ fn window_size(doc: &Document, phase: Phase, monitor: &Monitor) -> Size {
     let maxh = (mh - top - bottom - 32).max(1) as f32;
     match phase {
         Phase::Pick | Phase::Preparing | Phase::Edit => Size::new(mw as f32, mh as f32),
-        Phase::Scroll => Size::new(480.0_f32.min(maxw), 220.0_f32.min(maxh)),
+        Phase::Scroll => {
+            let w = (mw as f32 * 0.44).round().clamp(580.0, 680.0).min(maxw);
+            let h = (mh as f32 * 0.20).round().clamp(164.0, 188.0).min(maxh);
+            Size::new(w, h)
+        }
         Phase::Preview => {
             let r = doc.canvas();
             let scale = ((maxw - 24.0).min(720.0) / r.w as f32)
@@ -579,8 +607,16 @@ impl App {
             expiry: 1,
             remaining: Duration::from_secs(10),
             expiry_start: Instant::now(),
-            stitcher: None,
+            scroll_manual: None,
+            scroll_auto: None,
+            scroll_mode: ScrollMode::Manual,
+            scroll_axis: capture::stitch::Axis::Vertical,
+            scroll_frames: 0,
+            scroll_extent: 0,
             scroll_stop: Arc::new(AtomicBool::new(false)),
+            scroll_handshake: None,
+            scroll_live: Arc::new(std::sync::Mutex::new(ScrollProgress::default())),
+            scroll_pending: None,
             scroll_origin: None,
         };
         let mut tasks = vec![
@@ -598,11 +634,17 @@ impl App {
         ])
     }
     fn close(&mut self) -> Task<Message> {
-        self.scroll_stop.store(true, Ordering::Relaxed);
+        self.scroll_stop.store(true, Ordering::Release);
+        if let Some(h) = &self.scroll_handshake {
+            h.notify_stop();
+        }
         if self.phase == Phase::Preparing {
             return iced::exit();
         }
         if self.busy {
+            if self.phase == Phase::Scroll {
+                self.scroll_pending = Some(Action::Close);
+            }
             return Task::none();
         }
         self.busy = true;
@@ -667,10 +709,52 @@ impl App {
     }
     fn act(&mut self, action: Action) -> Task<Message> {
         if matches!(action, Action::ScrollStop) {
-            self.scroll_stop.store(true, Ordering::Relaxed);
+            self.scroll_pending = None;
+            self.scroll_mode = ScrollMode::Paused;
+            self.status = "Paused · press Done (Enter) to finish, or Resume Auto".into();
+            if let Ok(mut live) = self.scroll_live.lock() {
+                live.status = self.status.clone();
+            }
+            self.scroll_stop.store(true, Ordering::Release);
+            if let Some(h) = &self.scroll_handshake {
+                h.notify_stop();
+            }
             return Task::none();
         }
         if self.busy {
+            if self.phase == Phase::Scroll
+                && matches!(
+                    action,
+                    Action::Close
+                        | Action::ScrollDone
+                        | Action::ScrollAuto
+                        | Action::ScrollFrame
+                        | Action::ScrollAxis
+                )
+            {
+                match action {
+                    Action::ScrollAuto => {
+                        self.scroll_mode = ScrollMode::Auto;
+                        self.status = "Starting auto-scroll · keep pointer still…".into();
+                    }
+                    Action::ScrollFrame => {
+                        self.scroll_mode = ScrollMode::Manual;
+                        self.status = "Scroll with your mouse wheel, or press Done (Enter)".into();
+                    }
+                    Action::ScrollDone => {
+                        self.status = "Stitching captured frames…".into();
+                    }
+                    _ => {}
+                }
+                if let Ok(mut live) = self.scroll_live.lock() {
+                    live.status = self.status.clone();
+                }
+                self.scroll_pending = Some(action);
+                self.scroll_stop.store(true, Ordering::Release);
+                if let Some(h) = &self.scroll_handshake {
+                    h.notify_stop();
+                }
+            }
             return Task::none();
         }
         match action {
@@ -797,15 +881,52 @@ impl App {
                 }
             }
             Action::ScrollStop => return Task::none(),
-            Action::ScrollFrame => return self.scroll_frame(),
+            Action::ScrollAxis => {
+                self.scroll_axis = match self.scroll_axis {
+                    capture::stitch::Axis::Vertical => capture::stitch::Axis::Horizontal,
+                    capture::stitch::Axis::Horizontal => capture::stitch::Axis::Vertical,
+                };
+                self.scroll_manual = None;
+                self.scroll_auto = None;
+                self.scroll_frames = 0;
+                self.scroll_extent = 0;
+                return self.scroll_frame(None);
+            }
+            Action::ScrollFrame => return self.scroll_frame(None),
             Action::ScrollAuto => return self.scroll_auto(),
             Action::ScrollDone => {
-                if let Some(s) = self.stitcher.take() {
-                    self.capture.document = Document::new(s.image);
-                    self.phase = Phase::Edit;
-                    self.zoom = 1.0;
-                    self.pan = Vector::ZERO;
-                    return self.resize().chain(self.render());
+                let live_crop = self.scroll_live.lock().ok().and_then(|l| l.crop);
+                if let Some(c) = live_crop {
+                    self.scroll_origin = Some(c);
+                    self.doc_mut().state.crop = c;
+                }
+                let stitched = if let Some(a) = self.scroll_auto.as_ref() {
+                    Some(a.finish())
+                } else if let Some(m) = self.scroll_manual.as_mut() {
+                    Some(m.finish())
+                } else if let Some(crop) = self.scroll_origin {
+                    let src = &self.capture.document.source;
+                    let x = crop.x.max(0.0) as u32;
+                    let y = crop.y.max(0.0) as u32;
+                    let w = (crop.w as u32).min(src.width().saturating_sub(x)).max(1);
+                    let h = (crop.h as u32).min(src.height().saturating_sub(y)).max(1);
+                    Some(Ok(::image::imageops::crop_imm(src.as_ref(), x, y, w, h).to_image()))
+                } else {
+                    None
+                };
+                if let Some(res) = stitched {
+                    match res {
+                        Ok(image) => {
+                            self.scroll_auto = None;
+                            self.scroll_manual = None;
+                            self.capture.document = Document::new(image);
+                            self.phase = Phase::Edit;
+                            self.zoom = 1.0;
+                            self.pan = Vector::ZERO;
+                            return self.resize().chain(self.render());
+                        }
+                        Err(e) => self.status = e.to_string(),
+                    }
                 }
                 return Task::none();
             }
@@ -1120,6 +1241,30 @@ impl App {
                     return Task::none();
                 }
                 use keyboard::{Key, key::Named};
+                if self.phase == Phase::Scroll {
+                    match key.as_ref() {
+                        Key::Named(Named::Escape) => return self.close(),
+                        Key::Named(Named::Enter) => return self.act(Action::ScrollDone),
+                        Key::Named(Named::Space) => {
+                            return if self.scroll_mode == ScrollMode::Auto && self.busy {
+                                self.act(Action::ScrollStop)
+                            } else {
+                                self.act(Action::ScrollAuto)
+                            };
+                        }
+                        Key::Character(c) if !modifiers.control() => {
+                            match c.to_lowercase().as_str() {
+                                "a" => return self.act(Action::ScrollAuto),
+                                "m" => return self.act(Action::ScrollFrame),
+                                "s" => return self.act(Action::ScrollStop),
+                                "d" => return self.act(Action::ScrollDone),
+                                _ => {}
+                            }
+                        }
+                        _ => {}
+                    }
+                    return Task::none();
+                }
                 match key.as_ref() {
                     Key::Named(Named::Tab) if self.phase == Phase::Pick => {
                         self.picker_controls = !self.picker_controls;
@@ -1203,38 +1348,57 @@ impl App {
                     }
                 }
             }
+            Message::ScrollTick => {
+                if self.phase == Phase::Scroll && self.busy {
+                    let live_crop = if let Ok(live) = self.scroll_live.lock() {
+                        if !live.status.is_empty() {
+                            self.status = live.status.clone();
+                        }
+                        self.scroll_frames = live.frames;
+                        self.scroll_extent = live.extent;
+                        live.crop
+                    } else {
+                        None
+                    };
+                    if let Some(c) = live_crop {
+                        self.scroll_origin = Some(c);
+                        self.doc_mut().state.crop = c;
+                    }
+                    return delay(Duration::from_millis(100), Message::ScrollTick);
+                }
+            }
             Message::ScrollFrame(r) => {
                 self.busy = false;
+                self.scroll_handshake = None;
+                self.scroll_mode = ScrollMode::Manual;
                 match r {
-                    Ok(im) => {
-                        if let Some(s) = &mut self.stitcher {
-                            match s.append(im) {
-                                Ok(changed) => {
-                                    self.status = if changed {
-                                        format!("{} pixels tall", s.image.height())
-                                    } else {
-                                        "Page has not moved".into()
-                                    }
-                                }
-                                Err(e) => self.status = e.to_string(),
-                            }
-                        } else {
-                            self.stitcher = Some(capture::Stitcher::new(im));
-                            self.status = "Scroll the page, then Add frame".into()
-                        }
+                    Ok((session, status)) => {
+                        self.scroll_frames = session.kept;
+                        self.scroll_extent = session.current_extent();
+                        self.scroll_manual = Some(session);
+                        self.status = status;
                     }
                     Err(e) => self.status = e,
+                }
+                if let Some(pending) = self.scroll_pending.take() {
+                    return self.act(pending);
                 }
             }
             Message::AutoEnded(r) => {
                 self.busy = false;
+                self.scroll_handshake = None;
+                self.scroll_mode = ScrollMode::Paused;
                 match r {
-                    Ok(doc) => {
-                        self.capture.document = doc;
-                        self.phase = Phase::Edit;
-                        return self.resize().chain(self.render());
+                    Ok((session, status)) => {
+                        self.scroll_frames = session.kept;
+                        self.scroll_extent = session.current_extent();
+                        self.scroll_auto = Some(session);
+                        self.status = status;
                     }
                     Err(e) => self.status = e,
+                }
+                if let Some(pending) = self.scroll_pending.take() {
+                    return self.act(pending);
                 }
             }
             Message::Smoke => {
@@ -1431,8 +1595,19 @@ impl App {
                     self.doc_mut().state.crop = rect;
                     self.scroll_origin = Some(rect);
                     self.phase = Phase::Scroll;
-                    self.status = "Scroll the page, then Add frame; or start Auto".into();
-                    return self.resize().chain(self.scroll_frame());
+                    self.status = "Preparing scroll capture…".into();
+                    let size = window_size(self.doc(), self.phase, &self.capture.monitor);
+                    let workspace = self.capture.monitor.workspace().to_owned();
+                    let pre = self
+                        .window
+                        .map(|id| {
+                            Task::batch([
+                                window::set_mode(id, window::Mode::Windowed),
+                                window::resize(id, size),
+                            ])
+                        })
+                        .unwrap_or_else(Task::none);
+                    return Task::batch([pre, self.scroll_frame(Some((size, workspace)))]);
                 }
                 let mut doc = self.doc().clone();
                 doc.checkpoint();
@@ -1532,53 +1707,197 @@ impl App {
         }
         Task::none()
     }
-    fn scroll_frame(&mut self) -> Task<Message> {
+    fn scroll_frame(&mut self, resize_first: Option<(Size, String)>) -> Task<Message> {
         let Some(crop) = self.scroll_origin else {
             return Task::none();
         };
         self.busy = true;
+        self.scroll_mode = ScrollMode::Manual;
+        self.scroll_stop = Arc::new(AtomicBool::new(false));
+        let stop = self.scroll_stop.clone();
         let monitor = self.capture.monitor.clone();
-        job(
-            move || {
-                let _park = ParkedWindow::new(&monitor, crop)?;
-                capture::frame(&monitor, crop, false)
-            },
-            Message::ScrollFrame,
-        )
+        let axis = self.scroll_axis;
+        let mut session = if let Some(m) = self.scroll_manual.take() {
+            m
+        } else if let Some(a) = self.scroll_auto.take() {
+            capture::stitch::ManualCapture::from_auto(a)
+        } else {
+            capture::stitch::ManualCapture::new(axis)
+        };
+        self.scroll_frames = session.kept;
+        self.scroll_extent = session.current_extent();
+        let live = self.scroll_live.clone();
+        if let Ok(mut l) = live.lock() {
+            l.frames = self.scroll_frames;
+            l.extent = self.scroll_extent;
+            l.status = "Manual capture active · scroll the window or press Done".into();
+        }
+        self.status = "Manual capture active · scroll the window or press Done".into();
+        let hud_size = window_size(self.doc(), Phase::Scroll, &self.capture.monitor);
+        Task::batch([
+            delay(Duration::from_millis(100), Message::ScrollTick),
+            job(
+                move || {
+                    let _ = resize_first;
+                    let mut crop = crop;
+                    let _park = ParkedWindow::new(&monitor, &mut crop, hud_size, true)?;
+                    if let Ok(mut l) = live.lock() {
+                        l.crop = Some(crop);
+                    }
+                    let capturer = capture::ScrollCapturer::new(&monitor)?;
+                    let mut last_status = String::new();
+                    while !stop.load(Ordering::Acquire) {
+                        let frame = capturer.grab(crop, false)?;
+                        let (ev, status) = session.feed(frame);
+                        if let Ok(mut l) = live.lock() {
+                            l.frames = session.kept;
+                            l.extent = session.current_extent();
+                            l.status = status.clone();
+                        }
+                        last_status = status;
+                        if matches!(
+                            ev,
+                            capture::stitch::ManualEvent::Full
+                                | capture::stitch::ManualEvent::Error
+                        ) {
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                    session.flush_pending();
+                    Ok((session, last_status))
+                },
+                Message::ScrollFrame,
+            ),
+        ])
     }
     fn scroll_auto(&mut self) -> Task<Message> {
         let Some(crop) = self.scroll_origin else {
             return Task::none();
         };
         self.busy = true;
+        self.scroll_mode = ScrollMode::Auto;
         self.scroll_stop = Arc::new(AtomicBool::new(false));
         let stop = self.scroll_stop.clone();
+        let handshake = Arc::new(capture::stitch::CaptureHandshake::new());
+        self.scroll_handshake = Some(handshake.clone());
         let monitor = self.capture.monitor.clone();
-        let initial = self.stitcher.take();
-        self.status = "Auto capture · Stop, or relaunch Dusky Snap".into();
-        job(
-            move || {
-                let _park = ParkedWindow::new(&monitor, crop)?;
-                let mut stitch = if let Some(s) = initial {
-                    s
-                } else {
-                    capture::Stitcher::new(capture::frame(&monitor, crop, false)?)
-                };
-                for _ in 0..150 {
-                    if stop.load(Ordering::Relaxed) {
-                        break;
+        let axis = self.scroll_axis;
+        let mut session = if let Some(mut a) = self.scroll_auto.take() {
+            a.resume();
+            a
+        } else if let Some(m) = self.scroll_manual.take() {
+            capture::stitch::AutoCapture::from_manual(m)
+        } else {
+            capture::stitch::AutoCapture::new(axis)
+        };
+        self.scroll_frames = session.kept;
+        self.scroll_extent = session.current_extent();
+        let live = self.scroll_live.clone();
+        if let Ok(mut l) = live.lock() {
+            l.frames = self.scroll_frames;
+            l.extent = self.scroll_extent;
+            l.status = "Auto-scrolling… · press Space to pause, Enter when done".into();
+        }
+        self.status = "Auto-scrolling… · press Space to pause, Enter when done".into();
+        let hud_size = window_size(self.doc(), Phase::Scroll, &self.capture.monitor);
+        Task::batch([
+            delay(Duration::from_millis(100), Message::ScrollTick),
+            job(
+                move || {
+                    let mut crop = crop;
+                    let _park = ParkedWindow::new(&monitor, &mut crop, hud_size, true)?;
+                    if let Ok(mut l) = live.lock() {
+                        l.crop = Some(crop);
                     }
-                    crate::input::scroll(&monitor, crop, true)?;
-                    std::thread::sleep(Duration::from_millis(450));
-                    let next = capture::frame(&monitor, crop, false)?;
-                    if !stitch.append(next)? {
-                        break;
+                    let capturer = capture::ScrollCapturer::new(&monitor)?;
+                    let injector = crate::input::spawn_scroll_injector(
+                        stop.clone(),
+                        handshake.clone(),
+                        monitor.clone(),
+                        crop,
+                        axis,
+                    )?;
+                    let extent = if axis == capture::stitch::Axis::Vertical {
+                        crop.h
+                    } else {
+                        crop.w
+                    };
+                    let mut notches_per_tick = 1i32;
+                    let mut notches_fitted = false;
+                    let mut last_cycle = 0u64;
+                    let mut last_crop: Option<::image::RgbaImage> = None;
+                    let mut last_status = String::from("Auto-scrolling…");
+
+                    while !stop.load(Ordering::Acquire) {
+                        let cycle = handshake.ready_cycle();
+                        if cycle == 0 || cycle == last_cycle {
+                            std::thread::sleep(Duration::from_millis(20));
+                            continue;
+                        }
+                        let Ok(cropped) =
+                            capturer.acquire_settled_frame(crop, last_crop.as_ref(), &stop)
+                        else {
+                            break;
+                        };
+                        let out = session.feed(cropped.clone());
+                        if let Ok(mut l) = live.lock() {
+                            l.frames = session.kept;
+                            l.extent = session.current_extent();
+                            l.status = out.status.clone();
+                        }
+                        last_status = out.status.clone();
+                        if out.event == capture::stitch::AutoEvent::Blank {
+                            std::thread::sleep(Duration::from_millis(20));
+                            continue;
+                        }
+                        last_crop = Some(cropped);
+                        last_cycle = cycle;
+
+                        let per_notch = if out.event == capture::stitch::AutoEvent::Appended
+                            && out.estimate.motion.delta > 0
+                        {
+                            out.estimate.motion.delta as f64 / notches_per_tick as f64
+                        } else if out.event == capture::stitch::AutoEvent::Committed
+                            && out.second_delta > 0
+                        {
+                            out.second_delta as f64 / capture::stitch::PROBE_NOTCHES as f64
+                        } else if out.event == capture::stitch::AutoEvent::Committed
+                            && out.first_delta > 0
+                        {
+                            out.first_delta as f64 / notches_per_tick as f64
+                        } else {
+                            0.0
+                        };
+                        if !notches_fitted && per_notch > 0.0 {
+                            notches_per_tick = ((extent * 0.45) / per_notch.max(1.0))
+                                .round()
+                                .clamp(1.0, 12.0)
+                                as i32;
+                            notches_fitted = true;
+                        }
+
+                        match out.ack {
+                            capture::stitch::AutoAck::Normal => {
+                                handshake.acknowledge_with_notches(cycle, notches_per_tick)
+                            }
+                            capture::stitch::AutoAck::Probe => handshake
+                                .acknowledge_with_notches(cycle, capture::stitch::PROBE_NOTCHES),
+                            capture::stitch::AutoAck::Hold => {}
+                        }
+                        if session.is_finished_or_paused() {
+                            stop.store(true, Ordering::Release);
+                            break;
+                        }
                     }
-                }
-                Ok(Document::new(stitch.image))
-            },
-            Message::AutoEnded,
-        )
+                    stop.store(true, Ordering::Release);
+                    handshake.notify_stop();
+                    let _ = injector.join();
+                    Ok((session, last_status))
+                },
+                Message::AutoEnded,
+            ),
+        ])
     }
     fn view(&self) -> Element<'_, Message> {
         if self.phase == Phase::Preparing {
@@ -1617,23 +1936,139 @@ impl App {
         .align_y(iced::Alignment::Center)
         .spacing(12);
         if self.phase == Phase::Scroll {
+            let frames = self.scroll_frames.max(1);
+            let dim_label = match self.scroll_axis {
+                capture::stitch::Axis::Vertical => "px tall",
+                capture::stitch::Axis::Horizontal => "px wide",
+            };
+            let badge_text = if self.scroll_extent > 0 {
+                format!(
+                    "{} {} · {} {}",
+                    frames,
+                    if frames == 1 { "frame" } else { "frames" },
+                    self.scroll_extent,
+                    dim_label
+                )
+            } else {
+                format!(
+                    "{} {}",
+                    frames,
+                    if frames == 1 { "frame" } else { "frames" }
+                )
+            };
+            let stats_badge = container(text(badge_text).size(12))
+                .padding([4, 10])
+                .style(|t: &Theme| container::Style {
+                    background: Some(t.palette().primary.scale_alpha(0.16).into()),
+                    text_color: Some(t.palette().primary),
+                    border: iced::Border {
+                        radius: 12.0.into(),
+                        width: 1.0,
+                        color: t.palette().primary.scale_alpha(0.35),
+                    },
+                    ..Default::default()
+                });
+
+            let scroll_header = row![
+                mouse_area(
+                    row![
+                        text("Scrolling Capture").size(16),
+                        stats_badge,
+                    ]
+                    .spacing(10)
+                    .align_y(iced::Alignment::Center)
+                    .width(Length::Fill)
+                )
+                .on_press(Message::Drag),
+                icon_button(
+                    "close",
+                    "Cancel · Esc",
+                    Message::Act(Action::Close),
+                    false,
+                    self.theme.palette().text
+                )
+            ]
+            .align_y(iced::Alignment::Center)
+            .spacing(8);
+
+            let is_auto_running = self.scroll_mode == ScrollMode::Auto && self.busy;
+            let is_manual_active = self.scroll_mode == ScrollMode::Manual && self.busy;
+            let axis_label = match self.scroll_axis {
+                capture::stitch::Axis::Vertical => "Axis: ↓",
+                capture::stitch::Axis::Horizontal => "Axis: →",
+            };
+
+            let mut left_controls = row![].spacing(6).align_y(iced::Alignment::Center);
+            if is_auto_running {
+                left_controls = left_controls
+                    .push(active_button(text("● Auto-scrolling").size(13), true))
+                    .push(
+                        active_button(text("Pause · Space").size(13), false)
+                            .on_press(Message::Act(Action::ScrollStop)),
+                    );
+            } else {
+                let auto_label = if self.scroll_auto.is_some() || frames > 1 {
+                    "Resume Auto"
+                } else {
+                    "Auto Scroll"
+                };
+                left_controls = left_controls
+                    .push(
+                        active_button(text(auto_label).size(13), false)
+                            .on_press(Message::Act(Action::ScrollAuto)),
+                    )
+                    .push(
+                        active_button(
+                            text(if is_manual_active {
+                                "● Manual"
+                            } else {
+                                "Manual"
+                            })
+                            .size(13),
+                            is_manual_active,
+                        )
+                        .on_press(Message::Act(Action::ScrollFrame)),
+                    );
+                if frames <= 1 {
+                    left_controls = left_controls.push(
+                        active_button(text(axis_label).size(13), false)
+                            .on_press(Message::Act(Action::ScrollAxis)),
+                    );
+                }
+            }
+
+            let done_btn = primary_button(text("Done · Enter").size(13))
+                .on_press(Message::Act(Action::ScrollDone));
+
+            let toolbar = row![
+                container(left_controls.wrap()).width(Length::Fill),
+                done_btn,
+            ]
+            .spacing(10)
+            .align_y(iced::Alignment::Center);
+
             return container(
                 column![
-                    header,
-                    text("Scrolling capture").size(22),
-                    text("Scroll the page, then add a frame, or start Auto.").size(13),
-                    row![
-                        button("Add frame").on_press(Message::Act(Action::ScrollFrame)),
-                        button("Auto").on_press(Message::Act(Action::ScrollAuto)),
-                        button("Stop").on_press(Message::Act(Action::ScrollStop)),
-                        button("Edit result").on_press(Message::Act(Action::ScrollDone))
-                    ]
-                    .spacing(4),
-                    text(&self.status).size(12)
+                    scroll_header,
+                    container(text(&self.status).size(13))
+                        .padding([6, 10])
+                        .width(Length::Fill)
+                        .clip(true)
+                        .style(|t: &Theme| container::Style {
+                            background: Some(t.palette().text.scale_alpha(0.05).into()),
+                            border: iced::Border {
+                                radius: 8.0.into(),
+                                width: 1.0,
+                                color: t.palette().text.scale_alpha(0.08),
+                            },
+                            ..Default::default()
+                        }),
+                    widget::Space::new().height(Length::Fill),
+                    toolbar,
                 ]
-                .spacing(12),
+                .spacing(8),
             )
-            .padding(16)
+            .padding(12)
             .width(Length::Fill)
             .height(Length::Fill)
             .style(theme::panel)
@@ -1765,9 +2200,9 @@ impl App {
                 return stack.into();
             }
             let controls = row![
-                button("Region").on_press(Message::Mode("region")),
-                button("Window").on_press(Message::Mode("window")),
-                button("Scroll").on_press(Message::Mode("scroll")),
+                active_button("Region", false).on_press(Message::Mode("region")),
+                active_button("Window", false).on_press(Message::Mode("window")),
+                active_button("Scroll", self.options.mode == "scroll").on_press(Message::Mode("scroll")),
                 checkbox(self.options.editor)
                     .label("Annotate")
                     .on_toggle(Message::Annotate),
@@ -2129,6 +2564,24 @@ fn button<'a>(content: impl Into<Element<'a, Message>>) -> widget::Button<'a, Me
         .padding([8, 12])
         .style(|t, s| theme::control(t, s, false))
 }
+fn active_button<'a>(content: impl Into<Element<'a, Message>>, active: bool) -> widget::Button<'a, Message> {
+    widget::button(content)
+        .padding([8, 12])
+        .style(move |t, s| theme::control(t, s, active))
+}
+fn primary_button<'a>(content: impl Into<Element<'a, Message>>) -> widget::Button<'a, Message> {
+    widget::button(content)
+        .padding([8, 14])
+        .style(|t, s| {
+            let mut style = theme::control(t, s, true);
+            style.background = Some(t.palette().primary.into());
+            style.text_color = Color::WHITE;
+            if matches!(s, widget::button::Status::Hovered) {
+                style.background = Some(t.palette().primary.scale_alpha(0.85).into());
+            }
+            style
+        })
+}
 fn icon_button<'a>(
     kind: &'static str,
     label: &'a str,
@@ -2459,13 +2912,15 @@ fn resize_window(size: Size, position: Option<(i32, i32)>, workspace: &str) -> R
     } else {
         String::new()
     };
+    let clear_pick_rule =
+        r#"hl.window_rule({name="dusky_snap_pick",match={class="^__dusky_snap_disabled__$"}}); "#;
     let place = if let Some((x, y)) = position {
         format!("hl.dispatch(hl.dsp.window.move({{window=w,x={x},y={y},relative=false}}))")
     } else {
         "hl.dispatch(hl.dsp.window.center({window=w}))".into()
     };
     let script = format!(
-        "local w={selector}; {unpin}{restore_workspace}hl.dispatch(hl.dsp.window.resize({{window=w,x={},y={},relative=false}})); {place}",
+        "{clear_pick_rule}local w={selector}; {unpin}{restore_workspace}hl.dispatch(hl.dsp.window.resize({{window=w,x={},y={},relative=false}})); {place}",
         size.width.round() as i32,
         size.height.round() as i32
     );
@@ -2476,29 +2931,36 @@ struct ParkedWindow {
     address: String,
     x: i64,
     y: i64,
+    offscreen: bool,
 }
 impl ParkedWindow {
-    fn new(monitor: &Monitor, crop: Rect) -> Result<Self> {
-        let client = own_window()?;
+    fn new(
+        monitor: &Monitor,
+        crop: &mut Rect,
+        hud_size: Size,
+        move_cursor: bool,
+    ) -> Result<Self> {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let client = loop {
+            let client = own_window()?;
+            if client["fullscreen"].as_i64() == Some(0) {
+                break client;
+            }
+            if Instant::now() >= deadline {
+                return Err("Hyprland did not leave fullscreen".into());
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
         let address = client["address"]
             .as_str()
             .ok_or("Window has no address")?
             .to_string();
         let x = client["at"][0].as_i64().ok_or("Missing window x")?;
         let y = client["at"][1].as_i64().ok_or("Missing window y")?;
-        let width = client["size"][0].as_i64().ok_or("Missing window width")?;
-        let monitors: Vec<Monitor> = serde_json::from_slice(&capture::command(
-            "hyprctl",
-            &["-j", "monitors"],
-            None,
-            Duration::from_secs(2),
-        )?)?;
-        let left = monitors
-            .iter()
-            .map(|m| m.x as i64)
-            .min()
-            .ok_or("No outputs")?;
-        let height = client["size"][1].as_i64().ok_or("Missing window height")?;
+        let is_pinned = client["pinned"].as_bool().unwrap_or(false);
+
+        let width = hud_size.width.ceil() as i64;
+        let height = hud_size.height.ceil() as i64;
         let (mw, mh) = monitor.logical_size();
         let [reserved_left, reserved_top, reserved_right, reserved_bottom] = monitor.reserved;
         let (pw, ph) = if monitor.transform % 2 == 1 {
@@ -2506,77 +2968,123 @@ impl ParkedWindow {
         } else {
             (monitor.width, monitor.height)
         };
+
         let cx = crop.x * mw as f64 / pw as f64;
-        let cy = crop.y * mh as f64 / ph as f64;
+        let mut cy = crop.y * mh as f64 / ph as f64;
         let right = (crop.x + crop.w) * mw as f64 / pw as f64;
-        let bottom = (crop.y + crop.h) * mh as f64 / ph as f64;
-        let middle_x = ((cx + right - width as f64) / 2.0).clamp(
-            reserved_left as f64 + 8.0,
-            (mw as f64 - reserved_right as f64 - width as f64 - 8.0)
-                .max(reserved_left as f64 + 8.0),
-        ) as i64;
-        let middle_y = ((cy + bottom - height as f64) / 2.0).clamp(
-            reserved_top as f64 + 8.0,
-            (mh as f64 - reserved_bottom as f64 - height as f64 - 8.0)
-                .max(reserved_top as f64 + 8.0),
-        ) as i64;
-        let position = if cy - reserved_top as f64 >= height as f64 + 16.0 {
-            (
-                monitor.x as i64 + middle_x,
-                monitor.y as i64 + reserved_top as i64 + 8,
-            )
-        } else if mh as f64 - reserved_bottom as f64 - bottom >= height as f64 + 16.0 {
-            (
-                monitor.x as i64 + middle_x,
-                monitor.y as i64 + bottom.ceil() as i64 + 8,
-            )
-        } else if cx - reserved_left as f64 >= width as f64 + 16.0 {
-            (
-                monitor.x as i64 + reserved_left as i64 + 8,
-                monitor.y as i64 + middle_y,
-            )
-        } else if mw as f64 - reserved_right as f64 - right >= width as f64 + 16.0 {
-            (
-                monitor.x as i64 + right.ceil() as i64 + 8,
-                monitor.y as i64 + middle_y,
-            )
+        let mut bottom = (crop.y + crop.h) * mh as f64 / ph as f64;
+
+        let margin = 12.0;
+        let gap = 12.0;
+        let work_left = reserved_left as f64 + margin;
+        let work_top = reserved_top as f64 + margin;
+        let work_right = (mw - reserved_right) as f64 - margin;
+        let work_bottom = (mh - reserved_bottom) as f64 - margin;
+
+        let req_h = height as f64 + gap;
+        let req_w = width as f64 + gap;
+        let min_crop_h = 96.0;
+
+        let mut has_bottom = work_bottom - bottom >= req_h;
+        let mut has_top = cy - work_top >= req_h;
+        let has_right = work_right - right >= req_w;
+        let has_left = cx - work_left >= req_w;
+
+        // If the region covers the full screen height/width, reserve a clean strip
+        // outside `crop` (matching oma-snap's reserveChromeStrip) so the HUD never
+        // overlaps `crop` or gets baked into captured frames.
+        if !has_bottom && !has_top && !has_right && !has_left {
+            let max_bottom = (work_bottom - req_h).floor();
+            if max_bottom - cy >= min_crop_h {
+                bottom = max_bottom;
+                crop.h = ((bottom - cy) * ph as f64 / mh as f64).round();
+                has_bottom = true;
+            } else {
+                let min_top = (work_top + req_h).ceil();
+                if bottom - min_top >= min_crop_h {
+                    cy = min_top;
+                    crop.y = (cy * ph as f64 / mh as f64).round();
+                    crop.h = ((bottom - cy) * ph as f64 / mh as f64).round();
+                    has_top = true;
+                }
+            }
+        }
+
+        let min_x = work_left.round() as i64;
+        let max_x = (work_right - width as f64).floor() as i64;
+        let middle_x = (((cx + right - width as f64) / 2.0).round() as i64)
+            .clamp(min_x, max_x.max(min_x));
+
+        let min_y = work_top.round() as i64;
+        let max_y = (work_bottom - height as f64).floor() as i64;
+        let middle_y = (((cy + bottom - height as f64) / 2.0).round() as i64)
+            .clamp(min_y, max_y.max(min_y));
+
+        // Prefer parking directly below the capture region, then above, then beside,
+        // and clamp strictly inside the monitor's usable workarea.
+        let (local_x, local_y) = if has_bottom {
+            (middle_x, (bottom + gap).ceil() as i64)
+        } else if has_top {
+            (middle_x, (cy - gap - height as f64).floor() as i64)
+        } else if has_right {
+            ((right + gap).ceil() as i64, middle_y)
+        } else if has_left {
+            ((cx - gap - width as f64).floor() as i64, middle_y)
         } else {
-            (left - width - 64, y)
+            (middle_x, max_y.max(min_y))
         };
-        let park = Self { address, x, y };
-        park.move_to(position.0, position.1)?;
-        // This is intentional pointer placement for capture; it settles focus
-        // dimming before the first frame, as well as directing injected wheels.
-        let (sx, sy) = monitor.logical_size();
-        let (px, py) = if monitor.transform % 2 == 1 {
-            (monitor.height, monitor.width)
-        } else {
-            (monitor.width, monitor.height)
-        };
-        let cx = monitor.x as f64 + (crop.x + crop.w / 2.0) * sx as f64 / px as f64;
-        let cy = monitor.y as f64 + (crop.y + crop.h / 2.0) * sy as f64 / py as f64;
-        let script = format!(
-            "hl.dsp.cursor.move({{x={},y={}}})",
-            cx.round() as i64,
-            cy.round() as i64
+
+        let position = (
+            monitor.x as i64 + local_x.clamp(min_x, max_x.max(min_x)),
+            monitor.y as i64 + local_y.clamp(min_y, max_y.max(min_y)),
         );
-        capture::command(
-            "hyprctl",
-            &["dispatch", &script],
-            None,
-            Duration::from_secs(2),
-        )?;
-        std::thread::sleep(Duration::from_millis(250));
-        Ok(park)
+
+        let selector = serde_json::to_string(&format!("address:{address}"))?;
+        let clear_pick_rule =
+            r#"hl.window_rule({name="dusky_snap_pick",match={class="^__dusky_snap_disabled__$"}}); "#;
+        let ensure_pin = if !is_pinned {
+            "hl.dispatch(hl.dsp.window.pin({window=w})); "
+        } else {
+            ""
+        };
+        let cursor_cmd = if move_cursor {
+            let (park_px, park_py) = crate::input::auto_scroll_park_point(*crop);
+            let cur_x = monitor.x as f64 + park_px as f64 * mw as f64 / pw as f64;
+            let cur_y = monitor.y as f64 + park_py as f64 * mh as f64 / ph as f64;
+            format!(
+                "; hl.dispatch(hl.dsp.cursor.move({{x={},y={}}}))",
+                cur_x.round() as i64,
+                cur_y.round() as i64
+            )
+        } else {
+            String::new()
+        };
+
+        let script = format!(
+            "{clear_pick_rule}local w={selector}; {ensure_pin}\
+             hl.dispatch(hl.dsp.window.resize({{window=w,x={width},y={height},relative=false}})); \
+             hl.dispatch(hl.dsp.window.move({{window=w,x={},y={},relative=false}})){cursor_cmd}",
+            position.0, position.1
+        );
+        capture::command("hyprctl", &["eval", &script], None, Duration::from_secs(2))?;
+        std::thread::sleep(Duration::from_millis(120));
+
+        Ok(Self {
+            address,
+            x,
+            y,
+            offscreen: false,
+        })
     }
+
     fn move_to(&self, x: i64, y: i64) -> Result<()> {
         let script = format!(
-            "hl.dsp.window.move({{window={},x={x},y={y},relative=false}})",
+            "hl.dispatch(hl.dsp.window.move({{window={},x={x},y={y},relative=false}}))",
             serde_json::to_string(&format!("address:{}", self.address))?
         );
         capture::command(
             "hyprctl",
-            &["dispatch", &script],
+            &["eval", &script],
             None,
             Duration::from_secs(2),
         )?;
@@ -2585,7 +3093,9 @@ impl ParkedWindow {
 }
 impl Drop for ParkedWindow {
     fn drop(&mut self) {
-        let _ = self.move_to(self.x, self.y);
+        if self.offscreen {
+            let _ = self.move_to(self.x, self.y);
+        }
     }
 }
 fn set_pinned(pin: bool) -> Result<()> {
@@ -2606,12 +3116,12 @@ fn set_pinned(pin: bool) -> Result<()> {
     if is_pin != pin {
         let address = client["address"].as_str().ok_or("Window has no address")?;
         let script = format!(
-            "hl.dsp.window.pin({{ window = {} }})",
+            "hl.dispatch(hl.dsp.window.pin({{ window = {} }}))",
             serde_json::to_string(&format!("address:{address}"))?
         );
         capture::command(
             "hyprctl",
-            &["dispatch", &script],
+            &["eval", &script],
             None,
             Duration::from_secs(2),
         )?;
@@ -2797,19 +3307,32 @@ impl canvas::Program<Message> for Surface<'_> {
             );
         };
         if app.phase == Phase::Pick {
+            if app.busy {
+                return vec![frame.into_geometry()];
+            }
             // Wayland's pointer-enter position is usable without a motion event.
             let hover = cursor
                 .position_in(bounds)
                 .map(|p| view.source(p))
                 .or(app.hover);
+            let drag_selection = app
+                .gesture
+                .as_ref()
+                .map(|g| Rect::between(g.start, g.last))
+                .filter(|r| r.w >= 4.0 || r.h >= 4.0);
             // Paint-only guidance never intercepts the capture surface. Hide it
             // while selecting, or when the pointer approaches its screen edge.
-            if app.gesture.is_none()
+            if drag_selection.is_none()
                 && !app.picker_controls
                 && hover.is_none_or(|p| view.screen(p).y < bounds.height - 48.0)
             {
+                let prompt = if app.options.mode == "scroll" {
+                    "Scroll mode active · drag a region or click a window to start · Tab options · Esc cancel"
+                } else {
+                    "Drag a region · click a window · Tab options · Esc cancel"
+                };
                 frame.fill_text(canvas::Text {
-                    content: "Drag a region · click a window · Tab options · Esc cancel".into(),
+                    content: prompt.into(),
                     position: iced::Point::new(bounds.width / 2.0, bounds.height - 24.0),
                     align_x: iced::alignment::Horizontal::Center.into(),
                     color: Color::WHITE.scale_alpha(0.75),
@@ -2837,19 +3360,15 @@ impl canvas::Program<Message> for Surface<'_> {
                     stroke,
                 );
             }
-            let selection = app
-                .gesture
-                .as_ref()
-                .map(|g| Rect::between(g.start, g.last))
-                .or_else(|| {
-                    hover.and_then(|p| {
-                        app.capture
-                            .windows
-                            .iter()
-                            .find(|w| w.rect.contains(p))
-                            .map(|w| w.rect)
-                    })
-                });
+            let selection = drag_selection.or_else(|| {
+                hover.and_then(|p| {
+                    app.capture
+                        .windows
+                        .iter()
+                        .find(|w| w.rect.contains(p))
+                        .map(|w| w.rect)
+                })
+            });
             if let Some(r) = selection {
                 let b = view.bounds(r);
                 let dim = Color::from_rgba(0.0, 0.0, 0.0, 0.45);

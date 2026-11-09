@@ -315,84 +315,125 @@ pub fn load(o: &Options) -> Result<Capture> {
         pointer: None,
     })
 }
-pub fn frame(monitor: &Monitor, crop: Rect, cursor: bool) -> Result<RgbaImage> {
-    let conn = libwayshot::WayshotConnection::new()?;
-    let output = conn
-        .get_all_outputs()
-        .iter()
-        .find(|m| m.name == monitor.name)
-        .ok_or("Output was disconnected")?;
-    let image = output_image(&conn, output, cursor)?;
-    let x = crop.x.max(0.0) as u32;
-    let y = crop.y.max(0.0) as u32;
-    let w = (crop.w as u32).min(image.width().saturating_sub(x));
-    let h = (crop.h as u32).min(image.height().saturating_sub(y));
-    if w == 0 || h == 0 {
-        return Err("Scroll region is outside the output".into());
-    }
-    Ok(image::imageops::crop_imm(&image, x, y, w, h).to_image())
+#[path = "stitch.rs"]
+pub mod stitch;
+
+pub struct ScrollCapturer {
+    conn: libwayshot::WayshotConnection,
+    output: libwayshot::output::OutputInfo,
 }
 
-// Match the new frame against the tail, requiring agreement across multiple columns.
-// Ambiguous or unrelated frames are rejected instead of silently corrupting the stitch.
+impl ScrollCapturer {
+    pub fn new(monitor: &Monitor) -> Result<Self> {
+        let conn = libwayshot::WayshotConnection::new()?;
+        let output = conn
+            .get_all_outputs()
+            .iter()
+            .find(|m| m.name == monitor.name)
+            .cloned()
+            .ok_or("Output was disconnected")?;
+        Ok(Self { conn, output })
+    }
+
+    pub fn grab(&self, crop: Rect, cursor: bool) -> Result<RgbaImage> {
+        let image = output_image(&self.conn, &self.output, cursor)?;
+        let x = crop.x.max(0.0) as u32;
+        let y = crop.y.max(0.0) as u32;
+        let w = (crop.w as u32).min(image.width().saturating_sub(x));
+        let h = (crop.h as u32).min(image.height().saturating_sub(y));
+        if w == 0 || h == 0 {
+            return Err("Scroll region is outside the output".into());
+        }
+        Ok(image::imageops::crop_imm(&image, x, y, w, h).to_image())
+    }
+
+    pub fn acquire_settled_frame(
+        &self,
+        crop: Rect,
+        before: Option<&RgbaImage>,
+        stop: &std::sync::atomic::AtomicBool,
+    ) -> Result<RgbaImage> {
+        use std::sync::atomic::Ordering;
+        let start = std::time::Instant::now();
+        let mut moved = before.is_none();
+        let mut last: Option<RgbaImage> = None;
+        while !stop.load(Ordering::Acquire) {
+            let current = self.grab(crop, false)?;
+            if !moved {
+                if before.is_some_and(|b| b.as_raw() != current.as_raw()) {
+                    moved = true;
+                } else if start.elapsed() >= Duration::from_millis(650) {
+                    return Ok(current);
+                } else {
+                    std::thread::sleep(Duration::from_millis(35));
+                    continue;
+                }
+            }
+            if let Some(prev) = last.as_ref() {
+                if prev.as_raw() == current.as_raw() {
+                    return Ok(current);
+                }
+                let prev_g = stitch::downsample_to_gray(prev, stitch::Axis::Vertical);
+                let cur_g = stitch::downsample_to_gray(&current, stitch::Axis::Vertical);
+                if stitch::classify_motion(&prev_g, &cur_g, stitch::Axis::Vertical).motion.kind
+                    == stitch::MotionKind::Stationary
+                {
+                    return Ok(current);
+                }
+            }
+            last = Some(current);
+            if start.elapsed() >= Duration::from_millis(1800) {
+                return Ok(last.unwrap());
+            }
+            std::thread::sleep(Duration::from_millis(45));
+        }
+        Err("Scroll capture stopped".into())
+    }
+}
+
+pub fn frame(monitor: &Monitor, crop: Rect, cursor: bool) -> Result<RgbaImage> {
+    ScrollCapturer::new(monitor)?.grab(crop, cursor)
+}
+
 pub fn stitch(previous: &RgbaImage, next: &RgbaImage) -> Result<RgbaImage> {
-    if previous.width() != next.width() || next.height() < 16 {
+    if previous.width() != next.width()
+        || previous.height() < next.height()
+        || next.height() < 16
+    {
         return Err("Scroll frame dimensions changed".into());
     }
-    let max_overlap = previous.height().min(next.height());
-    if previous.height() >= next.height()
-        && previous.as_raw()[previous.as_raw().len() - next.as_raw().len()..] == *next.as_raw()
-    {
+    if previous.as_raw()[previous.as_raw().len() - next.as_raw().len()..] == *next.as_raw() {
         return Ok(previous.clone());
     }
-    let mut best = (f64::MAX, 0u32);
-    for overlap in 12..max_overlap {
-        let mut error = 0u64;
-        let mut samples = 0u64;
-        for row in (0..overlap).step_by((overlap / 12).max(1) as usize) {
-            for x in (next.width() / 10..next.width() * 9 / 10)
-                .step_by((next.width() / 32).max(1) as usize)
-            {
-                let a = previous.get_pixel(x, previous.height() - overlap + row);
-                let b = next.get_pixel(x, row);
-                for i in 0..3 {
-                    error += a[i].abs_diff(b[i]) as u64;
-                }
-                samples += 3;
-            }
-        }
-        let score = error as f64 / samples.max(1) as f64;
-        if score <= best.0 {
-            best = (score, overlap);
-        }
-    }
-    let sample = next.as_raw();
-    let texture = sample
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .step_by((sample.len() / 4 / 4096).max(1))
-        .filter(|p| p[..3] != sample[..3])
-        .count();
-    if texture < 8 {
+    if stitch::image_is_uniform(next) {
         return Err("Frame has too little detail for reliable alignment".into());
     }
-    if best.0 > 6.0 {
+    let tail_y = previous.height() - next.height();
+    let tail = image::imageops::crop_imm(previous, 0, tail_y, previous.width(), next.height())
+        .to_image();
+    let prev_gray = stitch::downsample_to_gray(&tail, stitch::Axis::Vertical);
+    let next_gray = stitch::downsample_to_gray(next, stitch::Axis::Vertical);
+    let est = stitch::classify_motion(&prev_gray, &next_gray, stitch::Axis::Vertical);
+    if est.motion.kind == stitch::MotionKind::Stationary {
+        return Ok(previous.clone());
+    }
+    if est.motion.kind != stitch::MotionKind::Forward || est.motion.delta <= 0 {
         return Err(format!(
             "Cannot align frames (error {:.1}); scroll less and capture again",
-            best.0
+            est.error
         )
         .into());
     }
-    let h = previous.height() + next.height() - best.1;
-    if u64::from(h) * u64::from(next.width()) > 160_000_000 {
-        return Err("Scroll capture reached its 160 megapixel budget".into());
+    let overlap = next.height().saturating_sub(est.motion.delta as u32);
+    let h = previous.height() + next.height() - overlap;
+    if u64::from(h) * u64::from(next.width()) > stitch::MAX_STITCHED_PIXELS as u64 {
+        return Err("Scroll capture reached its memory budget".into());
     }
     let mut out = RgbaImage::new(next.width(), h);
     let previous_bytes = previous.as_raw().len();
     out.as_mut()[..previous_bytes].copy_from_slice(previous.as_raw());
     out.as_mut()[previous_bytes..]
-        .copy_from_slice(&next.as_raw()[best.1 as usize * next.width() as usize * 4..]);
+        .copy_from_slice(&next.as_raw()[overlap as usize * next.width() as usize * 4..]);
     Ok(out)
 }
 #[cfg(test)]
@@ -419,54 +460,58 @@ mod tests {
 #[derive(Clone)]
 pub struct Stitcher {
     pub image: RgbaImage,
-    last: RgbaImage,
+    accumulator: stitch::StitchAccumulator,
+    last_gray: stitch::GrayView,
+    axis: stitch::Axis,
 }
 impl Stitcher {
     pub fn new(image: RgbaImage) -> Self {
+        Self::with_axis(image, stitch::Axis::Vertical)
+    }
+    pub fn with_axis(image: RgbaImage, axis: stitch::Axis) -> Self {
+        let accumulator =
+            stitch::StitchAccumulator::new(&image, axis).expect("valid initial scroll frame");
+        let last_gray = stitch::downsample_to_gray(&image, axis);
         Self {
-            last: image.clone(),
             image,
+            accumulator,
+            last_gray,
+            axis,
         }
     }
     pub fn append(&mut self, next: RgbaImage) -> Result<bool> {
-        if self.last.dimensions() != next.dimensions() {
+        let next_gray = stitch::downsample_to_gray(&next, self.axis);
+        if self.last_gray.width != next_gray.width || self.last_gray.height != next_gray.height {
             return Err("Scroll frame dimensions changed".into());
         }
-        if self.last == next {
+        let est = stitch::classify_motion(&self.last_gray, &next_gray, self.axis);
+        if est.motion.kind == stitch::MotionKind::Stationary {
             return Ok(false);
         }
-        let h = next.height();
-        let w = next.width();
-        let same_row = |y: u32| -> bool {
-            let start = y as usize * w as usize * 4;
-            let end = start + w as usize * 4;
-            self.last.as_raw()[start..end] == next.as_raw()[start..end]
-        };
-        let top = (0..h / 4).take_while(|&y| same_row(y)).count() as u32;
-        let bottom = (0..h / 4)
-            .take_while(|&offset| same_row(h - 1 - offset))
-            .count() as u32;
-        let old = (bottom > 0).then(|| {
-            image::imageops::crop_imm(&self.image, 0, 0, w, self.image.height() - bottom).to_image()
-        });
-        let content = (top > 0 || bottom > 0)
-            .then(|| image::imageops::crop_imm(&next, 0, top, w, h - top - bottom).to_image());
-        let joined = stitch(
-            old.as_ref().unwrap_or(&self.image),
-            content.as_ref().unwrap_or(&next),
-        )?;
-        self.image = if bottom == 0 {
-            joined
-        } else {
-            let mut image = RgbaImage::new(w, joined.height() + bottom);
-            let bytes = joined.as_raw().len();
-            image.as_mut()[..bytes].copy_from_slice(joined.as_raw());
-            image.as_mut()[bytes..]
-                .copy_from_slice(&next.as_raw()[(h - bottom) as usize * w as usize * 4..]);
-            image
-        };
-        self.last = next;
-        Ok(true)
+        if stitch::image_is_uniform(&next) {
+            return Err("Frame has too little detail for reliable alignment".into());
+        }
+        match est.motion.kind {
+            stitch::MotionKind::Forward => {
+                self.accumulator
+                    .push_forward(&next, est.motion.delta as usize)?;
+                self.last_gray = next_gray;
+                self.image = self.accumulator.finish()?;
+                Ok(true)
+            }
+            stitch::MotionKind::Reverse => {
+                self.accumulator
+                    .push_reverse(&next, est.motion.delta as usize)?;
+                self.last_gray = next_gray;
+                self.image = self.accumulator.finish()?;
+                Ok(true)
+            }
+            _ => Err(format!(
+                "Cannot align frames (error {:.1}); scroll less and capture again",
+                est.error
+            )
+            .into()),
+        }
     }
 }
 
