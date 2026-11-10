@@ -442,6 +442,17 @@ class AuditTests(unittest.TestCase):
             wrapper.write_text(text[start:end])
             proc = subprocess.run(['bash', '-n', str(wrapper)], capture_output=True, text=True)
             self.assertEqual(proc.returncode, 0, proc.stderr)
+            # Functional: generated Rust files must land in $builddir, which the
+            # wrapper must define itself (the upstream function's is local to it).
+            (tree / 'rust/kernel').mkdir(parents=True, exist_ok=True)
+            (tree / 'rust/kernel/generated_test.rs').write_text('// test\n')
+            pkgdir = tree / 'pkg'
+            pkgdir.mkdir()
+            script = tree / 'run.sh'
+            script.write_text('_dusky_upstream_headers() { :; }\ndepends=()\n' + wrapper.read_text() + '\n_package-headers\n')
+            env = os.environ | {'pkgdir': str(pkgdir), 'KERNELRELEASE': '7.4-dusky-battery', 'pkgbase': 'linux-dusky-battery'}
+            subprocess.run(['bash', str(script)], cwd=tree, env=env, check=True, capture_output=True)
+            self.assertTrue((pkgdir / 'usr/lib/modules/7.4-dusky-battery/build/rust/kernel/generated_test.rs').is_file())
 
     def test_runtime_opt_out_keeps_metadata_but_no_service(self):
         p=profile();p.set('runtime','enabled',False)

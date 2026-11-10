@@ -4613,7 +4613,7 @@ def stage_runtime_package(tree: Path, p: KernelProfile, d: Derived) -> None:
     if resolve_build_headers(p, d.facts):
         extra += "eval \"$(declare -f _package-headers | sed '1s/_package-headers/_dusky_upstream_headers/')\"\n"
         dependencies = "clang lld llvm" if d.toolchain == "llvm" else "gcc binutils"
-        extra += f"_package-headers() {{\n  _dusky_upstream_headers\n  depends+=({dependencies})\n"
+        extra += f"_package-headers() {{\n  local builddir=\"${{pkgdir}}/usr/lib/modules/${{KERNELRELEASE}}/build\"\n  _dusky_upstream_headers\n  depends+=({dependencies})\n"
         # Out-of-tree Rust modules include!() files generated into rust/kernel/;
         # upstream's _package-headers only ships rust/*.rmeta and rust/*.so.
         extra += ("  if [ -d rust/kernel ]; then\n"
