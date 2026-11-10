@@ -37,7 +37,7 @@ log_buf_shift = 16
 kexec = false
 
 [compiler]
-rust = false
+rust = true
 
 [security]
 stackprotector = "none"

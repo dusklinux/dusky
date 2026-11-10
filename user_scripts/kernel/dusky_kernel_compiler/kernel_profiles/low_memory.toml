@@ -34,7 +34,7 @@ kexec = false
 [compiler]
 optimize = "size"
 debug_info = "none"
-rust = false
+rust = true
 
 [security]
 profile = "extreme"

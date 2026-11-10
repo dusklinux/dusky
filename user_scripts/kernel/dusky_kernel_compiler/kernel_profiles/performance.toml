@@ -32,7 +32,7 @@ kexec = false
 
 [compiler]
 debug_info = "none"
-rust = false
+rust = true
 
 [security]
 profile = "extreme"
