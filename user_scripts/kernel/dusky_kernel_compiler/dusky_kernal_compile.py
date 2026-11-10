@@ -3327,10 +3327,22 @@ def _ops_core(mx: Matrix, p: KernelProfile, d: Derived) -> None:
         mx.y(sym)
     for sym in ("BINFMT_MISC", "BLK_DEV_LOOP", "FUSE_FS", "OVERLAY_FS", "DM_CRYPT", "DM_INTEGRITY", "X86_MSR", "X86_CPUID", "VETH", "BRIDGE"):
         mx.m(sym)
-    mx.y("ANDROID_BINDER_IPC", why="Android Binder IPC (Waydroid)")
-    mx.y("ANDROID_BINDERFS", why="Android Binderfs filesystem (Waydroid)")
-    mx.s("ANDROID_BINDER_DEVICES", "binder,hwbinder,vndbinder", why="Binder IPC device nodes")
-    mx.n("ANDROID_BINDER_IPC_RUST", optional=True, why="prefer stable C Binder IPC driver for Waydroid")
+    # Linux 7.4 removed the C binder driver and binderfs; only the Rust binder
+    # remains (and it depends on RUST). Pick whichever this tree can use.
+    c_binder = d.idx.has("ANDROID_BINDER_IPC")
+    rust_binder = d.idx.has("ANDROID_BINDER_IPC_RUST") and d.rust
+    if c_binder:
+        mx.y("ANDROID_BINDER_IPC", why="Android Binder IPC (Waydroid)")
+        if d.idx.has("ANDROID_BINDERFS"):
+            mx.y("ANDROID_BINDERFS", why="Android Binderfs filesystem (Waydroid)")
+        mx.n("ANDROID_BINDER_IPC_RUST", optional=True, why="prefer stable C Binder IPC driver for Waydroid")
+    elif rust_binder:
+        mx.y("ANDROID_BINDER_IPC_RUST", why="Android Binder IPC (Waydroid, Rust driver)")
+    elif d.idx.has("ANDROID_BINDER_IPC_RUST"):
+        warn("Android Binder on this tree requires the Rust binder driver, but compiler.rust is disabled; "
+             "Waydroid binder will be unavailable (enable compiler.rust or accept the loss)")
+    if c_binder or rust_binder:
+        mx.s("ANDROID_BINDER_DEVICES", "binder,hwbinder,vndbinder", why="Binder IPC device nodes")
     mx.y("CHECKPOINT_RESTORE", optional=True, why="container checkpoint/restore (LXC)")
     mx.y("MEMFD_CREATE", optional=True, why="memfd_create (Waydroid/ashmem replacement)")
     for sym in ("IP_NF_MANGLE", "IP_NF_NAT", "NETFILTER_XT_TARGET_CHECKSUM", "NETFILTER_XT_MATCH_COMMENT", "IP6_NF_MANGLE", "IP6_NF_NAT"):
@@ -3578,7 +3590,6 @@ def _ops_memory(mx: Matrix, p: KernelProfile, d: Derived) -> None:
     mx.flag("SLAB_BUCKETS", m["slab_buckets"] and not tiny)
     mx.flag("RANDOM_KMALLOC_CACHES", hardened and not lean and not tiny)
     mx.flag("SHUFFLE_PAGE_ALLOCATOR", not extreme and not lean)
-    mx.flag("PER_VMA_LOCK", m["per_vma_lock"], optional=True)
     mx.y("COMPACTION")
     mx.y("MIGRATION")
     mx.flag("KSM", m["ksm"])
@@ -4127,19 +4138,19 @@ VERIFY_HINTS: Final[dict[str, str]] = {
     "NTSYNC": "in-tree ntsync requires Linux >= 6.14 without BROKEN",
     "SLUB_CPU_PARTIAL": "unavailable under PREEMPT_RT or SLUB_TINY",
     "SLAB_BUCKETS": "depends on !SLUB_TINY",
-    "DEBUG_INFO_BTF": "needs pahole >= 1.16 (>= 1.27 recommended) and non-reduced DWARF",
+    "DEBUG_INFO_BTF": "needs pahole >= 1.16 (>= 1.32 recommended for Rust BTF) and non-reduced DWARF",
     "X86_64_VERSION": "depends on GENERIC_CPU and a compiler that knows x86-64-v levels",
     "ZRAM_MULTI_COMP": "requires ZRAM=y|m",
     "RCU_LAZY": "requires RCU_NOCB_CPU (RCU_EXPERT)",
     "PREEMPT_DYNAMIC": "requires HAVE_PREEMPT_DYNAMIC and !PREEMPT_RT",
     "MPTCP_IPV6": "requires IPV6=y",
     "TRIM_UNUSED_KSYMS": "requires !COMPILE_TEST and MODULES",
-    "PER_VMA_LOCK": "def_bool driven by ARCH_SUPPORTS_PER_VMA_LOCK && SMP",
     "INIT_STACK_ALL_ZERO": "requires a compiler supporting -ftrivial-auto-var-init=zero",
     "KFENCE_SAMPLE_INTERVAL": "only visible when KFENCE=y",
     "VFIO_PCI_DMABUF": "requires VFIO_PCI_CORE, PCI_P2PDMA (needs ZONE_DEVICE/MEMORY_HOTPLUG), and DMA_SHARED_BUFFER",
-    "ANDROID_BINDER_IPC": "requires MMU and NET",
-    "ANDROID_BINDERFS": "requires ANDROID_BINDER_IPC=y",
+    "ANDROID_BINDER_IPC": "requires MMU and NET (removed in Linux 7.4; use ANDROID_BINDER_IPC_RUST)",
+    "ANDROID_BINDERFS": "requires ANDROID_BINDER_IPC=y (removed in Linux 7.4)",
+    "ANDROID_BINDER_IPC_RUST": "requires RUST, MMU and NET",
 }
 
 
@@ -4516,8 +4527,8 @@ def check_dependencies(p: KernelProfile, facts: HostFacts, d_toolchain: str, wan
     if d_toolchain == "llvm" and clang_v and version_tuple(clang_v) < (19,):
         warn(f"clang {clang_v} detected; Linux 7.x LTO/kCFI/AutoFDO paths are validated with clang >= 21")
     pahole_v = facts.tools.get("pahole", "")
-    if pahole_v and version_tuple(pahole_v) < (1, 27):
-        warn(f"pahole {pahole_v} is old; BTF for Rust/LTO kernels needs >= 1.27")
+    if pahole_v and version_tuple(pahole_v) < (1, 32):
+        warn(f"pahole {pahole_v} is old; BTF for Rust kernels needs >= 1.32 (PAHOLE_HAS_LANG_EXCLUDE)")
 
 
 def rust_probe(tree: Path, env: Mapping[str, str]) -> tuple[bool, str]:
@@ -4602,7 +4613,15 @@ def stage_runtime_package(tree: Path, p: KernelProfile, d: Derived) -> None:
     if resolve_build_headers(p, d.facts):
         extra += "eval \"$(declare -f _package-headers | sed '1s/_package-headers/_dusky_upstream_headers/')\"\n"
         dependencies = "clang lld llvm" if d.toolchain == "llvm" else "gcc binutils"
-        extra += f"_package-headers() {{\n  _dusky_upstream_headers\n  depends+=({dependencies})\n}}\n"
+        extra += f"_package-headers() {{\n  _dusky_upstream_headers\n  depends+=({dependencies})\n"
+        # Out-of-tree Rust modules include!() files generated into rust/kernel/;
+        # upstream's _package-headers only ships rust/*.rmeta and rust/*.so.
+        extra += ("  if [ -d rust/kernel ]; then\n"
+                  "    while IFS= read -r -d \"\" _gen; do\n"
+                  "      install -Dm644 \"$_gen\" \"$builddir/$_gen\"\n"
+                  "    done < <(find rust -type f -name 'generated_*.rs' -print0)\n"
+                  "  fi\n")
+        extra += "}\n"
     extra += end_marker
     anchor = 'for _p in "${pkgname[@]}"; do'
     if anchor not in text:
@@ -5671,8 +5690,8 @@ def do_doctor(args: argparse.Namespace) -> int:
         ("clang", "compiler (LLVM)", True),
         ("ld.lld", "linker (LLD)", True),
         ("llvm-ar", "archiver (LLVM)", True),
-        ("rustc", "Rust-for-Linux", True),
-        ("bindgen", "Rust-for-Linux", True),
+        ("rustc", "Rust-for-Linux (required only when compiler.rust=true)", False),
+        ("bindgen", "Rust-for-Linux (required only when compiler.rust=true)", False),
         ("pahole", "BTF generation", True),
         ("make", "build automation", True),
         ("ccache", "compiler cache (optional)", False),

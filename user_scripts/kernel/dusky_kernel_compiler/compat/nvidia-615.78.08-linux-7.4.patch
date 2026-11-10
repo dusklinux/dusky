@@ -1,0 +1,128 @@
+# Linux 7.4 open-module build fix (VM_SPECIAL/is_vm_hugetlb_page removal and
+# drm_fb_helper.h move). Verified to apply to the tested NVIDIA 615.78.08 open
+# source with offsets (conftest.sh -104 lines, uvm_hmm.c fuzz 1); internally
+# version-guarded for Linux >= 7.4 and a no-op on older trees.
+From e67f2b878ace00dda25f3d0c799bb70ef6830712 Mon Sep 17 00:00:00 2001
+From: Peter Jung <admin@ptr1337.dev>
+Date: Thu, 5 Nov 2026 19:09:35 +0100
+Subject: [PATCH] Fix build on Linux 7.4
+
+Linux 7.4 made three changes that break the open kernel modules:
+
+- Commit 72a993449cb0 ("mm: eliminate VM_SPECIAL, VMA_SPECIAL_FLAGS")
+  removed VM_SPECIAL and commit c911e7ebebf5 ("mm: rename
+  is_vm_hugetlb_page() to vma_is_hugetlb()") renamed the hugetlb helper.
+  Use vma_is_mm_backed() and vma_is_hugetlb(), which are what
+  migrate_vma_setup() checks since commit 8bf792b7afcb ("mm: avoid use
+  of VMA_SPECIAL_FLAGS in migrate_vma_setup()").
+
+- Commit 6ccc5b5fc1d3 ("drm/fbdev: Move fbdev helpers into client
+  library") moved drm/drm_fb_helper.h to drm/clients/drm_fbdev_helper.h.
+  Add a header presence test and include the new header when it exists.
+
+The "functions" conftests treat a failed compile as "function present",
+so the missing header also made drm_fbdev_generic_setup and
+drm_fbdev_ttm_setup look present. Use the new header in those tests too.
+
+Signed-off-by: Peter Jung <admin@ptr1337.dev>
+---
+ kernel-open/conftest.sh                 | 12 ++++++++++++
+ kernel-open/header-presence-tests.mk    |  1 +
+ kernel-open/nvidia-drm/nvidia-drm-drv.c |  4 ++++
+ kernel-open/nvidia-uvm/uvm_hmm.c        |  7 +++++++
+ 4 files changed, 24 insertions(+)
+
+diff --git a/kernel-open/conftest.sh b/kernel-open/conftest.sh
+index 3996afc..bcb55d8 100755
+--- a/kernel-open/conftest.sh
++++ b/kernel-open/conftest.sh
+@@ -4554,7 +4554,11 @@ compile_test() {
+             # in v6.11.
+             #
+             CODE="
++            #if defined(NV_DRM_CLIENTS_DRM_FBDEV_HELPER_H_PRESENT)
++            #include <drm/clients/drm_fbdev_helper.h>
++            #else
+             #include <drm/drm_fb_helper.h>
++            #endif
+             #if defined(NV_DRM_DRM_FBDEV_GENERIC_H_PRESENT)
+             #include <drm/drm_fbdev_generic.h>
+             #endif
+@@ -4574,7 +4578,11 @@ compile_test() {
+             # 1000634477d8 ("drm/fbdev-ttm:Convert to client-setup") in v6.13.
+             #
+             CODE="
++            #if defined(NV_DRM_CLIENTS_DRM_FBDEV_HELPER_H_PRESENT)
++            #include <drm/clients/drm_fbdev_helper.h>
++            #else
+             #include <drm/drm_fb_helper.h>
++            #endif
+             #if defined(NV_DRM_DRM_FBDEV_TTM_H_PRESENT)
+             #include <drm/drm_fbdev_ttm.h>
+             #endif
+@@ -4596,7 +4604,11 @@ compile_test() {
+             # in linux-next b86711c6d6e2.
+             #
+             CODE="
++            #if defined(NV_DRM_CLIENTS_DRM_FBDEV_HELPER_H_PRESENT)
++            #include <drm/clients/drm_fbdev_helper.h>
++            #else
+             #include <drm/drm_fb_helper.h>
++            #endif
+             #if defined(NV_DRM_DRM_CLIENT_SETUP_H_PRESENT)
+             #include <drm/drm_client_setup.h>
+             #elif defined(NV_DRM_CLIENTS_DRM_CLIENT_SETUP_H_PRESENT)
+diff --git a/kernel-open/header-presence-tests.mk b/kernel-open/header-presence-tests.mk
+index a1a0e63..546336d 100644
+--- a/kernel-open/header-presence-tests.mk
++++ b/kernel-open/header-presence-tests.mk
+@@ -14,6 +14,7 @@ NV_HEADER_PRESENCE_TESTS = \
+   drm/drm_client_setup.h \
+   drm/drm_probe_helper.h \
+   drm/clients/drm_client_setup.h \
++  drm/clients/drm_fbdev_helper.h \
+   dt-bindings/interconnect/tegra_icc_id.h \
+   generated/autoconf.h \
+   generated/compile.h \
+diff --git a/kernel-open/nvidia-drm/nvidia-drm-drv.c b/kernel-open/nvidia-drm/nvidia-drm-drv.c
+index de784e2..486731e 100644
+--- a/kernel-open/nvidia-drm/nvidia-drm-drv.c
++++ b/kernel-open/nvidia-drm/nvidia-drm-drv.c
+@@ -64,8 +64,12 @@
+ #endif
+ 
+ #if defined(NV_DRM_FBDEV_AVAILABLE)
++#if defined(NV_DRM_CLIENTS_DRM_FBDEV_HELPER_H_PRESENT)
++#include <drm/clients/drm_fbdev_helper.h>
++#else
+ #include <drm/drm_fb_helper.h>
+ #endif
++#endif
+ 
+ #if defined(NV_DRM_DRM_CLIENT_SETUP_H_PRESENT)
+ #include <drm/drm_client_setup.h>
+diff --git a/kernel-open/nvidia-uvm/uvm_hmm.c b/kernel-open/nvidia-uvm/uvm_hmm.c
+index 6f38ef4..d7025e2 100644
+--- a/kernel-open/nvidia-uvm/uvm_hmm.c
++++ b/kernel-open/nvidia-uvm/uvm_hmm.c
+@@ -4039,10 +4039,17 @@ bool uvm_hmm_must_use_sysmem(uvm_va_block_t *va_block,
+     // remote mapping.
+     // TODO: Bug 3660968: add support for file-backed migrations.
+     // TODO: Bug 3368756: add support for transparent huge page migrations.
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 4, 0)
++    return !vma_is_anonymous(vma) ||
++           !vma_is_mm_backed(vma) ||
++           vma_is_dax(vma) ||
++           vma_is_hugetlb(vma);
++#else
+     return !vma_is_anonymous(vma) ||
+            (vma->vm_flags & VM_SPECIAL) ||
+            vma_is_dax(vma) ||
+            is_vm_hugetlb_page(vma);
++#endif
+ }
+ 
+ static NV_STATUS hmm_ats_pte_snapshot_locked(uvm_va_block_t *va_block,
+-- 
+2.56.0
+

@@ -1,4 +1,4 @@
-# NVIDIA open 615.78.08: runtime D3 on Linux 7.3
+# NVIDIA open 615.78.08: runtime D3cold on Linux 7.3 + build fix for Linux 7.4
 
 Linux 7.3 starts kernel threads in a private empty nullfs. The NVIDIA open
 615.78.08 package tested here probes the GPU from a dedicated kthread and uses
@@ -31,15 +31,29 @@ This does not establish behavior for every GPU or driver source revision.
 
 See the [kernel maintainer's explanation of the filesystem change](https://patchew.org/linux/20260814-vfs-v73-6e884cb31ac9@brauner/).
 
+## Linux 7.4: open-module build fix
+
+Linux 7.4 removed `VM_SPECIAL`/`VMA_SPECIAL_FLAGS`, renamed
+`is_vm_hugetlb_page()` to `vma_is_hugetlb()`, and moved
+`drm/drm_fb_helper.h` to `drm/clients/drm_fbdev_helper.h`. The 615.78.08
+open module still uses the old names, so it does not compile without
+`nvidia-615.78.08-linux-7.4.patch`. The patch is internally version-guarded
+and a no-op on older trees. It also teaches `header-presence-tests.mk` and
+`conftest.sh` about the new fbdev header; without that, the conftests treat
+the failed include as "function present" and misdetect the fbdev helpers.
+
 ## Compiler integration
 
 The compiler prepares this overlay automatically during local package
 installation when NVIDIA PCI hardware and nvidia-open-dkms 615.78.08 are
-present. It checks the PCI-probe and runtime-PM source hashes, preserves existing DKMS overrides,
-and runs before pacman's hooks. Afterwards it checks the installed module's
-actual `userspace_init_fs` ELF import, rebuilding only if absent and checking
-again before initramfs generation or boot promotion. Already repaired source
-is recognized by its hash. The compiler leaves package-owned sources intact.
+present. It checks the PCI-probe/runtime-PM hashes for the 7.3 repair and the
+`uvm_hmm.c`/`nvidia-drm-drv.c`/`conftest.sh`/`header-presence-tests.mk` hashes
+for the 7.4 repair, preserves existing DKMS overrides, and runs before pacman's
+hooks. The DKMS override applies each patch only when the target headers need
+it. Afterwards it checks the installed module's actual `userspace_init_fs`
+ELF import, rebuilding only if absent and checking again before initramfs
+generation or boot promotion. Already repaired source is recognized by its
+hash. The compiler leaves package-owned sources intact.
 
 Intel/AMD-only hosts skip this path without importing the NVIDIA helper.
 Build-only and remote export operations never prepare the builder's drivers.
@@ -55,16 +69,18 @@ From this directory, with nvidia-open-dkms 615.78.08 and dkms 3.4.4 installed:
 
 ```sh
 sudo install -Dm644 nvidia-615.78.08-linux-7.3-rtd3.patch /etc/dkms/nvidia/patches/nvidia-615.78.08-linux-7.3-rtd3.patch
+sudo install -Dm644 nvidia-615.78.08-linux-7.4.patch /etc/dkms/nvidia/patches/nvidia-615.78.08-linux-7.4.patch
 sudo install -Dm644 nvidia-615.78.08.conf /etc/dkms/nvidia-615.78.08.conf
 sudo dkms build nvidia/615.78.08 -k "$(uname -r)" --force
 sudo dkms install nvidia/615.78.08 -k "$(uname -r)" --force
 ```
 
 Merge with an existing version-specific override if one exists. The override
-checks the target headers for the API, so the working stock 7.2 kernel is not
-patched. DKMS copies the patch into its private build tree; package-owned
-`/usr/src` files stay unchanged. The version-specific override does not apply
-to later NVIDIA releases: recheck the source before porting this patch.
+checks the target headers for each API, so a working stock 7.2 kernel is not
+patched and a 7.4 kernel gets the build fix without the RTD3 patch. DKMS copies
+the patches into its private build tree; package-owned `/usr/src` files stay
+unchanged. The version-specific override does not apply to later NVIDIA
+releases: recheck the source before porting these patches.
 
 Reboot into the target kernel to activate the rebuilt module. If that target's
 initramfs embeds NVIDIA modules, regenerate its mkinitcpio preset before

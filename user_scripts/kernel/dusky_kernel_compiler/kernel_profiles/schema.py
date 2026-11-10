@@ -311,7 +311,7 @@ PROFILE_SPEC: Final[dict[str, tuple[FieldSpec, ...]]] = {
         F("dirty_bytes_mb", "int", 0, "vm.dirty_bytes in MiB (0 = kernel ratio defaults)", minimum=0, maximum=65536),
         F("slub_tiny", "bool", False, "CONFIG_SLUB_TINY minimal allocator (sacrifices SMP scalability)"),
         F("slab_buckets", "bool", False, "CONFIG_SLAB_BUCKETS hardening buckets (slightly more memory)"),
-        F("per_vma_lock", "bool", True, "CONFIG_PER_VMA_LOCK"),
+        F("per_vma_lock", "bool", True, "CONFIG_PER_VMA_LOCK (removed in Linux 7.4; kept for profile compatibility)"),
         F("numa", "bool", True, "NUMA topology support"),
         F("numa_balancing", "bool", False, "Automatic NUMA balancing"),
         F("nodes_shift", "int", 0, "CONFIG_NODES_SHIFT (0 = target NUMA topology)", minimum=0, maximum=10),

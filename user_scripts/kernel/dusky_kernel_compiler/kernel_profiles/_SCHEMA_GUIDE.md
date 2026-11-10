@@ -161,7 +161,7 @@ dirty_bytes_mb = 0
 slub_tiny = false
 # CONFIG_SLAB_BUCKETS hardening buckets (slightly more memory)
 slab_buckets = false
-# CONFIG_PER_VMA_LOCK
+# CONFIG_PER_VMA_LOCK (removed in Linux 7.4; kept for profile compatibility)
 per_vma_lock = true
 # NUMA topology support
 numa = true

@@ -27,7 +27,8 @@ flowchart TD
 | `dusky_kernal_compile.py` | Hardware discovery, configuration, build and installation orchestration |
 | `kernel_profiles/schema.py` | Field defaults, validation and wizard metadata |
 | `kernel_profiles/*.toml` | Selectable tuning profiles |
-| `patches/`, `compat/`, `extra/` | Historical artifacts; unused by the compiler |
+| `patches/`, `extra/` | Historical artifacts; unused by the compiler |
+| `compat/` | NVIDIA DKMS compatibility overlay (patches + version-specific config) |
 | `kernel_profiles/settings/kernel_settings.toml` / `kernel_storage.py` | Machine storage policy and RAM restore/checkpoint handling |
 | `kernel_runtime.py` | Optional packaged boot-time settings |
 | `tests/test_kernel.py` | Isolated regression checks |

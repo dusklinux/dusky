@@ -422,6 +422,27 @@ class AuditTests(unittest.TestCase):
             unit=root/'usr/lib/systemd/system/multi-user.target.wants/linux-dusky-battery-tuning.service'
             self.assertTrue(unit.is_symlink());self.assertTrue(unit.exists())
 
+    def test_headers_package_installs_generated_rust_files(self):
+        with tempfile.TemporaryDirectory() as td:
+            tree = Path(td)
+            path = tree / 'scripts/package/PKGBUILD'
+            path.parent.mkdir(parents=True)
+            path.write_text('_package() { :; }\n_package-headers() { :; }\nfor _p in "${pkgname[@]}"; do\n eval "package_$_p() {\n $(declare -f _package)\n _package\n }"\ndone\n')
+            p = profile(); p.set('compiler', 'rust', True)
+            d = derived(p, f=facts(dkms_modules=('nvidia',)), tree=tree)
+            d.kernelrelease = '7.4-dusky-battery'
+            with contextlib.redirect_stdout(io.StringIO()):
+                k.stage_runtime_package(tree, p, d)
+            text = path.read_text()
+            self.assertIn('generated_*.rs', text)
+            self.assertIn('_dusky_upstream_headers', text)
+            start = text.index('# Dusky runtime package integration')
+            end = text.index('# End Dusky runtime package integration')
+            wrapper = tree / 'wrapper.sh'
+            wrapper.write_text(text[start:end])
+            proc = subprocess.run(['bash', '-n', str(wrapper)], capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+
     def test_runtime_opt_out_keeps_metadata_but_no_service(self):
         p=profile();p.set('runtime','enabled',False)
         with tempfile.TemporaryDirectory() as td:
@@ -832,6 +853,32 @@ class AuditTests(unittest.TestCase):
         self.assertEqual(ops_dict['IP_NF_MANGLE'].action, 'm')
         self.assertEqual(ops_dict['NETFILTER_XT_TARGET_CHECKSUM'].action, 'm')
         self.assertEqual(ops_dict['MEMFD_CREATE'].action, 'y')
+
+    def test_binder_driver_follows_kernel_generation(self):
+        p = profile()
+        # Linux 7.3: C binder present -> prefer it and disable the Rust variant.
+        idx_c = k.KconfigIndex(frozenset({'ANDROID_BINDER_IPC', 'ANDROID_BINDERFS', 'ANDROID_BINDER_IPC_RUST',
+                                          'ANDROID_BINDER_DEVICES', 'SCHED_CACHE', 'PREEMPT_LAZY'}), 4)
+        ops = {o.symbol: o for o in k.build_config_matrix(p, derived(p, idx=idx_c)).ops}
+        self.assertEqual(ops['ANDROID_BINDER_IPC'].action, 'y')
+        self.assertEqual(ops['ANDROID_BINDERFS'].action, 'y')
+        self.assertEqual(ops['ANDROID_BINDER_IPC_RUST'].action, 'n')
+        # Linux 7.4: C binder and binderfs gone -> Rust binder when Rust is on.
+        idx_rust = k.KconfigIndex(frozenset({'ANDROID_BINDER_IPC_RUST', 'ANDROID_BINDER_DEVICES',
+                                             'SCHED_CACHE', 'PREEMPT_LAZY'}), 4)
+        p_rust = profile(); p_rust.set('compiler', 'rust', True)
+        d_rust = k.derive(p_rust, facts(), idx_rust, Path('.'), 'eevdf', True, '')
+        ops = {o.symbol: o for o in k.build_config_matrix(p_rust, d_rust).ops}
+        self.assertEqual(ops['ANDROID_BINDER_IPC_RUST'].action, 'y')
+        self.assertNotIn('ANDROID_BINDERFS', ops)
+        self.assertEqual(ops['ANDROID_BINDER_DEVICES'].value, 'binder,hwbinder,vndbinder')
+        # Rust binder with Rust disabled -> no binder, with a warning.
+        d_no_rust = k.derive(p_rust, facts(), idx_rust, Path('.'), 'eevdf', False, '')
+        with patch.object(k, 'warn') as warn:
+            ops = {o.symbol: o for o in k.build_config_matrix(p_rust, d_no_rust).ops}
+        self.assertNotIn('ANDROID_BINDER_IPC_RUST', ops)
+        self.assertNotIn('ANDROID_BINDER_DEVICES', ops)
+        self.assertTrue(any('Rust binder' in str(call) for call in warn.call_args_list))
 
     def test_single_numa_node_does_not_compile_numa(self):
         p = profile(); p.set('memory', 'numa', True)
