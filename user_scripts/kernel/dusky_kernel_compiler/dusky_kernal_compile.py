@@ -21,12 +21,17 @@ lazy import kernel_nvidia
 import collections
 import functools
 import fcntl
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
+from enum import StrEnum
 lazy import gzip
 import hashlib
 import json
 lazy import lzma
 import os
+from pathlib import Path
 import platform
 import re
 import shlex
@@ -39,15 +44,10 @@ import textwrap
 import threading
 import time
 import tomllib
+from typing import Any, Final, Literal, Self
 lazy import urllib.error
 lazy import urllib.parse
 lazy import urllib.request
-from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
-from enum import StrEnum
-from pathlib import Path
-from typing import Any, Final, Literal, Self
 
 type Sections = dict[str, dict[str, Any]]
 type Json = dict[str, Any]
@@ -83,22 +83,29 @@ TARBALL_DIR: Path = Path(os.environ.get("DUSKY_TARBALL_DIR") or XDG_CACHE / "dus
 THINLTO_CACHE_DIR: Path = Path(os.environ.get("DUSKY_THINLTO_CACHE") or XDG_CACHE / "dusky-kernel" / "thinlto-cache")
 PKGDEST_DIR: Path = Path(os.environ.get("DUSKY_PKGDEST") or BUILD_DIR / "packages")
 IMPORT_DIR: Final = STATE_DIR / "imports"
-STORAGE: dict = {}
+STORAGE: dict[str, Any] = {}
 CCACHE_DIR: Path = XDG_CACHE / "dusky-kernel" / "ccache"
 RAM_RESERVE_GIB: int = 0
 
 
-def set_build_dir(new_path: Path | str) -> None:
+def set_build_dir(new_path: Path | str, *, create: bool = True) -> None:
     global BUILD_DIR, SRC_DIR, TARBALL_DIR, THINLTO_CACHE_DIR, PKGDEST_DIR
     BUILD_DIR = Path(new_path).expanduser().resolve()
-    BUILD_DIR.mkdir(parents=True, exist_ok=True)
     SRC_DIR = BUILD_DIR / "src"
-    TARBALL_DIR = Path(os.environ.get("DUSKY_TARBALL_DIR") or STORAGE.get("persistent_dir", XDG_CACHE / "dusky-kernel") / "tarballs")
-    THINLTO_CACHE_DIR = STORAGE.get("thinlto_dir", Path(os.environ.get("DUSKY_THINLTO_CACHE") or XDG_CACHE / "dusky-kernel" / "thinlto-cache"))
-    PKGDEST_DIR = STORAGE.get("packages_dir", Path(os.environ.get("DUSKY_PKGDEST") or XDG_CACHE / "dusky-kernel" / "packages"))
-    IMPORT_DIR.mkdir(parents=True, exist_ok=True)
-    for d in (SRC_DIR, TARBALL_DIR, THINLTO_CACHE_DIR, PKGDEST_DIR, BUILD_DIR / "seeds"):
-        d.mkdir(parents=True, exist_ok=True)
+    persistent_base = Path(STORAGE.get("persistent_dir") or (XDG_CACHE / "dusky-kernel"))
+    env_tarball = os.environ.get("DUSKY_TARBALL_DIR")
+    TARBALL_DIR = Path(env_tarball).expanduser() if env_tarball else (persistent_base / "tarballs")
+    env_thinlto = os.environ.get("DUSKY_THINLTO_CACHE")
+    THINLTO_CACHE_DIR = Path(env_thinlto).expanduser() if env_thinlto else Path(STORAGE.get("thinlto_dir") or (persistent_base / "thinlto-cache"))
+    env_pkgdest = os.environ.get("DUSKY_PKGDEST")
+    PKGDEST_DIR = Path(env_pkgdest).expanduser() if env_pkgdest else Path(STORAGE.get("packages_dir") or (persistent_base / "packages"))
+    if create:
+        BUILD_DIR.mkdir(parents=True, exist_ok=True)
+        IMPORT_DIR.mkdir(parents=True, exist_ok=True)
+        for d in (SRC_DIR, TARBALL_DIR, THINLTO_CACHE_DIR, PKGDEST_DIR, BUILD_DIR / "seeds"):
+            d.mkdir(parents=True, exist_ok=True)
+
+
 LOG_DIR: Final = STATE_DIR / "logs"
 HISTORY_FILE: Final = STATE_DIR / "history.json"
 MODPROBED_DB_PATH: Final = XDG_CONFIG / "modprobed.db"
@@ -116,7 +123,7 @@ def _modprobed_db_from_conf() -> Path | None:
                     clean = raw_line.split("#", 1)[0].strip()
                     m = re.match(r'^DBPATH=["\']?([^"\']+)["\']?', clean)
                     if m:
-                        val = m.group(1).strip()
+                        val = os.path.expandvars(m.group(1).strip())
                         if val:
                             return Path(val).expanduser() / "modprobed.db"
         except OSError:
@@ -134,7 +141,7 @@ def modprobed_db_candidates() -> tuple[Path, ...]:
     cands: list[Path] = []
     env = os.environ.get("DUSKY_MODPROBED_DB")
     if env:
-        cands.append(Path(env).expanduser())
+        cands.append(Path(os.path.expandvars(env)).expanduser())
     conf_db = _modprobed_db_from_conf()
     if conf_db and conf_db not in cands:
         cands.append(conf_db)
@@ -168,7 +175,7 @@ def _extract_module_name(line: str) -> str | None:
         return None  # lsmod header, wherever it appears
     parts = s.split()
     first = parts[0].replace("-", "_")
-    if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", first):
+    if not re.fullmatch(r"[A-Za-z0-9_]+", first):
         return None
     if len(parts) > 1:
         # lsmod-style row: second field must be the numeric size.
@@ -214,12 +221,13 @@ def resolve_modprobed_db(custom: str | None = None) -> Path | None:
             except (OSError, RuntimeError):
                 continue
         return None
+
     if custom:
-        p = Path(custom).expanduser()
+        p = Path(os.path.expandvars(custom)).expanduser()
         return _usable_with_modules(p)
     env = os.environ.get("DUSKY_MODPROBED_DB")
     if env:
-        r = _usable_with_modules(Path(env).expanduser())
+        r = _usable_with_modules(Path(os.path.expandvars(env)).expanduser())
         if r is not None:
             return r
         debug(f"$DUSKY_MODPROBED_DB={env} is not usable; falling back to auto-discovery")
@@ -272,6 +280,8 @@ def normalize_lsmod_file_to_db(src: Path, dest: Path) -> int:
     except OSError:
         return 0
     return len(names)
+
+
 KERNEL_ORG_RELEASES: Final = "https://www.kernel.org/releases.json"
 ARCH_UPSTREAM_CONFIG_URL: Final = "https://gitlab.archlinux.org/archlinux/packaging/packages/linux/-/raw/main/config.x86_64"
 KERNEL_SIGNING_FPRS: Final = frozenset({
@@ -364,10 +374,11 @@ class Journal:
     """Plain-text build journal under ~/.local/state/dusky-kernel/logs."""
 
     def __init__(self) -> None:
-        self.fh = None
+        self.fh: Any = None
         self.path: Path | None = None
 
     def open(self, name: str) -> None:
+        self.close()
         try:
             LOG_DIR.mkdir(parents=True, exist_ok=True)
             self.path = LOG_DIR / f"build-{name}-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}.log"
@@ -386,6 +397,8 @@ class Journal:
         if self.fh is not None:
             try:
                 self.fh.close()
+            except OSError:
+                pass
             finally:
                 self.fh = None
 
@@ -579,7 +592,7 @@ from kernel_profiles.schema import (
     WIZARD_STEPS,
     SECURITY_BUNDLES,
     FOOTPRINT_RANK,
- )
+)
 
 
 @dataclass(slots=True)
@@ -692,7 +705,7 @@ def validate_profile(p: KernelProfile) -> None:
     for sec, fields in PROFILE_SPEC.items():
         for f in fields:
             val = p.sections[sec].get(f.key)
-            if f.required and not val:
+            if f.required and (val is None or val == "" or val == [] or val == {}):
                 raise ProfileError(f"{p.path.name}: missing required field {sec}.{f.key}")
             if f.choices and val not in f.choices:
                 raise ProfileError(f"{p.path.name}: invalid value '{val}' for {sec}.{f.key}; allowed: {', '.join(map(str, f.choices))}")
@@ -716,7 +729,7 @@ def validate_profile(p: KernelProfile) -> None:
     for key, value in p.g("dusky", "extra_config").items():
         if not re.fullmatch(r"(?:CONFIG_)?[A-Za-z0-9_]+", key) or type(value) not in (bool, int, str):
             raise ProfileError(f"Invalid Kconfig override: {key}")
-        if isinstance(value, str) and ('\n' in value or '\r' in value):
+        if isinstance(value, str) and ("\n" in value or "\r" in value):
             raise ProfileError(f"Kconfig string override {key} must fit on one line")
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", p.suffix):
         raise ProfileError(f"{p.path.name}: meta.suffix '{p.suffix}' must match [a-z0-9][a-z0-9-]*")
@@ -855,7 +868,7 @@ def render_profile_toml(sections: Sections, *, header: str = "") -> str:
         lines.append("")
         for key, tbl in tables:
             lines.append(f"[{sec}.{key}]")
-            lines.append("# SYMBOL = true | false | \"m\" | 123 | \"string\"   (CONFIG_ prefix optional)")
+            lines.append('# SYMBOL = true | false | "m" | 123 | "string"   (CONFIG_ prefix optional)')
             for k, v in tbl.items():
                 lines.append(f"{k} = {toml_scalar(v)}")
             lines.append("")
@@ -1132,7 +1145,7 @@ def _parse_answer(spec: FieldSpec, raw: str, current: Any) -> Any:
                     out.pop(item[1:].removeprefix("CONFIG_"), None)
                     continue
                 if "=" not in item:
-                    raise ValueError("use SYMBOL=y|n|m|<int>|\"str\" or -SYMBOL to remove")
+                    raise ValueError('use SYMBOL=y|n|m|<int>|"str" or -SYMBOL to remove')
                 sym, _, v = item.partition("=")
                 sym = sym.strip().removeprefix("CONFIG_")
                 v = v.strip()
@@ -1184,7 +1197,7 @@ def prompt_field(p: KernelProfile, sec: str, spec: FieldSpec, facts: "HostFacts 
     elif spec.kind == "list":
         say(f"    {C.DIM}comma-separated values, '-' clears{C.RESET}")
     elif spec.kind == "table":
-        say(f"    {C.DIM}SYMBOL=y|n|m|<int>|\"str\" comma-separated, -SYMBOL removes{C.RESET}")
+        say(f'    {C.DIM}SYMBOL=y|n|m|<int>|"str" comma-separated, -SYMBOL removes{C.RESET}')
     if (sec, spec.key) == ("memory", "footprint") and facts is not None:
         note(f"    host RAM: {facts.mem_gib:.1f} GiB -> suggested tier: {suggest_footprint(facts.mem_gib)}")
     while True:
@@ -1208,6 +1221,8 @@ def prompt_field(p: KernelProfile, sec: str, spec: FieldSpec, facts: "HostFacts 
             note("    unchanged")
             return None
         p.set(sec, spec.key, val)
+        if (sec, spec.key) == ("security", "profile"):
+            apply_security_bundle(p)
         line = f"{sec}.{spec.key}: {_fmt_value(spec, current)} -> {_fmt_value(spec, val)}"
         say(f"    {C.YELLOW}↳ {line}{C.RESET}")
         return line
@@ -1240,13 +1255,14 @@ def run_wizard(p: KernelProfile, facts: "HostFacts | None", steps: Sequence[int]
                     active_questions.append((step_idx, step.title, sec, spec))
 
     pos = 0
-    history: list[tuple[int, str, str, Any, str | None]] = []
+    history: list[tuple[int, str, str, Any, bool, dict[str, Any] | None, str | None]] = []
     diff_map: dict[str, str] = {}
     current_step_idx = -1
 
     while pos < len(active_questions):
         step_idx, step_title, sec, spec = active_questions[pos]
         if not field_relevant(p.sections, sec, spec.key):
+            diff_map.pop(f"{sec}.{spec.key}", None)
             pos += 1
             continue
 
@@ -1254,14 +1270,20 @@ def run_wizard(p: KernelProfile, facts: "HostFacts | None", steps: Sequence[int]
             current_step_idx = step_idx
             rule(f"Wizard {step_idx + 1}/{len(WIZARD_STEPS)} · {step_title}")
 
-        old_val = p.g(sec, spec.key)
+        old_val = json.loads(json.dumps(p.g(sec, spec.key)))
+        was_explicit = (sec, spec.key) in p.explicit
+        sec_snapshot = json.loads(json.dumps(p.sections["security"])) if (sec, spec.key) == ("security", "profile") else None
         res = prompt_field(p, sec, spec, facts)
 
         if isinstance(res, WizardSignal):
             if res is WizardSignal.BACK:
                 if history:
-                    prev_pos, prev_sec, prev_key, prev_old_val, _ = history.pop()
-                    p.set(prev_sec, prev_key, prev_old_val)
+                    prev_pos, prev_sec, prev_key, prev_old_val, prev_explicit, prev_sec_snap, _ = history.pop()
+                    p.set(prev_sec, prev_key, prev_old_val, explicit=prev_explicit)
+                    if not prev_explicit:
+                        p.explicit.discard((prev_sec, prev_key))
+                    if prev_sec_snap is not None:
+                        p.sections["security"] = prev_sec_snap
                     diff_map.pop(f"{prev_sec}.{prev_key}", None)
                     prev_spec = active_questions[prev_pos][3]
                     warn(f"Reverted {prev_sec}.{prev_key} to {_fmt_value(prev_spec, prev_old_val)} and stepped back.")
@@ -1302,21 +1324,28 @@ def run_wizard(p: KernelProfile, facts: "HostFacts | None", steps: Sequence[int]
         diff_line = res if isinstance(res, str) else None
         if diff_line:
             diff_map[f"{sec}.{spec.key}"] = diff_line
-        history.append((pos, sec, spec.key, old_val, diff_line))
+        history.append((pos, sec, spec.key, old_val, was_explicit, sec_snapshot, diff_line))
         pos += 1
 
+    for _, _, sec, spec in active_questions:
+        if not field_relevant(p.sections, sec, spec.key):
+            diff_map.pop(f"{sec}.{spec.key}", None)
     return list(diff_map.values())
 
 
 def wizard_review_loop(p: KernelProfile, facts: "HostFacts | None", diff: list[str], *, force: bool) -> list[str]:
     """Validate after the wizard; let the user revisit an offending step instead of aborting."""
     while True:
-        notes = normalize_profile(p)
-        for n in notes:
-            note(f"auto-adjusted {n}")
+        apply_security_bundle(p)
+        candidate = p.clone()
+        notes = normalize_profile(candidate)
         try:
-            validate_profile(p)
-            cross_validate(p, facts, force=force)
+            validate_profile(candidate)
+            cross_validate(candidate, facts, force=force)
+            p.sections = candidate.sections
+            p.explicit = candidate.explicit
+            for n in notes:
+                note(f"auto-adjusted {n}")
             return diff + notes
         except ProfileError as e:
             err(str(e))
@@ -1353,6 +1382,7 @@ def offer_save_profile(p: KernelProfile) -> None:
 def configure_profile_interactively(p: KernelProfile, facts: "HostFacts | None", args: argparse.Namespace) -> list[str]:
     """Apply defaults and overrides; the granular wizard is explicitly requested."""
     cli_diff = apply_overrides(p, Overrides.from_env_and_args(args))
+    apply_security_bundle(p)
     diff = list(cli_diff)
     if getattr(args, "wizard", False):
         diff.extend(run_wizard(p, facts))
@@ -1365,10 +1395,11 @@ def configure_profile_interactively(p: KernelProfile, facts: "HostFacts | None",
     cross_validate(p, facts, force=bool(getattr(args, "force", False)))
     return diff + notes
 
+
 # ---------------------------------------------------------------------------------------------------
 # Process execution: every child runs in its own process group so aborts never leak make/clang trees
 # ---------------------------------------------------------------------------------------------------
-_CHILD_LOCK: Final = threading.Lock()
+_CHILD_LOCK: Final = threading.RLock()
 _CHILD_PGIDS: Final[set[int]] = set()
 _ABORT: Final = threading.Event()
 
@@ -1384,6 +1415,8 @@ def terminate_process_group(pgid: int, grace: float = 2.0) -> None:
             os.killpg(pgid, 0)
         except ProcessLookupError:
             return
+        except PermissionError:
+            break
         time.sleep(0.05)
     try:
         os.killpg(pgid, signal.SIGKILL)
@@ -1416,8 +1449,11 @@ def _unregister(pgid: int | None) -> None:
 def _on_signal(signum: int, _frame: Any) -> None:
     _ABORT.set()
     _reap_all()
-    sys.stdout.write(C.SHOW)
-    sys.stdout.flush()
+    if C.SHOW:
+        try:
+            os.write(sys.stdout.fileno(), C.SHOW.encode("utf-8"))
+        except OSError:
+            pass
     if signum == signal.SIGINT:
         raise KeyboardInterrupt
     raise SystemExit(128 + signum)
@@ -1441,33 +1477,50 @@ def run(cmd: Sequence[str], *, cwd: Path | None = None, env: Mapping[str, str] |
     check_abort()
     debug("run: " + shlex.join(cmd))
     JOURNAL.write("$ " + shlex.join(cmd))
+    proc: subprocess.Popen[str] | None = None
     pgid: int | None = None
     try:
-        proc = subprocess.Popen(list(cmd), cwd=cwd, env=dict(env) if env is not None else None, text=True, encoding="utf-8", errors="replace",
-                                stdin=subprocess.DEVNULL if stdin_null else None,
-                                stdout=subprocess.PIPE if capture else None, stderr=subprocess.STDOUT if capture else None,
-                                start_new_session=own_group)
-    except FileNotFoundError as e:
-        raise DependencyError(f"Executable not found: {cmd[0]}") from e
-    pgid = _register(proc, own_group)
-    try:
+        try:
+            proc = subprocess.Popen(list(cmd), cwd=cwd, env=dict(env) if env is not None else None, text=True, encoding="utf-8", errors="replace",
+                                    stdin=subprocess.DEVNULL if stdin_null else None,
+                                    stdout=subprocess.PIPE if capture else None, stderr=subprocess.STDOUT if capture else None,
+                                    start_new_session=own_group)
+        except FileNotFoundError as e:
+            raise DependencyError(f"Executable not found: {cmd[0]}") from e
+        pgid = _register(proc, own_group)
+        if _ABORT.is_set():
+            raise AbortError("Aborted")
         out, _ = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired as e:
-        if pgid is not None:
-            terminate_process_group(pgid)
-        else:
-            proc.kill()
-        proc.wait()
-        raise BuildError(f"Command timed out after {timeout}s: {shlex.join(cmd)}") from e
-    finally:
-        if proc.poll() is None:
+        if proc is not None:
             if pgid is not None:
                 terminate_process_group(pgid)
             else:
-                proc.kill()
-            proc.wait()
-        if proc.stdout is not None:
-            proc.stdout.close()
+                try:
+                    proc.kill()
+                except (ProcessLookupError, PermissionError):
+                    pass
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+        raise BuildError(f"Command timed out after {timeout}s: {shlex.join(cmd)}") from e
+    finally:
+        if proc is not None:
+            if proc.poll() is None:
+                if pgid is not None:
+                    terminate_process_group(pgid)
+                else:
+                    try:
+                        proc.kill()
+                    except (ProcessLookupError, PermissionError):
+                        pass
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
+            if proc.stdout is not None:
+                proc.stdout.close()
         _unregister(pgid)
     out = out or ""
     if out and capture:
@@ -1482,10 +1535,15 @@ def run_stream(cmd: Sequence[str], *, cwd: Path | None = None, env: Mapping[str,
                on_line: Callable[[str], None] | None = None) -> int:
     check_abort()
     JOURNAL.write("$ " + shlex.join(cmd))
-    proc = subprocess.Popen(list(cmd), cwd=cwd, env=dict(env) if env is not None else None, text=True, encoding="utf-8", errors="replace",
-                            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True, bufsize=1)
-    pgid = _register(proc, True)
+    proc: subprocess.Popen[str] | None = None
+    pgid: int | None = None
     try:
+        try:
+            proc = subprocess.Popen(list(cmd), cwd=cwd, env=dict(env) if env is not None else None, text=True, encoding="utf-8", errors="replace",
+                                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True, bufsize=1)
+        except FileNotFoundError as e:
+            raise DependencyError(f"Executable not found: {cmd[0]}") from e
+        pgid = _register(proc, True)
         assert proc.stdout is not None
         for line in proc.stdout:
             text = line.rstrip("\r\n")
@@ -1498,11 +1556,15 @@ def run_stream(cmd: Sequence[str], *, cwd: Path | None = None, env: Mapping[str,
         proc.stdout.close()
         return proc.wait()
     finally:
-        if proc.poll() is None:
-            terminate_process_group(proc.pid)
-            proc.wait()
-        if proc.stdout is not None:
-            proc.stdout.close()
+        if proc is not None:
+            if proc.poll() is None:
+                terminate_process_group(proc.pid)
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
+            if proc.stdout is not None:
+                proc.stdout.close()
         _unregister(pgid)
 
 
@@ -1561,7 +1623,10 @@ class Privilege:
 
     def _keepalive(self) -> None:
         while not self._stop.wait(50):
-            subprocess.run(["sudo", "-nv"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                subprocess.run(["sudo", "-nv"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
+            except (OSError, subprocess.SubprocessError):
+                pass
 
     def argv(self, cmd: Sequence[str]) -> list[str]:
         match self.detect():
@@ -1584,17 +1649,18 @@ class Privilege:
             return
         self.ensure()
         with tempfile.TemporaryDirectory(prefix="dusky-stage-") as tmp:
+            os.chmod(Path(tmp), 0o700)
             staged: list[tuple[Path, Path, str]] = []
             for i, (dest, (content, mode)) in enumerate(files.items()):
                 src = Path(tmp) / f"{i:03d}-{dest.name}"
                 src.write_text(content, encoding="utf-8")
+                os.chmod(src, 0o600)
                 staged.append((src, dest, mode))
             script = "set -e\n" + "\n".join(f"install -Dm{mode} {shlex.quote(str(src))} {shlex.quote(str(dest))}" for src, dest, mode in staged) + "\n"
-            (Path(tmp) / "install.sh").write_text(script, encoding="utf-8")
-            os.chmod(Path(tmp), 0o755)
-            for src, _, _ in staged:
-                os.chmod(src, 0o644)
-            self.run(["sh", str(Path(tmp) / "install.sh")])
+            script_path = Path(tmp) / "install.sh"
+            script_path.write_text(script, encoding="utf-8")
+            os.chmod(script_path, 0o700)
+            self.run(["sh", str(script_path)])
 
     def stop(self) -> None:
         self._stop.set()
@@ -1602,7 +1668,6 @@ class Privilege:
             self._thread.join(timeout=2)
             if not self._thread.is_alive():
                 self._thread = None
-
 
 
 PRIV: Final = Privilege()
@@ -1639,41 +1704,43 @@ class Live:
         self._smoothed_eta: float | None = None
         self._link_phase_start: float | None = None
         self._orig_winch: Any = None
+        self._winch_pending: bool = False
 
     def feed(self, line: str) -> None:
-        self.tail.append(line)
-        m = _KBUILD_STEP_RE.match(line)
-        if m:
-            self.steps += 1
-            tag, target = m.group(1), m.group(2)
-            self.last = f"{tag} {target}"[-70:]
-            now = time.monotonic()
-            if not self._samples or (now - self._samples[-1][0]) >= 0.25:
-                self._samples.append((now, self.steps))
+        with _OUT_LOCK:
+            self.tail.append(line)
+            m = _KBUILD_STEP_RE.match(line)
+            if m:
+                self.steps += 1
+                tag, target = m.group(1), m.group(2)
+                self.last = f"{tag} {target}"[-70:]
+                now = time.monotonic()
+                if not self._samples or (now - self._samples[-1][0]) >= 0.25:
+                    self._samples.append((now, self.steps))
 
-            if tag in ("CC", "RUSTC", "AS"):
-                self.phase = "compile"
-                # Dynamic step count expansion: if compile steps exceed expected_steps,
-                # extend expected_steps so progress never freezes or causes retrograde ETA
-                if self.steps >= self.expected_steps - 10:
-                    self.expected_steps = max(self.expected_steps + 150, int(self.steps * 1.05))
-            elif tag in ("LTO", "LD") and ("vmlinux" in target):
-                self.phase = "link vmlinux" + (" (LTO)" if tag == "LTO" or "vmlinux.o" in target else "")
-                if self._link_phase_start is None:
-                    self._link_phase_start = now
-            elif tag == "BTF":
-                self.phase = "BTF generation" if ("vmlinux" in target or not target.endswith(".ko")) else "module BTF"
-            elif tag == "MODPOST":
-                self.phase = "modpost"
-            elif tag in ("INSTALL", "STRIP", "SIGN", "ZSTD", "XZ", "GZIP") and ("modules" in target or tag == "DEPMOD"):
-                self.phase = "modules_install"
-        elif line.startswith("==>"):
-            low_line = line.lower()
-            if "package" in low_line or "fakeroot" in low_line or "compress" in low_line:
-                self.phase = "packaging: " + line[4:40].strip()
-        low = line.lower()
-        if ("error:" in low or " error " in low or low.startswith("make: ***") or "undefined reference" in low or "Error " in line) and len(self.errors) < 40:
-            self.errors.append(line.strip()[:200])
+                if tag in ("CC", "RUSTC", "AS"):
+                    self.phase = "compile"
+                    # Dynamic step count expansion: if compile steps exceed expected_steps,
+                    # extend expected_steps so progress never freezes or causes retrograde ETA
+                    if self.steps >= self.expected_steps - 10:
+                        self.expected_steps = max(self.expected_steps + 150, int(self.steps * 1.05))
+                elif tag in ("LTO", "LD") and ("vmlinux" in target):
+                    self.phase = "link vmlinux" + (" (LTO)" if tag == "LTO" or "vmlinux.o" in target else "")
+                    if self._link_phase_start is None:
+                        self._link_phase_start = now
+                elif tag == "BTF":
+                    self.phase = "BTF generation" if ("vmlinux" in target or not target.endswith(".ko")) else "module BTF"
+                elif tag == "MODPOST":
+                    self.phase = "modpost"
+                elif tag in ("INSTALL", "STRIP", "SIGN", "ZSTD", "XZ", "GZIP") and ("modules" in target or tag == "DEPMOD"):
+                    self.phase = "modules_install"
+            elif line.startswith("==>"):
+                low_line = line.lower()
+                if "package" in low_line or "fakeroot" in low_line or "compress" in low_line:
+                    self.phase = "packaging: " + line[4:40].strip()
+            low = line.lower()
+            if ("error:" in low or " error " in low or low.startswith("make: ***") or "undefined reference" in low or "Error " in line) and len(self.errors) < 40:
+                self.errors.append(line.strip()[:200])
 
     def _calc_eta(self, elapsed: float) -> float | None:
         now = time.monotonic()
@@ -1775,11 +1842,13 @@ class Live:
             self._tick += 1
             with _OUT_LOCK:
                 if self.tty:
+                    self._winch_pending = False
                     sys.stdout.write("\r" + C.CLEAR_EOL + self._status())
                     sys.stdout.flush()
 
     def emit(self, text: str) -> None:
         if self.tty:
+            self._winch_pending = False
             sys.stdout.write("\r" + C.CLEAR_EOL + text + "\n" + self._status())
         else:
             sys.stdout.write(text + "\n")
@@ -1790,11 +1859,11 @@ class Live:
         _LIVE = self
         if self.tty:
             sys.stdout.write(C.HIDE)
+            sys.stdout.flush()
             try:
                 if threading.current_thread() is threading.main_thread() and hasattr(signal, "SIGWINCH"):
                     def _sigwinch_handler(sig: int, frame: Any) -> None:
-                        sys.stdout.write("\r" + C.CLEAR_EOL)
-                        sys.stdout.flush()
+                        self._winch_pending = True
                     self._orig_winch = signal.signal(signal.SIGWINCH, _sigwinch_handler)
             except (ValueError, OSError):
                 pass
@@ -1807,15 +1876,16 @@ class Live:
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=2)
-        _LIVE = None
-        if self.tty:
-            if self._orig_winch is not None:
-                try:
-                    signal.signal(signal.SIGWINCH, self._orig_winch)
-                except (ValueError, OSError):
-                    pass
-            sys.stdout.write("\r" + C.CLEAR_EOL + C.SHOW)
-            sys.stdout.flush()
+        with _OUT_LOCK:
+            _LIVE = None
+            if self.tty:
+                if self._orig_winch is not None:
+                    try:
+                        signal.signal(signal.SIGWINCH, self._orig_winch)
+                    except (ValueError, OSError):
+                        pass
+                sys.stdout.write("\r" + C.CLEAR_EOL + C.SHOW)
+                sys.stdout.flush()
 
     @property
     def elapsed(self) -> float:
@@ -1895,7 +1965,6 @@ def history_estimate(profile: str, lto: str, current_jobs: int = 0, is_clean: bo
     return base_steps, round(fallback_dur, 1)
 
 
-
 # ---------------------------------------------------------------------------------------------------
 # Host telemetry
 # ---------------------------------------------------------------------------------------------------
@@ -1968,6 +2037,13 @@ def _gpu_vendors() -> tuple[str, ...]:
     return tuple(vendors)
 
 
+_KNOWN_FILESYSTEMS: Final = (
+    "ext4", "btrfs", "xfs", "f2fs", "vfat", "exfat", "ntfs", "ntfs3",
+    "virtiofs", "fuse", "fuseblk", "overlay", "nfs", "nfs4", "cifs",
+    "smb3", "erofs", "zfs", "bcachefs",
+)
+
+
 def _mounted_filesystems() -> tuple[tuple[str, ...], str]:
     fstypes: list[str] = []
     root_fs = ""
@@ -1976,16 +2052,79 @@ def _mounted_filesystems() -> tuple[tuple[str, ...], str]:
         if len(parts) < 3:
             continue
         mnt, fstype = parts[1], parts[2]
-        if fstype in ("ext4", "btrfs", "xfs", "f2fs", "vfat", "exfat", "ntfs", "ntfs3", "virtiofs", "fuse", "fuseblk", "overlay", "nfs", "nfs4", "cifs", "smb3", "erofs", "zfs", "bcachefs"):
+        if fstype in _KNOWN_FILESYSTEMS:
             if fstype not in fstypes:
                 fstypes.append(fstype)
             if mnt == "/":
                 root_fs = fstype
     for line in _read("/etc/fstab").splitlines():
-        parts = line.split()
-        if len(parts) >= 3 and not line.lstrip().startswith("#") and parts[2] not in fstypes and parts[2] in ("ext4", "btrfs", "xfs", "f2fs", "vfat", "exfat", "ntfs", "ntfs3", "virtiofs", "nfs", "nfs4", "cifs"):
+        clean = line.split("#", 1)[0].strip()
+        parts = clean.split()
+        if len(parts) >= 3 and parts[2] not in fstypes and parts[2] in _KNOWN_FILESYSTEMS:
             fstypes.append(parts[2])
     return tuple(fstypes), root_fs
+
+
+def _is_dm_crypt_block(sys_block: Path, visited: set[str] | None = None) -> bool:
+    if visited is None:
+        visited = set()
+    if sys_block.name in visited:
+        return False
+    visited.add(sys_block.name)
+    dm_uuid = _read(sys_block / "dm" / "uuid").strip().upper()
+    if dm_uuid.startswith("CRYPT-"):
+        return True
+    slaves = sys_block / "slaves"
+    if slaves.is_dir():
+        for slave in slaves.iterdir():
+            if _is_dm_crypt_block(slave, visited):
+                return True
+    return False
+
+
+def _detect_root_luks() -> bool:
+    root_devs: list[str] = []
+    for line in _read("/proc/mounts").splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[1] == "/":
+            root_devs.append(parts[0])
+    inspected_any = False
+    for dev in root_devs:
+        try:
+            resolved = Path(dev).resolve()
+            sys_block = Path("/sys/class/block") / resolved.name
+            if sys_block.exists():
+                inspected_any = True
+                if _is_dm_crypt_block(sys_block):
+                    return True
+                continue
+        except OSError:
+            pass
+        if dev.startswith("/dev/mapper/"):
+            return True
+    if inspected_any:
+        return False
+    return any(_read(dm / "dm" / "uuid").strip().upper().startswith("CRYPT-") for dm in Path("/sys/block").glob("dm-*"))
+
+
+def _parse_mkinitcpio_config() -> tuple[str, bool]:
+    files = [Path("/etc/mkinitcpio.conf")]
+    dropin_dir = Path("/etc/mkinitcpio.conf.d")
+    if dropin_dir.is_dir():
+        files.extend(sorted(dropin_dir.glob("*.conf")))
+    comp = "zstd"
+    hooks: list[str] = []
+    for f in files:
+        if not f.is_file():
+            continue
+        lines = [ln.split("#", 1)[0] for ln in _read(f).splitlines()]
+        clean_text = "\n".join(lines)
+        for m in re.finditer(r'(?m)^\s*COMPRESSION\s*=\s*"?([A-Za-z0-9_+-]+)"?', clean_text):
+            comp = m.group(1)
+        for m in re.finditer(r'(?ms)^\s*HOOKS\s*=\s*(?:\(([^)]*)\)|"([^"]*)")', clean_text):
+            raw_hooks = m.group(1) if m.group(1) is not None else m.group(2)
+            hooks = raw_hooks.split()
+    return comp, ("microcode" in hooks)
 
 
 def _dkms_modules() -> tuple[str, ...]:
@@ -2126,12 +2265,9 @@ def host_facts() -> HostFacts:
     fstypes, root_fs = _mounted_filesystems()
     rotational = any(_read(p).strip() == "1" for p in Path("/sys/block").glob("sd*/queue/rotational"))
     flags = _cpuinfo_flags()
-    mkconf = _read("/etc/mkinitcpio.conf")
-    comp_m = re.search(r'^COMPRESSION="?(\w+)"?', mkconf, re.M)
-    hooks_m = re.search(r"^HOOKS=\((.*)\)", mkconf, re.M)
-    hooks = hooks_m.group(1).split() if hooks_m else []
+    initrd_comp, microcode_hook = _parse_mkinitcpio_config()
     bootloaders, esp, xbootldr = _bootloaders()
-    root_luks = any(line.split()[0].startswith("/dev/mapper/") for line in _read("/proc/mounts").splitlines() if len(line.split()) > 1 and line.split()[1] == "/")
+    root_luks = _detect_root_luks()
     return HostFacts(
         vendor=vendor, model=(model_m.group(1).strip() if model_m else platform.processor() or "unknown"), flags=flags,
         threads=possible_cpu_count(), cores=cores, llc_domains=llc_domains, llc_kib=llc_kib,
@@ -2142,7 +2278,7 @@ def host_facts() -> HostFacts:
         filesystems=fstypes, root_fs=root_fs, root_luks=root_luks, has_nvme=any(Path("/sys/block").glob("nvme*")), rotational=rotational,
         battery=any(Path("/sys/class/power_supply").glob("BAT*")), dkms_modules=_dkms_modules(), bootloaders=bootloaders, esp=esp, xbootldr=xbootldr,
         tools=_tool_versions(), sched_ext_live=Path("/sys/kernel/sched_ext").is_dir(),
-        initrd_compression=(comp_m.group(1) if comp_m else "zstd"), microcode_hook="microcode" in hooks,
+        initrd_compression=initrd_comp, microcode_hook=microcode_hook,
     )
 
 
@@ -2234,7 +2370,6 @@ def auto_jobs(facts: HostFacts, lto: str) -> int:
     return max(1, min(os.process_cpu_count() or facts.threads, facts.threads,
                       int(max(1, memory - 2 - RAM_RESERVE_GIB) // per_job_gib)))
 
-
 # ---------------------------------------------------------------------------------------------------
 # Kernel versions & releases (kernel.org releases.json)
 # ---------------------------------------------------------------------------------------------------
@@ -2324,7 +2459,7 @@ def candidates_for(releases: Sequence[Release], channel: str, allow_rc: bool, mi
             continue
         match channel:
             case "mainline":
-                if r.moniker == "mainline":
+                if r.moniker == "mainline" or (not effective_allow_rc and r.moniker == "stable"):
                     cands.append(r)
             case "stable":
                 if r.moniker == "stable" or (r.moniker == "mainline" and not r.is_rc):
@@ -2415,16 +2550,20 @@ def expected_sha256(archive_name: str, version: str) -> str | None:
 
 
 def archive_valid(path: Path, extension: str) -> bool:
-    """Check the tar header and read the entire compressed stream, including its checksum."""
+    """Check the tar header and verify the compressed stream integrity."""
     try:
         if not tarfile.is_tarfile(path):
             return False
+        if extension == ".xz" and have("xz"):
+            return run(["xz", "-t", str(path)], check=False, timeout=120).returncode == 0
+        if extension == ".gz" and have("gzip"):
+            return run(["gzip", "-t", str(path)], check=False, timeout=120).returncode == 0
         opener = gzip.open if extension == ".gz" else lzma.open if extension == ".xz" else open
         with opener(path, "rb") as stream:
             while stream.read(4 << 20):
                 pass
         return True
-    except (OSError, EOFError, lzma.LZMAError, tarfile.TarError):
+    except (OSError, EOFError, lzma.LZMAError, tarfile.TarError, DuskyError):
         return False
 
 
@@ -2510,45 +2649,54 @@ def verify_pgp(tarball: Path, pgp_url: str) -> bool | None:
     if not ensure_kernel_keys():
         return None
     sig = tarball.with_name(Path(urllib.parse.urlparse(pgp_url).path).name)
-    if not sig.is_file():
+    had_cached_sig = sig.is_file()
+    for attempt in range(2 if had_cached_sig else 1):
+        if not sig.is_file():
+            try:
+                sig.write_bytes(http_get(pgp_url))
+            except NetworkError as e:
+                warn(f"Signature download failed: {e}")
+                return None
+        decomp = ["xz", "-cd", str(tarball)] if tarball.suffix == ".xz" else ["gzip", "-cd", str(tarball)]
+        decompressor: subprocess.Popen[bytes] | None = None
+        verifier: subprocess.Popen[str] | None = None
+        pg1: int | None = None
+        pg2: int | None = None
         try:
-            sig.write_bytes(http_get(pgp_url))
-        except NetworkError as e:
-            warn(f"Signature download failed: {e}")
-            return None
-    decomp = ["xz", "-cd", str(tarball)] if tarball.suffix == ".xz" else ["gzip", "-cd", str(tarball)]
-    decompressor = subprocess.Popen(decomp, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True)
-    pg1 = _register(decompressor, True)
-    verifier = None
-    pg2 = None
-    try:
-        verifier = subprocess.Popen(["gpg", "--batch", "--status-fd", "1", "--verify", str(sig), "-"],
-                                    stdin=decompressor.stdout, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                    text=True, start_new_session=True)
-        pg2 = _register(verifier, True)
-        assert decompressor.stdout is not None
-        decompressor.stdout.close()
-        out, _ = verifier.communicate()
-        decompressor.wait()
-    finally:
-        for proc, pgid in ((verifier, pg2), (decompressor, pg1)):
-            if proc is not None:
-                if proc.poll() is None:
-                    terminate_process_group(proc.pid)
-                    proc.wait()
-                if proc.stdout is not None:
-                    proc.stdout.close()
-            _unregister(pgid)
-    if decompressor.returncode or verifier.returncode:
-        return False
-    # GnuPG's optional final VALIDSIG field identifies a signing subkey's
-    # primary key. Kernel release signatures can legitimately use subkeys.
-    for line in out.splitlines():
-        fields = line.split()
-        if fields[:2] == ["[GNUPG:]", "VALIDSIG"] and len(fields) >= 11:
-            primary = fields[11] if len(fields) >= 12 else fields[2]
-            if primary in KERNEL_SIGNING_FPRS:
-                return True
+            decompressor = subprocess.Popen(decomp, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True)
+            pg1 = _register(decompressor, True)
+            verifier = subprocess.Popen(["gpg", "--batch", "--status-fd", "1", "--verify", str(sig), "-"],
+                                        stdin=decompressor.stdout, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                        text=True, start_new_session=True)
+            pg2 = _register(verifier, True)
+            assert decompressor.stdout is not None
+            decompressor.stdout.close()
+            out, _ = verifier.communicate()
+            decompressor.wait()
+        finally:
+            for proc, pgid in ((verifier, pg2), (decompressor, pg1)):
+                if proc is not None:
+                    if proc.poll() is None:
+                        terminate_process_group(proc.pid)
+                        try:
+                            proc.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            pass
+                    if proc.stdout is not None:
+                        proc.stdout.close()
+                _unregister(pgid)
+        if not decompressor or not verifier or decompressor.returncode or verifier.returncode:
+            sig.unlink(missing_ok=True)
+            continue
+        # GnuPG's optional final VALIDSIG field identifies a signing subkey's
+        # primary key. Kernel release signatures can legitimately use subkeys.
+        for line in out.splitlines():
+            fields = line.split()
+            if fields[:2] == ["[GNUPG:]", "VALIDSIG"] and len(fields) >= 11:
+                primary = fields[11] if len(fields) >= 12 else fields[2]
+                if primary in KERNEL_SIGNING_FPRS:
+                    return True
+        sig.unlink(missing_ok=True)
     return False
 
 
@@ -2644,6 +2792,7 @@ def unpack(tarball: Path, rel: Release, identity: str, fresh: bool) -> Path:
     ok(f"Extracted Linux {tree_version(dest)} -> {dest}")
     return dest
 
+
 # ---------------------------------------------------------------------------------------------------
 # .config seeding, modprobed-db and localmodconfig pruning
 # ---------------------------------------------------------------------------------------------------
@@ -2673,7 +2822,10 @@ def arch_upstream_config() -> Path | None:
         return dest
     # A previously pruned running kernel cannot seed drivers for newly recorded
     # peripherals. Prefer the installed distribution kernel's complete config.
-    configs = [module / "build/.config" for module in Path("/usr/lib/modules").iterdir()
+    modules_root = Path("/usr/lib/modules")
+    if not modules_root.is_dir():
+        return None
+    configs = [module / "build/.config" for module in modules_root.iterdir()
                if _read(module / "pkgbase").strip() == "linux"
                and is_plausible_kernel_config(module / "build/.config")]
     return max(configs, key=lambda path: path.stat().st_mtime) if configs else None
@@ -2708,7 +2860,6 @@ def seed_config(tree: Path, p: KernelProfile, env: Mapping[str, str], override: 
             case "running":
                 gz = Path("/proc/config.gz")
                 if gz.is_file():
-                    import gzip
                     with gzip.open(gz, "rb") as fh:
                         dest.write_bytes(fh.read())
                     if is_plausible_kernel_config(dest):
@@ -2763,8 +2914,8 @@ def ensure_modprobed_db(p: KernelProfile) -> Path | None:
     if not p.g("modules", "modprobed_db"):
         return None
     custom = p.g("modules", "modprobed_db_path")
-    if custom and not Path(custom).expanduser().is_absolute():
-        custom = str((p.path.parent / custom).resolve())
+    if custom and not Path(os.path.expandvars(custom)).expanduser().is_absolute():
+        custom = str((p.path.parent / os.path.expandvars(custom)).resolve())
     if not custom and not p.g("meta", "manifest_path") and have("modprobed-db"):
         ensure_modprobed_db_service(prompt=False)
 
@@ -2782,7 +2933,7 @@ def ensure_modprobed_db(p: KernelProfile) -> Path | None:
         searched = ", ".join(str(c) for c in modprobed_db_candidates())
         warn(f"modprobed.db missing (searched: {searched}; install from AUR: paru -S modprobed-db; modprobed-db store)")
     else:
-        warn(f"modprobed.db not found at {Path(custom).expanduser()} (searched custom path only)")
+        warn(f"modprobed.db not found at {Path(os.path.expandvars(custom)).expanduser()} (searched custom path only)")
     return None
 
 
@@ -2825,6 +2976,10 @@ def _generate_modprobed_db_from_lsmod() -> Path | None:
 
 def localmodconfig(tree: Path, p: KernelProfile, db: Path | None, env: Mapping[str, str]) -> set[str]:
     mode = p.g("modules", "mode")
+    if broad_hardware(p) and db is None and mode == "expanded":
+        rule("Module pruning (portable package)")
+        note("Portable profile without a target manifest: keeping broad hardware coverage")
+        return set()
     if p.g("meta", "manifest_path") and db is None:
         raise ProfileError("Remote pruning requires a usable module census from the target")
     rule(f"Module pruning ({mode})")
@@ -2855,15 +3010,16 @@ def localmodconfig(tree: Path, p: KernelProfile, db: Path | None, env: Mapping[s
     # Upstream streamline_config only recognizes obj-$(CONFIG_*). Intel's
     # generated intel-target-* modules need their source-declared mapping.
     restored: set[str] = set()
-    makefile = _read(tree / "drivers/platform/x86/intel/Makefile")
-    for symbol, objects in re.findall(r"(?m)^intel-target-\$\(CONFIG_(\w+)\)\s*\+=\s*(.+)$", makefile):
+    makefile = re.sub(r"\\\r?\n", " ", _read(tree / "drivers/platform/x86/intel/Makefile"))
+    intel_rules = re.findall(r"(?m)^intel-target-\$\(CONFIG_(\w+)\)\s*\+=\s*(.+)$", makefile)
+    for symbol, objects in intel_rules:
         if any("intel_" + name.removesuffix(".o").replace("-", "_") in missing
                for name in objects.split() if name.endswith(".o")):
             restored.add(symbol)
     if restored:
         note("Restoring target census drivers missed by upstream localmodconfig: " + ", ".join(sorted(restored)))
     unresolved = missing - {"intel_" + name.removesuffix(".o").replace("-", "_")
-                            for symbol, objects in re.findall(r"(?m)^intel-target-\$\(CONFIG_(\w+)\)\s*\+=\s*(.+)$", makefile)
+                            for symbol, objects in intel_rules
                             if symbol in restored for name in objects.split()}
     if unresolved:
         note("Census entries not mapped by localmodconfig (may be built-in or external): " + ", ".join(sorted(unresolved)))
@@ -2874,6 +3030,8 @@ def localmodconfig(tree: Path, p: KernelProfile, db: Path | None, env: Mapping[s
 # Kconfig symbol index: know exactly which symbols this tree offers (drives skip/soft/hard verification)
 # ---------------------------------------------------------------------------------------------------
 _KCONFIG_SYM_RE: Final = re.compile(r"^\s*(?:menu)?config\s+([A-Za-z0-9_]+)\s*$", re.M)
+_KCONFIG_BLOCK_END_RE: Final = re.compile(r"(?m)^(?:choice|endchoice|menu|endmenu|if|endif|comment|source)\b")
+_KCONFIG_TYPE_RE: Final = re.compile(r"(?m)^[ \t]+(?:def_(bool|tristate)|(bool|tristate|int|hex|string))\b")
 
 
 @dataclass(slots=True)
@@ -2897,10 +3055,14 @@ class KconfigIndex:
                     text = _read(root / fn)
                     syms.update(_KCONFIG_SYM_RE.findall(text))
                     for block in re.split(r"(?m)^[ \t]*(?:menu)?config[ \t]+", text)[1:]:
-                        name = block.split()[0]
-                        kind = re.search(r"(?m)^[ \t]+(bool|tristate|int|hex|string)\b", block)
+                        parts = block.split(None, 1)
+                        if not parts:
+                            continue
+                        name = parts[0]
+                        body = _KCONFIG_BLOCK_END_RE.split(block, maxsplit=1)[0]
+                        kind = _KCONFIG_TYPE_RE.search(body)
                         if kind:
-                            types[name] = kind.group(1)
+                            types[name] = kind.group(1) or kind.group(2)
         vmax = 3
         cpu_kconfig = _read(tree / "arch" / "x86" / "Kconfig.cpu")
         m = re.search(r"config X86_64_VERSION\n(?:.*\n)*?\s*range\s+(\d+)\s+(\d+)", cpu_kconfig)
@@ -2935,7 +3097,7 @@ class Op:
             case "val":
                 return f"CONFIG_{self.symbol}={self.value}"
             case _:
-                value = str(self.value).replace('\\', '\\\\').replace('"', '\\"')
+                value = str(self.value).replace("\\", "\\\\").replace('"', '\\"')
                 return f'CONFIG_{self.symbol}="{value}"'
 
 
@@ -2984,6 +3146,7 @@ class Matrix:
 
     def __len__(self) -> int:
         return len(self._ops)
+
 
 # ---------------------------------------------------------------------------------------------------
 # Derived build state (resolved once, shared by matrix, environment, cmdline and verification)
@@ -3074,7 +3237,8 @@ def derive(p: KernelProfile, facts: HostFacts, idx: KconfigIndex, tree: Path, sc
         mtune = "generic" if march.startswith("x86-64") else march
     mtune = overrides.get("-mtune", mtune)
 
-    return Derived(facts=facts, idx=idx, tree=tree, version=tree_version(tree), sched=sched, toolchain=toolchain, lto=lto, btf=btf,
+    ver = tree_version(tree) if is_valid_kernel_tree(tree) else "unknown"
+    return Derived(facts=facts, idx=idx, tree=tree, version=ver, sched=sched, toolchain=toolchain, lto=lto, btf=btf,
                    tracing=tracing, rust=rust, rust_reason=reason, fdo=fdo, fdo_reason=fdo_reason, march=march, mtune=mtune)
 
 
@@ -3433,7 +3597,7 @@ def _ops_memory(mx: Matrix, p: KernelProfile, d: Derived) -> None:
     mx.flag("MEMCG", m["memcg"])
     mx.flag("MEMCG_V1", m["memcg"] and not lean)
     mx.flag("CPUSETS_V1", not lean)
-    retained = parse_dotconfig(_read(d.tree / ".config"))
+    retained = parse_dotconfig(_read(d.tree / ".config")) if is_valid_kernel_tree(d.tree) else {}
     recorded_virtio_mem = retained.get("VIRTIO_MEM") in ("y", "m")
     hotplug = vm or not lean or bool(set(f.gpus) & {"amd", "nvidia"}) or recorded_virtio_mem
     mx.flag("MEMORY_HOTPLUG", hotplug, why="ZONE_DEVICE/DEVICE_PRIVATE (GPU SVM) and VM balloons need it")
@@ -3587,7 +3751,13 @@ def _ops_security(mx: Matrix, p: KernelProfile, d: Derived) -> None:
     mx.n("SECURITY_SMACK")
     mx.n("SECURITY_TOMOYO")
     mx.n("SECURITY_APPARMOR_DEBUG")
-    mx.s("LSM", "landlock,lockdown,yama,integrity" + (",apparmor" if sec["apparmor"] else "") + ",bpf")
+    lsm_list = ["landlock", "lockdown", "yama", "integrity"]
+    if sec["apparmor"]:
+        lsm_list.append("apparmor")
+    if sec["selinux"]:
+        lsm_list.append("selinux")
+    lsm_list.append("bpf")
+    mx.s("LSM", ",".join(lsm_list))
     mx.flag("SECURITY_LOCKDOWN_LSM_EARLY", sec["lockdown_early"])
     mx.flag("SECURITY_DMESG_RESTRICT", hardened)
     mx.y("X86_USER_SHADOW_STACK")
@@ -3634,7 +3804,7 @@ def _ops_gaming(mx: Matrix, p: KernelProfile, d: Derived) -> None:
 FS_SYMBOLS: Final[dict[str, tuple[str, ...]]] = {
     "ext4": ("EXT4_FS", "EXT4_FS_POSIX_ACL", "EXT4_FS_SECURITY"), "btrfs": ("BTRFS_FS", "BTRFS_FS_POSIX_ACL"), "xfs": ("XFS_FS", "XFS_POSIX_ACL"),
     "f2fs": ("F2FS_FS", "F2FS_FS_POSIX_ACL", "F2FS_FS_SECURITY"), "vfat": ("VFAT_FS", "FAT_FS", "NLS_CODEPAGE_437", "NLS_ISO8859_1", "FAT_DEFAULT_UTF8"),
-    "virtiofs": ("FUSE_FS", "VIRTIO_FS"), "exfat": ("EXFAT_FS",), "ntfs": ("NTFS_FS", "NTFS_FS_POSIX_ACL"), "ntfs3": ("NTFS3_FS", "NTFS3_LZX_XPRESS", "NTFS3_FS_POSIX_ACL"),
+    "virtiofs": ("FUSE_FS", "VIRTIO_FS"), "exfat": ("EXFAT_FS",), "ntfs": ("NTFS3_FS", "NTFS3_LZX_XPRESS", "NTFS3_FS_POSIX_ACL"), "ntfs3": ("NTFS3_FS", "NTFS3_LZX_XPRESS", "NTFS3_FS_POSIX_ACL"),
     "fuse": ("FUSE_FS",), "fuseblk": ("FUSE_FS",), "overlay": ("OVERLAY_FS",),
     "nfs": ("NFS_FS", "NFS_V4"), "nfs4": ("NFS_FS", "NFS_V4"), "cifs": ("CIFS",), "smb3": ("CIFS",), "erofs": ("EROFS_FS",), "bcachefs": ("BCACHEFS_FS",),
 }
@@ -3669,10 +3839,13 @@ def _ops_storage(mx: Matrix, p: KernelProfile, d: Derived) -> None:
     mx.y("NLS_CODEPAGE_437")
     mx.y("NLS_ISO8859_1")
     wanted = set(f.filesystems) | set(st["extra_filesystems"])
+    builtin_fs_syms: set[str] = set(FS_SYMBOLS.get("vfat", ()))
+    if f.root_fs:
+        builtin_fs_syms.update(FS_SYMBOLS.get(f.root_fs, ()))
     for fstype in sorted(wanted):
         for sym in FS_SYMBOLS.get(fstype, ()):
-            if fstype in (f.root_fs, "vfat"):
-                mx.y(sym, why=f"boot/root filesystem {fstype} must be built-in")
+            if sym in builtin_fs_syms:
+                mx.y(sym, why=f"boot/root filesystem {f.root_fs or fstype} must be built-in")
             elif sym.endswith(("_POSIX_ACL", "_SECURITY", "_UTF8", "NLS_CODEPAGE_437", "NLS_ISO8859_1", "LZX_XPRESS", "NFS_V4")):
                 mx.y(sym)
             else:
@@ -3715,7 +3888,7 @@ def _ops_power(mx: Matrix, p: KernelProfile, d: Derived) -> None:
 
 def _ops_network(mx: Matrix, p: KernelProfile, d: Derived) -> None:
     n = p.sections["network"]
-    retained = parse_dotconfig(_read(d.tree / ".config"))
+    retained = parse_dotconfig(_read(d.tree / ".config")) if is_valid_kernel_tree(d.tree) else {}
 
     def algorithm(symbol: str, selected: bool) -> None:
         if not selected and retained.get(symbol) in ("m", "y"):
@@ -3817,9 +3990,9 @@ def _ops_gpu(mx: Matrix, p: KernelProfile, d: Derived) -> None:
         mx.y("AMD_PRIVATE_COLOR", optional=True, why="enable AMD KMS color management for Gamescope/HDR")
     if "intel" in gpus or portable:
         drivers = ("DRM_I915", "DRM_XE")
-        pruned = parse_dotconfig(_read(d.tree / ".config"))
+        pruned = parse_dotconfig(_read(d.tree / ".config")) if is_valid_kernel_tree(d.tree) else {}
         retained = [sym for sym in drivers if pruned.get(sym) in ("y", "m")]
-        if p.g("modules", "mode") == "strict" and not portable and (d.tree / ".config").is_file():
+        if p.g("modules", "mode") == "strict" and not portable and d.seed_source and (d.tree / ".config").is_file():
             explicit = {str(sym).removeprefix("CONFIG_") for sym in p.g("modules", "keep_symbols")}
             explicit.update(str(sym).removeprefix("CONFIG_") for sym, value in p.g("dusky", "extra_config").items() if value in (True, "y", "m"))
             drivers = tuple(sym for sym in drivers if sym in retained or sym in explicit)
@@ -3898,6 +4071,7 @@ def build_config_matrix(p: KernelProfile, d: Derived) -> Matrix:
                 mx.add(replace(op, action="y"))
     return mx
 
+
 # ---------------------------------------------------------------------------------------------------
 # Apply / finalize / verify the configuration
 # ---------------------------------------------------------------------------------------------------
@@ -3933,7 +4107,7 @@ def parse_dotconfig(text: str) -> dict[str, str]:
         if line.startswith("CONFIG_"):
             key, _, val = line[7:].partition("=")
             if val.startswith('"') and val.endswith('"') and len(val) >= 2:
-                val = re.sub(r'\\(["\\])', r'\1', val[1:-1])
+                val = re.sub(r'\\(["\\])', r"\1", val[1:-1])
             out[key] = val
         elif line.startswith("# CONFIG_") and line.endswith(" is not set"):
             out[line[9:-11]] = "n"
@@ -4153,6 +4327,7 @@ def build_env(p: KernelProfile, d: Derived, facts: HostFacts, epoch: float) -> d
         env["HOSTCC"] = "gcc"
         env["LD"] = "ld.bfd"
     if p.g("compiler", "ccache") and have("ccache"):
+        CCACHE_DIR.mkdir(parents=True, exist_ok=True)
         env["CC"] = "ccache clang" if d.toolchain == "llvm" else "ccache gcc"
         env["CCACHE_BASEDIR"] = str(SRC_DIR)
         env["CCACHE_DIR"] = str(CCACHE_DIR)
@@ -4221,13 +4396,29 @@ def check_disk_space(lto: str, *, installing: bool = False, building: bool = Tru
             pass
 
 
+def _dir_size_bytes(root: Path) -> int:
+    total = 0
+    try:
+        for dirpath, _, filenames in root.walk(follow_symlinks=False):
+            for fn in filenames:
+                p = dirpath / fn
+                try:
+                    if not p.is_symlink():
+                        total += p.stat().st_size
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return total
+
+
 def prune_obsolete_build_trees(profile_name: str, current_tree: str, keep_limit: int = 1) -> None:
     """Automatically remove obsolete build trees and packages to prevent persistent disk exhaustion.
 
     Retains the active tree plus up to keep_limit previous builds for fast rebuilds.
     Incomplete trees (failed or aborted before vmlinux) are pruned immediately.
     """
-    src_parent = STORAGE.get("persistent_dir", BUILD_DIR) / "src"
+    src_parent = Path(STORAGE.get("persistent_dir", BUILD_DIR)) / "src"
     if not src_parent.is_dir():
         return
     pattern = f"+{profile_name}-"
@@ -4252,7 +4443,7 @@ def prune_obsolete_build_trees(profile_name: str, current_tree: str, keep_limit:
     to_check.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     for old_tree in to_check[keep_limit:]:
         try:
-            size = sum(f.stat().st_size for f in old_tree.rglob("*") if f.is_file())
+            size = _dir_size_bytes(old_tree)
             shutil.rmtree(old_tree)
             ok(f"Pruned obsolete build tree: {old_tree.name} (freed {fmt_bytes(size)})")
         except OSError:
@@ -4340,8 +4531,9 @@ def prepare_extmod_build(tree: Path, d: Derived, env: Mapping[str, str]) -> None
     text = path.read_text()
     start = "# Dusky external-module toolchain\n"
     end = "# End Dusky external-module toolchain\n"
-    if start in text:
-        a = text.index(start); b = text.index(end, a) + len(end)
+    if start in text and end in text:
+        a = text.index(start)
+        b = text.index(end, a) + len(end)
         text = text[:a] + text[b:]
     anchor = "export KBUILD_EXTMOD\n"
     if anchor not in text:
@@ -4387,18 +4579,18 @@ def stage_runtime_package(tree: Path, p: KernelProfile, d: Derived) -> None:
     text = pkgbuild.read_text()
     marker = "\n# Dusky runtime package integration\n"
     end_marker = "# End Dusky runtime package integration\n"
-    if marker in text:
+    if marker in text and end_marker in text:
         start = text.index(marker)
         end = text.index(end_marker, start) + len(end_marker)
         text = text[:start] + text[end:]
     # Rename the upstream implementation, keeping its internal body untouched.
     # Evaluated after upstream declares package_<pkgbase>, which calls _package dynamically.
     extra = marker + "eval \"$(declare -f _package | sed '1s/_package/_dusky_upstream_package/')\"\n"
-    extra += '_package() {\n  _dusky_upstream_package\n'
+    extra += "_package() {\n  _dusky_upstream_package\n"
     if p.g("runtime", "enabled"):
-        extra += '  depends+=(python systemd util-linux kmod)\n'
+        extra += "  depends+=(python systemd util-linux kmod)\n"
     if p.g("runtime", "enabled") and p.g("scheduler", "scx") != "none":
-        extra += '  depends+=(scx-scheds)\n'
+        extra += "  depends+=(scx-scheds)\n"
     if p.g("runtime", "enabled"):
         extra += f'  install -Dm644 "${{srctree}}/.dusky/runtime/runtime.py" "${{pkgdir}}{base}/runtime.py"\n'
     extra += f'  install -Dm644 "${{srctree}}/.dusky/runtime/profile.json" "${{pkgdir}}{base}/profile.json"\n'
@@ -4406,7 +4598,7 @@ def stage_runtime_package(tree: Path, p: KernelProfile, d: Derived) -> None:
         extra += f'  install -Dm644 "${{srctree}}/.dusky/runtime/{unit}" "${{pkgdir}}/usr/lib/systemd/system/{unit}"\n'
         extra += '  install -dm755 "${pkgdir}/usr/lib/systemd/system/multi-user.target.wants"\n'
         extra += f'  ln -sf "../{unit}" "${{pkgdir}}/usr/lib/systemd/system/multi-user.target.wants/{unit}"\n'
-    extra += '}\n'
+    extra += "}\n"
     if resolve_build_headers(p, d.facts):
         extra += "eval \"$(declare -f _package-headers | sed '1s/_package-headers/_dusky_upstream_headers/')\"\n"
         dependencies = "clang lld llvm" if d.toolchain == "llvm" else "gcc binutils"
@@ -4446,13 +4638,16 @@ def compile_kernel(tree: Path, p: KernelProfile, d: Derived, env: Mapping[str, s
         info("Build type: fresh compile (new kernel release or clean tree; no prior objects)")
     else:
         info("Build type: incremental rebuild (reusing existing object files for faster compilation)")
-    if have("ccache"):
+    make_cmd = ["make", f"-j{jobs}"]
+    if p.g("compiler", "ccache") and have("ccache") and b_env.get("CC"):
+        make_cmd.append(f"CC={b_env['CC']}")
         note(f"ccache active ({CCACHE_DIR})")
+    make_cmd.append("pacman-pkg")
     if d.lto == "thin":
         note(f"ThinLTO cache active ({THINLTO_CACHE_DIR})")
     expected_steps, expected_seconds = history_estimate(p.name, d.lto, current_jobs=jobs, is_clean=is_clean)
     with Live(p.pkgbase, expected_steps, expected_seconds, lto=d.lto) as live:
-        ret = run_stream(["make", f"-j{jobs}", "pacman-pkg"], cwd=tree, env=b_env, on_line=live.feed)
+        ret = run_stream(make_cmd, cwd=tree, env=b_env, on_line=live.feed)
         duration = live.elapsed
         steps = live.steps
         errors = list(live.errors)
@@ -4506,17 +4701,33 @@ def _kernelreleases_for_pkgbases(pkgbases: set[str]) -> dict[str, str]:
     return found
 
 
-def audit_dkms(krel: str, pkgbase: str) -> bool:
-    """Verify DKMS for the kernel just installed, never an older release of its flavor."""
+def _dkms_module_excluded(mod: str, ver: str, krel: str) -> bool:
+    """Return True if dkms.conf declares BUILD_EXCLUSIVE_KERNEL that excludes krel."""
+    for cand in (Path(f"/var/lib/dkms/{mod}/{ver}/source/dkms.conf"), Path(f"/usr/src/{mod}-{ver}/dkms.conf")):
+        if not cand.is_file():
+            continue
+        text = _read(cand)
+        m = re.search(r'(?m)^\s*BUILD_EXCLUSIVE_KERNEL\s*=\s*["\']?([^"\'\n]+)["\']?', text)
+        if m:
+            try:
+                if not re.search(m.group(1), krel):
+                    return True
+            except re.error:
+                pass
+    return False
+
+
+def audit_dkms(krel: str, pkgbase: str) -> tuple[bool, bool]:
+    """Verify DKMS for the kernel just installed; returns (ok, rebuilt_any)."""
     if not have("dkms"):
-        return True
+        return True, False
     try:
         targets = _kernelreleases_for_pkgbases({pkgbase})
     except OSError:
         targets = {}
     if targets.get(krel) != pkgbase:
         warn(f"Installed kernel {krel} has no matching pkgbase {pkgbase}")
-        return False
+        return False, False
 
     def status() -> tuple[set[tuple[str, str]], dict[tuple[str, str], str]] | None:
         try:
@@ -4532,7 +4743,9 @@ def audit_dkms(krel: str, pkgbase: str) -> bool:
         for line in (cp.stdout or "").splitlines():
             head = re.match(r"^([^/,]+)/([^,:]+)", line.strip())
             if head:
-                registered.add((head.group(1), head.group(2)))
+                mod_name, mod_ver = head.group(1), head.group(2)
+                if not _dkms_module_excluded(mod_name, mod_ver, krel):
+                    registered.add((mod_name, mod_ver))
             match = _DKMS_STATUS_RE.match(line.strip())
             if match and match.group(3) == krel:
                 current[(match.group(1), match.group(2))] = match.group(4).strip()
@@ -4540,16 +4753,16 @@ def audit_dkms(krel: str, pkgbase: str) -> bool:
 
     before = status()
     if before is None:
-        return False
+        return False, False
     registered, current = before
     if not registered or all(current.get(module, "").startswith("installed") for module in registered):
         ok(f"DKMS modules up to date for {krel} ({pkgbase})")
-        return True
+        return True, False
     PRIV.ensure()
     result = PRIV.run(["dkms", "autoinstall", "-k", krel], check=False)
     after = status()
     if after is None:
-        return False
+        return False, True
     registered, current = after
     for mod, ver in sorted(registered):
         if current.get((mod, ver), "").startswith("built"):
@@ -4557,7 +4770,7 @@ def audit_dkms(krel: str, pkgbase: str) -> bool:
             PRIV.run(["dkms", "install", "--force", f"{mod}/{ver}", "-k", krel], check=False)
     final = status()
     if final is None:
-        return False
+        return False, True
     registered, current = final
     missing = [f"{mod}/{ver} ({current.get((mod, ver), 'missing')})" for mod, ver in sorted(registered)
                if not current.get((mod, ver), "").startswith("installed")]
@@ -4565,9 +4778,9 @@ def audit_dkms(krel: str, pkgbase: str) -> bool:
         warn(f"DKMS missing for {krel}: {', '.join(missing)}")
         if result.returncode:
             warn(f"dkms autoinstall exited {result.returncode}; review /var/lib/dkms/<module>/<version>/build/make.log")
-        return False
+        return False, True
     ok(f"DKMS modules up to date for {krel} ({pkgbase})")
-    return True
+    return True, True
 
 
 def prepare_nvidia_compat() -> bool:
@@ -4596,11 +4809,12 @@ def prepare_nvidia_compat() -> bool:
     return True
 
 
-def verify_nvidia_compat(kernelrelease: str) -> None:
+def verify_nvidia_compat(kernelrelease: str) -> bool:
     """DKMS 'installed' is insufficient: require the fixed ELF import for this driver."""
+    rebuilt = False
     try:
         if not kernel_nvidia.target_needs_init_fs(Path("/usr/lib/modules") / kernelrelease / "build"):
-            return
+            return False
 
         def repaired() -> bool:
             version = run(["modinfo", "-k", kernelrelease, "-F", "version", "nvidia"]).stdout.strip()
@@ -4613,11 +4827,13 @@ def verify_nvidia_compat(kernelrelease: str) -> None:
             info(f"Rebuilding NVIDIA {kernel_nvidia.VERSION} for {kernelrelease} with the RTD3 fix")
             for action in ("build", "install"):
                 PRIV.run(["dkms", action, f"nvidia/{kernel_nvidia.VERSION}", "-k", kernelrelease, "--force"], capture=False)
+            rebuilt = True
             if not repaired():
                 raise ValueError("rebuilt NVIDIA module still lacks userspace_init_fs; boot promotion stopped")
     except (OSError, ValueError, subprocess.SubprocessError) as e:
         raise BuildError(f"NVIDIA compatibility verification failed: {e}") from e
     ok(f"NVIDIA RTD3 compatibility verified in the installed module for {kernelrelease}")
+    return rebuilt
 
 
 def ensure_install_dependencies(p: KernelProfile) -> None:
@@ -4631,21 +4847,12 @@ def ensure_install_dependencies(p: KernelProfile) -> None:
         PRIV.run(["pacman", "-S", "--needed", "--noconfirm", *missing], capture=False)
 
 
-def prune_stale_modules(kernelrelease: str) -> None:
-    """Remove orphaned module files that conflict with built-in modules.
-
-    When kernel-modules-hook is installed or when rebuilding a kernel release
-    after Kconfig symbols transition from =m to =y (built-in), pacman or ALPM
-    hooks (such as 10-linux-modules-post.hook) restore older module files from
-    /usr/lib/modules/backup/<krel> into /usr/lib/modules/<krel>. These stale
-    module files conflict with built-in drivers, corrupt depmod's dependency
-    graph, and cause 'Exec format error' at runtime when modprobe attempts
-    to insert them for dependent drivers (e.g. asus-wmi).
-    """
+def prune_stale_modules(kernelrelease: str) -> bool:
+    """Remove orphaned module files that conflict with built-in modules."""
     mod_dir = Path(f"/usr/lib/modules/{kernelrelease}")
     builtin_file = mod_dir / "modules.builtin"
     if not builtin_file.is_file():
-        return
+        return False
     try:
         builtins = {
             line.strip().removeprefix("kernel/").removesuffix(".ko")
@@ -4653,7 +4860,7 @@ def prune_stale_modules(kernelrelease: str) -> None:
             if line.strip()
         }
     except OSError:
-        return
+        return False
 
     to_remove: list[str] = []
     kernel_dir = mod_dir / "kernel"
@@ -4677,6 +4884,8 @@ def prune_stale_modules(kernelrelease: str) -> None:
         PRIV.run(["rm", "-f", *to_remove], capture=False)
         PRIV.run(["depmod", "-a", kernelrelease], capture=False)
         ok(f"Pruned {len(to_remove)} conflicting module files and updated module dependencies")
+        return True
+    return False
 
 
 def install_packages(pkgs: Sequence[Path], profile: KernelProfile, kernelrelease: str) -> None:
@@ -4703,24 +4912,24 @@ def install_packages(pkgs: Sequence[Path], profile: KernelProfile, kernelrelease
     install_started = time.time()
     PRIV.run(["pacman", "-U", "--noconfirm", *[str(x) for x in pkgs]], capture=False)
     ok("Kernel packages installed (mkinitcpio and DKMS pacman hooks have run)")
-    prune_stale_modules(kernelrelease)
+    pruned_any = prune_stale_modules(kernelrelease)
     # Fresh-install path: (re)assert the modprobed-db writer so future
     # strict localmodconfig builds keep accumulating modules. User unit -> no sudo.
     if profile.g("modules", "modprobed_db") and have("modprobed-db"):
         ensure_modprobed_db_service(prompt=False)
     # Same-version reinstalls can leave DKMS objects stale ("built" instead of
     # "installed", then Exec format error at modprobe). Audit and force-rebuild.
-    if not audit_dkms(kernelrelease, profile.pkgbase):
+    dkms_ok, dkms_rebuilt = audit_dkms(kernelrelease, profile.pkgbase)
+    if not dkms_ok:
         raise BuildError("Kernel installed, but DKMS failed; boot configuration was not promoted. Review DKMS logs before rebooting.")
-    if nvidia_compat:
-        verify_nvidia_compat(kernelrelease)
+    nvidia_rebuilt = verify_nvidia_compat(kernelrelease) if nvidia_compat else False
 
-    # DKMS repairs happen after pacman hooks: include their resulting modules.
-    # Also regenerate stale images when an alpm hook failed or did not run.
+    # Regenerate initramfs if post-pacman module changes occurred or if the image is missing/stale.
     initramfs_img = Path(f"/boot/initramfs-{profile.pkgbase}.img")
-    if have("dkms") or not initramfs_img.is_file() or initramfs_img.stat().st_mtime < install_started:
+    if pruned_any or dkms_rebuilt or nvidia_rebuilt or not initramfs_img.is_file() or initramfs_img.stat().st_mtime < install_started:
         info(f"Generating initramfs for {profile.pkgbase} via mkinitcpio -p...")
         PRIV.run(["mkinitcpio", "-p", profile.pkgbase], capture=False)
+
 
 # ---------------------------------------------------------------------------------------------------
 # Bootloader integration
@@ -4741,6 +4950,31 @@ def base_cmdline_tokens(facts: HostFacts, *, drop_managed: bool = True) -> list[
 def uki_preset(pkgbase: str) -> bool:
     preset = _read(f"/etc/mkinitcpio.d/{pkgbase}.preset")
     return any(re.match(r"^\s*\w+_uki=", line) for line in preset.splitlines())
+
+
+def _resolve_loader_conf(facts: HostFacts) -> Path | None:
+    roots = [r for r in (facts.esp, facts.xbootldr) if r]
+    for r in roots:
+        cand = Path(r) / "loader" / "loader.conf"
+        if cand.is_file() or PRIV.run(["test", "-f", str(cand)], check=False).returncode == 0:
+            return cand
+    for r in roots:
+        ldr = Path(r) / "loader"
+        if ldr.is_dir() or PRIV.run(["test", "-d", str(ldr)], check=False).returncode == 0:
+            return ldr / "loader.conf"
+    return None
+
+
+def _read_privileged_text(path: Path) -> str | None:
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except PermissionError:
+        res = PRIV.run(["cat", str(path)], check=False)
+        return res.stdout if res.returncode == 0 else None
+    except OSError:
+        return None
 
 
 def write_bls_entries(p: KernelProfile, facts: HostFacts, d: Derived) -> None:
@@ -4796,16 +5030,10 @@ def write_bls_entries(p: KernelProfile, facts: HostFacts, d: Derived) -> None:
     if not p.g("boot", "set_default"):
         return
     # Update loader.conf only when explicitly selected in the profile.
-    loader_conf = Path(root) / "loader" / "loader.conf"
-    has_loader_conf = loader_conf.is_file() or PRIV.run(["test", "-f", str(loader_conf)], check=False).returncode == 0
-    if has_loader_conf:
-        txt = ""
-        try:
-            txt = loader_conf.read_text(encoding="utf-8")
-        except PermissionError:
-            res = PRIV.run(["cat", str(loader_conf)], check=False)
-            txt = res.stdout if res.returncode == 0 else ""
-        if txt:
+    loader_conf = _resolve_loader_conf(facts)
+    if loader_conf is not None:
+        txt = _read_privileged_text(loader_conf)
+        if txt is not None:
             if re.search(r"^default\s+", txt, re.M):
                 new_txt = re.sub(r"^default\s+.*$", f"default {p.pkgbase}.conf", txt, flags=re.M)
             else:
@@ -4815,6 +5043,8 @@ def write_bls_entries(p: KernelProfile, facts: HostFacts, d: Derived) -> None:
                 if m_timeout.group(1).isdigit() and int(m_timeout.group(1)) == 0:
                     new_txt = re.sub(r"^timeout\s+\S+", "timeout 3", new_txt, flags=re.M)
             else:
+                if new_txt and not new_txt.endswith("\n"):
+                    new_txt += "\n"
                 new_txt += "timeout 3\n"
             PRIV.write_files({loader_conf: (new_txt, "0644")})
             ok(f"Updated {loader_conf} default -> {p.pkgbase}.conf (timeout 3s)")
@@ -4849,6 +5079,7 @@ def refresh_boot(p: KernelProfile, facts: HostFacts, d: Derived, *, kernel_insta
     if not facts.bootloaders:
         warn("No supported bootloader detected (systemd-boot, GRUB, rEFInd, Limine); add /boot/vmlinuz-" + p.pkgbase + " manually")
 
+
 # ---------------------------------------------------------------------------------------------------
 # Cross-machine hardware bundles
 # ---------------------------------------------------------------------------------------------------
@@ -4873,8 +5104,8 @@ def do_export_bundle(dest: Path | None, profile_name: str | None = None) -> Path
 
     selected = select_profile(ensure_profiles_exist(), profile_name, facts) if profile_name else None
     custom_db = selected.g("modules", "modprobed_db_path") if selected else ""
-    if custom_db and not Path(custom_db).expanduser().is_absolute():
-        custom_db = str(selected.path.parent / custom_db)
+    if custom_db and not Path(os.path.expandvars(custom_db)).expanduser().is_absolute():
+        custom_db = str(selected.path.parent / os.path.expandvars(custom_db))
     db_src = resolve_modprobed_db(custom_db or None)
     manifest = facts.as_json() | {"format": "dusky_bundle_v3", "hostname": hname,
                                  "created_at": datetime.now(UTC).isoformat(), "app_version": APP_VERSION}
@@ -4934,6 +5165,7 @@ def do_import_bundle(src: Path, profile_name: str | None = None) -> str:
         import_dir = IMPORT_DIR / (hname + "-" + sha256_file(src)[:12])
         import_dir.mkdir(parents=True, exist_ok=True)
         db_path = ""
+        dest_db = import_dir / "modprobed.db"
         mods: set[str] = set()
         if (tmp / "modprobed.db").is_file():
             for line in (tmp / "modprobed.db").read_text(encoding="utf-8", errors="replace").splitlines():
@@ -4941,17 +5173,23 @@ def do_import_bundle(src: Path, profile_name: str | None = None) -> str:
                 if m:
                     mods.add(m)
         if (tmp / "lsmod.txt").is_file():
-            for line in (tmp / "lsmod.txt").read_text(encoding="utf-8", errors="replace").splitlines():
-                m = _extract_module_name(line)
-                if m:
-                    mods.add(m)
+            if not mods:
+                count = normalize_lsmod_file_to_db(tmp / "lsmod.txt", dest_db)
+                if count > 0:
+                    db_path = str(dest_db)
+                    note(f"Imported {count} unique modules for {hname} from lsmod.txt")
+            else:
+                for line in (tmp / "lsmod.txt").read_text(encoding="utf-8", errors="replace").splitlines():
+                    m = _extract_module_name(line)
+                    if m:
+                        mods.add(m)
         if mods:
-            (import_dir / "modprobed.db").write_text("\n".join(sorted(mods)) + "\n", encoding="utf-8")
-            db_path = str(import_dir / "modprobed.db")
+            dest_db.write_text("\n".join(sorted(mods)) + "\n", encoding="utf-8")
+            db_path = str(dest_db)
             note(f"Imported {len(mods)} unique modules for {hname} from bundle")
-        else:
+        elif not db_path:
             warn("bundle contained neither a usable modprobed.db nor a parseable lsmod.txt")
-        shutil.copy2(tmp / "manifest.json", import_dir / "manifest.json")
+        shutil.copy2(mf, import_dir / "manifest.json")
     if manifest.get("format") != "dusky_bundle_v3":
         raise ProfileError("Re-export the target with this version; bundle v3 required")
     if not db_path:
@@ -4974,7 +5212,7 @@ def do_import_bundle(src: Path, profile_name: str | None = None) -> str:
     prof.set("modules", "allow_lsmod_fallback", False)
     # Boot-entry preference belongs to the target. do_build never installs remote builds.
     validate_profile(prof)
-    cross_validate(prof, target_facts_for_profile(prof, host_facts()), force=True)
+    cross_validate(prof, target, force=True)
     dest_dir = PROFILES_DIR if os.access(PROFILES_DIR, os.W_OK) or not PROFILES_DIR.exists() else USER_PROFILES_DIR
     dest_dir.mkdir(parents=True, exist_ok=True)
     original_name = pname
@@ -5017,7 +5255,9 @@ def toolchain_env(p: KernelProfile) -> dict[str, str]:
 def validate_rust_cpu(d: Derived) -> None:
     if not d.rust:
         return
-    cp = run(["rustc", "--print", "target-cpus", "--target=x86_64-unknown-none"], timeout=30)
+    cp = run(["rustc", "--print", "target-cpus", "--target=x86_64-unknown-none"], check=False, timeout=30)
+    if cp.returncode != 0:
+        raise DependencyError(f"rustc target-cpus probe failed: {(cp.stdout or '').strip()}")
     supported = {line.split()[0] for line in cp.stdout.splitlines() if line.strip()}
     for cpu in (d.march, d.mtune):
         if cpu not in ("native", "generic") and cpu not in supported:
@@ -5026,8 +5266,10 @@ def validate_rust_cpu(d: Derived) -> None:
 
 def validate_cpu_flags(p: KernelProfile) -> None:
     arch = p.g("cpu", "arch")
-    march = {"generic": "x86-64", "generic_v2": "x86-64-v2", "generic_v3": "x86-64-v3", "generic_v4": "x86-64-v4"}.get(arch, arch)
-    flags = [f"-march={march}", *shlex.split(p.g("cpu", "march"))]
+    march = {"generic": "x86-64", "generic_v2": "x86-64-v2", "generic_v3": "x86-64-v3", "generic_v4": "x86-64-v4"}.get(arch, arch.replace("_", "-") if "x86-64" in arch else arch)
+    extra_flags = shlex.split(p.g("cpu", "march"))
+    has_explicit_march = any(f.startswith("-march=") for f in extra_flags)
+    flags = [*([] if has_explicit_march else [f"-march={march}"]), *extra_flags]
     compiler = "clang" if p.g("compiler", "toolchain") == "llvm" else "gcc"
     cp = run([compiler, *flags, "-x", "c", "-fsyntax-only", "/dev/null"], check=False)
     if cp.returncode:
@@ -5047,7 +5289,7 @@ def show_configuration(profile: KernelProfile, diff: Sequence[str]) -> None:
 
 
 @contextmanager
-def build_workspace_lock():
+def build_workspace_lock() -> Iterator[None]:
     BUILD_DIR.mkdir(parents=True, exist_ok=True)
     with (BUILD_DIR / ".build.lock").open("a") as lock:
         try:
@@ -5060,7 +5302,7 @@ def build_workspace_lock():
             fcntl.flock(lock, fcntl.LOCK_UN)
 
 
-def checkpoint_run(cmd):
+def checkpoint_run(cmd: Sequence[str]) -> subprocess.CompletedProcess[str]:
     # The signal handler sets _ABORT; saving after Ctrl-C must still be allowed.
     aborted = _ABORT.is_set()
     _ABORT.clear()
@@ -5072,7 +5314,7 @@ def checkpoint_run(cmd):
 
 
 @contextmanager
-def storage_session(use_ram: bool, tree_name: str):
+def storage_session(use_ram: bool, tree_name: str) -> Iterator[None]:
     global THINLTO_CACHE_DIR, CCACHE_DIR, RAM_RESERVE_GIB
     if not use_ram:
         yield
@@ -5084,7 +5326,9 @@ def storage_session(use_ram: bool, tree_name: str):
         with kernel_storage.ram_workspace(settings, run, note, checkpoint_run, tree_name=tree_name) as ram:
             set_build_dir(ram)
             THINLTO_CACHE_DIR, CCACHE_DIR = ram / "thinlto-cache", ram / "ccache"
-            RAM_RESERVE_GIB = settings["ram_reserve_gib"]
+            THINLTO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            CCACHE_DIR.mkdir(parents=True, exist_ok=True)
+            RAM_RESERVE_GIB = int(settings["ram_reserve_gib"])
             yield
     except (kernel_storage.StorageError, OSError) as exc:
         raise BuildError(str(exc)) from exc
@@ -5092,6 +5336,9 @@ def storage_session(use_ram: bool, tree_name: str):
         set_build_dir(persistent)
         THINLTO_CACHE_DIR, CCACHE_DIR = old_lto, old_ccache
         RAM_RESERVE_GIB = 0
+        persisted_link = persistent / "src" / tree_name / ".thinlto-cache"
+        if persisted_link.is_symlink() and not persisted_link.exists():
+            persisted_link.unlink(missing_ok=True)
 
 
 def show_ram_fallback_warning(res: Any, lto: str = "thin") -> None:
@@ -5253,7 +5500,7 @@ def do_build(args: argparse.Namespace) -> int:
         workspace.enter_context(storage_session(use_ram, tree_name))
         check_disk_space(profile.g("compiler", "lto"), installing=not args.no_install and not args.configure_only)
         tree = unpack(tarball, release, build_id, bool(args.fresh))
-        sched = "eevdf"
+        sched = profile.g("scheduler", "type")
         env0 = toolchain_env(profile)
         seed_source = seed_config(tree, profile, env0, Path(args.seed_config).expanduser() if args.seed_config else None)
         run(["make", "olddefconfig"], cwd=tree, env=env0)
@@ -5261,7 +5508,6 @@ def do_build(args: argparse.Namespace) -> int:
         census_symbols = localmodconfig(tree, profile, db, env0)
         idx = KconfigIndex.scan(tree)
         note(f"Kconfig index: {len(idx.symbols):,} symbols (x86 view), X86_64_VERSION range max {idx.x86_64_version_max}")
-        target_facts = target_facts_for_profile(profile, facts)
         if target_facts is not facts:
             note(f"Target hardware profile: {target_facts.model} ({target_facts.vendor}), {target_facts.threads} threads, uarch={target_facts.uarch or 'generic_v' + str(target_facts.psabi_level)}, gpus={', '.join(target_facts.gpus) or 'none'}, virt={target_facts.virt}")
         rust_ok, rust_out = (rust_probe(tree, env0) if profile.g("compiler", "rust") else (False, ""))
@@ -5315,7 +5561,9 @@ def do_list(_: argparse.Namespace) -> int:
 
 def do_show(args: argparse.Namespace) -> int:
     p = select_profile(ensure_profiles_exist(), args.profile, host_facts()).clone()
-    diff = apply_overrides(p, Overrides.from_env_and_args(args)) + normalize_profile(p)
+    ov_diff = apply_overrides(p, Overrides.from_env_and_args(args))
+    apply_security_bundle(p)
+    diff = ov_diff + normalize_profile(p)
     validate_profile(p)
     cross_validate(p, target_facts_for_profile(p, host_facts()), force=bool(args.force))
     if args.json:
@@ -5360,7 +5608,9 @@ def do_matrix(args: argparse.Namespace) -> int:
     banner()
     facts = host_facts()
     p = select_profile(ensure_profiles_exist(), args.profile, facts).clone()
-    diff = apply_overrides(p, Overrides.from_env_and_args(args)) + normalize_profile(p)
+    ov_diff = apply_overrides(p, Overrides.from_env_and_args(args))
+    apply_security_bundle(p)
+    diff = ov_diff + normalize_profile(p)
     validate_profile(p)
     tree = latest_tree(p.name)
     if tree is not None:
@@ -5370,8 +5620,8 @@ def do_matrix(args: argparse.Namespace) -> int:
         idx = KconfigIndex(frozenset(), 3)
         note("No extracted source tree yet; showing the permissive matrix (every symbol assumed available)")
     facts = target_facts_for_profile(p, facts)
-    cross_validate(p, facts)
-    d = derive(p, facts, idx, tree or Path("."), p.g("scheduler", "type"), True, "")
+    cross_validate(p, facts, force=bool(getattr(args, "force", False)))
+    d = derive(p, facts, idx, tree or Path("/nonexistent"), p.g("scheduler", "type"), True, "")
     mx = build_config_matrix(p, d)
     show_configuration(p, diff)
     rule(f"Kconfig matrix ({len(mx)} ops)")
@@ -5412,7 +5662,7 @@ def do_doctor(args: argparse.Namespace) -> int:
         rule("NVIDIA runtime power (passive snapshot)")
         for gpu in nvidia:
             say(f"  {gpu['pci']}: {gpu['driver']} / {gpu['power_state']} / {gpu['runtime_status']} / control={gpu['control']}")
-            say(textwrap.indent(gpu['nvidia_power'], "    "))
+            say(textwrap.indent(gpu["nvidia_power"], "    "))
         note("D0 can be expected with active GPU clients or displays; a snapshot alone does not prove a PM fault")
     rule("Toolchain & Systems Integration")
     rows = []
@@ -5473,8 +5723,18 @@ def do_clean(args: argparse.Namespace) -> int:
     banner()
     rule("Clean artifacts")
     what = args.clean or "all"
-    targets = {"src": SRC_DIR, "tarballs": TARBALL_DIR, "packages": PKGDEST_DIR, "thinlto": THINLTO_CACHE_DIR, "logs": LOG_DIR, "seeds": BUILD_DIR / "seeds"}
-    chosen = list(targets) if what == "all" else [w.strip() for w in what.split(",")]
+    targets = {
+        "src": SRC_DIR,
+        "tarballs": TARBALL_DIR,
+        "packages": PKGDEST_DIR,
+        "thinlto": THINLTO_CACHE_DIR,
+        "ccache": CCACHE_DIR,
+        "logs": LOG_DIR,
+        "seeds": BUILD_DIR / "seeds",
+        "imports": IMPORT_DIR,
+    }
+    default_all = ("src", "tarballs", "packages", "thinlto", "logs", "seeds")
+    chosen = list(default_all) if what == "all" else [w.strip() for w in what.split(",") if w.strip()]
     with build_workspace_lock():
         for name in chosen:
             path = targets.get(name)
@@ -5482,11 +5742,15 @@ def do_clean(args: argparse.Namespace) -> int:
                 warn(f"Unknown clean target '{name}' (choose from: all, {', '.join(targets)})")
                 continue
             if path.exists():
-                size = sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+                size = _dir_size_bytes(path)
                 shutil.rmtree(path)
                 ok(f"Removed {path} ({fmt_bytes(size)})")
             else:
                 note(f"{path} already clean")
+        if what == "all":
+            fb = BUILD_DIR / "lsmod-fallback.db"
+            if fb.is_file():
+                fb.unlink(missing_ok=True)
         return 0
 
 
@@ -5520,31 +5784,26 @@ def do_uninstall(args: argparse.Namespace) -> int:
         warn(f"No installed packages named linux-{flavor}*")
     facts = host_facts()
     root = facts.xbootldr or facts.esp
+    target_confs = {f"linux-{flavor}.conf", f"linux-{flavor}-fallback.conf"}
     if root:
-        cand_entries = [Path(root, "loader", "entries", f"linux-{flavor}{suffix}.conf") for suffix in ("", "-fallback")]
+        cand_entries = [Path(root, "loader", "entries", name) for name in sorted(target_confs)]
         entries = [entry for entry in cand_entries if entry.is_file() or PRIV.run(["test", "-f", str(entry)], check=False).returncode == 0]
         if entries:
             PRIV.run(["rm", "-f", *[str(e) for e in entries]], check=False)
             ok(f"Removed boot entries: {', '.join(e.name for e in entries)}")
-        loader_conf = Path(root) / "loader" / "loader.conf"
-        has_loader_conf = loader_conf.is_file() or PRIV.run(["test", "-f", str(loader_conf)], check=False).returncode == 0
-        if has_loader_conf:
-            txt = ""
-            try:
-                txt = loader_conf.read_text(encoding="utf-8")
-            except PermissionError:
-                res = PRIV.run(["cat", str(loader_conf)], check=False)
-                txt = res.stdout if res.returncode == 0 else ""
+        loader_conf = _resolve_loader_conf(facts)
+        if loader_conf is not None:
+            txt = _read_privileged_text(loader_conf)
             if txt:
-                m = re.search(r"^default\s+(.+)$", txt, re.M)
-                if m and f"linux-{flavor}" in m.group(1):
+                m = re.search(r"^default\s+(\S+)", txt, re.M)
+                if m and m.group(1).strip() in target_confs:
                     remaining: list[str] = []
                     try:
-                        remaining = [e.name for e in sorted((Path(root) / "loader" / "entries").glob("*.conf")) if f"linux-{flavor}" not in e.name]
+                        remaining = [e.name for e in sorted((Path(root) / "loader" / "entries").glob("*.conf")) if e.name not in target_confs]
                     except PermissionError:
                         res = PRIV.run(["ls", "-1", f"{root}/loader/entries"], check=False)
                         if res.returncode == 0:
-                            remaining = [line.strip() for line in res.stdout.splitlines() if line.endswith(".conf") and f"linux-{flavor}" not in line]
+                            remaining = [line.strip() for line in res.stdout.splitlines() if line.strip().endswith(".conf") and line.strip() not in target_confs]
                     new_default = remaining[0] if remaining else "@saved"
                     new_txt = re.sub(r"^default\s+.*$", f"default {new_default}", txt, flags=re.M)
                     PRIV.write_files({loader_conf: (new_txt, "0644")})
@@ -5612,10 +5871,14 @@ def packaged_profile(pkgs: Sequence[Path], pkgbase: str) -> KernelProfile | None
                 member = next((m for m in tf if m.name.removeprefix("./") == member_name), None)
                 if member is None:
                     continue
-                with tf.extractfile(member) as stream:
+                extracted = tf.extractfile(member)
+                if extracted is None:
+                    continue
+                with extracted as stream:
                     raw = json.load(stream)["profile"]
                 sections, explicit = coerce(raw, pkg)
                 result = KernelProfile(pkg, sections, explicit)
+                apply_security_bundle(result)
                 validate_profile(result)
                 if result.pkgbase != pkgbase:
                     raise ProfileError("Packaged profile does not match the kernel package")
@@ -5634,7 +5897,10 @@ def packaged_kernelrelease(pkgs: Sequence[Path], pkgbase: str) -> str:
                     match = re.fullmatch(r"usr/lib/modules/([^/]+)/pkgbase", member.name.removeprefix("./"))
                     if not match or not member.isfile():
                         continue
-                    with archive.extractfile(member) as stream:
+                    extracted = archive.extractfile(member)
+                    if extracted is None:
+                        continue
+                    with extracted as stream:
                         if stream.read().decode("utf-8", "replace").strip() == pkgbase:
                             return match.group(1)
         except (tarfile.TarError, OSError, EOFError) as e:
@@ -5668,8 +5934,8 @@ def do_install_pkg(args: argparse.Namespace) -> int:
         krel = packaged_kernelrelease(pkgs, pkgbase)
         info(f"{pkgbase}: using profile '{profile.name}' for preset and boot entries")
         install_packages(sorted(pkgs), profile, krel)
-        d = Derived(facts=facts, idx=KconfigIndex(frozenset(), 3), tree=Path("."), version=krel, sched="eevdf",
-                    toolchain="llvm", lto="none", btf=False, tracing="minimal", rust=False, rust_reason="",
+        d = Derived(facts=facts, idx=KconfigIndex(frozenset(), 3), tree=Path("/nonexistent"), version=krel, sched=profile.g("scheduler", "type"),
+                    toolchain=profile.g("compiler", "toolchain"), lto=profile.g("compiler", "lto"), btf=False, tracing="minimal", rust=False, rust_reason="",
                     fdo="none", fdo_reason="", kernelrelease=krel)
         refresh_boot(profile, facts, d, kernel_install=bool(getattr(args, "kernel_install", False)))
     rule("Done")
@@ -5703,7 +5969,8 @@ def do_fdo_record(args: argparse.Namespace) -> int:
     if facts.vendor == "intel":
         event = ["-e", "BR_INST_RETIRED.NEAR_TAKEN:k"]
     elif facts.vendor == "amd" and facts.flags & {"brs", "amd_lbr_v2"}:
-        event = ["--pfm-events", "RETIRED_TAKEN_BRANCH_INSTRUCTIONS:k"]
+        probe_pfm = run(["perf", "record", "--pfm-events", "RETIRED_TAKEN_BRANCH_INSTRUCTIONS:k", "-o", "/dev/null", "--", "true"], check=False)
+        event = ["--pfm-events", "RETIRED_TAKEN_BRANCH_INSTRUCTIONS:k"] if probe_pfm.returncode == 0 else ["-e", "r00c4:k"]
     else:
         raise ProfileError("FDO recording requires Intel branch sampling or AMD BRS/amd_lbr_v2 support")
     info(f"Recording {seconds}s of system-wide kernel branch samples; run your representative workload now")
@@ -5725,7 +5992,7 @@ def do_fdo_record(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------------------------------
-EPILOG: Final = textwrap.dedent(f"""\
+EPILOG: Final = textwrap.dedent("""\
     examples:
       %(prog)s --write-default-profiles        write the profile template
       %(prog)s --doctor                        host telemetry, toolchain and bootloader diagnostics
@@ -5752,7 +6019,7 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--spec", action="store_true", help="print the profile schema")
     mode.add_argument("--print-matrix", action="store_true", help="print the Kconfig matrix (dry-run without a build, or after configuration during a build)")
     mode.add_argument("--doctor", action="store_true", help="system diagnostics")
-    mode.add_argument("--clean", metavar="WHAT", nargs="?", const="all", help="clean all|src|tarballs|packages|thinlto|logs|seeds (comma separated)")
+    mode.add_argument("--clean", metavar="WHAT", nargs="?", const="all", help="clean all|src|tarballs|packages|thinlto|ccache|logs|seeds|imports (comma separated)")
     mode.add_argument("--write-default-profiles", action="store_true", help="write the profile template")
     mode.add_argument("--export-bundle", nargs="?", const="", default=None, metavar="FILE", help="export a hardware bundle for remote builds")
     mode.add_argument("--import-bundle", type=Path, metavar="FILE", help="import a hardware bundle and register remote_<host>")
@@ -5835,7 +6102,7 @@ def install_aur_package(pkg: str) -> bool:
 
 def initialize_toolchains() -> None:
     rule("Toolchains & hardware profiler")
-    official_pkgs = ["base-devel", "clang", "lld", "llvm", "rust", "rust-bindgen", "bc", "cpio", "kmod", "pahole", "perf", "curl", "gnupg", "terminus-font"]
+    official_pkgs = ["base-devel", "clang", "lld", "llvm", "rust", "rust-src", "rust-bindgen", "bc", "cpio", "kmod", "pahole", "perf", "curl", "gnupg", "terminus-font"]
     if ask_yes(f"Install official packages (pacman -S --needed {' '.join(official_pkgs)}) ?", True):
         PRIV.run(["pacman", "-S", "--needed", *official_pkgs], capture=False)
 
@@ -5892,6 +6159,7 @@ def config_manager_menu() -> None:
                 print_profile_table(ensure_profiles_exist(), facts)
             case 2:
                 p = select_profile(ensure_profiles_exist(), None, facts).clone()
+                apply_security_bundle(p)
                 show_configuration(p, normalize_profile(p))
             case 3:
                 p = select_profile(ensure_profiles_exist(), None, facts).clone()
@@ -5920,7 +6188,7 @@ def bundle_manager_menu() -> None:
             return
 
 
-def interactive_menu() -> int:
+def interactive_menu(base_args: argparse.Namespace | None = None) -> int:
     while True:
         say("")
         banner()
@@ -5940,7 +6208,7 @@ def interactive_menu() -> int:
                 case 1:
                     initialize_toolchains()
                 case 2:
-                    args = build_parser().parse_args([])
+                    args = argparse.Namespace(**vars(base_args)) if base_args is not None else build_parser().parse_args([])
                     do_build(args)
                 case 3:
                     bundle_manager_menu()
@@ -5962,7 +6230,7 @@ def interactive_menu() -> int:
                             if flavor:
                                 do_uninstall(argparse.Namespace(uninstall=flavor))
                         case 5:
-                            do_clean(argparse.Namespace(clean=ask("What to clean (all|src|tarballs|packages|thinlto|logs|seeds)", "packages,logs")))
+                            do_clean(argparse.Namespace(clean=ask("What to clean (all|src|tarballs|packages|thinlto|ccache|logs|seeds|imports)", "packages,logs")))
                         case _:
                             continue
                 case _:
@@ -5981,8 +6249,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         STORAGE = kernel_storage.load_settings(args.settings or SCRIPT_DIR / "kernel_profiles" / "settings" / "kernel_settings.toml", XDG_CACHE, args.build_dir)
-        CCACHE_DIR = STORAGE["ccache_dir"]
-        set_build_dir(STORAGE["persistent_dir"])
+        CCACHE_DIR = Path(STORAGE["ccache_dir"])
+        set_build_dir(STORAGE["persistent_dir"], create=False)
     except (OSError, ValueError) as exc:
         sys.stderr.write(f"Storage settings: {exc}\n")
         return 2
@@ -6019,7 +6287,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return do_matrix(args)
         wants_build = bool(args.profile or args.configure_only or args.no_install or args.wizard or args.yes)
         if args.menu or (not wants_build and interactive()):
-            return interactive_menu()
+            return interactive_menu(args)
         return do_build(args)
     except DuskyError as e:
         err(str(e))
