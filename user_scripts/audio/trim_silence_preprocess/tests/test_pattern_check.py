@@ -115,23 +115,202 @@ class PatternTests(unittest.TestCase):
             with self.subTest(pause=pause):
                 self.assertEqual(PATTERN._trace_back_to_onset(blocks), 12)
 
+    def test_mid_show_break_with_outro_music_does_not_cut_first_half_of_episode(self):
+        # Regression for Critical half-episode truncation bug:
+        # 1) Direct backtracking across bumper music + dead air.
+        kinds = (
+            ['quiet'] * 6
+            + ['speech'] * 20
+            + ['music'] * 5
+            + ['quiet'] * 3
+            + ['speech'] * 40
+        )
+        blocks = [block(kind, i) for i, kind in enumerate(kinds)]
+        self.assertEqual(PATTERN._trace_back_to_onset(blocks), 6)
+        # 2) Full analyze_episode path where the first half has 50% speech density
+        # (< 60% min_speech_pct, so confirmation only locks in during the second half)
+        # followed by a 30s music + 30s dead-air mid-show break.
+        segments = (
+            [('quiet', 30)]
+            + [('speech', 10), ('drums', 10)] * 7
+            + [('music', 30), ('quiet', 30), ('speech', 120)]
+        )
+        result = self.detect(segments, min_speech_minutes=2)
+        self.assertEqual(result.show_start_sec, 30.0)
+        self.assertEqual(result.show_duration_sec, 320.0)
+
+    def test_two_disconnected_bumpers_with_20s_gap_do_not_jump_to_preshow(self):
+        # H1 regression: two 20s bumpers separated by a 20s dead-air break must not
+        # combine into a 60s confirmation window when backtracking from the real show.
+        result = self.detect(
+            [('quiet', 20), ('speech', 20), ('quiet', 20), ('speech', 20), ('quiet', 40), ('speech', 80)],
+            min_speech_minutes=1,
+        )
+        self.assertEqual(result.show_start_sec, 120.0)
+
+    def test_end_of_episode_is_never_truncated_by_trailing_silence_or_early_stop(self):
+        # Verify show_duration_sec covers the full remainder of the file and preprocess_command
+        # never emits an end-trim flag even when the episode has mid-show and trailing silence.
+        result = self.detect(
+            [('quiet', 30), ('speech', 90), ('quiet', 15), ('speech', 60), ('quiet', 45)],
+            min_speech_minutes=1,
+        )
+        self.assertEqual(result.show_start_sec, 30)
+        self.assertEqual(result.total_duration_sec, 240)
+        self.assertEqual(result.show_duration_sec, 210)
+        self.assertNotIn('--end', result.preprocess_command)
+        self.assertNotIn('-to', result.preprocess_command)
+
+    def test_non_qualifying_stinger_after_dead_air_returns_speech_onset(self):
+        # 60s dead air + 20s music stinger (<30s music_boundary_sec) + speech at block 8
+        # must return block 8 (speech onset), not block 6 (start of the music stinger).
+        kinds = ['quiet'] * 6 + ['music'] * 2 + ['speech'] * 40
+        blocks = [block(kind, i) for i, kind in enumerate(kinds)]
+        self.assertEqual(PATTERN._trace_back_to_onset(blocks), 8)
+        # A 10s music block at k == 0 (<30s music_boundary_sec) must not clip block 0.
+        opening_stinger = [block('music', 0)] + [block('speech', i) for i in range(1, 20)]
+        self.assertEqual(PATTERN._trace_back_to_onset(opening_stinger), 0)
+
+    def test_post_silence_music_bumper_does_not_trigger_priority1_silence_to_speech(self):
+        # 25s silence followed by 15s unmodulated music (-31.7 dBFS, below -30 dB) and speech at 40s:
+        # Priority 1 must not mistake the music onset at 25s for silence-to-speech.
+        quiet_music = array.array('h', (int(1200 * math.sin(2 * math.pi * 220 * i / 8000))
+                                        for i in range(8000)))  # ~ -31.7 dBFS
+        self.audio([('quiet', 25), ('music', 15), ('speech', 40)])
+        with wave.open(str(self.source), 'rb') as src:
+            raw = bytearray(src.readframes(src.getnframes()))
+        raw[25 * 16000 : 40 * 16000] = quiet_music.tobytes() * 15
+        with wave.open(str(self.source), 'wb') as out:
+            out.setnchannels(1)
+            out.setsampwidth(2)
+            out.setframerate(8000)
+            out.writeframesraw(raw)
+        sec, sig = PATTERN.refine_boundary_fine(self.source, 40.0)
+        self.assertEqual(sec, 40.0)
+        self.assertIn('music-to-speech', sig)
+
+    def test_single_second_transient_in_leading_quiet_does_not_abort_priority1b(self):
+        tone_pop = array.array('h', (int(1200 * math.sin(2 * math.pi * 220 * i / 8000))
+                                     for i in range(8000)))  # ~ -31.7 dBFS (> -34 dB) 1s transient
+        self.audio([('quiet', 10), ('speech', 70)])
+        with wave.open(str(self.source), 'rb') as src:
+            raw = bytearray(src.readframes(src.getnframes()))
+        raw[2 * 16000 : 3 * 16000] = tone_pop.tobytes()
+        with wave.open(str(self.source), 'wb') as out:
+            out.setnchannels(1)
+            out.setsampwidth(2)
+            out.setframerate(8000)
+            out.writeframesraw(raw)
+        sec, sig = PATTERN.refine_boundary_fine(self.source, 10.0)
+        self.assertEqual(sec, 10.0)
+        self.assertIn('early speech onset', sig)
+
+    def test_ffprobe_na_stream_duration_falls_back_to_format_duration(self):
+        self.audio([('quiet', 10), ('speech', 70)])
+        fake_meta = {
+            'streams': [{'sample_rate': '8000', 'channels': 1, 'duration': 'N/A'}],
+            'format': {'duration': '80.0', 'size': '1280000'},
+        }
+        with patch.object(PATTERN, 'probe_audio_stream', return_value=fake_meta):
+            result = PATTERN.analyze_episode(self.source, min_speech_minutes=1)
+        self.assertEqual(result.total_duration_sec, 80.0)
+        self.assertEqual(result.show_start_sec, 10.0)
+
+    def test_profile_rejects_impossible_silence_gate_and_zero_speech_pct(self):
+        for bad in (
+            {'min_abs_silence_pct': 85.0, 'dead_air_silence_pct': 85.0},
+            {'min_abs_silence_pct': 90.0, 'dead_air_silence_pct': 85.0},
+            {'min_speech_pct': 0.0},
+            {'boundary_quiet_sec': 4, 'refine_window_sec': 12},
+            {'min_pause_ms': 4000, 'min_pauses': 2},
+        ):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                PATTERN.DetectionProfile(**bad)
+
+    def test_early_speech_onset_gets_high_confidence(self):
+        result = self.detect([('quiet', 7), ('speech', 100)], min_speech_minutes=1)
+        self.assertEqual(result.show_start_sec, 7)
+        self.assertIn('early speech onset', result.transition_signature)
+        self.assertEqual(result.confidence_pct, 93.0)
+
+    def test_soft_fade_in_speech_after_dead_air_refines_accurately(self):
+        tone_quiet = array.array('h', (int(500 * math.sin(2 * math.pi * 220 * i / 8000))
+                                       for i in range(8000)))  # ~ -33.1 dBFS
+        tone_mid = array.array('h', (int(1000 * math.sin(2 * math.pi * 220 * i / 8000))
+                                     for i in range(8000)))    # ~ -27.1 dBFS
+        self.audio([('quiet', 30), ('speech', 70)])
+        with wave.open(str(self.source), 'rb') as src:
+            raw = bytearray(src.readframes(src.getnframes()))
+        # Replace seconds 30 and 31 with a soft 2-second speech fade-in (-33 dB -> -27 dB)
+        raw[30 * 16000 : 31 * 16000] = tone_quiet.tobytes()
+        raw[31 * 16000 : 32 * 16000] = tone_mid.tobytes()
+        with wave.open(str(self.source), 'wb') as out:
+            out.setnchannels(1)
+            out.setsampwidth(2)
+            out.setframerate(8000)
+            out.writeframesraw(raw)
+        sec, sig = PATTERN.refine_boundary_fine(self.source, 30.0)
+        self.assertEqual(sec, 30.0)
+        self.assertIn('silence-to-speech', sig)
+
+    def test_opening_bumper_before_20s_dead_air_does_not_hijack_refinement(self):
+        result = self.detect([('quiet', 2), ('speech', 5), ('quiet', 23), ('speech', 100)],
+                             min_speech_minutes=1)
+        self.assertEqual(result.show_start_sec, 30)
+        self.assertIn('silence-to-speech', result.transition_signature)
+
+    def test_two_disconnected_bumpers_do_not_confirm_early(self):
+        # 20s bumper + 30s dead air + 20s bumper must not confirm a 1-minute (60% = 40s) window
+        result = self.detect(
+            [('quiet', 20), ('speech', 20), ('quiet', 30), ('speech', 20), ('quiet', 40), ('speech', 80)],
+            min_speech_minutes=1,
+        )
+        self.assertEqual(result.show_start_sec, 130)
+
+    def test_positive_db_and_invalid_threshold_rejected(self):
+        for bad in ({'speech_min_db': 44.0}, {'dead_air_max_db': 10.0},
+                    {'dead_air_max_db': -30.0, 'speech_min_db': -44.0},
+                    {'abs_silence_threshold': 1.5},
+                    {'min_speech_pct': 80.0, 'min_speech_or_quiet_pct': 70.0}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                PATTERN.DetectionProfile(**bad)
+
     def test_fine_decoder_failure_is_reported(self):
         failed = subprocess.CompletedProcess([], 1, b'')
         with patch.object(PATTERN.subprocess, 'run', return_value=failed):
             with self.assertRaisesRegex(RuntimeError, 'refinement failed'):
                 PATTERN.refine_boundary_fine(self.source, 100)
 
+    def test_refinement_omits_first_pts_zero_on_nonzero_seek(self):
+        ok = subprocess.CompletedProcess([], 0, b'')
+        with patch.object(PATTERN.subprocess, 'run', return_value=ok) as run_mock:
+            PATTERN.refine_boundary_fine(self.source, 20.0)
+            cmd_zero = run_mock.call_args.args[0]
+            self.assertIn('aresample=async=1:first_pts=0', cmd_zero)
+            PATTERN.refine_boundary_fine(self.source, 100.0)
+            cmd_seek = run_mock.call_args.args[0]
+            self.assertIn('aresample=async=1', cmd_seek)
+            self.assertNotIn('aresample=async=1:first_pts=0', cmd_seek)
+
     def test_analysis_decoder_failure_is_reported(self):
         executable = self.folder / 'ffmpeg'
-        self.audio([('speech', 2)])
-        for tiny_output in (False, True):
-            executable.write_text(f'#!{sys.executable}\nimport sys\n'
-                                  + ('sys.stdout.buffer.write(bytes(4))\n' if tiny_output else '')
-                                  + 'sys.exit(23)\n', encoding='utf-8')
+        self.audio([('speech', 60)])
+        for mode in ('empty', 'tiny', 'exact_block'):
+            payload = (
+                'sys.stdout.buffer.write(bytes(4))\n' if mode == 'tiny' else
+                'import array, math\n'
+                'tone = array.array("f", (0.15 * math.sin(2 * math.pi * 220 * i / 8000) for i in range(4000)))\n'
+                'frame = (tone + array.array("f", [0.0]) * 4000).tobytes()\n'
+                'sys.stdout.buffer.write(frame * 60)\n' if mode == 'exact_block' else ''
+            )
+            executable.write_text(
+                f'#!{sys.executable}\nimport sys\n{payload}sys.exit(23)\n',
+                encoding='utf-8',
+            )
             executable.chmod(0o755)
-            with patch.dict(os.environ, PATH=f'{self.folder}:{os.environ["PATH"]}'):
+            with self.subTest(mode=mode), patch.dict(os.environ, PATH=f'{self.folder}:{os.environ["PATH"]}'):
                 with self.assertRaisesRegex(RuntimeError, 'analysis failed'):
-                    PATTERN.analyze_episode(self.source)
+                    PATTERN.analyze_episode(self.source, min_speech_minutes=1)
 
     def test_verifier_uses_selected_json_and_reports_mpv_failure(self):
         detections = self.folder / 'detections.json'
@@ -244,7 +423,8 @@ class PatternTests(unittest.TestCase):
         config = self.folder / 'config.toml'
         config.write_text('[defaults]\nmin_speech_minutes = 2.0\nmax_music_pct = 20.0\n'
                           '[profiles.short]\nmin_speech_minutes = 1.0\n'
-                          'min_speech_pct = 75.0\n', encoding='utf-8')
+                          'min_speech_pct = 75.0\n'
+                          'min_speech_or_quiet_pct = 75.0\n', encoding='utf-8')
         default = PATTERN.load_profile(config, 'default')
         short = PATTERN.load_profile(config, 'short')
         self.assertEqual(default.min_speech_minutes, 2)
@@ -360,7 +540,7 @@ class PatternTests(unittest.TestCase):
         self.assertEqual(buffer[:8], b'abcdefgh')
 
     def test_unicode_columns_and_grapheme_truncation(self):
-        for text, width in [('字', 2), ('e\u0301', 1), ('👩\u200d💻', 2), ('🇮🇳', 2)]:
+        for text, width in [('字', 2), ('e\u0301', 1), ('👩\u200d💻', 2), ('🏳\u200d🌈', 2), ('🇮🇳', 2), ('क\u094d\u200dष', 1)]:
             self.assertEqual(PATTERN.display_width(text), width)
             self.assertEqual(PATTERN.display_width(PATTERN.format_cell(text * 5, 8)), 8)
         for width in range(4):

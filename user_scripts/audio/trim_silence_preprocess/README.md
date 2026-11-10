@@ -16,17 +16,19 @@ python3 user_scripts/audio/trim_silence_preprocess/preprocess.py recording.m4a /
 ```
 
 The output extension selects the encoding. Interactive suggestions use `.m4a`
-and include the requested speed in the filename. AAC defaults to **128 kbps**
-for mono/stereo, or 64 kbps per channel for multichannel recordings; `--bitrate`
-sets an integer kbps value for `.m4a` only. Channels are retained. FFmpeg selects
+and include the requested speed in the filename. When the source is already
+compressed, AAC defaults to its measured bitrate capped at 320 kbps; PCM
+sources default to **128 kbps** for mono/stereo, or 64 kbps per channel for
+multichannel recordings. `--bitrate` sets an integer kbps value for `.m4a`
+only. Channels are retained. FFmpeg selects
 a supported AAC sample rate when the source rate cannot be encoded directly;
 the report records source and output rates. WAV preserves the source rate.
 AAC adds lossy compression; WAV avoids that additional encoding loss. Rebuild
 from the original to avoid accumulating lossy compression or speed adjustments.
 Trimming, speedup and encoding share one FFmpeg pipeline with no intermediate WAV.
 
-`--speed` accepts a finite multiplier of at least 1, including `2.5`, `3`, `4`
-and higher values. The default is `1`, which bypasses tempo processing and
+`--speed` accepts a finite multiplier between 1 and 64, including `2.5`, `3`,
+`4` and higher values. The default is `1`, which bypasses tempo processing and
 preserves the previous decoded PCM output when choosing WAV. Speedup follows silence trimming, so the ending
 guard still covers six seconds of source audio before acceleration. FFmpeg's
 pitch-preserving `atempo` stages each run at most 2x to avoid its sample-skipping
@@ -44,8 +46,10 @@ Times accept seconds, `MM:SS`, or `HH:MM:SS`, including fractional seconds.
 
 `--start` selects the source offset; optional `--duration` limits the
 input excerpt. Omit both to process the whole recording. Music is not detected
-automatically: select the talking section yourself. Existing leading-silence
-behavior and the six-second ending guard are retained for the selected excerpt.
+automatically: select the talking section yourself. Leading silence is
+preserved by default, matching the live filter; pass `--trim-leading-silence`
+to remove initial dead air at the start of the excerpt. The six-second ending
+guard is always retained.
 WAV has no additional quantization of the float32 decoded samples. Descriptive
 tags (title, artist, album, album artist, composer, genre, date, track, disc,
 comment, description and copyright) are retained where supported by the output
@@ -59,7 +63,7 @@ records codec, target AAC bitrate, output size estimate and actual sample rate.
 Existing output/report/log files are never overwritten.
 
 The default per-cache ceiling is **4 GiB**, adjustable with `--max-cache-gib`.
-For WAV, preflight uses the untrimmed, unaccelerated PCM size bound. For AAC,
+For WAV, preflight uses the untrimmed PCM size bound divided by speed. For AAC,
 it estimates the untrimmed duration divided by speed at the requested bitrate,
 plus 15% encoding headroom, estimated packet tables and 64 KiB for container
 overhead. Neither calculation assumes silence savings. AAC is an estimate,

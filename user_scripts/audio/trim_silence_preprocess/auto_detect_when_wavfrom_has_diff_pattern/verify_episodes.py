@@ -23,7 +23,14 @@ def main() -> None:
         print(f"Error: Detection file not found: {json_path}", file=sys.stderr)
         sys.exit(1)
 
-    episodes = json.loads(json_path.read_text(encoding="utf-8"))
+    try:
+        episodes = json.loads(json_path.read_text(encoding="utf-8"))
+        if not isinstance(episodes, list):
+            raise ValueError("Detections JSON root must be a list of episode objects")
+    except (OSError, ValueError, TypeError) as error:
+        print(f"Verification failed: {error}", file=sys.stderr)
+        sys.exit(1)
+
     print("=" * 85)
     print(f"Loaded {len(episodes)} auto-detected episodes for sequential verification.")
     print("How it works: Listen to each episode at the detected timestamp.")
@@ -32,15 +39,21 @@ def main() -> None:
     print("=" * 85 + "\n")
 
     for idx, ep in enumerate(episodes, 1):
-        filename = ep["filename"]
-        filepath = ep["filepath"]
-        start_ts = ep["show_start_timestamp"]
-        total_dur = ep["total_duration_sec"]
-        hh = int(total_dur // 3600)
-        mm = int((total_dur % 3600) // 60)
-        ss = int(total_dur % 60)
+        try:
+            if not isinstance(ep, dict):
+                raise TypeError(f"Episode #{idx} is not a JSON object")
+            filename = str(ep["filename"])
+            filepath = str(ep["filepath"])
+            start_ts = str(ep["show_start_timestamp"])
+            total_dur = max(0, int(round(float(ep["total_duration_sec"]))))
+            sig = str(ep["transition_signature"])
+        except (KeyError, TypeError, ValueError) as error:
+            print(f"Invalid episode entry #{idx}: {error}", file=sys.stderr)
+            sys.exit(1)
+
+        hh, rem = divmod(total_dur, 3600)
+        mm, ss = divmod(rem, 60)
         total_ts = f"{hh:02d}:{mm:02d}:{ss:02d}"
-        sig = ep["transition_signature"]
 
         print(f"\n[{idx}/{len(episodes)}] {filename}")
         print(f"  -> Total: {total_ts} | Detected Start: {start_ts} | Signature: {sig}")
@@ -56,14 +69,15 @@ def main() -> None:
             f"--osd-msg1=[Episode {idx}/{len(episodes)}] Start: {start_ts} | Press 'q' for next",
             "--osd-level=3",
             f"--start={start_ts}",
+            "--",
             filepath,
         ]
         try:
-            subprocess.run(cmd, check=False)
+            subprocess.run(cmd, check=True)
         except KeyboardInterrupt:
             print("\nVerification aborted by user.", file=sys.stderr)
             sys.exit(130)
-        except OSError as error:
+        except (OSError, subprocess.CalledProcessError) as error:
             print(f"MPV launch failed: {error}", file=sys.stderr)
             sys.exit(1)
 

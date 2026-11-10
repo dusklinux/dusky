@@ -64,7 +64,7 @@ class PreprocessTests(unittest.TestCase):
         self.assertEqual(live, cached)
         self.assertEqual(cached[-5 * 48000 * 2 * 4:], bytes(5 * 48000 * 2 * 4))
 
-    def write_tone(self, rate=48000, channels=2):
+    def write_tone(self, rate=48000, channels=2, silence=True):
         tone = array.array('h', (int(8000 * math.sin(2 * math.pi * 440 * n / rate))
                                  for n in range(rate)))
         block = array.array('h', (sample for sample in tone for _ in range(channels)))
@@ -74,7 +74,7 @@ class PreprocessTests(unittest.TestCase):
             output.setframerate(rate)
             for second in range(20):
                 output.writeframes(bytes(rate * channels * 2)
-                                   if 5 <= second < 8 or second >= 15 else block)
+                                   if silence and (5 <= second < 8 or second >= 15) else block)
 
     def test_aac_speed_pitch_size_and_decode(self):
         self.write_tone()
@@ -296,7 +296,7 @@ class PreprocessTests(unittest.TestCase):
                 cache = self.folder / 'invalid-speed.wav'
                 result = self.preprocess(cache, f'--speed={speed}')
                 self.assertEqual(result.returncode, 2)
-                self.assertIn('Speed must be finite and at least 1', result.stderr)
+                self.assertIn('Speed must be finite and between 1 and 64', result.stderr)
                 self.assertFalse(cache.exists())
                 self.assertFalse(cache.with_suffix('.log').exists())
 
@@ -588,3 +588,77 @@ class PreprocessTests(unittest.TestCase):
              patch.object(sys, 'argv', ['preprocess.py', str(self.source), '--interactive']):
             PREPROCESS.main()
         self.assertTrue(cache.exists())
+
+    def test_aac_source_bitrate_preserved_by_default(self):
+        # Continuous audio keeps the encoded source near the requested bitrate;
+        # silence gaps would drag its average bitrate far below 195 kbps.
+        self.write_tone(silence=False)
+        aac_source = self.folder / 'high-bitrate-source.m4a'
+        subprocess.run(['ffmpeg', '-v', 'error', '-i', str(self.source),
+                        '-c:a', 'aac', '-b:a', '195k', str(aac_source)],
+                       check=True, timeout=20)
+        self.source = aac_source
+        cache = self.folder / 'preserved-bitrate.m4a'
+        result = self.preprocess(cache)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertGreaterEqual(report['target_bitrate_kbps'], 180)
+        self.assertLessEqual(report['target_bitrate_kbps'], 220)
+
+    def test_format_tags_take_precedence_over_stream_handler_tags(self):
+        self.write_tone()
+        tagged = self.folder / 'stream-vs-format.mka'
+        subprocess.run([
+            'ffmpeg', '-v', 'error', '-i', str(self.source), '-map', '0:a:0',
+            '-metadata:g', 'title=Episode 1234',
+            '-metadata:s:a:0', 'title=SoundHandler',
+            '-c:a', 'copy', str(tagged),
+        ], check=True, timeout=20)
+        self.source = tagged
+        cache = self.folder / 'tag-precedence.m4a'
+        result = self.preprocess(cache)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        probed = PREPROCESS.probe(cache)
+        tags = {k.lower(): v for k, v in probed['format'].get('tags', {}).items()}
+        self.assertEqual(tags.get('title'), 'Episode 1234')
+
+    def test_wav_preflight_budget_accounts_for_speed(self):
+        self.write_tone()
+        cache = self.folder / 'speed-budget.wav'
+        # 20s stereo float32 @ 48 kHz is ~7.68 MiB at 1x, but ~1.92 MiB at 4x.
+        with patch.object(PREPROCESS, 'cache_budget', return_value=(3 * 1024**2, 'tmpfs')), \
+             patch.object(sys, 'argv', ['preprocess.py', str(self.source), str(cache), '--speed', '4']):
+            PREPROCESS.main()
+        self.assertTrue(cache.exists())
+
+    def test_trim_leading_silence_flag_removes_initial_silence(self):
+        with wave.open(str(self.source), 'wb') as output:
+            output.setnchannels(2)
+            output.setsampwidth(2)
+            output.setframerate(48000)
+            for second in range(20):
+                value = 4000 if second >= 10 else 0
+                output.writeframes(array.array('h', [value, value]) * 48000)
+        cache = self.folder / 'trimmed-leading.wav'
+        result = self.preprocess(cache, '--trim-leading-silence')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertAlmostEqual(report['cached_duration_seconds'], 10.0, delta=0.05)
+
+    def test_truncated_output_below_ending_guard_is_rejected_and_cleans_log(self):
+        cache = self.folder / 'truncated.wav'
+        measure = PREPROCESS.measure
+
+        def write_short_output(command, log, budget=None):
+            short_cmd = [
+                'ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo',
+                '-t', '1', '-c:a', 'pcm_f32le', command[-1],
+            ]
+            return measure(short_cmd, log, budget)
+
+        with patch.object(PREPROCESS, 'measure', side_effect=write_short_output), \
+             patch.object(sys, 'argv', ['preprocess.py', str(self.source), str(cache)]):
+            with self.assertRaisesRegex(RuntimeError, 'Unexpected output duration'):
+                PREPROCESS.main()
+        self.assertFalse(cache.exists())
+        self.assertFalse(cache.with_suffix('.log').exists())

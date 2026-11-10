@@ -44,6 +44,7 @@ def measure(command: list[str], log: Path, max_file_bytes: int | None = None) ->
         except BaseException:
             process.kill()
             process.wait()
+            log.unlink(missing_ok=True)
             raise
     result = {
         'command': command,
@@ -60,9 +61,11 @@ def measure(command: list[str], log: Path, max_file_bytes: int | None = None) ->
 def probe(path: Path) -> dict:
     return json.loads(subprocess.check_output([
         'ffprobe', '-hide_banner', '-v', 'error', '-select_streams', 'a:0',
-        '-show_entries', 'stream=codec_name,sample_rate,channels,duration:stream_tags:format=duration,size:format_tags',
-        '-of', 'json', str(path),
-    ], stdin=subprocess.DEVNULL, text=True, encoding='utf-8', timeout=30))
+        '-show_entries',
+        'stream=codec_name,sample_rate,channels,duration,bit_rate:stream_tags:format=duration,size,bit_rate:format_tags',
+        '-of', 'json', '--', str(path),
+    ], stdin=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+       encoding='utf-8', timeout=30, preexec_fn=child_setup()))
 
 
 def mounts() -> list[Mount]:
@@ -82,8 +85,10 @@ def mounts() -> list[Mount]:
 def available_memory(entries: list[Mount]) -> int:
     fields = dict(line.split(':', 1) for line in Path('/proc/meminfo').read_text(encoding='utf-8').splitlines())
     available = int(fields['MemAvailable'].split()[0]) * 1024
-    membership = next(Path(line[3:]) for line in Path('/proc/self/cgroup').read_text(encoding='utf-8').splitlines()
-                      if line.startswith('0::'))
+    membership = next((Path(line[3:]) for line in Path('/proc/self/cgroup').read_text(encoding='utf-8').splitlines()
+                       if line.startswith('0::')), None)
+    if membership is None:
+        return available
     # Include ancestor limits: a user/session/container may have less RAM than
     # the host. memory.current includes the group's other processes and tmpfs.
     for root, mount, kind, _ in entries:
@@ -173,11 +178,11 @@ def ask_time(prompt: str, default: float | None, valid) -> float | None:
 def parse_speed(value: str) -> float:
     try:
         speed = float(value)
-        if math.isfinite(speed) and speed >= 1:
+        if math.isfinite(speed) and 1 <= speed <= 64:
             return speed
     except ValueError:
         pass
-    raise argparse.ArgumentTypeError('Speed must be finite and at least 1 (for example 2.5)')
+    raise argparse.ArgumentTypeError('Speed must be finite and between 1 and 64 (for example 2.5)')
 
 
 def tempo_filters(speed: float) -> list[str]:
@@ -221,11 +226,14 @@ def main() -> None:
     parser.add_argument('--start', type=parse_time, default=0, help='Source offset: seconds or HH:MM:SS')
     parser.add_argument('--duration', type=parse_time, help='Optional excerpt length: seconds or HH:MM:SS')
     parser.add_argument('--speed', type=parse_speed, default=1.0,
-                        help='Pitch-preserving playback speed, at least 1 (default: 1; e.g. 2.5, 3, 4)')
+                        help='Pitch-preserving playback speed, 1-64 (default: 1; e.g. 2.5, 3, 4)')
     parser.add_argument('--bitrate', type=parse_bitrate, metavar='KBPS',
-                        help='AAC bitrate in kbps (default: 128 for mono/stereo, 64 per channel otherwise); .m4a only')
+                        help='AAC bitrate in kbps (default: preserve compressed source bitrate up to 320; '
+                             'PCM sources use 128 for mono/stereo, 64 per channel otherwise); .m4a only')
     parser.add_argument('--max-cache-gib', type=float, default=4,
                         help='Cache size ceiling in GiB (default: 4); RAM-backed output also uses at most 1/4 available RAM')
+    parser.add_argument('--trim-leading-silence', action='store_true',
+                        help='Also trim initial silence at the start of the excerpt')
     parser.add_argument('--play', action='store_true', help='Open the completed cache in MPV with live trimming disabled')
     args = parser.parse_args()
     if args.output is None and not args.interactive:
@@ -269,10 +277,14 @@ def main() -> None:
     duration = min(args.duration or source_duration, source_duration - args.start)
     rate = int(stream['sample_rate'])
     channels = int(stream['channels'])
-    bitrate = (args.bitrate or max(128, channels * 64)) if compressed else None
+    source_bps = (0 if stream.get('codec_name', '').startswith('pcm_') else
+                  int(stream.get('bit_rate') or metadata.get('format', {}).get('bit_rate') or 0))
+    default_kbps = max(128, channels * 64, min(320, round(source_bps / 1000)))
+    bitrate = (args.bitrate or default_kbps) if compressed else None
     # Keep descriptive tags, excluding stale duration, gain and timeline data.
-    source_tags = {key.lower(): value for key, value in
-                   (metadata['format'].get('tags', {}) | stream.get('tags', {})).items()}
+    stream_tags = {key.lower(): value for key, value in stream.get('tags', {}).items()}
+    format_tags = {key.lower(): value for key, value in metadata.get('format', {}).get('tags', {}).items()}
+    source_tags = stream_tags | format_tags
     tags = {key: source_tags[key] for key in (
         'title', 'artist', 'album', 'album_artist', 'composer', 'genre', 'date',
         'track', 'disc', 'comment', 'description', 'copyright',
@@ -293,7 +305,7 @@ def main() -> None:
         estimated_bytes = math.ceil((duration / args.speed + 1) *
                                     (bitrate * 1000 / 8 * 1.15 + rate / 1024 * 16)) + 65536 + tag_bytes
     else:
-        estimated_bytes = math.ceil((duration + 1) * rate) * channels * 4 + 4096 + tag_bytes
+        estimated_bytes = math.ceil((duration / args.speed + 1) * rate) * channels * 4 + 4096 + tag_bytes
     if estimated_bytes > budget:
         parser.error(f'Untrimmed cache size {"estimate" if compressed else "upper bound"} is '
                      f'{estimated_bytes / 1024**3:.2f} GiB; '
@@ -302,9 +314,11 @@ def main() -> None:
     # Same RMS/window/all-channel rule as dusky_silence.lua Max Plus. Preserve
     # the last six seconds of this excerpt. Rewrite PTS for contiguous WAV audio;
     # source-timestamp seeking/bookmarks require a separate map (not implemented).
+    leading_rule = ('start_periods=1:start_duration=0:start_threshold=0.005:start_mode=all:'
+                    if args.trim_leading_silence else '')
     graph = (
         'aformat=sample_fmts=flt,'
-        'silenceremove=stop_periods=-1:stop_duration=0:stop_threshold=0.005:'
+        f'silenceremove={leading_rule}stop_periods=-1:stop_duration=0:stop_threshold=0.005:'
         f'stop_mode=all:detection=rms:window={1152 / rate:.9f}:timestamp=copy:'
         f"enable='lt(t,{max(0, duration - 6):.9f})',asetpts=N/SR/TB"
     )
@@ -318,33 +332,41 @@ def main() -> None:
         encoding = (['-c:a', 'aac', '-b:a', f'{bitrate}k'] if compressed else
                     ['-c:a', 'pcm_f32le', '-rf64', 'auto'])
         tag_options = [*('-metadata', f'{key}={value}') for key, value in tags.items()]
+        seek_options = ['-accurate_seek', '-ss', str(args.start)] if args.start > 0 else []
         command = ['ffmpeg', '-nostdin', '-hide_banner', '-nostats', '-n',
-                   '-filter_threads', '1', '-threads', '2', '-accurate_seek',
-                   '-ss', str(args.start), '-t', str(duration),
+                   '-xerror', '-err_detect', 'explode',
+                   '-filter_threads', '1', '-threads', '2', *seek_options,
+                   '-t', str(duration),
                    '-i', str(source), '-map', '0:a:0', '-map_metadata', '-1',
                    '-map_metadata:s:a', '-1', '-map_chapters', '-1',
                    '-af', graph, *encoding, *tag_options, str(cache)]
         measurement = measure(command, log_path, budget)
-        cached = probe(cache)
-        if not cached['streams']:
-            raise RuntimeError('No output audio; use a longer excerpt or lower speed')
-        cached_stream = cached['streams'][0]
-        cached_rate = int(cached_stream['sample_rate'])
-        codec = 'aac' if compressed else 'pcm_f32le'
-        if (cached_stream['codec_name'] != codec or int(cached_stream['channels']) != channels
-                or (not compressed and cached_rate != rate)):
-            raise RuntimeError('Unexpected output audio format; cache was not installed')
-        cached_duration = float(cached['format'].get('duration') or 0)
-        tolerance = 0.1 + (1024 / cached_rate if compressed else 0)
-        if (not math.isfinite(cached_duration) or cached_duration <= 0
-                or cached_duration > duration / args.speed + tolerance):
-            raise RuntimeError('Unexpected output duration; cache was not installed')
-        if cache.stat().st_size >= budget:
-            raise RuntimeError('Cache exceeded its size budget; cache was not installed')
-        current_stat = source.stat()
-        if (current_stat.st_size, current_stat.st_mtime_ns, current_stat.st_ino) != (
-                source_stat.st_size, source_stat.st_mtime_ns, source_stat.st_ino):
-            raise RuntimeError('Source changed during processing; cache was not installed')
+        try:
+            cached = probe(cache)
+            if not cached.get('streams'):
+                raise RuntimeError('No output audio; use a longer excerpt or lower speed')
+            cached_stream = cached['streams'][0]
+            cached_rate = int(cached_stream['sample_rate'])
+            codec = 'aac' if compressed else 'pcm_f32le'
+            if (cached_stream['codec_name'] != codec or int(cached_stream['channels']) != channels
+                    or (not compressed and cached_rate != rate)):
+                raise RuntimeError('Unexpected output audio format; cache was not installed')
+            cached_duration = float(cached_stream.get('duration') or cached['format'].get('duration') or 0)
+            tolerance = 0.1 + (1024 / cached_rate if compressed else 0)
+            min_duration = min(duration, 6) / args.speed - tolerance
+            if (not math.isfinite(cached_duration) or cached_duration <= 0
+                    or cached_duration < min_duration
+                    or cached_duration > duration / args.speed + tolerance):
+                raise RuntimeError('Unexpected output duration; cache was not installed')
+            if cache.stat().st_size >= budget:
+                raise RuntimeError('Cache exceeded its size budget; cache was not installed')
+            current_stat = source.stat()
+            if (current_stat.st_size, current_stat.st_mtime_ns, current_stat.st_ino) != (
+                    source_stat.st_size, source_stat.st_mtime_ns, source_stat.st_ino):
+                raise RuntimeError('Source changed during processing; cache was not installed')
+        except BaseException:
+            log_path.unlink(missing_ok=True)
+            raise
         report = {
             'source': str(source),
             'source_stat': {'size': source_stat.st_size, 'mtime_ns': source_stat.st_mtime_ns},
@@ -364,18 +386,23 @@ def main() -> None:
             'channels': channels, 'filter': graph,
             'measurement': measurement,
             'timeline': 'Cache time; original source positions are not mapped',
-            'leading_silence': 'Preserved, as in existing MPV Max Plus',
+            'leading_silence': ('Trimmed (--trim-leading-silence)' if args.trim_leading_silence
+                                else 'Preserved, as in existing MPV Max Plus'),
         }
         temporary_report = Path(temporary) / 'report.json'
         with temporary_report.open('x', encoding='utf-8') as report_file:
             json.dump(report, report_file, indent=2)
             report_file.write('\n')
         # Publish complete files without overwriting another invocation's output.
-        os.link(temporary_report, report_path)
         try:
-            os.link(cache, output)
+            os.link(temporary_report, report_path)
+            try:
+                os.link(cache, output)
+            except BaseException:
+                report_path.unlink(missing_ok=True)
+                raise
         except BaseException:
-            report_path.unlink()
+            log_path.unlink(missing_ok=True)
             raise
     print(json.dumps(report, indent=2))
     if args.play:
@@ -396,6 +423,6 @@ if __name__ == '__main__':
     except EOFError:
         print('Input ended; preprocessing cancelled.', file=sys.stderr)
         sys.exit(130)
-    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+    except (OSError, ValueError, LookupError, StopIteration, RuntimeError, subprocess.SubprocessError) as error:
         print(f'Preprocessing failed: {error}', file=sys.stderr)
         sys.exit(1)

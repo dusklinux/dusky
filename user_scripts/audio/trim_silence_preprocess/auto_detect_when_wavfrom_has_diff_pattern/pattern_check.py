@@ -43,12 +43,22 @@ DEFAULT_CONFIG_PATH = DEFAULT_DETECTIONS_PATH.with_name("config.toml")
 
 # Linux prctl constants for guaranteeing child FFmpeg termination on parent death
 _PR_SET_PDEATHSIG = 1
-_libc = ctypes.CDLL(None, use_errno=True)
+_libc = ctypes.CDLL(None, use_errno=True) if sys.platform.startswith("linux") else None
+if _libc is not None and hasattr(_libc, "prctl"):
+    _libc.prctl.argtypes = (
+        ctypes.c_int,
+        ctypes.c_ulong,
+        ctypes.c_ulong,
+        ctypes.c_ulong,
+        ctypes.c_ulong,
+    )
+    _libc.prctl.restype = ctypes.c_int
 
 
 def _bind_to_parent(parent_pid: int) -> None:
-    if _libc.prctl(_PR_SET_PDEATHSIG, signal.SIGKILL, 0, 0, 0) != 0:
-        os._exit(127)
+    if _libc is not None and hasattr(_libc, "prctl"):
+        if _libc.prctl(_PR_SET_PDEATHSIG, signal.SIGKILL, 0, 0, 0) != 0:
+            os._exit(127)
     if os.getppid() != parent_pid:
         os._exit(127)
 
@@ -100,13 +110,25 @@ class DetectionProfile:
                 raise ValueError(f"{field.name} must be between 0 and 100")
             if field.name.endswith(("_sec", "_ms", "_minutes")) and value <= 0:
                 raise ValueError(f"{field.name} must be positive")
-        if self.abs_silence_threshold <= 0:
-            raise ValueError("abs_silence_threshold must be positive")
-        if self.min_pause_ms % 25:
-            raise ValueError("min_pause_ms must be a multiple of 25")
+        if not 0 < self.abs_silence_threshold < 1.0:
+            raise ValueError("abs_silence_threshold must be between 0 and 1")
+        if self.min_speech_pct <= 0 or self.min_speech_or_quiet_pct <= 0:
+            raise ValueError("min_speech_pct and min_speech_or_quiet_pct must be positive")
+        if self.min_abs_silence_pct >= self.dead_air_silence_pct:
+            raise ValueError("min_abs_silence_pct must be strictly less than dead_air_silence_pct")
+        if self.speech_min_db > 0 or self.dead_air_max_db > 0 or self.music_min_db > 0:
+            raise ValueError("dBFS thresholds must be nonpositive (<= 0.0)")
+        if self.dead_air_max_db >= self.speech_min_db:
+            raise ValueError("dead_air_max_db must be strictly less than speech_min_db")
+        if self.min_speech_or_quiet_pct < self.min_speech_pct:
+            raise ValueError("min_speech_or_quiet_pct must be >= min_speech_pct")
+        if self.min_pause_ms % 25 or self.min_pause_ms > 5000:
+            raise ValueError("min_pause_ms must be a multiple of 25 and <= 5000")
         if not 0 <= self.min_pauses <= self.max_pauses or self.music_max_pauses < 0:
             raise ValueError("Pause counts must be nonnegative and min_pauses <= max_pauses")
-        if self.refine_window_sec < 2 * self.boundary_quiet_sec + 4:
+        if self.min_pauses * self.min_pause_ms >= 8000:
+            raise ValueError("min_pauses * min_pause_ms must be < 8000 ms to allow speech cadence")
+        if self.refine_window_sec < max(20, 2 * self.boundary_quiet_sec + 4):
             raise ValueError("refine_window_sec must allow the quiet boundary and following audio")
 
 
@@ -173,10 +195,10 @@ class EpisodeDetection:
 
 
 def format_hms(seconds: Seconds) -> str:
-    """Format seconds into HH:MM:SS."""
+    """Format seconds into HH:MM:SS without rounding past speech onset."""
     if not math.isfinite(seconds) or seconds < 0.0:
         return "00:00:00"
-    total_sec = int(round(seconds))
+    total_sec = int(math.floor(seconds + 1e-6))
     hh, rem = divmod(total_sec, 3600)
     mm, ss = divmod(rem, 60)
     return f"{hh:02d}:{mm:02d}:{ss:02d}"
@@ -191,10 +213,16 @@ def rms_to_db(rms: float) -> Decibels:
 
 def _grapheme_width(text: str) -> int:
     widths = [2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
-              for ch in text if unicodedata.category(ch) not in ("Cf", "Mn", "Me", "Cc")]
-    if "\ufe0f" in text or "\u20e3" in text or ("\u200d" in text and 2 in widths):
+              for ch in text if unicodedata.category(ch) not in ("Cf", "Mn", "Me", "Mc", "Cc")]
+    if not widths:
+        return 0
+    if "\ufe0f" in text or "\u20e3" in text or 2 in widths:
         return 2
-    return sum(widths)
+    if "\u200d" in text and any(ord(ch) >= 0x2600 for ch in text):
+        return 2
+    if len(widths) == 2 and all(0x1F1E6 <= ord(ch) <= 0x1F1FF for ch in text):
+        return 2
+    return widths[0]
 
 
 def display_width(text: str) -> int:
@@ -253,17 +281,28 @@ def probe_audio_stream(filepath: Path) -> dict[str, Any]:
         "-of", "json",
         str(filepath.resolve()),
     ]
-    proc = subprocess.run(
-        cmd,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        timeout=30.0,
-        check=True,
-    )
-    return json.loads(proc.stdout)
+    try:
+        proc = subprocess.run(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30.0,
+            check=True,
+            preexec_fn=child_setup(),
+        )
+    except subprocess.TimeoutExpired as err:
+        raise RuntimeError(f"ffprobe timed out for {filepath}") from err
+    except subprocess.CalledProcessError as err:
+        detail = (err.stderr or "").strip()
+        raise RuntimeError(f"ffprobe failed ({err.returncode}) for {filepath}: {detail}") from err
+    try:
+        return json.loads(proc.stdout)
+    except ValueError as err:
+        raise RuntimeError(f"ffprobe returned invalid JSON for {filepath}") from err
 
 
 def refine_boundary_fine(
@@ -281,6 +320,7 @@ def refine_boundary_fine(
     frames_per_sec = rate // frame_samples  # 40 frames/sec
     silence_thresh_sq = frame_samples * profile.abs_silence_threshold**2
 
+    af_filter = "aresample=async=1:first_pts=0" if search_start == 0.0 else "aresample=async=1"
     cmd = [
         "ffmpeg",
         "-nostdin",
@@ -295,6 +335,7 @@ def refine_boundary_fine(
         "-i", str(filepath.resolve()),
         "-map", "0:a:0",
         "-vn", "-sn", "-dn",
+        "-af", af_filter,
         "-ac", "1",
         "-ar", str(rate),
         "-f", "f32le",
@@ -345,21 +386,9 @@ def refine_boundary_fine(
         sil_pct = (quiet_frames / frames_per_sec) * 100.0
         sec_stats.append((search_start + s, rms_db, sil_pct))
 
-    # The beginning of the file itself bounds a short leading quiet run.
-    # Stop at its first sound, so later breaths cannot become initial onsets.
-    if search_start == 0.0:
-        for i, (t_sec, db_val, _) in enumerate(sec_stats):
-            if db_val < -42.0:
-                continue
-            modulated = sum(10.0 <= quiet <= 75.0 and db >= -35.0
-                            for _, db, quiet in sec_stats[i:i + 3]) >= 2
-            if db_val >= -34.0 and (is_immediate_start or (i > 0 and modulated)):
-                kind = "immediate speech start" if i == 0 else "early speech onset"
-                return t_sec, f"{kind} ({db_val:.1f} dB)"
-            break
-
-    # A breath or a bumper's brief pause is not a pre-show boundary. Require
-    # at least 20 seconds of quiet before emergence into active sound.
+    # Priority 1: A breath or a bumper's brief pause is not a pre-show boundary.
+    # Require at least boundary_quiet_sec of quiet before emergence into modulated sound.
+    music_db_gate = max(-38.0, profile.music_min_db)
     quiet_run = 0
     for i in range(len(sec_stats) - 2):
         t_cur, db_cur, _ = sec_stats[i]
@@ -367,12 +396,69 @@ def refine_boundary_fine(
         _, db_after, _ = sec_stats[i + 2]
         quiet_run = quiet_run + 1 if db_cur < -42.0 else 0
         if quiet_run >= profile.boundary_quiet_sec:
-            if (db_next >= -33.0 and db_after >= -38.0) or (db_next >= -42.0 and db_after >= -25.0):
+            post_window = sec_stats[i + 1 : i + 5]
+            is_unmodulated_music = (
+                len(post_window) >= 3
+                and all(s_sil < 5.0 and s_db >= music_db_gate for _, s_db, s_sil in post_window[:3])
+            )
+            if not is_unmodulated_music and (
+                (db_next >= -33.0 and db_after >= -38.0)
+                or (db_next >= -42.0 and db_after >= -32.0)
+                or (
+                    i + 3 < len(sec_stats)
+                    and db_next >= -42.0
+                    and db_after >= -38.0
+                    and sec_stats[i + 3][1] >= -32.0
+                )
+                or (
+                    i + 3 < len(sec_stats)
+                    and db_next >= -33.0
+                    and db_after < -42.0
+                    and sec_stats[i + 3][1] >= -33.0
+                )
+            ):
                 return t_next, f"silence-to-speech transition ({db_cur:.1f} dB -> {db_next:.1f} dB)"
 
-    # Priority 2: Music-to-speech cadence transition (continuous loud audio -> speech pauses)
-    for i in range(2, len(sec_stats) - 3):
-        prev_dense = all(sec_stats[j][2] < 5.0 and sec_stats[j][1] >= -30.0 for j in range(i - 2, i))
+    # Priority 1b: The beginning of the file itself bounds a short leading quiet run
+    # when coarse_sec is within the opening boundary window.
+    if search_start == 0.0 and coarse_sec <= profile.boundary_quiet_sec + 10:
+        min_early_sec = 0.0 if coarse_sec <= profile.boundary_quiet_sec else coarse_sec - 10.0
+        non_quiet_skips = 0
+        for i, (t_sec, db_val, _) in enumerate(sec_stats):
+            if i >= profile.boundary_quiet_sec:
+                break
+            if db_val < -42.0:
+                continue
+            modulated = sum(10.0 <= quiet <= 75.0 and db >= -35.0
+                            for _, db, quiet in sec_stats[i:i + 3]) >= 2
+            if t_sec >= min_early_sec and db_val >= -34.0 and (is_immediate_start or modulated):
+                kind = "immediate speech start" if i == 0 else "early speech onset"
+                return t_sec, f"{kind} ({db_val:.1f} dB)"
+            if t_sec >= min_early_sec and i + 1 < len(sec_stats) and db_val >= -42.0 and sec_stats[i + 1][1] >= -34.0:
+                mod_next = sum(10.0 <= quiet <= 75.0 and db >= -35.0
+                               for _, db, quiet in sec_stats[i + 1:i + 4]) >= 2
+                if mod_next:
+                    return t_sec, f"early speech onset ({db_val:.1f} dB)"
+            non_quiet_skips += 1
+            next_is_quiet = i + 1 < len(sec_stats) and sec_stats[i + 1][1] < -42.0
+            if non_quiet_skips > 1 or not next_is_quiet:
+                break
+
+    # Priority 2: Music-to-speech cadence transition near coarse_sec (avoid matching
+    # brief vocal gaps deep inside pre-show music >15s before coarse_sec).
+    music_db_gate = max(-38.0, profile.music_min_db)
+    min_music_idx = max(2, int(coarse_sec - search_start) - 15)
+    for i in range(min_music_idx, len(sec_stats) - 3):
+        prev_dense = all(
+            sec_stats[j][2] < 5.0 and sec_stats[j][1] >= music_db_gate
+            for j in range(i - 2, i)
+        )
+        if not prev_dense and i >= 4:
+            # Allow a 1-2s fade/dip between dense music and speech onset
+            prev_dense = (
+                all(sec_stats[j][2] < 5.0 and sec_stats[j][1] >= music_db_gate for j in range(i - 4, i - 2))
+                and all(sec_stats[j][1] < -35.0 for j in range(i - 2, i))
+            )
         next_modulated = (
             sum(1 for j in range(i, i + 3) if 10.0 <= sec_stats[j][2] <= 75.0 and sec_stats[j][1] >= -35.0)
             >= 2
@@ -382,28 +468,145 @@ def refine_boundary_fine(
             t_pt, db_pt, _ = sec_stats[i]
             return t_pt, f"music-to-speech cadence onset ({db_pt:.1f} dB)"
 
+    # Priority 3: A short run of absolute digital silence (< -60 dB) before sustained
+    # audio, for pre-show gaps shorter than boundary_quiet_sec that the coarse block
+    # cannot resolve. Require >=5s of near-silence and >=3 active seconds after it.
+    # Keep only candidates within +/-10s of the coarse estimate; prefer the longest
+    # gap, then the closest candidate.
+    candidates: list[tuple[int, float]] = []  # (quiet_run_seconds, onset_sec)
+    quiet_run = 0
+    for i, (t_sec, db_val, _sil) in enumerate(sec_stats):
+        if db_val < -60.0:
+            quiet_run += 1
+            continue
+        if quiet_run >= 5:
+            following = sec_stats[i : i + 5]
+            active = sum(1 for _, db, _ in following if db >= -35.0)
+            if active >= 3:
+                candidates.append((quiet_run, t_sec))
+        quiet_run = 0
+    best = None
+    for run_len, onset_sec in candidates:
+        if abs(onset_sec - coarse_sec) > 10.0:
+            continue
+        if (
+            best is None
+            or run_len > best[0]
+            or (run_len == best[0] and abs(onset_sec - coarse_sec) < abs(best[1] - coarse_sec))
+        ):
+            best = (run_len, onset_sec)
+    if best is not None:
+        return best[1], f"digital-silence-to-speech transition ({best[0]}s gap)"
+
     return coarse_sec, "coarse estimate"
 
 
-def _has_preceding_sustained_speech(blocks: Sequence[BlockMetrics], idx: int) -> bool:
+def _has_preceding_sustained_speech(
+    blocks: Sequence[BlockMetrics],
+    idx: int,
+    profile: DetectionProfile = DEFAULT_PROFILE,
+    min_speech_minutes: float | None = None,
+) -> bool:
     """Check whether blocks prior to idx contain a sustained speech segment (not a brief bumper)."""
-    if idx < 6:
+    if min_speech_minutes is None:
+        min_speech_minutes = profile.min_speech_minutes
+    block_dur = blocks[0].dur if blocks and blocks[0].dur > 0 else 10.0
+    confirm_blocks = max(1, math.ceil((min_speech_minutes * 60.0) / block_dur))
+    min_floor = min(6, max(2, confirm_blocks))
+    min_sustained = min(14, max(min_floor, math.ceil(confirm_blocks * (profile.min_speech_pct / 100.0) * 0.4)))
+    if idx < min_sustained:
         return False
-    lookback = blocks[max(0, idx - 18) : idx]
-    speech_cnt = sum(1 for b in lookback if b.is_speech)
-    music_cnt = sum(1 for b in lookback if b.is_music)
-    return speech_cnt >= max(6, int(len(lookback) * 0.65)) and music_cnt <= 2
+
+    lookback_len = max(18, min_sustained + 4)
+    req_ratio = min(0.65, profile.min_speech_pct / 100.0)
+    relaxed_speech_blocks = max(
+        min_sustained,
+        math.ceil(confirm_blocks * (profile.min_speech_pct / 100.0) * 0.75),
+    )
+    relaxed_sq_blocks = math.ceil(confirm_blocks * (profile.min_speech_or_quiet_pct / 100.0) * 0.75)
+    max_win_music = math.floor(confirm_blocks * (profile.max_music_pct / 100.0))
+
+    # Split blocks[:idx] at qualifying dead-air (>= boundary_quiet_sec) and music
+    # (>= music_boundary_sec) breaks so disconnected pre-show bumpers cannot merge.
+    segments: list[Sequence[BlockMetrics]] = []
+    seg_start = 0
+    pos = 0
+    while pos < idx:
+        b = blocks[pos]
+        if b.is_dead_air:
+            run_end = pos + 1
+            while run_end < idx and blocks[run_end].is_dead_air:
+                run_end += 1
+            if sum(x.dur for x in blocks[pos:run_end]) >= profile.boundary_quiet_sec:
+                if pos > seg_start:
+                    segments.append(blocks[seg_start:pos])
+                seg_start = run_end
+            pos = run_end
+        elif b.is_music or b.cadence_silence_pct < 6.0:
+            run_end = pos + 1
+            while run_end < idx and (blocks[run_end].is_music or blocks[run_end].cadence_silence_pct < 8.0):
+                run_end += 1
+            if sum(x.dur for x in blocks[pos:run_end]) >= profile.music_boundary_sec:
+                if pos > seg_start:
+                    segments.append(blocks[seg_start:pos])
+                seg_start = run_end
+            pos = run_end
+        else:
+            pos += 1
+    if seg_start < idx:
+        segments.append(blocks[seg_start:idx])
+
+    for seg in segments:
+        end = len(seg)
+        while end > 0 and not seg[end - 1].is_speech:
+            end -= 1
+        trimmed = seg[:end]
+        if len(trimmed) < min_sustained:
+            continue
+
+        win_len = min(len(trimmed), lookback_len)
+        max_music = max(2, math.floor(win_len * (profile.max_music_pct / 100.0)))
+        req_speech = max(min_sustained, math.ceil(win_len * req_ratio))
+        for start in range(0, len(trimmed) - win_len + 1):
+            sub = trimmed[start : start + win_len]
+            speech_cnt = sum(1 for x in sub if x.is_speech)
+            music_cnt = sum(1 for x in sub if x.is_music)
+            if speech_cnt >= req_speech and music_cnt <= max_music:
+                return True
+
+        # A contiguous break-free span at least confirm_blocks long with >=75% of the
+        # confirmation speech density establishes an earlier host-speech half.
+        if len(trimmed) >= confirm_blocks:
+            for start in range(0, len(trimmed) - confirm_blocks + 1):
+                win = trimmed[start : start + confirm_blocks]
+                w_speech = sum(1 for x in win if x.is_speech)
+                w_sq = sum(1 for x in win if not x.is_music)
+                w_music = sum(1 for x in win if x.is_music)
+                if (
+                    w_speech >= relaxed_speech_blocks
+                    and w_sq >= relaxed_sq_blocks
+                    and w_music <= max_win_music
+                ):
+                    return True
+
+    return False
 
 
-def _trace_back_to_onset(blocks: Sequence[BlockMetrics],
-                         profile: DetectionProfile = DEFAULT_PROFILE) -> int:
+def _trace_back_to_onset(
+    blocks: Sequence[BlockMetrics],
+    profile: DetectionProfile = DEFAULT_PROFILE,
+    min_speech_minutes: float | None = None,
+) -> int:
     """Trace backwards from the confirmed speech window to find the exact coarse block onset."""
     # Start from the latest confirmed speech block
     back_idx = len(blocks) - 1
     while back_idx > 0 and not blocks[back_idx].is_speech:
         back_idx -= 1
+    speech_onset_idx = back_idx
 
     while back_idx > 0:
+        if blocks[back_idx].is_speech:
+            speech_onset_idx = back_idx
         prev_idx = back_idx - 1
         prev = blocks[prev_idx]
 
@@ -411,33 +614,69 @@ def _trace_back_to_onset(blocks: Sequence[BlockMetrics],
             k = prev_idx
             while k >= 0 and blocks[k].is_dead_air:
                 if k == 0:
-                    return back_idx
+                    return speech_onset_idx
                 k -= 1
             gap_sec = sum(block.dur for block in blocks[k + 1:prev_idx + 1])
             # Preserve a later break within already sustained host speech.
-            if gap_sec >= profile.boundary_quiet_sec and not _has_preceding_sustained_speech(blocks, k + 1):
-                return back_idx
+            if gap_sec >= profile.boundary_quiet_sec and not _has_preceding_sustained_speech(
+                blocks, k + 1, profile, min_speech_minutes
+            ):
+                return speech_onset_idx
             back_idx = k + 1
 
         elif prev.is_music or prev.cadence_silence_pct < 6.0:
             k = prev_idx
             while k >= 0 and (blocks[k].is_music or blocks[k].cadence_silence_pct < 8.0):
                 if k == 0:
-                    return back_idx
+                    music_sec = sum(block.dur for block in blocks[0:prev_idx + 1])
+                    if music_sec >= profile.music_boundary_sec:
+                        return speech_onset_idx
+                    return 0
                 k -= 1
             music_sec = sum(block.dur for block in blocks[k + 1:prev_idx + 1])
-            if music_sec >= profile.music_boundary_sec and not _has_preceding_sustained_speech(blocks, k + 1):
-                return back_idx
+            if music_sec >= profile.music_boundary_sec and not _has_preceding_sustained_speech(
+                blocks, k + 1, profile, min_speech_minutes
+            ):
+                return speech_onset_idx
             back_idx = k + 1
 
         elif prev.is_speech:
             back_idx -= 1
+            speech_onset_idx = back_idx
 
         else:
-            # Ambiguous transition/fade block
-            if back_idx >= 2 and (blocks[back_idx - 2].is_music or blocks[back_idx - 2].is_dead_air):
-                if not _has_preceding_sustained_speech(blocks, back_idx - 1):
-                    return back_idx
+            # Ambiguous transition/fade block: check if preceded by a qualifying boundary
+            if back_idx >= 2:
+                b2 = blocks[back_idx - 2]
+                if b2.is_dead_air:
+                    k = back_idx - 2
+                    while k >= 0 and blocks[k].is_dead_air:
+                        if k == 0:
+                            return speech_onset_idx
+                        k -= 1
+                    gap_sec = sum(block.dur for block in blocks[k + 1:back_idx - 1])
+                    if gap_sec >= profile.boundary_quiet_sec and not _has_preceding_sustained_speech(
+                        blocks, k + 1, profile, min_speech_minutes
+                    ):
+                        return speech_onset_idx
+                    back_idx = k + 1
+                    continue
+                elif b2.is_music or b2.cadence_silence_pct < 6.0:
+                    k = back_idx - 2
+                    while k >= 0 and (blocks[k].is_music or blocks[k].cadence_silence_pct < 8.0):
+                        if k == 0:
+                            music_sec = sum(block.dur for block in blocks[0:back_idx - 1])
+                            if music_sec >= profile.music_boundary_sec:
+                                return speech_onset_idx
+                            return 0
+                        k -= 1
+                    music_sec = sum(block.dur for block in blocks[k + 1:back_idx - 1])
+                    if music_sec >= profile.music_boundary_sec and not _has_preceding_sustained_speech(
+                        blocks, k + 1, profile, min_speech_minutes
+                    ):
+                        return speech_onset_idx
+                    back_idx = k + 1
+                    continue
             back_idx -= 1
 
     return 0
@@ -464,8 +703,9 @@ def analyze_episode(
         raise ValueError("max_scan_hours must be finite and nonnegative")
     if not math.isfinite(min_speech_minutes) or min_speech_minutes <= 0:
         raise ValueError("min_speech_minutes must be positive and finite")
+    blocks_per_25ms = block_sec * 40.0
     if (sample_rate <= 0 or sample_rate % 40 or not math.isfinite(block_sec)
-            or block_sec < 0.025 or not (block_sec * 40).is_integer()):
+            or block_sec < 0.025 or not math.isclose(blocks_per_25ms, round(blocks_per_25ms), abs_tol=1e-9)):
         raise ValueError("Use a positive sample rate divisible by 40 and whole 25ms blocks")
     resolved_path = filepath.resolve()
     meta = probe_audio_stream(resolved_path)
@@ -474,10 +714,17 @@ def analyze_episode(
         raise ValueError(f"No audio stream in {resolved_path}")
 
     stream_info = streams[0]
-    total_duration = float(
-        stream_info.get("duration") or meta.get("format", {}).get("duration") or 0.0
-    )
-    if not math.isfinite(total_duration) or total_duration <= 0.0:
+    candidate_durations: list[float] = []
+    for raw_dur in (stream_info.get("duration"), meta.get("format", {}).get("duration")):
+        if raw_dur is not None:
+            try:
+                val = float(raw_dur)
+                if math.isfinite(val) and val > 0.0:
+                    candidate_durations.append(val)
+            except (TypeError, ValueError):
+                pass
+    total_duration = max(candidate_durations, default=0.0)
+    if total_duration <= 0.0:
         raise ValueError(f"Unknown or invalid duration for {resolved_path}")
 
     scan_limit_sec = total_duration
@@ -505,6 +752,7 @@ def analyze_episode(
         "-i", str(resolved_path),
         "-map", "0:a:0",
         "-vn", "-sn", "-dn",
+        "-af", "aresample=async=1:first_pts=0",
         "-ac", "1",
         "-ar", str(sample_rate),
         "-f", "f32le",
@@ -552,7 +800,8 @@ def analyze_episode(
                 if n_frames == 0:
                     continue  # Still consume EOF and check the decoder's exit status.
 
-                dur = n_samples / sample_rate
+                analyzed_samples = n_frames * frame_samples
+                dur = analyzed_samples / sample_rate
                 block_energy = 0.0
                 abs_low_frames = 0
 
@@ -595,7 +844,7 @@ def analyze_episode(
 
                 abs_silence_pct = (abs_low_frames / n_frames) * 100.0
                 cadence_silence_pct = (cadence_low_frames / n_frames) * 100.0
-                block_rms = math.sqrt(block_energy / n_samples)
+                block_rms = math.sqrt(block_energy / (n_frames * frame_samples))
                 block_rms_db = rms_to_db(block_rms)
 
                 # Mutually exclusive block classification
@@ -647,17 +896,24 @@ def analyze_episode(
                         and speech_or_quiet >= min_speech_or_quiet_blocks
                         and music_count <= max_music_blocks
                     ):
-                        onset_idx = _trace_back_to_onset(blocks, profile)
-                        confirmed_speech_start = blocks[onset_idx].sec
-                        is_immediate_start = onset_idx == 0 and blocks[0].is_speech
-                        confidence = 95.0
-
-                        if verbose:
-                            print(
-                                f"[{resolved_path.name[:40]}] Confirmed sustained speech at "
-                                f"~{confirmed_speech_start:.1f}s, stopping scan early."
+                        onset_idx = _trace_back_to_onset(blocks, profile, min_speech_minutes)
+                        post_onset_speech = sum(1 for b in blocks[onset_idx:] if b.is_speech)
+                        if onset_idx <= win_start_idx or post_onset_speech >= min_speech_blocks:
+                            at_eof = n_bytes < bytes_per_block or (
+                                hasattr(proc.stdout, "peek") and not proc.stdout.peek(1)
                             )
-                        break
+                            if (at_eof and proc.wait() != 0) or proc.poll() not in (None, 0):
+                                raise RuntimeError(f"FFmpeg analysis failed ({proc.returncode}): {filepath}")
+                            confirmed_speech_start = blocks[onset_idx].sec
+                            is_immediate_start = onset_idx == 0 and blocks[0].is_speech
+                            confidence = 95.0
+
+                            if verbose:
+                                print(
+                                    f"[{resolved_path.name[:40]}] Confirmed sustained speech at "
+                                    f"~{confirmed_speech_start:.1f}s, stopping scan early."
+                                )
+                            break
 
                 current_sec += dur
         finally:
@@ -677,7 +933,7 @@ def analyze_episode(
         transition_signature = sig
         if "silence-to-speech" in sig or "immediate speech" in sig:
             confidence = 98.0
-        elif "post-silence" in sig or "music-to-speech" in sig:
+        elif "early speech onset" in sig or "music-to-speech" in sig:
             confidence = 93.0
         else:
             confidence = 70.0
@@ -722,24 +978,41 @@ def collect_target_files(inputs: Sequence[str], *, recursive: bool = False) -> l
     found: dict[Path, None] = {}
 
     for item in inputs:
-        p = Path(item).expanduser()
-        if p.is_file():
+        try:
+            p = Path(item).expanduser()
+            is_file = p.is_file()
+            is_dir = False if is_file else p.is_dir()
+        except OSError:
+            continue
+        if is_file:
             if p.suffix.lower() in AUDIO_EXTENSIONS:
-                found[p.resolve()] = None
-        elif p.is_dir():
-            iterator = p.rglob("*") if recursive else p.iterdir()
-            for sub in iterator:
-                if sub.is_file() and sub.suffix.lower() in AUDIO_EXTENSIONS:
-                    found[sub.resolve()] = None
+                try:
+                    found[p.resolve()] = None
+                except OSError:
+                    continue
+        elif is_dir:
+            try:
+                iterator = p.rglob("*") if recursive else p.iterdir()
+                for sub in iterator:
+                    try:
+                        if sub.is_file() and sub.suffix.lower() in AUDIO_EXTENSIONS:
+                            found[sub.resolve()] = None
+                    except OSError:
+                        continue
+            except OSError:
+                continue
         else:
             # Handle multi-segment glob expressions safely
             expanded = str(p)
             for match_str in glob.glob(expanded, recursive=recursive):
                 match = Path(match_str)
-                if match.is_file() and match.suffix.lower() in AUDIO_EXTENSIONS:
-                    found[match.resolve()] = None
+                try:
+                    if match.is_file() and match.suffix.lower() in AUDIO_EXTENSIONS:
+                        found[match.resolve()] = None
+                except OSError:
+                    continue
 
-    return sorted(found.keys(), key=lambda path: path.name)
+    return sorted(found.keys(), key=lambda path: (path.name, str(path)))
 
 
 def print_detection_table(detections: Sequence[EpisodeDetection]) -> None:
@@ -759,8 +1032,10 @@ def print_detection_table(detections: Sequence[EpisodeDetection]) -> None:
 
     for d in detections:
         name_cell = format_cell(d.filename, 48)
-        total_hms = format_hms(d.total_duration_sec)
-        show_hms = format_hms(d.show_duration_sec)
+        total_sec_int = max(0, int(round(d.total_duration_sec)))
+        start_sec_int = max(0, int(math.floor(d.show_start_sec + 1e-6)))
+        total_hms = format_hms(total_sec_int)
+        show_hms = format_hms(max(0, total_sec_int - start_sec_int))
         conf_str = f"{d.confidence_pct:.0f}%"
         sig_cell = format_cell(d.transition_signature, 24, ellipsis="..")
         print(
@@ -807,6 +1082,8 @@ def main() -> None:
     parser.add_argument("--config", type=Path,
                         help=f"Profile TOML file (default: {DEFAULT_CONFIG_PATH})")
     parser.add_argument("--profile", default="default", help="Named audio profile (default: %(default)s)")
+    parser.add_argument("--ram-dir", type=Path, default=Path("/mnt/zram1") if Path("/mnt/zram1").is_dir() else Path("/dev/shm"),
+                        help="RAM/ZRAM output directory for preprocess commands (default: %(default)s)")
     parser.add_argument(
         "--print-preprocess-commands",
         action="store_true",
@@ -856,6 +1133,7 @@ def main() -> None:
                     verbose=args.verbose,
                     profile=profile,
                     profile_name=args.profile,
+                    ram_dir=args.ram_dir,
                 )
                 detections.append(det)
                 if not args.verbose:
@@ -880,6 +1158,7 @@ def main() -> None:
                     verbose=False,
                     profile=profile,
                     profile_name=args.profile,
+                    ram_dir=args.ram_dir,
                 ): f
                 for f in files
             }
@@ -899,11 +1178,12 @@ def main() -> None:
                     print(f"[{completed}/{len(files)}] Failed {orig_file.name}: {exc}", file=sys.stderr)
         except BaseException:
             executor.terminate_workers()
+            executor.shutdown(wait=True, cancel_futures=True)
             raise
         else:
             executor.shutdown(wait=True)
 
-    detections.sort(key=lambda d: d.filename)
+    detections.sort(key=lambda d: (d.filename, d.filepath))
     print_detection_table(detections)
 
     if len(detections) != len(files):
@@ -913,11 +1193,28 @@ def main() -> None:
         json_path = args.json_out.expanduser().resolve()
         json_path.parent.mkdir(parents=True, exist_ok=True)
         data = [asdict(d) for d in detections]
-        # Publish one complete report; interruption must not truncate settings.
-        with tempfile.TemporaryDirectory(prefix=".detections-", dir=json_path.parent) as temporary:
-            report = Path(temporary) / "detections.json"
+        # Publish one complete report; interruption must not truncate settings or leak temp dirs.
+        temp_dir = tempfile.TemporaryDirectory(prefix=".detections-", dir=json_path.parent)
+        try:
+            report = Path(temp_dir.name) / "detections.json"
             report.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
             report.replace(json_path)
+        finally:
+            deferred_sig = False
+
+            def _defer_sig(_signum: int, _frame: Any) -> None:
+                nonlocal deferred_sig
+                deferred_sig = True
+
+            prev_int = signal.signal(signal.SIGINT, _defer_sig)
+            prev_term = signal.signal(signal.SIGTERM, _defer_sig)
+            try:
+                temp_dir.cleanup()
+            finally:
+                signal.signal(signal.SIGINT, prev_int)
+                signal.signal(signal.SIGTERM, prev_term)
+            if deferred_sig:
+                raise KeyboardInterrupt
         print(f"\nSaved structured results to: {json_path}")
 
     if args.print_mpv_commands:
