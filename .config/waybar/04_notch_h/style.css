@@ -70,14 +70,17 @@ tooltip label,
 }
 
 #workspaces {
-    padding: 6px 2px;
-    margin: 0 0 0 4px;
+    padding: 0;
+    margin: 3px 2px;
 }
 
 #workspaces button {
-    padding: 0px 2px;
+    padding: 0;
     margin: 0px 2px;
-    border-radius: 45px;
+    min-width: 26px;
+    min-height: 26px;
+    font-size: 11px;
+    border-radius: 100px;
     background-color: @glass_module;
     color: alpha(@tertiary, 0.6);
     transition: all 0.3s ease-in-out;
@@ -92,8 +95,10 @@ tooltip label,
 #workspaces button.active {
     background: linear-gradient(135deg, @primary 0%, @secondary 100%);
     color: @on_primary;
-    min-height: 16px;
-    min-width: 24px;
+    min-width: 26px;
+    min-height: 26px;
+    font-size: 11px;
+    border-radius: 100px;
     transition: all 0.3s ease-in-out;
 }
 
@@ -105,7 +110,10 @@ tooltip label,
 #workspaces button:hover {
     background: linear-gradient(135deg, @primary 50%, @secondary 100%);
     color: @on_primary;
-    min-width: 20px;
+    min-width: 26px;
+    min-height: 26px;
+    font-size: 11px;
+    border-radius: 100px;
     background-size: 400% 400%;
 }
 
