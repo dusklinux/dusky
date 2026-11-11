@@ -5,7 +5,7 @@
 		"custom/right_div#1",
 		"hyprland/workspaces",
 		"custom/notifications",
-		"custom/right_div#1"
+		"custom/right_div#6"
 	],
 	"modules-center": [
 		"custom/left_div#2",
@@ -13,7 +13,7 @@
 		"custom/left_div#3",
 		"memory",
 		"custom/left_div#4",
-		"cpu",
+		"group/cpu-drawer",
 		"custom/left_inv#1",
 		"custom/left_div#5",
 		"custom/distro",
@@ -131,12 +131,25 @@
 		"format": "󰘚 {percentage}%",
 		"format-warning": "󰀧 {percentage}%",
 		"format-critical": "󰀧 {percentage}%",
-    "on-click": "dusky-run kitty --class dusky_disk_monitor_io -e python \"$HOME/user_scripts/drives/dusky_disk_monitor_io.py\"",
+		"on-click": "dusky-run kitty --class dusky_disk_monitor_io -e python \"$HOME/user_scripts/drives/dusky_disk_monitor_io.py\"",
 		"states": {
 			"warning": 75,
 			"critical": 90
 		},
 		"tooltip-format": "Memory Used: {used:0.0f}/{total:0.0f} GiB"
+	},
+
+	"group/cpu-drawer": {
+		"orientation": "horizontal",
+		"drawer": {
+			"transition-duration": 300,
+			"children-class": "cpu-drawer-child",
+			"transition-left-to-right": false
+		},
+		"modules": [
+			"cpu",
+			"temperature"
+		]
 	},
 
 	"cpu": {
@@ -151,6 +164,18 @@
 		"tooltip": false
 	},
 
+	"temperature": {
+		"thermal-zone": 1,
+		"interval": 10,
+		"format": "{icon} {temperatureC}°C",
+		"format-icons": [
+			"󱃃", "󰔏", "󱃂"
+		],
+		"critical-threshold": 90,
+		"format-critical": "󰀦 {temperatureC}°C",
+		"tooltip-format": "In Fahrenheit: {temperatureF}°F"
+	},
+
 	"custom/distro": {
 		"format": "󰌽",
 		"on-click": "\"$HOME/.local/bin/dusky-center\"",
@@ -160,7 +185,7 @@
 
 	"clock#time": {
 		"format": "{:%H:%M}",
-		"tooltip-format": "<b>Standard Time</b>: {:%H:%M}"
+		"tooltip-format": "<b>Standard Time</b>: <span text_transform='lowercase'>{:%I:%M %p}</span>"
 	},
 
 	"clock#date": {
@@ -418,6 +443,7 @@
 	"custom/right_div#3": { "format": "", "tooltip": false },
 	"custom/right_div#4": { "format": "", "tooltip": false },
 	"custom/right_div#5": { "format": "", "tooltip": false },
+	"custom/right_div#6": { "format": "", "tooltip": false },
 
 	"custom/right_inv#1": { "format": "", "tooltip": false }
 }

@@ -66,8 +66,9 @@ tooltip label {
 	font-size: 18px;
 }
 
+#custom-net-speed-trigger,
 #custom-net-speed-trigger label {
-	font-size: 20px;
+	font-size: 18px;
 }
 
 #custom-left_div,
@@ -135,6 +136,8 @@ tooltip label {
 }
 
 #cpu,
+#temperature,
+#group-cpu-drawer,
 #clock.time {
 	background-color: @glass_tier_high;
 	padding: 0 6px;
@@ -166,6 +169,9 @@ tooltip label {
 
 #custom-left_div.1,
 #custom-right_div.1 {
+	color: @glass_tier_low;
+}
+#custom-right_div.6 {
 	color: @glass_tier_low;
 }
 #workspaces {
@@ -278,6 +284,7 @@ tooltip label {
 
 #memory.critical,
 #cpu.critical,
+#temperature.critical,
 #battery.critical:not(.charging):not(.plugged) {
 	color: @error;
 }
