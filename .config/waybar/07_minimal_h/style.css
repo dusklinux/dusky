@@ -183,7 +183,7 @@ revealer {
     font-size: 14px;
     border-radius: 100px;
     margin: 1px 3px;
-    padding: 0 10px 0 20px;
+    padding: 0 10px 0 10px;
     min-width: 20px;
     transition: all 0.2s ease;
 }

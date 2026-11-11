@@ -1,0 +1,236 @@
+@import url("../matugen/generated/waybar-colors.css");
+
+/* Tooltip colors participate in the visual-effects switch. */
+@define-color tooltip_surface alpha(@surface_container, 0.57);
+@define-color tooltip_surface_high alpha(@surface_container_high, 0.57);
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TRANSPARENCY CONTROLS (GLASSY MODE)
+   ───────────────────────────────────────────────────────────────────────────── */
+@define-color glass_module      alpha(@surface_container, 0.55);
+@define-color glass_module_low  alpha(@surface_container_low, 0.55);
+@define-color glass_workspace   alpha(@surface_container_high, 0.6);
+@define-color glass_primary     alpha(@primary, 0.85);
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TRANSPARENCY TOGGLE
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* WAYBAR_OPAQUE_SWITCH_START */
+@define-color tooltip_surface @surface_container;
+@define-color tooltip_surface_high @surface_container_high;
+
+@define-color glass_module      @surface_container;
+@define-color glass_module_low  @surface_container_low;
+@define-color glass_workspace   @surface_container_high;
+@define-color glass_primary     @primary;
+
+/* WAYBAR_OPAQUE_SWITCH_END */
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   RESET & FOUNDATIONS
+   ───────────────────────────────────────────────────────────────────────────── */
+
+* {
+    font-family: "JetBrainsMono Nerd Font", "Noto Sans", sans-serif;
+    font-size: 13px;
+    font-weight: bold;
+    min-height: 0;
+    border: none;
+    border-radius: 0;
+}
+
+window#waybar {
+    background: transparent;
+    color: @on_surface;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   UNIFIED CAPSULE STYLE
+   ───────────────────────────────────────────────────────────────────────────── */
+#clock,
+#custom-weather,
+#custom-net-speed,
+#custom-notification,
+#custom-updates,
+#workspaces,
+#pulseaudio,
+#bluetooth,
+#network,
+#battery,
+#cpu,
+#memory,
+#custom-inhibit-suspend {
+    background-color: @glass_module;
+    min-width: 20px;
+    color: @on_surface;
+    border-radius: 100px;
+    margin: 1px 3px;
+    font-size: 15px;
+    padding: 0 14px;
+    /* Box-shadow removed completely to fix blur bleeding artifact */
+    transition: all 0.2s ease;
+}
+
+/* --- LEFT SECTION --- */
+#clock {
+    background-color: @glass_primary;
+    color: @on_primary;
+    font-size: 13px;
+    padding: 0 14px;
+}
+
+#custom-weather, #custom-updates, #custom-net-speed {
+    color: @on_surface_variant;
+    font-size: 12px;
+}
+
+#custom-notification {
+    color: @on_surface_variant;
+}
+
+/* --- CENTER SECTION --- */
+#workspaces {
+    background-color: @glass_workspace;
+    padding: 0 6px;
+}
+
+#workspaces button {
+    margin: 6px 2px;
+    padding: 0 2px;
+    border-radius: 16px;
+    color: @on_surface_variant;
+    background-color: alpha(@on_surface, 0.12);
+    transition: all 0.2s ease;
+}
+
+#workspaces button:not(.empty):not(.active):not(.urgent) {
+    color: alpha(@tertiary, 0.9);
+    background-color: alpha(@primary, 0.2);
+}
+
+#workspaces button.active {
+    background-color: @primary;
+    padding: 0 8px;
+    color: @on_primary;
+}
+
+#workspaces button.urgent {
+    background-color: @error;
+    color: @on_error;
+}
+
+#workspaces button:hover {
+    background-color: @on_primary_fixed_variant;
+}
+
+/* --- RIGHT SECTION --- */
+#pulseaudio, #battery {
+    font-size: 12px;
+    padding: 0 14px;
+}
+
+#bluetooth, #network {
+    font-size: 13px;
+    color: @on_surface_variant;
+}
+
+#network.disconnected { color: @error; }
+
+#battery.charging { color: @tertiary; }
+#battery.warning:not(.charging):not(.plugged) { color: @error; }
+
+#cpu, #memory {
+    font-size: 12px;
+    color: @on_surface_variant;
+}
+
+#cpu.critical, #memory.critical {
+    color: @error;
+}
+
+#custom-inhibit-suspend {
+    color: @on_surface_variant;
+    font-size: 14px;
+}
+
+#custom-inhibit-suspend.disabled {
+    color: @tertiary;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   DRAWER & REVEALER SPACING FIXES
+   ───────────────────────────────────────────────────────────────────────────── */
+.drawer,
+#clock-drawer,
+#notif-drawer,
+#audio-drawer,
+#battery-drawer,
+#power-drawer {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+}
+
+revealer {
+    transition: all 0.3s ease;
+}
+
+
+#custom-power {
+    background-color: @glass_module;
+    color: @on_surface;
+    font-size: 14px;
+    border-radius: 100px;
+    margin: 1px 3px;
+    padding: 0 14px;
+    min-width: 20px;
+    transition: all 0.2s ease;
+}
+
+#custom-power image {
+    min-width: 0;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+}
+
+#custom-power label {
+    font-family: "JetBrainsMono Nerd Font", monospace;
+    font-size: 14px;
+    padding: 0;
+    margin: 0;
+}
+
+#custom-power:hover {
+    background-color: @error;
+    color: @on_error;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TOOLTIPS
+   ───────────────────────────────────────────────────────────────────────────── */
+tooltip decoration {
+    background-color: transparent;
+    border: none;
+    box-shadow: none;
+}
+
+tooltip,
+tooltip.background,
+.tooltip {
+    background-color: @tooltip_surface;
+    background: linear-gradient(135deg, @tooltip_surface, @tooltip_surface_high);
+    border: 1px solid alpha(@primary, 0.5);
+    border-radius: 12px;
+    box-shadow: none;
+}
+
+tooltip label,
+.tooltip label {
+    color: @on_surface;
+    padding: 8px 12px;
+    font-family: "JetBrainsMono Nerd Font Propo", "JetBrainsMono Nerd Font", monospace;
+    font-size: 12px;
+    font-weight: 600;
+}

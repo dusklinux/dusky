@@ -234,8 +234,12 @@ tooltip label,
 
 #custom-arch {
     color: @primary;
-    font-size: 16px;
-    margin: 0 6px;
+    font-size: 15px;
+    margin: 0 4px;
+    padding: 0 0 0 2px;
+    min-width: 32px;
+    min-height: 32px;
+    border-radius: 50%;
 }
 
 #custom-arch:hover {
@@ -251,11 +255,11 @@ tooltip label,
 #custom-logout,
 #custom-reboot,
 #custom-shutdown {
-    font-size: 14px;
+    font-size: 13px;
     margin: 0 3px;
-    padding: 0px 10px;
-    min-width: 14px;
-    min-height: 14px;
+    padding: 0 0 0 2px;
+    min-width: 32px;
+    min-height: 32px;
     color: @primary;
     border-radius: 50%;
     border: 2px solid @glass_primary_mild;
