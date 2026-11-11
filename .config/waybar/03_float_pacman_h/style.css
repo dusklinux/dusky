@@ -60,17 +60,12 @@ window#waybar > box {
 #custom-launcher {
     background: linear-gradient(135deg, @primary, @primary_fixed_dim);
     color: @on_primary;
-    padding: 0px 10px 0px 8px;
+    min-width: 27px;
+    min-height: 27px;
+    padding: 0px;
     margin: 4px 8px 4px 4px;
-    border-radius: 12px;
-    font-size: 14px;
-    font-weight: 300;
-}
-
-#custom-launcher label,
-#custom-power label {
-    padding: 0;
-    margin: 1px;
+    border-radius: 50%;
+    font-size: 13px;
     font-weight: 300;
 }
 
@@ -351,10 +346,12 @@ window#waybar #workspaces button.active {
 #custom-power {
     background: linear-gradient(135deg, @primary, @primary_fixed_dim);
     color: @on_primary;
-    padding: 0px 10px 0px 8px;
+    min-width: 27px;
+    min-height: 27px;
+    padding: 0px;
     margin: 4px 4px 4px 4px;
-    border-radius: 12px;
-    font-size: 14px;
+    border-radius: 50%;
+    font-size: 13px;
     font-weight: 300;
 }
 

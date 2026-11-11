@@ -49,6 +49,16 @@
 	font-size: 16px;
 }
 
+/* Prevent Waybar v0.16.0 AIconLabel anonymous outer box from injecting rogue padding/margins */
+widget > box {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+}
+
+
 #window label,
 #mpris,
 tooltip label {
