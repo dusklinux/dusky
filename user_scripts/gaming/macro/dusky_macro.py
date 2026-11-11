@@ -1214,6 +1214,14 @@ class HyprlandSocketClient:
                 return bool(data.get("locked", False))
         return False
 
+    def is_left_handed(self) -> bool:
+        """Checks whether Hyprland has mouse handedness reversed (input:left_handed = true)."""
+        try:
+            res = self.query_json("getoption input:left_handed")
+            return bool(res.get("bool", False) or res.get("int", 0) == 1)
+        except Exception:
+            return False
+
     def active_keyboard_layout(self) -> tuple[str, str, str]:
         with contextlib.suppress(Exception):
             devices = self.query_json("devices")
@@ -2576,6 +2584,16 @@ class MacroRecorder:
         last_rescan = start_mono
 
         need_mouse_open = self.capture_mouse or self.stop_matcher.needs_mouse_buttons
+        is_left_handed = self.ipc.is_left_handed()
+
+        def _map_button(code: int) -> int:
+            if is_left_handed:
+                if code == BTN_LEFT:
+                    return BTN_RIGHT
+                if code == BTN_RIGHT:
+                    return BTN_LEFT
+            return code
+
         RuntimeBeacon.write_state("RECORDING", self.cfg.profile_id, name)
         try:
             with EvdevInputSession(
@@ -2687,22 +2705,24 @@ class MacroRecorder:
                                     coalesced_raw_dx = 0
                                     coalesced_raw_dy = 0
 
-                                for btn_code, pressed in frame.buttons:
+                                for raw_btn_code, pressed in frame.buttons:
                                     if (
                                         self.cfg.strip_trigger_chords
                                         and not pressed
-                                        and btn_code in suppressed_up_codes
+                                        and raw_btn_code in suppressed_up_codes
                                     ):
-                                        suppressed_up_codes.discard(btn_code)
+                                        suppressed_up_codes.discard(raw_btn_code)
                                         continue
+                                    logical_btn = _map_button(raw_btn_code)
                                     d_us = max(0, t_us - prev_t_us)
                                     prev_t_us = t_us
                                     events.append({
                                         "t_us": t_us,
                                         "d_us": d_us,
                                         "type": "mouse_button",
-                                        "button": BUTTON_CODE_TO_NAME.get(btn_code, "left"),
-                                        "code": btn_code,
+                                        "button": BUTTON_CODE_TO_NAME.get(logical_btn, "left"),
+                                        "code": logical_btn,
+                                        "raw_code": raw_btn_code,
                                         "state": "down" if pressed else "up",
                                         "x": cur_x,
                                         "y": cur_y,
@@ -3027,8 +3047,17 @@ class MacroPlayer:
                             btn_code = int(
                                 ev.get("code") or BUTTON_NAME_TO_CODE.get(ev.get("button", "left"), BTN_LEFT)
                             )
+                            # If Hyprland has left_handed enabled on input, the compositor swaps BTN_LEFT <-> BTN_RIGHT.
+                            # We translate logical btn_code into the physical code that Hyprland maps to this button.
+                            wire_btn = btn_code
+                            if self.ipc.is_left_handed():
+                                if btn_code == BTN_LEFT:
+                                    wire_btn = BTN_RIGHT
+                                elif btn_code == BTN_RIGHT:
+                                    wire_btn = BTN_LEFT
+
                             self.injector.emit_button(
-                                btn_code, pressed=(ev.get("state") == "down"), sync=sync_btn
+                                wire_btn, pressed=(ev.get("state") == "down"), sync=sync_btn
                             )
                         case "mouse_scroll":
                             if not bg_keys:
@@ -4109,6 +4138,7 @@ def cmd_doctor(settings: SettingsManager, profiles_mgr: ProfileManager, json_out
             "cursor": list(pos),
             "layout": f"{layout}({variant})" if variant else layout,
             "layout_group": f"{grp_idx}/{grp_cnt}",
+            "left_handed": ipc.is_left_handed(),
         }
     except Exception as exc:
         report["checks"]["hyprland_ipc"] = {"ok": False, "error": str(exc)}
