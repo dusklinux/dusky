@@ -57,9 +57,11 @@ window#waybar {
    ───────────────────────────────────────────────────────────────────────────── */
 
 #custom-settings {
-    padding: 0px 12px 0px 8px;
-    margin: 2px 2px 2px 2px;
-    border-radius: 10px;
+    padding: 0px 2px 0px 0px;
+    margin: 2px;
+    min-width: 26px;
+    min-height: 26px;
+    border-radius: 100px;
     background-color: @glass_module;
     color: @on_surface;
     font-size: 14px;
@@ -137,10 +139,11 @@ window#waybar {
 
 /* Compensate the numeric font's side bearing while retaining pill width. */
 #workspaces button {
-    padding: 2px 4px 2px 6px;
-    margin: 2px 2px 2px 2px;
-    min-width: 12px;
-    border-radius: 12px;
+    padding: 0;
+    margin: 2px 3px;
+    min-width: 28px;
+    min-height: 28px;
+    border-radius: 100px;
     background-color: @glass_workspace;
     color: @on_surface_variant;
     font-size: 10px;
@@ -148,28 +151,31 @@ window#waybar {
 }
 
 #workspaces button.empty:not(.active):not(.urgent) {
-    padding: 2px 4px 2px 6px;
-    margin: 2px 2px 2px 2px;
-    min-width: 12px;
-    border-radius: 12px;
+    padding: 0;
+    margin: 2px 3px;
+    min-width: 28px;
+    min-height: 28px;
+    border-radius: 100px;
     background-color: @glass_workspace_empty;
     color: alpha(@on_surface_variant, 0.4);
 }
 
 #workspaces button.visible {
-    padding: 2px 4px 2px 6px;
-    margin: 2px 2px 2px 2px;
-    min-width: 12px;
-    border-radius: 12px;
+    padding: 0;
+    margin: 2px 3px;
+    min-width: 28px;
+    min-height: 28px;
+    border-radius: 100px;
     background-color: @glass_workspace_visible;
     color: @on_surface;
 }
 
 #workspaces button.active {
-    padding: 2px 4px 2px 6px;
-    margin: 2px 2px 2px 2px;
-    min-width: 12px;
-    border-radius: 12px;
+    padding: 0;
+    margin: 2px 3px;
+    min-width: 28px;
+    min-height: 28px;
+    border-radius: 100px;
     background-image: linear-gradient(135deg, @glass_workspace_primary, @glass_workspace_tertiary);
     color: @on_primary;
     font-weight: 800;
@@ -186,10 +192,11 @@ window#waybar {
 }
 
 #workspaces button.urgent {
-    padding: 2px 4px 2px 6px;
-    margin: 2px 2px 2px 2px;
-    min-width: 12px;
-    border-radius: 12px;
+    padding: 0;
+    margin: 2px 3px;
+    min-width: 28px;
+    min-height: 28px;
+    border-radius: 100px;
     background-color: @error;
     color: @on_error;
     animation: pulse 1.5s ease-in-out infinite;
@@ -351,9 +358,11 @@ window#waybar {
    ───────────────────────────────────────────────────────────────────────────── */
 
 #custom-power {
-    padding: 2px 10px;
-    margin: 2px 2px 2px 2px;
-    border-radius: 10px;
+    padding: 0px 4px 0px 0px;
+    margin: 2px;
+    min-width: 26px;
+    min-height: 26px;
+    border-radius: 100px;
     background-color: @glass_module;
     color: @error;
     font-size: 14px;
