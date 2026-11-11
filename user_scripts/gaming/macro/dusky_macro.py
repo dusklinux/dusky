@@ -3310,15 +3310,16 @@ class DuskyMacroTUI:
         with self._lock:
             seen: set[Path] = set()
             ordered: list[Path] = []
+            # Only list macro files that actually exist on disk
             for b in self.cfg.bindings:
                 p = b.macro_file.resolve()
-                if p not in seen:
+                if p.is_file() and p not in seen:
                     seen.add(p)
                     ordered.append(p)
             if self.settings.recordings_dir.is_dir():
                 for p in sorted(self.settings.recordings_dir.glob("*.json")):
                     rp = p.resolve()
-                    if rp not in seen:
+                    if rp.is_file() and rp not in seen:
                         seen.add(rp)
                         ordered.append(rp)
             self.macro_files = ordered
@@ -3613,6 +3614,7 @@ class DuskyMacroTUI:
             ("Wayland Wire: OK ", "green"),
             ("│ ", "dim"),
             (f"● {state} ", badge_style),
+            justify="center",
         )
         header_panel = Panel(header_text, border_style="cyan", padding=(0, 1))
 
