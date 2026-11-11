@@ -1262,13 +1262,8 @@ impl TrayApp {
             // Extending the active bar directly to the knob center ensures the
             // right edge stays completely submerged underneath the solid 20px
             // knob disc, preventing any visible gap or inward-curving crescent.
-            let fill_portion = if ratio >= 0.98 {
-                1000_u16
-            } else {
-                (59.0 + ratio * 882.0).round().clamp(1.0, 1000.0) as u16
-            };
+            let fill_portion = (59.0 + ratio * 882.0).round().clamp(1.0, 1000.0) as u16;
             let empty_portion = 1000_u16.saturating_sub(fill_portion);
-            let right_radius = if ratio >= 0.98 { 8.0 } else { 0.0 };
             let active_pill = container(Space::new())
                 .width(Length::FillPortion(fill_portion))
                 .height(Length::Fixed(16.0))
@@ -1285,8 +1280,8 @@ impl TrayApp {
                             radius: iced_core::border::Radius {
                                 top_left: 8.0,
                                 bottom_left: 8.0,
-                                top_right: right_radius,
-                                bottom_right: right_radius,
+                                top_right: 0.0,
+                                bottom_right: 0.0,
                             },
                             ..Default::default()
                         },
