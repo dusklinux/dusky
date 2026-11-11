@@ -1,0 +1,46 @@
+# =============================================================================
+# DuskyMacro Profile: profiles/01_default.toml
+# Default fallback profile when no game/application-specific profile matches.
+# =============================================================================
+
+schema_version = 1
+
+[profile]
+id = "01_default"
+name = "Default Desktop"
+description = "Standard window-relative desktop & productivity macro profile"
+enabled = true
+priority = 0
+
+[match]
+# Empty regexes match any window when used as the fallback profile
+window_class_regex = ""
+window_title_regex = ""
+
+[overrides.hotkeys]
+record_toggle = "f8"
+play_toggle = "f9"
+pause_toggle = "f10"
+emergency_abort = "ctrl+shift+backspace"
+
+[overrides.playback]
+coordinate_mode = "window_relative"
+scale_window_relative = false
+speed_multiplier = 1.0
+repeat_count = 1
+strict_window_match = false
+auto_focus_target_window = true
+abort_on_focus_loss = false
+
+[overrides.recording]
+capture_mouse = true
+capture_keyboard = true
+coalesce_mouse_move_us = 1000
+
+[[bindings]]
+name = "Quick Slot 1"
+hotkey = "f9"
+macro_file = "recordings/quick.macro.json"
+coordinate_mode = "window_relative"
+speed_multiplier = 1.0
+repeat_count = 1

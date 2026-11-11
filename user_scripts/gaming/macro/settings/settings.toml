@@ -1,0 +1,62 @@
+# =============================================================================
+# DuskyMacro Global Engine Configuration (settings/settings.toml)
+# Target: Arch Linux | Kernel 7.4+ | Hyprland (Pure Wayland) | Python 3.15+
+# =============================================================================
+
+schema_version = 1
+
+[paths]
+# Relative paths are resolved against ~/user_scripts/gaming/macro (or script dir)
+profiles_dir = "profiles"
+recordings_dir = "recordings"
+default_macro_file = "recordings/quick.macro.json"
+
+[hotkeys]
+# Global default hotkeys (can be overridden per profile).
+# Supports modifiers (ctrl, shift, alt, super) + keys or mouse buttons (mouse4, mouse5, mousemiddle).
+record_toggle = "f8"
+play_toggle = "f9"
+pause_toggle = "f10"
+emergency_abort = "ctrl+shift+backspace"
+profile_cycle_next = "ctrl+shift+f12"
+profile_cycle_prev = "ctrl+shift+f11"
+
+[timing]
+# Hybrid PrecisionClock tuning (time.perf_counter_ns)
+spin_threshold_us = 1200             # Final window (in microseconds) to busy-spin for sub-us accuracy
+max_coarse_sleep_ms = 12.0           # Maximum sleep chunk (ms) so abort triggers respond within <= 12ms
+epoll_poll_timeout_ms = 10.0         # Epoll select timeout (ms) for /dev/input/event* readers
+hotplug_rescan_interval_s = 1.0      # Interval (s) to reconcile newly plugged/unplugged USB/BT devices
+use_kernel_monotonic_ts = true       # Set EVIOCSCLOCKID=CLOCK_MONOTONIC on evdev fds for hardware timestamps
+coalesce_mouse_move_us = 1000        # Minimum interval (us) between cursorpos IPC queries during motion (1000us = 1000Hz)
+
+[recording]
+capture_mouse = true
+capture_keyboard = true
+strip_trigger_chords = true          # Strip start/stop hotkey presses/releases from recorded events
+ignore_virtual_devices = true        # Exclude compositor/virtual devices to prevent feedback loops
+extra_ignored_device_keywords = []   # Optional additional substring filters for /dev/input/event* names
+
+[playback]
+# Coordinate modes: "window_relative" | "absolute" | "logical_relative" | "raw_relative"
+default_coordinate_mode = "window_relative"
+scale_window_relative = false        # Scale (wx, wy) proportionally if target window size changed
+default_speed_multiplier = 1.0
+default_repeat_count = 1
+strict_window_match = false          # Refuse playback if recorded target window is not open
+auto_focus_target_window = true      # Automatically dispatch focuswindow to target before playback
+abort_on_focus_loss = false          # Abort immediately if user switches active window during replay
+sync_every_button = true             # Perform wl_display.sync roundtrip on mouse clicks/scrolls
+sync_every_key = false               # Stream key events via FIFO socket without per-key roundtrip jitter
+
+[safety]
+abort_on_session_lock = true         # Immediately abort & release_all if hyprlock/session lock activates
+block_on_auth_layer = true           # Refuse to inject input while a polkit/authentication layer is open
+block_on_launcher_layer = true       # Refuse to inject input while wofi/rofi/fuzzel/walker is open
+safety_check_interval_events = 16    # Re-verify session lock & focus guards every N playback events
+notify_on_state_change = true        # Show Hyprland OSD notifications on record/play/abort/profile switch
+notification_timeout_ms = 2000
+
+[profiles]
+default_profile = "01_default"
+auto_switch_by_window = true         # Automatically switch active profile based on focused Hyprland window

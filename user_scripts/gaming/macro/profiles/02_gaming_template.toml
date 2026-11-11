@@ -1,0 +1,54 @@
+# =============================================================================
+# DuskyMacro Profile: profiles/02_gaming_template.toml
+# High-priority gaming profile with automatic window matching & mouse4/mouse5 binds.
+# =============================================================================
+
+schema_version = 1
+
+[profile]
+id = "02_gaming_template"
+name = "Gaming Profile (Steam / Native)"
+description = "Low-latency gaming profile with focus-loss safety and extra mouse bindings"
+enabled = true
+priority = 50
+
+[match]
+# Automatically activates when the focused Hyprland window class matches:
+window_class_regex = "^(steam_app_.*|gamescope|prism.*|lutris|minecraft.*)$"
+window_title_regex = ".*"
+
+[overrides.hotkeys]
+record_toggle = "ctrl+f8"
+play_toggle = "f9"
+pause_toggle = "f10"
+emergency_abort = "ctrl+shift+backspace"
+
+[overrides.playback]
+coordinate_mode = "raw_relative"
+scale_window_relative = false
+speed_multiplier = 1.0
+repeat_count = 1
+strict_window_match = true
+auto_focus_target_window = false
+abort_on_focus_loss = true
+
+[overrides.recording]
+capture_mouse = true
+capture_keyboard = true
+coalesce_mouse_move_us = 500
+
+[[bindings]]
+name = "Primary Gaming Macro"
+hotkey = "f9"
+macro_file = "recordings/game_quick.macro.json"
+coordinate_mode = "raw_relative"
+speed_multiplier = 1.0
+repeat_count = 1
+
+[[bindings]]
+name = "Mouse Side Button 4 Combo"
+hotkey = "mouse4"
+macro_file = "recordings/side_combo.macro.json"
+coordinate_mode = "window_relative"
+speed_multiplier = 1.25
+repeat_count = 1
