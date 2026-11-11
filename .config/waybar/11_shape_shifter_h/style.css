@@ -63,7 +63,7 @@ window#waybar > box {
   background-color: @glass_bar;
   border-radius: 14px;
   border: none;
-  margin: 4px 0;
+  margin: 0;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -86,7 +86,7 @@ window#waybar > box {
 
 #custom-launcher {
   padding: 0px 10px 0px 7px;
-  margin: 4px 1px 5px 6px;
+  margin: 4px 1px 5px 2px;
   border-radius: 100px;
   background-image: linear-gradient(135deg, @primary_container 0%, @primary_fixed_dim 100%);
   border: none;
@@ -260,9 +260,9 @@ window#waybar > box {
 #workspaces button.active {
   padding: 0px 1px 0px 1px;
   min-width: 28px;
-  background-image: linear-gradient(135deg, @primary_container 0%, @primary_fixed_dim 100%);
+  background-image: linear-gradient(135deg, @secondary_container 0%, @secondary_fixed_dim 100%);
   border: none;
-  color: @on_primary_container;
+  color: @on_secondary_container;
   font-weight: 700;
 }
 
@@ -272,7 +272,7 @@ window#waybar > box {
 }
 
 #workspaces button.active:hover {
-  background-image: linear-gradient(135deg, @primary_fixed_dim 0%, @primary 100%);
+  background-image: linear-gradient(135deg, @secondary_fixed_dim 0%, @secondary 100%);
 }
 
 #workspaces button.urgent {
@@ -368,7 +368,7 @@ window#waybar > box {
 
 #custom-power {
   padding: 0px 12px 0px 9px;
-  margin: 3px 6px 3px 0px;
+  margin: 3px 2px 3px 0px;
   border-radius: 100px;
   background-image: linear-gradient(135deg, @primary_container 0%, @primary_fixed_dim 100%);
   border: none;
@@ -468,8 +468,8 @@ window#waybar > box {
 #workspaces button.active {
   border: none;
   border-radius: 20px;
-  background-image: linear-gradient(135deg, @primary_container 0%, @primary_fixed_dim 100%);
-  color: @on_primary_container;
+  background-image: linear-gradient(135deg, @secondary_container 0%, @secondary_fixed_dim 100%);
+  color: @on_secondary_container;
 }
 
 /* WAYBAR_OPAQUE_SWITCH_END */
