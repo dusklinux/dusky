@@ -110,36 +110,102 @@ box.module > label {
     color: @error;
 }
 
-/* --- CENTER SECTION --- */
+/* --- CENTER SECTION: WORKSPACES --- */
 #workspaces {
     background-color: @glass_module_high;
-    padding: 2px 0;
-}
-
-#workspaces button {
-    padding: 0;
-    margin: 2px 4px;
-    padding: 2px 0;
-    border-radius: 16px;
-    color: @on_surface_variant;
-    background-color: alpha(@on_surface, 0.12);
-    transition: all 0.2s ease;
+    margin: 3px 1px;
+    padding: 5px 0;
+    border-radius: 999px;
+    border: none;
     box-shadow: none;
 }
 
-#workspaces button.active {
-    background-color: @glass_workspace_active;
-    padding: 8px 0;
-    color: @on_primary;
+#workspaces button {
+    margin: 3px 6px;
+    padding: 0;
+    min-width: 16px;
+    min-height: 16px;
+    border-radius: 50%;
+    border: none;
+    outline: none;
+    text-shadow: none;
+    background-color: alpha(@primary, 0.16);
+    background-image: radial-gradient(
+        circle at center,
+        alpha(@primary, 0.90) 2px,
+        transparent 2.8px
+    );
+    box-shadow: inset 0 0 0 1.5px alpha(@primary, 0.70);
+    transition: all 0.2s ease;
 }
 
+/* Completely zero out the inner GTK label so text/glyphs can never shift or stretch the circle */
+#workspaces button label {
+    font-size: 0;
+    color: transparent;
+    padding: 0;
+    margin: 0;
+    min-width: 0;
+    min-height: 0;
+}
+
+/* 1. EMPTY INACTIVE WORKSPACE: Quiet hollow circle */
+#workspaces button.empty:not(.active):not(.urgent) {
+    background-color: alpha(@on_surface, 0.08);
+    background-image: none;
+    box-shadow: inset 0 0 0 1px alpha(@on_surface, 0.20);
+}
+
+/* 2. OCCUPIED INACTIVE WORKSPACE: Distinct ring + subtle 4px center dot */
+#workspaces button:not(.empty):not(.active):not(.urgent) {
+    background-color: alpha(@primary, 0.16);
+    background-image: radial-gradient(
+        circle at center,
+        alpha(@primary, 0.90) 2px,
+        transparent 2.8px
+    );
+    box-shadow: inset 0 0 0 1.5px alpha(@primary, 0.70);
+}
+
+/* 3. ACTIVE WORKSPACE: Gorgeous high-contrast lens */
+#workspaces button.active {
+    background-color: @primary;
+    background-image: radial-gradient(
+        circle at center,
+        @on_primary 3px,
+        @primary 3.8px
+    );
+    box-shadow: 0 0 6px alpha(@primary, 0.45);
+    padding: 0;
+    min-width: 16px;
+    min-height: 16px;
+}
+
+/* 4. URGENT WORKSPACE: High-alert @error circle + @on_error center core */
 #workspaces button.urgent {
     background-color: @error;
-    color: @on_error;
+    background-image: radial-gradient(
+        circle at center,
+        @on_error 3px,
+        @error 3.8px
+    );
+    box-shadow: 0 0 6px alpha(@error, 0.55);
 }
 
+/* HOVER STATES */
 #workspaces button:hover {
-    background-color: @glass_workspace_hover;
+    background-color: alpha(@primary, 0.30);
+    box-shadow: inset 0 0 0 1.5px @primary;
+}
+
+#workspaces button.active:hover {
+    background-color: @primary;
+    background-image: radial-gradient(
+        circle at center,
+        @on_primary 3.5px,
+        @primary 4.3px
+    );
+    box-shadow: 0 0 8px alpha(@primary, 0.65);
 }
 
 /* --- BOTTOM SECTION --- */

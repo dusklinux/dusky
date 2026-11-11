@@ -4,10 +4,10 @@
     "position": "right",
     "spacing": 0,
     "width": 30, // Slightly wider to fit the numbers comfortably
-    "margin-top": 5,
-    "margin-bottom": 5,
-    "margin-left": 4,
-    "margin-right": 4,
+    "margin-top": 4,
+    "margin-bottom": 4,
+    "margin-left": -3,
+    "margin-right": 2,
     "fixed-center": true,
     "reload_style_on_change": true,
 
