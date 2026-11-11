@@ -3604,7 +3604,7 @@ class DuskyMacroTUI:
 
         prov = self.ipc.config_provider().upper()
         header_text = Text.assemble(
-            (" ⚡ DUSKY MACRO ", "bold black on cyan"),
+            (" DUSKY MACRO ", "bold black on cyan"),
             (f" v{__version__} ", "bold cyan"),
             ("│ ", "dim"),
             (f"Kernel {os.uname().release.split('-')[0]} ", "white"),
