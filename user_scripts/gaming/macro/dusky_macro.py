@@ -4,25 +4,8 @@ dusky_macro.py — Production Pure-Wayland Macro Recorder, Player, Profile Engin
 
 Target Environment:
   - Arch Linux (Linux Kernel 7.4+)
-  - Hyprland (Wayland exclusively; zero X11 / XWayland dependencies)
+  - Hyprland 0.56+ / 0.57+ (Wayland exclusively; zero X11 / XWayland dependencies)
   - Python 3.15+ (Stdlib tomllib + ctypes libxkbcommon.so + rich Interactive TUI)
-
-Second-Pass Audit & Reliability Architecture:
-  1. Decoupled POSIX Signal Handling: SIGINT/SIGTERM/SIGHUP never perform socket I/O or lock
-     acquisition inside the signal frame; main thread wakes in <=12ms and executes release_all().
-  2. Per-FD Held-Key Tracking: Tracks depressed keys/buttons per /dev/input/event* file descriptor
-     and purges state automatically on USB/Bluetooth hotplug disconnect.
-  3. High-Resolution Scroll Wheel Support: Handles both REL_WHEEL/REL_HWHEEL notches and Kernel
-     7.4+ REL_WHEEL_HI_RES/REL_HWHEEL_HI_RES (120-unit) fractional scrolling without double-counting.
-  4. Pre-Compiled Wire Structs & Fast-Path IPC: Packs Wayland event + PTR_FRAME / VK_MODIFIERS into
-     single-syscall composite structs; recycles Wayland object IDs (wl_display.delete_id); uses
-     anonymous RAM-backed os.memfd_create() for XKB keymap uploads.
-  5. Strict CLOCK_MONOTONIC Domain Alignment: Hardware EVIOCSCLOCKID interrupt timestamps and
-     user-space PrecisionClock deadlines share time.clock_gettime_ns(time.CLOCK_MONOTONIC).
-  6. Multi-Monitor Euclidean Clamping, Empty-Workspace Fallback & TOML Hot-Reloading.
-  7. Rich Interactive TUI: Launches automatically when run with no arguments (or --tui / tui),
-     providing live desktop telemetry, embedded background hotkey listener, guided recording wizard,
-     playback override dials, and profile switcher while preserving all CLI subcommands.
 """
 
 from __future__ import annotations
@@ -51,7 +34,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-__version__ = "2.1.0"
+__version__ = "2.2.0"
 
 # Suppress SIGPIPE globally so broken Wayland/Hyprland sockets raise EPIPE instead of killing the process
 if hasattr(signal, "SIGPIPE"):
@@ -171,7 +154,7 @@ MODIFIER_EQUIVALENTS: dict[int, set[int]] = {
     126: {125, 126},
 }
 
-# Kernel ioctl helpers for /dev/input/event* interrogation & CLOCK_MONOTONIC configuration
+# Kernel ioctl helpers for /dev/input/event* interrogation, CLOCK_MONOTONIC, & EVIOCGRAB probe
 _IOC_WRITE = 1
 _IOC_READ = 2
 
@@ -189,6 +172,7 @@ def EVIOCGBIT(ev_type: int, length: int = 128) -> int:
 
 
 EVIOCSCLOCKID = _IOC(_IOC_WRITE, "E", 0xA0, 4)
+EVIOCGRAB = _IOC(_IOC_WRITE, "E", 0x90, 4)
 
 # Wayland wire protocol constants
 WL_DISPLAY_ID = 1
@@ -245,7 +229,7 @@ class SafetyAbortError(DuskyMacroError):
 
 
 # =============================================================================
-# SECTION 2: TOML SETTINGS & PROFILE MANAGEMENT (SettingsManager / ProfileManager)
+# SECTION 2: TOML SETTINGS, RUNTIME BEACON & PROFILE MANAGEMENT
 # =============================================================================
 
 DEFAULT_SETTINGS_TOML = """\
@@ -271,6 +255,7 @@ epoll_poll_timeout_ms = 10.0
 hotplug_rescan_interval_s = 1.0
 use_kernel_monotonic_ts = true
 coalesce_mouse_move_us = 1000
+pre_click_settle_us = 1500
 
 [recording]
 capture_mouse = true
@@ -282,6 +267,8 @@ extra_ignored_device_keywords = []
 [playback]
 default_coordinate_mode = "window_relative"
 scale_window_relative = false
+click_at_current_cursor = false
+background_window_keys = false
 default_speed_multiplier = 1.0
 default_repeat_count = 1
 strict_window_match = false
@@ -326,6 +313,8 @@ emergency_abort = "ctrl+shift+backspace"
 [overrides.playback]
 coordinate_mode = "window_relative"
 scale_window_relative = false
+click_at_current_cursor = false
+background_window_keys = false
 speed_multiplier = 1.0
 repeat_count = 1
 strict_window_match = false
@@ -340,11 +329,86 @@ coalesce_mouse_move_us = 1000
 [[bindings]]
 name = "Quick Slot 1"
 hotkey = "f9"
-macro_file = "recordings/quick.macro.json"
+macro_file = "quick.macro.json"
 coordinate_mode = "window_relative"
 speed_multiplier = 1.0
 repeat_count = 1
 """
+
+
+class RuntimeBeacon:
+    """Manages cross-process fcntl.flock seat serialization ($XDG_RUNTIME_DIR/dusky_macro/seat.lock)
+    and a live Waybar/status beacon ($XDG_RUNTIME_DIR/dusky_macro/state.json)."""
+
+    @staticmethod
+    def runtime_dir() -> Path:
+        base = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}") / "dusky_macro"
+        base.mkdir(parents=True, exist_ok=True)
+        return base
+
+    @classmethod
+    def lock_path(cls) -> Path:
+        return cls.runtime_dir() / "seat.lock"
+
+    @classmethod
+    def state_path(cls) -> Path:
+        return cls.runtime_dir() / "state.json"
+
+    @classmethod
+    @contextlib.contextmanager
+    def acquire_seat_lock(cls, blocking: bool = False) -> Any:
+        fh = open(cls.lock_path(), "a+", encoding="utf-8")  # noqa: SIM115
+        flags = fcntl.LOCK_EX if blocking else (fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            fcntl.flock(fh, flags)
+        except BlockingIOError as exc:
+            fh.close()
+            raise DuskyMacroError("Another dusky_macro action is already active on the seat") from exc
+        try:
+            fh.seek(0)
+            fh.truncate()
+            fh.write(str(os.getpid()))
+            fh.flush()
+            yield fh
+        finally:
+            with contextlib.suppress(Exception):
+                fcntl.flock(fh, fcntl.LOCK_UN)
+            fh.close()
+
+    @classmethod
+    def write_state(
+        cls,
+        state: str,
+        profile_id: str = "",
+        macro_name: str = "",
+    ) -> None:
+        payload = {
+            "pid": os.getpid(),
+            "state": state,
+            "profile": profile_id,
+            "macro": macro_name,
+            "updated_ns": _monotonic_ns(),
+        }
+        with contextlib.suppress(OSError):
+            tmp = cls.state_path().with_suffix(".tmp")
+            tmp.write_text(json.dumps(payload), encoding="utf-8")
+            tmp.replace(cls.state_path())
+
+    @classmethod
+    def clear_state(cls) -> None:
+        with contextlib.suppress(OSError):
+            st = cls.read_state()
+            if not st or st.get("pid") == os.getpid():
+                cls.state_path().unlink(missing_ok=True)
+
+    @classmethod
+    def read_state(cls) -> dict[str, Any] | None:
+        p = cls.state_path()
+        if not p.is_file():
+            return None
+        with contextlib.suppress(Exception):
+            return json.loads(p.read_text(encoding="utf-8"))
+        return None
 
 
 @dataclass(slots=True)
@@ -355,6 +419,8 @@ class MacroBinding:
     coordinate_mode: str | None = None
     speed_multiplier: float | None = None
     repeat_count: int | None = None
+    click_at_current_cursor: bool | None = None
+    background_window_keys: bool | None = None
 
 
 @dataclass(slots=True)
@@ -411,6 +477,7 @@ class EffectiveConfig:
     hotplug_rescan_interval_s: float
     use_kernel_monotonic_ts: bool
     coalesce_mouse_move_us: int
+    pre_click_settle_ns: int
     capture_mouse: bool
     capture_keyboard: bool
     strip_trigger_chords: bool
@@ -418,6 +485,8 @@ class EffectiveConfig:
     extra_ignored_keywords: tuple[str, ...]
     coordinate_mode: str
     scale_window_relative: bool
+    click_at_current_cursor: bool
+    background_window_keys: bool
     speed_multiplier: float
     repeat_count: int
     strict_window_match: bool
@@ -465,9 +534,12 @@ class SettingsManager:
 
         paths_cfg = self.raw.get("paths", {})
         self.profiles_dir = self.resolve_path(paths_cfg.get("profiles_dir", "profiles"))
-        self.recordings_dir = self.resolve_path(paths_cfg.get("recordings_dir", "recordings"))
-        self.default_macro_file = self.resolve_path(
-            paths_cfg.get("default_macro_file", "recordings/quick.macro.json")
+        rec_dir_raw = paths_cfg.get("recordings_dir", "~/.config/dusky/settings/dusky_macros")
+        if rec_dir_raw == "recordings":
+            rec_dir_raw = "~/.config/dusky/settings/dusky_macros"
+        self.recordings_dir = self.resolve_path(rec_dir_raw)
+        self.default_macro_file = self.resolve_macro_path(
+            paths_cfg.get("default_macro_file", "quick.macro.json")
         )
 
     def reload_if_modified(self) -> bool:
@@ -486,6 +558,17 @@ class SettingsManager:
         if p.is_absolute():
             return p
         return (self.root_dir / p).resolve()
+
+    def resolve_macro_path(self, path_str: str | Path) -> Path:
+        """Resolves macro file paths so relative filenames or legacy 'recordings/...'
+        paths always map cleanly inside self.recordings_dir (~/.config/dusky/settings/dusky_macros)."""
+        p = Path(path_str).expanduser()
+        if p.is_absolute():
+            return p
+        parts = p.parts
+        if parts and parts[0] == "recordings":
+            p = Path(*parts[1:]) if len(parts) > 1 else Path("quick.macro.json")
+        return (self.recordings_dir / p).resolve()
 
     def ensure_directories_and_defaults(self) -> None:
         self.settings_path.parent.mkdir(parents=True, exist_ok=True)
@@ -515,20 +598,19 @@ class SettingsManager:
             hk.update({k: v for k, v in profile.hotkey_overrides.items() if v is not None})
             rec.update({k: v for k, v in profile.recording_overrides.items() if v is not None})
             pb_ov = profile.playback_overrides
-            if "coordinate_mode" in pb_ov:
-                pb["default_coordinate_mode"] = pb_ov["coordinate_mode"]
-            if "scale_window_relative" in pb_ov:
-                pb["scale_window_relative"] = pb_ov["scale_window_relative"]
-            if "speed_multiplier" in pb_ov:
-                pb["default_speed_multiplier"] = pb_ov["speed_multiplier"]
-            if "repeat_count" in pb_ov:
-                pb["default_repeat_count"] = pb_ov["repeat_count"]
-            if "strict_window_match" in pb_ov:
-                pb["strict_window_match"] = pb_ov["strict_window_match"]
-            if "auto_focus_target_window" in pb_ov:
-                pb["auto_focus_target_window"] = pb_ov["auto_focus_target_window"]
-            if "abort_on_focus_loss" in pb_ov:
-                pb["abort_on_focus_loss"] = pb_ov["abort_on_focus_loss"]
+            for key_map in (
+                ("coordinate_mode", "default_coordinate_mode"),
+                ("scale_window_relative", "scale_window_relative"),
+                ("click_at_current_cursor", "click_at_current_cursor"),
+                ("background_window_keys", "background_window_keys"),
+                ("speed_multiplier", "default_speed_multiplier"),
+                ("repeat_count", "default_repeat_count"),
+                ("strict_window_match", "strict_window_match"),
+                ("auto_focus_target_window", "auto_focus_target_window"),
+                ("abort_on_focus_loss", "abort_on_focus_loss"),
+            ):
+                if key_map[0] in pb_ov:
+                    pb[key_map[1]] = pb_ov[key_map[0]]
             if "coalesce_mouse_move_us" in rec:
                 tm["coalesce_mouse_move_us"] = rec["coalesce_mouse_move_us"]
             bindings = list(profile.bindings)
@@ -557,6 +639,7 @@ class SettingsManager:
             hotplug_rescan_interval_s=float(tm.get("hotplug_rescan_interval_s", 1.0)),
             use_kernel_monotonic_ts=bool(tm.get("use_kernel_monotonic_ts", True)),
             coalesce_mouse_move_us=int(tm.get("coalesce_mouse_move_us", 1000)),
+            pre_click_settle_ns=int(tm.get("pre_click_settle_us", 1500)) * 1000,
             capture_mouse=bool(rec.get("capture_mouse", True)),
             capture_keyboard=bool(rec.get("capture_keyboard", True)),
             strip_trigger_chords=bool(rec.get("strip_trigger_chords", True)),
@@ -564,6 +647,8 @@ class SettingsManager:
             extra_ignored_keywords=tuple(str(x).lower() for x in rec.get("extra_ignored_device_keywords", [])),
             coordinate_mode=str(pb.get("default_coordinate_mode", "window_relative")),
             scale_window_relative=bool(pb.get("scale_window_relative", False)),
+            click_at_current_cursor=bool(pb.get("click_at_current_cursor", False)),
+            background_window_keys=bool(pb.get("background_window_keys", False)),
             speed_multiplier=float(pb.get("default_speed_multiplier", 1.0)),
             repeat_count=int(pb.get("default_repeat_count", 1)),
             strict_window_match=bool(pb.get("strict_window_match", False)),
@@ -634,10 +719,16 @@ class ProfileManager:
                     MacroBinding(
                         name=str(b_raw.get("name") or b_raw["hotkey"]),
                         hotkey=str(b_raw["hotkey"]),
-                        macro_file=self.settings.resolve_path(str(b_raw["macro_file"])),
+                        macro_file=self.settings.resolve_macro_path(str(b_raw["macro_file"])),
                         coordinate_mode=b_raw.get("coordinate_mode"),
                         speed_multiplier=float(b_raw["speed_multiplier"]) if "speed_multiplier" in b_raw else None,
                         repeat_count=int(b_raw["repeat_count"]) if "repeat_count" in b_raw else None,
+                        click_at_current_cursor=(
+                            bool(b_raw["click_at_current_cursor"]) if "click_at_current_cursor" in b_raw else None
+                        ),
+                        background_window_keys=(
+                            bool(b_raw["background_window_keys"]) if "background_window_keys" in b_raw else None
+                        ),
                     )
                 )
 
@@ -723,10 +814,22 @@ class _XkbRuleNames(ctypes.Structure):
     ]
 
 
+_LEVEL_MODS = ("", "SHIFT", "MOD5", "SHIFT MOD5")
+_CONTROL_CHORDS: dict[str, str] = {
+    "\n": "Return",
+    "\r": "Return",
+    "\t": "Tab",
+    "\b": "BackSpace",
+    "\x1b": "Escape",
+    "\x7f": "Delete",
+}
+
+
 class XkbBridge:
     """Interfaces with libxkbcommon.so via ctypes to compile full hardware keymaps,
     track depressed/latched/locked modifier masks for zwp_virtual_keyboard_v1,
-    resolve keycodes to keysym names, and build dynamic Unicode keymaps."""
+    resolve keycodes and characters to level-0 base keysyms for Hyprland's sendshortcut,
+    and build dynamic Unicode keymaps."""
 
     XKB_KEY_UP = 0
     XKB_KEY_DOWN = 1
@@ -745,6 +848,8 @@ class XkbBridge:
         self._keymap: int | None = None
         self._state: int | None = None
         self._keymap_bytes: bytes = b""
+        self._evdev_to_base_sym: dict[int, str] = {}
+        self._char_to_chord: dict[str, tuple[str, str]] = {}
         self._init_keymap()
 
     @staticmethod
@@ -766,6 +871,20 @@ class XkbBridge:
         lib.xkb_keymap_get_as_string.argtypes = [ctypes.c_void_p, ctypes.c_int]
         lib.xkb_keymap_unref.restype = None
         lib.xkb_keymap_unref.argtypes = [ctypes.c_void_p]
+        lib.xkb_keymap_min_keycode.restype = ctypes.c_uint32
+        lib.xkb_keymap_min_keycode.argtypes = [ctypes.c_void_p]
+        lib.xkb_keymap_max_keycode.restype = ctypes.c_uint32
+        lib.xkb_keymap_max_keycode.argtypes = [ctypes.c_void_p]
+        lib.xkb_keymap_num_levels_for_key.restype = ctypes.c_uint32
+        lib.xkb_keymap_num_levels_for_key.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32]
+        lib.xkb_keymap_key_get_syms_by_level.restype = ctypes.c_int
+        lib.xkb_keymap_key_get_syms_by_level.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.POINTER(ctypes.POINTER(ctypes.c_uint32)),
+        ]
 
         lib.xkb_state_new.restype = ctypes.c_void_p
         lib.xkb_state_new.argtypes = [ctypes.c_void_p]
@@ -781,6 +900,8 @@ class XkbBridge:
         lib.xkb_state_key_get_one_sym.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
         lib.xkb_keysym_get_name.restype = ctypes.c_int
         lib.xkb_keysym_get_name.argtypes = [ctypes.c_uint32, ctypes.c_char_p, ctypes.c_size_t]
+        lib.xkb_keysym_to_utf32.restype = ctypes.c_uint32
+        lib.xkb_keysym_to_utf32.argtypes = [ctypes.c_uint32]
         return lib
 
     @staticmethod
@@ -816,6 +937,26 @@ class XkbBridge:
         if not self._state:
             raise DuskyMacroError("xkb_state_new failed")
 
+        # Build level-0 base key table and character->(mods, base_key) chord table for sendshortcut
+        min_kc = int(self._lib.xkb_keymap_min_keycode(self._keymap))
+        max_kc = int(self._lib.xkb_keymap_max_keycode(self._keymap))
+        buf = ctypes.create_string_buffer(64)
+        for kc in range(min_kc, max_kc + 1):
+            base_sym_name: str | None = None
+            num_levels = min(int(self._lib.xkb_keymap_num_levels_for_key(self._keymap, kc, 0)), 4)
+            for lvl in range(num_levels):
+                syms = ctypes.POINTER(ctypes.c_uint32)()
+                if self._lib.xkb_keymap_key_get_syms_by_level(self._keymap, kc, 0, lvl, ctypes.byref(syms)) < 1:
+                    continue
+                self._lib.xkb_keysym_get_name(syms[0], buf, 64)
+                sym_name = buf.value.decode("utf-8", errors="replace")
+                if lvl == 0 and sym_name:
+                    base_sym_name = sym_name
+                    self._evdev_to_base_sym[kc - XKB_KEYCODE_OFFSET] = base_sym_name
+                cp = int(self._lib.xkb_keysym_to_utf32(syms[0]))
+                if cp and base_sym_name and chr(cp) not in self._char_to_chord:
+                    self._char_to_chord[chr(cp)] = (_LEVEL_MODS[lvl], base_sym_name)
+
     @property
     def keymap_bytes(self) -> bytes:
         return self._keymap_bytes
@@ -848,6 +989,16 @@ class XkbBridge:
         buf = ctypes.create_string_buffer(64)
         self._lib.xkb_keysym_get_name(sym, buf, 64)
         return buf.value.decode("utf-8", errors="replace") or f"code_{evdev_code}"
+
+    def keycode_to_base_symbol(self, evdev_code: int) -> str | None:
+        """Returns the unshifted level-0 XKB symbol name for an evdev keycode (used by sendshortcut)."""
+        return self._evdev_to_base_sym.get(evdev_code)
+
+    def char_to_sendshortcut_chord(self, ch: str) -> tuple[str, str] | None:
+        """Returns (mods, base_key_name) for Hyprland's sendshortcut, or None if not on layout."""
+        if ch in _CONTROL_CHORDS:
+            return ("", _CONTROL_CHORDS[ch])
+        return self._char_to_chord.get(ch)
 
     @staticmethod
     def build_unicode_keymap(chars: list[str]) -> bytes:
@@ -899,13 +1050,57 @@ class XkbBridge:
 # =============================================================================
 
 _LUA_SAFE_BYTES = frozenset(range(0x20, 0x7F)) - {0x22, 0x5C}
+_LUA_FULLSCREEN_MODES = {"0": "fullscreen", "1": "maximized"}
 
 LAYER_LEVELS = ("background", "bottom", "top", "overlay")
-AUTH_LAYER_MARK = "polkit"
-LAUNCHER_PREFIXES = (
-    "wofi", "rofi", "fuzzel", "tofi", "anyrun", "walker", "launcher",
-    "omarchy-menu", "omarchy-clipboard", "omarchy-emojis",
+AUTH_LAYER_MARKS = ("polkit", "dusky-polkit", "org.dusky.polkit")
+_LAYER_KINDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "launcher",
+        (
+            "wofi", "rofi", "fuzzel", "tofi", "anyrun", "walker", "launcher",
+            "omarchy-menu", "omarchy-clipboard", "omarchy-emojis",
+            "omarchy-image-selector", "omarchy-keyboard-panel", "omarchy-reminders",
+            "omarchy-network-qr", "omarchy-network-speedtest", "omarchy-disk-speedtest",
+        ),
+    ),
+    ("bar", ("waybar", "hyprpanel", "ags-", "bar", "omarchy-bar")),
+    ("notifications", ("mako", "dunst", "swaync", "notification", "omarchy-notifications")),
+    ("lock-preview", ("omarchy-lock-preview",)),
+    ("lock", ("hyprlock", "swaylock", "lockscreen")),
+    ("osk", ("wvkbd", "squeekboard", "osk")),
 )
+
+# Client window classes and titles that represent privilege/authentication dialogs
+AUTH_WINDOW_CLASSES = (
+    "dusky-polkit",
+    "org.dusky.polkit",
+    "hyprpolkitagent",
+    "polkit-gnome-authentication-agent-1",
+    "polkit-kde-authentication-agent-1",
+    "lxqt-policykit-agent",
+    "mate-polkit",
+    "gcr-prompter",
+    "pinentry",
+    "hyprland-dialog",
+    "hyprland-share-picker",
+)
+
+AUTH_WINDOW_TITLES = (
+    "dusky polkit",
+    "authenticate",
+    "authentication required",
+)
+
+
+def classify_layer_namespace(namespace: str) -> str:
+    low = namespace.lower()
+    if any(mark in low for mark in AUTH_LAYER_MARKS):
+        return "auth"
+    for kind, prefixes in _LAYER_KINDS:
+        if any(low.startswith(p) for p in prefixes):
+            return kind
+    return "other"
 
 
 def lua_escape_str(text: str) -> str:
@@ -934,8 +1129,8 @@ def logical_monitor_rect(m: dict[str, Any]) -> tuple[int, int, int, int]:
 
 
 class HyprlandSocketClient:
-    """Direct AF_UNIX socket client for Hyprland's .socket.sock with fast-path movecursor
-    and rate-limited notification helpers."""
+    """Direct AF_UNIX socket client for Hyprland's .socket.sock with complete 0.56+/0.57+ Lua
+    dispatcher translations (including hl.dsp.send_shortcut), fast-path movecursor, and notify."""
 
     LUA = "lua"
     HYPRLANG = "hyprlang"
@@ -1030,6 +1225,18 @@ class HyprlandSocketClient:
             return layout, variant, options
         return "us", "", ""
 
+    def layout_group(self) -> tuple[int, int]:
+        """Returns (active_layout_index, total_layout_count) of main keyboard.
+        sendshortcut requires index == 0 because Hyprland resolves keys on active layout
+        but delivers on layout group 0."""
+        with contextlib.suppress(Exception):
+            devices = self.query_json("devices")
+            keyboards = devices.get("keyboards", [])
+            kb = next((k for k in keyboards if k.get("main")), keyboards[0] if keyboards else {})
+            count = len((kb.get("layout") or "us").split(","))
+            return int(kb.get("active_layout_index") or 0), count
+        return 0, 1
+
     def config_provider(self) -> str:
         if self._provider is None:
             try:
@@ -1042,16 +1249,33 @@ class HyprlandSocketClient:
 
     def _format_dispatch(self, prov: str, name: str, *args: str) -> bytes:
         if prov == self.LUA:
-            if name == "movecursor":
+            if name == "exec":
+                expr = f"hl.dsp.exec_cmd({lua_escape_str(args[0])})"
+            elif name == "movecursor":
                 expr = f"hl.dsp.cursor.move({{ x = {int(args[0])}, y = {int(args[1])} }})"
             elif name == "focuswindow":
                 expr = f"hl.dsp.focus({{ window = {lua_escape_str(args[0])} }})"
             elif name == "workspace":
                 expr = f"hl.dsp.focus({{ workspace = {lua_escape_str(args[0])} }})"
+            elif name == "closewindow":
+                expr = f"hl.dsp.window.close({{ window = {lua_escape_str(args[0])} }})"
             elif name == "movetoworkspacesilent":
                 ws, _, win = args[0].partition(",")
                 target = f", window = {lua_escape_str(win)}" if win else ""
                 expr = f"hl.dsp.window.move({{ workspace = {lua_escape_str(ws)}{target}, follow = false }})"
+            elif name == "fullscreen":
+                mode_arg = args[0] if args else "0"
+                mode_name = _LUA_FULLSCREEN_MODES.get(mode_arg, "fullscreen")
+                expr = f'hl.dsp.window.fullscreen({{ mode = "{mode_name}", action = "toggle" }})'
+            elif name == "togglefloating":
+                win_arg = args[0] if args else ""
+                target = f", window = {lua_escape_str(win_arg)}" if win_arg else ""
+                expr = f'hl.dsp.window.float({{ action = "toggle"{target} }})'
+            elif name == "tagwindow":
+                tag = args[0]
+                win_arg = args[1] if len(args) > 1 else ""
+                target = f", window = {lua_escape_str(win_arg)}" if win_arg else ""
+                expr = f"hl.dsp.window.tag({{ tag = {lua_escape_str(tag)}{target} }})"
             elif name == "sendshortcut":
                 mods, key, win = (p.strip() for p in args[0].split(",", 2))
                 expr = (
@@ -1077,8 +1301,14 @@ class HyprlandSocketClient:
                     return
             raise DuskyMacroError(f"Hyprland dispatch {name} {args} failed: {reply}")
 
+    def send_shortcut(self, mods: str, key: str, address: str) -> None:
+        """Atomically sends a key with modifiers to a window address without stealing focus.
+        Under Hyprland 0.57+ Lua config provider, dispatches:
+        hl.dsp.send_shortcut({ mods = "MODS", key = "KEY", window = "address:0x..." })"""
+        addr = address if address.startswith("0x") else f"0x{address}"
+        self.dispatch("sendshortcut", f"{mods}, {key}, address:{addr}")
+
     def move_cursor(self, x: int | float, y: int | float) -> None:
-        """Fast-path cursor movement bypassing generic tuple formatting."""
         ix, iy = int(round(x)), int(round(y))
         prov = self.config_provider()
         if prov == self.LUA:
@@ -1090,7 +1320,6 @@ class HyprlandSocketClient:
             self.dispatch("movecursor", str(ix), str(iy))
 
     def notify(self, message: str, timeout_ms: int = 2000, icon: int = -1, color: str = "0") -> None:
-        """Rate-limited Hyprland OSD notification (coalesces identical messages within 150ms)."""
         now_ns = _monotonic_ns()
         if message == self._last_notify_msg and (now_ns - self._last_notify_ns) < 150_000_000:
             return
@@ -1102,8 +1331,9 @@ class HyprlandSocketClient:
 
 
 class DesktopTopology:
-    """Maintains desktop monitor geometry (including special scratchpad workspaces),
-    active window state, and subscribes to Hyprland's .socket2.sock event stream."""
+    """Maintains desktop monitor geometry, normalized client window properties,
+    layer-shell & authentication guards (including dusky-polkit / org.dusky.polkit),
+    and state-first .socket2.sock event waiting."""
 
     _SCHEMAS: dict[str, tuple[tuple[str, ...], int]] = {
         "openwindow": (("address", "workspace", "class", "title"), 3),
@@ -1191,6 +1421,8 @@ class DesktopTopology:
             addr = "0x" + addr
         at = w.get("at") or [0, 0]
         size = w.get("size") or [0, 0]
+        fs_val = w.get("fullscreen", 0)
+        fs_int = int(fs_val) if isinstance(fs_val, int | bool) else 0
         return {
             "address": addr,
             "class": w.get("class", ""),
@@ -1198,6 +1430,12 @@ class DesktopTopology:
             "workspace": workspace_ref(w.get("workspace")),
             "rect": [int(at[0]), int(at[1]), int(size[0]), int(size[1])],
             "floating": bool(w.get("floating", False)),
+            "fullscreen": fs_int == 2 or (isinstance(fs_val, bool) and fs_val),
+            "maximized": fs_int == 1,
+            "pinned": bool(w.get("pinned", False)),
+            "hidden": bool(w.get("hidden", False)),
+            "pid": int(w.get("pid", 0) or 0),
+            "focus_history_id": int(w.get("focusHistoryID", 9999) if "focusHistoryID" in w else 9999),
             "xwayland": bool(w.get("xwayland", False)),
         }
 
@@ -1211,42 +1449,66 @@ class DesktopTopology:
                     continue
                 for s in surfaces or []:
                     ns = str(s.get("namespace", ""))
-                    low = ns.lower()
-                    if AUTH_LAYER_MARK in low:
-                        kind = "auth"
-                    elif any(low.startswith(p) for p in LAUNCHER_PREFIXES):
-                        kind = "launcher"
-                    else:
-                        kind = "other"
                     out.append({
                         "namespace": ns,
-                        "kind": kind,
+                        "kind": classify_layer_namespace(ns),
                         "level": LAYER_LEVELS[lvl] if lvl < 4 else str(lvl),
                         "monitor": mon_name,
                     })
         return out
 
     def has_blocking_overlay(self, block_auth: bool = True, block_launcher: bool = True) -> str | None:
+        """Checks active window class/title and visible clients/layers for authentication dialogs
+        (including dusky-polkit / org.dusky.polkit / 'Dusky Polkit') or launchers."""
         with self._lock:
+            if block_auth:
+                win_cls = (self.active_window.get("class") or "").lower()
+                win_ttl = (self.active_window.get("title") or "").lower()
+                if any(auth_cls in win_cls for auth_cls in AUTH_WINDOW_CLASSES):
+                    return f"authentication window ({self.active_window.get('class')})"
+                if any(auth_ttl in win_ttl for auth_ttl in AUTH_WINDOW_TITLES):
+                    return f"authentication window ({self.active_window.get('title')})"
+                # Also check if any mapped floating authentication dialog (e.g. Dusky Polkit) is open on the active workspace
+                active_ws = self.active_window.get("workspace")
+                for c in self._clients:
+                    if c.get("hidden", False):
+                        continue
+                    c_cls = (c.get("class") or "").lower()
+                    c_ttl = (c.get("title") or "").lower()
+                    if any(a_cls in c_cls for a_cls in AUTH_WINDOW_CLASSES) or any(
+                        a_ttl in c_ttl for a_ttl in AUTH_WINDOW_TITLES
+                    ):
+                        if active_ws is None or c.get("workspace") == active_ws or c.get("pinned", False):
+                            return f"authentication dialog ({c.get('class') or c.get('title')})"
+
             for layer in self.layers:
-                if block_auth and layer["kind"] == "auth":
-                    return f"auth overlay ({layer['namespace']})"
-                if block_launcher and layer["kind"] == "launcher":
-                    return f"launcher overlay ({layer['namespace']})"
+                kind = layer["kind"]
+                if block_auth and kind in ("auth", "lock", "lock-preview"):
+                    return f"{kind} layer ({layer['namespace']})"
+                if block_launcher and kind in ("launcher", "osk"):
+                    return f"{kind} layer ({layer['namespace']})"
         return None
 
-    def find_matching_window(self, win_class: str, title_pattern: str = "") -> dict[str, Any] | None:
+    def find_matching_window(
+        self, win_class: str, title_pattern: str = "", include_hidden: bool = False
+    ) -> dict[str, Any] | None:
         self.refresh_full_snapshot()
         with self._lock:
             candidates = list(self._clients)
         title_re = re.compile(title_pattern, re.IGNORECASE) if title_pattern else None
+        matched: list[dict[str, Any]] = []
         for c in candidates:
+            if not include_hidden and c.get("hidden", False):
+                continue
             if win_class and c["class"].lower() != win_class.lower():
                 continue
             if title_re and not title_re.search(c["title"]):
                 continue
-            return c
-        return None
+            matched.append(c)
+        if not matched:
+            return None
+        matched.sort(key=lambda w: (w.get("hidden", False), w.get("focus_history_id", 9999)))
+        return matched[0]
 
     def clamp_to_monitors(self, x: float, y: float) -> tuple[int, int]:
         ix, iy = int(round(x)), int(round(y))
@@ -1325,12 +1587,10 @@ class DesktopTopology:
                             if not parsed:
                                 continue
                             ev_name, payload = parsed
-                            if ev_name in (
-                                "activewindowv2", "windowtitlev2", "movewindow", "openwindow", "closewindow"
-                            ):
-                                self.refresh_active_window()
-                            elif ev_name in ("openlayer", "closelayer", "workspace", "activespecial"):
+                            if ev_name in ("openwindow", "closewindow", "openlayer", "closelayer", "workspace", "activespecial"):
                                 self.refresh_full_snapshot()
+                            elif ev_name in ("activewindowv2", "windowtitlev2", "movewindow"):
+                                self.refresh_active_window()
                             with self._event_cond:
                                 self._recent_events.append((time.monotonic(), ev_name, payload))
                                 if len(self._recent_events) > 128:
@@ -1340,7 +1600,41 @@ class DesktopTopology:
                 if not self._stop_event.is_set():
                     time.sleep(0.25)
 
+    def _condition_already_holds(self, ev_name: str, match_substr: str) -> bool:
+        """Checks if a waited-for compositor condition already holds in current desktop state
+        so wait_for_event never misses an event that arrived just prior to waiting."""
+        needle = match_substr.lower()
+        with self._lock:
+            if ev_name in ("openwindow", "window_open"):
+                return any(
+                    not needle or needle in f"{c['address']} {c['class']} {c['title']}".lower()
+                    for c in self._clients
+                )
+            if ev_name in ("closewindow", "window_close") and needle:
+                return all(
+                    needle not in f"{c['address']} {c['class']} {c['title']}".lower()
+                    for c in self._clients
+                )
+            if ev_name == "activewindowv2" and needle:
+                addr = (self.active_window.get("address") or "").lower()
+                return needle in addr
+            if ev_name in ("windowtitlev2", "title_change") and needle:
+                ttl = (self.active_window.get("title") or "").lower()
+                return needle in ttl
+            if ev_name == "workspace" and needle:
+                return any(
+                    needle == str(m.get("active_workspace", "")).lower()
+                    or needle == str(m.get("special_workspace", "")).lower()
+                    for m in self.monitors
+                )
+            if ev_name in ("openlayer", "layer_open") and needle:
+                return any(needle in (l.get("namespace") or "").lower() for l in self.layers)
+        return False
+
     def wait_for_event(self, ev_name: str, match_substr: str = "", timeout_s: float = 5.0) -> bool:
+        self.refresh_full_snapshot()
+        if self._condition_already_holds(ev_name, match_substr):
+            return True
         deadline = time.monotonic() + timeout_s
         with self._event_cond:
             while True:
@@ -1802,7 +2096,7 @@ def _test_bit(bitmask: bytes, bit: int) -> bool:
 
 class EvdevDeviceScanner:
     """Scans /dev/input/event* nodes, classifies mice and keyboards via EVIOCGBIT,
-    and filters out virtual/synthetic devices to prevent feedback loops."""
+    filters out virtual/synthetic devices, and probes for exclusive EVIOCGRAB conflicts."""
 
     VIRTUAL_KEYWORDS = (
         "virtual", "wlroots", "hyprland", "uinput", "crossmacro", "ydotool", "hyprmacro", "dusky"
@@ -1875,6 +2169,28 @@ class EvdevDeviceScanner:
                 os.close(fd)
         return devices
 
+    @classmethod
+    def probe_grab_conflicts(cls, devices: list[EvdevDeviceInfo]) -> list[str]:
+        """Tests whether any target /dev/input/event* device is exclusively grabbed (EVIOCGRAB / EBUSY)
+        by another process (such as gpu-screen-recorder or an input remapper)."""
+        grabbed: list[str] = []
+        for dev in devices:
+            try:
+                fd = os.open(dev.path, os.O_RDONLY | os.O_NONBLOCK)
+            except OSError as exc:
+                if exc.errno == errno.EBUSY:
+                    grabbed.append(f"{dev.name} ({dev.path}: EBUSY)")
+                continue
+            try:
+                fcntl.ioctl(fd, EVIOCGRAB, struct.pack("<i", 1))
+                fcntl.ioctl(fd, EVIOCGRAB, struct.pack("<i", 0))
+            except OSError as exc:
+                if exc.errno == errno.EBUSY:
+                    grabbed.append(f"{dev.name} ({dev.path}: exclusively grabbed by another process)")
+            finally:
+                os.close(fd)
+        return grabbed
+
 
 @dataclass(slots=True)
 class AtomicInputFrame:
@@ -1936,7 +2252,6 @@ class SynReportAccumulator:
                 return None
             if ev_code == SYN_REPORT:
                 ts_ns = kernel_ts_ns if kernel_ts_ns > 0 else _monotonic_ns()
-                # Prefer hi-res wheel delta (120 units/notch) if present without double-counting
                 final_w_dy = (
                     round(self._hi_res_dy / HI_RES_UNITS_PER_NOTCH, 4)
                     if self._hi_res_dy != 0
@@ -2090,8 +2405,6 @@ class EvdevInputSession:
         return len(self._fds)
 
     def update_held(self, source_fd: int, code: int, pressed: bool) -> set[int]:
-        """Updates depressed key/button state for a specific device FD and returns
-        the live union of held codes across all connected devices."""
         fd_set = self._held_by_fd.setdefault(source_fd, set())
         if pressed:
             fd_set.add(code)
@@ -2263,155 +2576,155 @@ class MacroRecorder:
         last_rescan = start_mono
 
         need_mouse_open = self.capture_mouse or self.stop_matcher.needs_mouse_buttons
-        with EvdevInputSession(
-            capture_mouse=need_mouse_open,
-            capture_keyboard=True,
-            use_kernel_monotonic_ts=self.cfg.use_kernel_monotonic_ts,
-            rescan_interval_s=self.cfg.hotplug_rescan_interval_s,
-            ignore_virtual=self.cfg.ignore_virtual_devices,
-            extra_ignored=self.cfg.extra_ignored_keywords,
-        ) as session:
-            if len(session._fds) == 0:
-                raise DuskyMacroError(
-                    "No readable /dev/input/event* devices found. Ensure your user is in the 'input' group."
-                )
+        RuntimeBeacon.write_state("RECORDING", self.cfg.profile_id, name)
+        try:
+            with EvdevInputSession(
+                capture_mouse=need_mouse_open,
+                capture_keyboard=True,
+                use_kernel_monotonic_ts=self.cfg.use_kernel_monotonic_ts,
+                rescan_interval_s=self.cfg.hotplug_rescan_interval_s,
+                ignore_virtual=self.cfg.ignore_virtual_devices,
+                extra_ignored=self.cfg.extra_ignored_keywords,
+            ) as session:
+                if len(session._fds) == 0:
+                    raise DuskyMacroError(
+                        "No readable /dev/input/event* devices found. Ensure your user is in the 'input' group."
+                    )
 
-            stop_triggered = False
-            while not stop_triggered:
-                if abort_event is not None and abort_event.is_set():
-                    break
-                if max_duration_s is not None and (time.monotonic() - start_mono) >= max_duration_s:
-                    break
-
-                last_rescan = session.rescan_if_due(last_rescan)
-                frames = session.poll_frames(timeout_s=self.cfg.epoll_poll_timeout_s)
-
-                for frame in frames:
-                    # 1. Process keyboard keys & check stop hotkey using per-FD held tracking
-                    for code, pressed in frame.keys:
-                        held_codes = session.update_held(frame.source_fd, code, pressed)
-
-                        if self.cfg.strip_trigger_chords and not pressed and code in suppressed_up_codes:
-                            suppressed_up_codes.discard(code)
-                            continue
-
-                        if self.stop_matcher.matches_press(code, pressed, held_codes):
-                            stop_triggered = True
-                            break
-
-                        if not self.capture_keyboard:
-                            continue
-
-                        if t0_ns is None:
-                            t0_ns = frame.timestamp_ns
-                        t_us = max(prev_t_us, (frame.timestamp_ns - t0_ns) // 1000)
-                        d_us = max(0, t_us - prev_t_us)
-                        prev_t_us = t_us
-
-                        events.append({
-                            "t_us": t_us,
-                            "d_us": d_us,
-                            "type": "key",
-                            "code": code,
-                            "symbol": self.xkb.keycode_to_symbol(code),
-                            "state": "down" if pressed else "up",
-                        })
-
-                    if stop_triggered:
+                stop_triggered = False
+                while not stop_triggered:
+                    if abort_event is not None and abort_event.is_set():
+                        break
+                    if max_duration_s is not None and (time.monotonic() - start_mono) >= max_duration_s:
                         break
 
-                    # 2. Check if a mouse button is the stop hotkey
-                    for btn_code, pressed in frame.buttons:
-                        held_codes = session.update_held(frame.source_fd, btn_code, pressed)
-                        if self.stop_matcher.matches_press(btn_code, pressed, held_codes):
-                            stop_triggered = True
-                            break
+                    last_rescan = session.rescan_if_due(last_rescan)
+                    frames = session.poll_frames(timeout_s=self.cfg.epoll_poll_timeout_s)
 
-                    if stop_triggered or not self.capture_mouse:
+                    for frame in frames:
+                        for code, pressed in frame.keys:
+                            held_codes = session.update_held(frame.source_fd, code, pressed)
+
+                            if self.cfg.strip_trigger_chords and not pressed and code in suppressed_up_codes:
+                                suppressed_up_codes.discard(code)
+                                continue
+
+                            if self.stop_matcher.matches_press(code, pressed, held_codes):
+                                stop_triggered = True
+                                break
+
+                            if not self.capture_keyboard:
+                                continue
+
+                            if t0_ns is None:
+                                t0_ns = frame.timestamp_ns
+                            t_us = max(prev_t_us, (frame.timestamp_ns - t0_ns) // 1000)
+                            d_us = max(0, t_us - prev_t_us)
+                            prev_t_us = t_us
+
+                            events.append({
+                                "t_us": t_us,
+                                "d_us": d_us,
+                                "type": "key",
+                                "code": code,
+                                "symbol": self.xkb.keycode_to_symbol(code),
+                                "state": "down" if pressed else "up",
+                            })
+
                         if stop_triggered:
                             break
-                        continue
 
-                    # 3. Process mouse motion & buttons
-                    if frame.has_mouse_motion or frame.buttons:
-                        if t0_ns is None:
-                            t0_ns = frame.timestamp_ns
-                        t_us = max(prev_t_us, (frame.timestamp_ns - t0_ns) // 1000)
+                        for btn_code, pressed in frame.buttons:
+                            held_codes = session.update_held(frame.source_fd, btn_code, pressed)
+                            if self.stop_matcher.matches_press(btn_code, pressed, held_codes):
+                                stop_triggered = True
+                                break
 
-                        if frame.has_mouse_motion:
-                            coalesced_raw_dx += frame.rel_dx
-                            coalesced_raw_dy += frame.rel_dy
+                        if stop_triggered or not self.capture_mouse:
+                            if stop_triggered:
+                                break
+                            continue
 
-                        should_sample_cursor = bool(frame.buttons) or (
-                            frame.has_mouse_motion and (t_us - last_motion_query_us) >= coalesce_us
-                        )
-                        if should_sample_cursor:
-                            cur_x, cur_y = self.ipc.cursor_pos_fast()
-                            last_motion_query_us = t_us
-                            win = self.topology.active_window or target_win
-                            wrect = win.get("rect", [0, 0, 0, 0])
-                            wx = cur_x - wrect[0]
-                            wy = cur_y - wrect[1]
-                            log_dx = cur_x - prev_x
-                            log_dy = cur_y - prev_y
-                            prev_x, prev_y = cur_x, cur_y
+                        if frame.has_mouse_motion or frame.buttons:
+                            if t0_ns is None:
+                                t0_ns = frame.timestamp_ns
+                            t_us = max(prev_t_us, (frame.timestamp_ns - t0_ns) // 1000)
 
-                            if coalesced_raw_dx != 0 or coalesced_raw_dy != 0:
-                                d_us = max(0, t_us - prev_t_us)
-                                prev_t_us = t_us
-                                events.append({
-                                    "t_us": t_us,
-                                    "d_us": d_us,
-                                    "type": "mouse_move",
-                                    "x": cur_x,
-                                    "y": cur_y,
-                                    "wx": wx,
-                                    "wy": wy,
-                                    "dx": log_dx,
-                                    "dy": log_dy,
-                                    "raw_dx": coalesced_raw_dx,
-                                    "raw_dy": coalesced_raw_dy,
-                                })
-                                coalesced_raw_dx = 0
-                                coalesced_raw_dy = 0
+                            if frame.has_mouse_motion:
+                                coalesced_raw_dx += frame.rel_dx
+                                coalesced_raw_dy += frame.rel_dy
 
-                            for btn_code, pressed in frame.buttons:
-                                if (
-                                    self.cfg.strip_trigger_chords
-                                    and not pressed
-                                    and btn_code in suppressed_up_codes
-                                ):
-                                    suppressed_up_codes.discard(btn_code)
-                                    continue
-                                d_us = max(0, t_us - prev_t_us)
-                                prev_t_us = t_us
-                                events.append({
-                                    "t_us": t_us,
-                                    "d_us": d_us,
-                                    "type": "mouse_button",
-                                    "button": BUTTON_CODE_TO_NAME.get(btn_code, "left"),
-                                    "code": btn_code,
-                                    "state": "down" if pressed else "up",
-                                    "x": cur_x,
-                                    "y": cur_y,
-                                    "wx": wx,
-                                    "wy": wy,
-                                })
+                            should_sample_cursor = bool(frame.buttons) or (
+                                frame.has_mouse_motion and (t_us - last_motion_query_us) >= coalesce_us
+                            )
+                            if should_sample_cursor:
+                                cur_x, cur_y = self.ipc.cursor_pos_fast()
+                                last_motion_query_us = t_us
+                                win = self.topology.active_window or target_win
+                                wrect = win.get("rect", [0, 0, 0, 0])
+                                wx = cur_x - wrect[0]
+                                wy = cur_y - wrect[1]
+                                log_dx = cur_x - prev_x
+                                log_dy = cur_y - prev_y
+                                prev_x, prev_y = cur_x, cur_y
 
-                    # 4. Process scroll wheel (discrete or hi-res fractional)
-                    if frame.wheel_dy or frame.wheel_dx:
-                        if t0_ns is None:
-                            t0_ns = frame.timestamp_ns
-                        t_us = max(prev_t_us, (frame.timestamp_ns - t0_ns) // 1000)
-                        d_us = max(0, t_us - prev_t_us)
-                        prev_t_us = t_us
-                        events.append({
-                            "t_us": t_us,
-                            "d_us": d_us,
-                            "type": "mouse_scroll",
-                            "dy": frame.wheel_dy,
-                            "dx": frame.wheel_dx,
-                        })
+                                if coalesced_raw_dx != 0 or coalesced_raw_dy != 0:
+                                    d_us = max(0, t_us - prev_t_us)
+                                    prev_t_us = t_us
+                                    events.append({
+                                        "t_us": t_us,
+                                        "d_us": d_us,
+                                        "type": "mouse_move",
+                                        "x": cur_x,
+                                        "y": cur_y,
+                                        "wx": wx,
+                                        "wy": wy,
+                                        "dx": log_dx,
+                                        "dy": log_dy,
+                                        "raw_dx": coalesced_raw_dx,
+                                        "raw_dy": coalesced_raw_dy,
+                                    })
+                                    coalesced_raw_dx = 0
+                                    coalesced_raw_dy = 0
+
+                                for btn_code, pressed in frame.buttons:
+                                    if (
+                                        self.cfg.strip_trigger_chords
+                                        and not pressed
+                                        and btn_code in suppressed_up_codes
+                                    ):
+                                        suppressed_up_codes.discard(btn_code)
+                                        continue
+                                    d_us = max(0, t_us - prev_t_us)
+                                    prev_t_us = t_us
+                                    events.append({
+                                        "t_us": t_us,
+                                        "d_us": d_us,
+                                        "type": "mouse_button",
+                                        "button": BUTTON_CODE_TO_NAME.get(btn_code, "left"),
+                                        "code": btn_code,
+                                        "state": "down" if pressed else "up",
+                                        "x": cur_x,
+                                        "y": cur_y,
+                                        "wx": wx,
+                                        "wy": wy,
+                                    })
+
+                        if frame.wheel_dy or frame.wheel_dx:
+                            if t0_ns is None:
+                                t0_ns = frame.timestamp_ns
+                            t_us = max(prev_t_us, (frame.timestamp_ns - t0_ns) // 1000)
+                            d_us = max(0, t_us - prev_t_us)
+                            prev_t_us = t_us
+                            events.append({
+                                "t_us": t_us,
+                                "d_us": d_us,
+                                "type": "mouse_scroll",
+                                "dy": frame.wheel_dy,
+                                "dx": frame.wheel_dx,
+                            })
+        finally:
+            RuntimeBeacon.clear_state()
 
         if self.cfg.strip_trigger_chords:
             while events and events[-1]["type"] in ("key", "mouse_button") and events[-1]["state"] == "down":
@@ -2439,6 +2752,8 @@ class MacroRecorder:
             "settings": {
                 "coordinate_mode": self.coordinate_mode,
                 "scale_window_relative": self.cfg.scale_window_relative,
+                "click_at_current_cursor": self.cfg.click_at_current_cursor,
+                "background_window_keys": self.cfg.background_window_keys,
                 "strict_window_match": self.cfg.strict_window_match,
                 "auto_focus_target_window": self.cfg.auto_focus_target_window,
                 "abort_on_focus_loss": self.cfg.abort_on_focus_loss,
@@ -2457,8 +2772,8 @@ class MacroRecorder:
 
 class MacroPlayer:
     """High-precision macro playback engine with Coordinate Mode resolution,
-    empty-workspace fallback, proportional window-relative scaling, session-lock/auth-overlay
-    safety guards, background emergency abort monitoring, and release_all() cleanup."""
+    pre-click cursor settle, click_at_current_cursor, background sendshortcut key delivery,
+    dusky-polkit / session-lock safety guards, and guaranteed release_all() cleanup."""
 
     def __init__(
         self,
@@ -2548,6 +2863,8 @@ class MacroPlayer:
         override_mode: str | None = None,
         override_speed: float | None = None,
         override_repeat: int | None = None,
+        override_click_current: bool | None = None,
+        override_bg_keys: bool | None = None,
         dry_run: bool = False,
         spawn_watchdog: bool = True,
     ) -> dict[str, Any]:
@@ -2559,9 +2876,27 @@ class MacroPlayer:
             raise DuskyMacroError("speed_multiplier must be > 0")
 
         scale_win_rel = bool(m_settings.get("scale_window_relative", self.cfg.scale_window_relative))
+        click_cur = (
+            override_click_current
+            if override_click_current is not None
+            else bool(m_settings.get("click_at_current_cursor", self.cfg.click_at_current_cursor))
+        )
+        bg_keys = (
+            override_bg_keys
+            if override_bg_keys is not None
+            else bool(m_settings.get("background_window_keys", self.cfg.background_window_keys))
+        )
         strict_match = bool(m_settings.get("strict_window_match", self.cfg.strict_window_match))
-        auto_focus = bool(m_settings.get("auto_focus_target_window", self.cfg.auto_focus_target_window))
-        abort_focus_loss = bool(m_settings.get("abort_on_focus_loss", self.cfg.abort_on_focus_loss))
+        auto_focus = (
+            False
+            if bg_keys
+            else bool(m_settings.get("auto_focus_target_window", self.cfg.auto_focus_target_window))
+        )
+        abort_focus_loss = (
+            False
+            if bg_keys
+            else bool(m_settings.get("abort_on_focus_loss", self.cfg.abort_on_focus_loss))
+        )
 
         target_ctx = macro.get("target_context", {})
         target_class = target_ctx.get("class", "")
@@ -2576,15 +2911,26 @@ class MacroPlayer:
         self.topology.start_event_listener()
 
         expected_addr: str | None = None
+        matched_win: dict[str, Any] | None = None
         if target_class:
             matched_win = self.topology.find_matching_window(target_class, target_title)
-            if matched_win is None and strict_match:
+            if matched_win is None and (strict_match or bg_keys):
                 raise DuskyMacroError(
                     f"Target window class={target_class!r} title={target_title!r} not found"
                 )
             if matched_win is not None:
                 expected_addr = matched_win["address"]
-                if auto_focus and not dry_run:
+                if bg_keys:
+                    if matched_win.get("xwayland", False):
+                        raise DuskyMacroError(
+                            f"background_window_keys (sendshortcut) is unsupported on XWayland window {expected_addr}"
+                        )
+                    grp_idx, _ = self.ipc.layout_group()
+                    if grp_idx != 0:
+                        raise DuskyMacroError(
+                            "background_window_keys (sendshortcut) requires the primary keyboard layout (group 0) to be active"
+                        )
+                elif auto_focus and not dry_run:
                     cur_active = self.topology.refresh_active_window()
                     if cur_active.get("address") != expected_addr:
                         self.ipc.dispatch("focuswindow", f"address:{expected_addr}")
@@ -2596,6 +2942,7 @@ class MacroPlayer:
                 "status": "dry_run",
                 "profile": self.cfg.profile_id,
                 "coordinate_mode": coord_mode,
+                "background_window_keys": bg_keys,
                 "speed": speed,
                 "repeat": repeat,
                 "planned_events": len(events) * repeat,
@@ -2613,8 +2960,18 @@ class MacroPlayer:
         check_interval = self.cfg.safety_check_interval_events
         sync_btn = self.cfg.sync_every_button
         sync_key = self.cfg.sync_every_key
+        settle_ns = self.cfg.pre_click_settle_ns
         executed = 0
 
+        bg_held_mods: set[str] = set()
+        mod_code_to_hypr: dict[int, str] = {
+            29: "CTRL", 97: "CTRL",
+            42: "SHIFT", 54: "SHIFT",
+            56: "ALT", 100: "MOD5",
+            125: "SUPER", 126: "SUPER",
+        }
+
+        RuntimeBeacon.write_state("PLAYING", self.cfg.profile_id, str(macro.get("name", "")))
         try:
             for _ in range(max(1, repeat)):
                 self._verify_safety_guards(expected_addr, abort_focus_loss)
@@ -2644,14 +3001,29 @@ class MacroPlayer:
 
                     match ev.get("type"):
                         case "mouse_move":
-                            log_x, log_y = self._execute_mouse_move(
-                                ev, coord_mode, log_x, log_y, recorded_rect, scale_win_rel
-                            )
-                        case "mouse_button":
-                            if coord_mode in ("absolute", "window_relative"):
+                            if not bg_keys and not click_cur and coord_mode != "current_position":
                                 log_x, log_y = self._execute_mouse_move(
                                     ev, coord_mode, log_x, log_y, recorded_rect, scale_win_rel
                                 )
+                        case "mouse_button":
+                            if bg_keys:
+                                continue
+                            use_cur = (
+                                click_cur
+                                or coord_mode == "current_position"
+                                or bool(ev.get("use_current_position", False))
+                            )
+                            if not use_cur and coord_mode in ("absolute", "window_relative", "logical_relative"):
+                                prev_lx, prev_ly = log_x, log_y
+                                log_x, log_y = self._execute_mouse_move(
+                                    ev, coord_mode, log_x, log_y, recorded_rect, scale_win_rel
+                                )
+                                if settle_ns > 0 and (abs(log_x - prev_lx) > 1.0 or abs(log_y - prev_ly) > 1.0):
+                                    PrecisionClock.wait_until_ns(
+                                        _monotonic_ns() + settle_ns,
+                                        self.abort_event,
+                                        spin_threshold_ns=self.cfg.spin_threshold_ns,
+                                    )
                             btn_code = int(
                                 ev.get("code") or BUTTON_NAME_TO_CODE.get(ev.get("button", "left"), BTN_LEFT)
                             )
@@ -2659,15 +3031,35 @@ class MacroPlayer:
                                 btn_code, pressed=(ev.get("state") == "down"), sync=sync_btn
                             )
                         case "mouse_scroll":
-                            self.injector.emit_scroll(
-                                dy=float(ev.get("dy", 0.0)), dx=float(ev.get("dx", 0.0)), sync=sync_btn
-                            )
+                            if not bg_keys:
+                                self.injector.emit_scroll(
+                                    dy=float(ev.get("dy", 0.0)), dx=float(ev.get("dx", 0.0)), sync=sync_btn
+                                )
                         case "key":
-                            self.injector.emit_key(
-                                int(ev["code"]), pressed=(ev.get("state") == "down"), sync=sync_key
-                            )
+                            code = int(ev["code"])
+                            pressed = ev.get("state") == "down"
+                            if bg_keys and expected_addr:
+                                if code in mod_code_to_hypr:
+                                    if pressed:
+                                        bg_held_mods.add(mod_code_to_hypr[code])
+                                    else:
+                                        bg_held_mods.discard(mod_code_to_hypr[code])
+                                elif pressed:
+                                    base_sym = self.injector.xkb.keycode_to_base_symbol(code) or ev.get("symbol", "")
+                                    if base_sym:
+                                        mods_str = " ".join(sorted(bg_held_mods))
+                                        self.ipc.send_shortcut(mods_str, base_sym, expected_addr)
+                            else:
+                                self.injector.emit_key(code, pressed=pressed, sync=sync_key)
                         case "text":
-                            self.injector.type_unicode_text(str(ev.get("text", "")))
+                            txt = str(ev.get("text", ""))
+                            if bg_keys and expected_addr:
+                                for ch in txt:
+                                    chord = self.injector.xkb.char_to_sendshortcut_chord(ch)
+                                    if chord is not None:
+                                        self.ipc.send_shortcut(chord[0], chord[1], expected_addr)
+                            else:
+                                self.injector.type_unicode_text(txt)
                         case "hypr_dispatch":
                             self.ipc.dispatch(str(ev["dispatcher"]), *(str(a) for a in ev.get("args", [])))
                         case "wait_event":
@@ -2681,12 +3073,14 @@ class MacroPlayer:
         finally:
             watchdog_stop.set()
             self.injector.release_all()
+            RuntimeBeacon.clear_state()
 
         return {
             "status": "ok",
             "profile": self.cfg.profile_id,
             "executed_events": executed,
             "coordinate_mode": coord_mode,
+            "background_window_keys": bg_keys,
         }
 
     def _execute_mouse_move(
@@ -2714,7 +3108,6 @@ class MacroPlayer:
         if coord_mode == "window_relative" and "wx" in ev and "wy" in ev:
             win = self.topology.active_window
             wrect = win.get("rect", [0, 0, 0, 0])
-            # Fallback to recorded_rect if active workspace has no focused window
             if (len(wrect) < 4 or wrect[2] <= 0 or wrect[3] <= 0) and len(recorded_rect) == 4:
                 wrect = recorded_rect
             if len(wrect) == 4 and (wrect[2] > 0 or wrect[3] > 0):
@@ -2784,7 +3177,6 @@ class _CbreakTerminal:
             return None
         ch = os.read(sys.stdin.fileno(), 1).decode("utf-8", errors="ignore")
         if ch == "\x1b":
-            # Check for ANSI escape sequence (arrow keys)
             r2, _, _ = select.select([sys.stdin], [], [], 0.015)
             if r2:
                 seq = os.read(sys.stdin.fileno(), 2).decode("utf-8", errors="ignore")
@@ -2829,11 +3221,13 @@ class DuskyMacroTUI:
         self.override_mode: str | None = None
         self.override_speed: float = 1.0
         self.override_repeat: int = 1
+        self.override_click_current: bool | None = None
+        self.override_bg_keys: bool | None = None
         self.countdown_s: int = 0
 
         # Background listener state
         self.listener_enabled: bool = True
-        self.engine_state: str = "LISTENING"  # IDLE | LISTENING | RECORDING | PLAYING
+        self.engine_state: str = "LISTENING"
         self._listener_stop = threading.Event()
         self._listener_rebind = threading.Event()
         self._listener_pause = threading.Event()
@@ -2887,7 +3281,6 @@ class DuskyMacroTUI:
         with self._lock:
             seen: set[Path] = set()
             ordered: list[Path] = []
-            # Include active profile bound macro files first, then all files in recordings_dir
             for b in self.cfg.bindings:
                 p = b.macro_file.resolve()
                 if p not in seen:
@@ -2953,6 +3346,7 @@ class DuskyMacroTUI:
         if self._listener_thread and self._listener_thread.is_alive():
             self._listener_thread.join(timeout=1.0)
         self.engine_state = "IDLE"
+        RuntimeBeacon.clear_state()
 
     def cycle_profile(self, delta: int = 1) -> None:
         with self._lock:
@@ -2960,7 +3354,6 @@ class DuskyMacroTUI:
             if not enabled:
                 return
             if self.locked_profile_id is None:
-                # Lock onto first/next profile
                 cur_idx = next(
                     (i for i, p in enumerate(enabled) if self.current_prof and p.id == self.current_prof.id),
                     0,
@@ -3003,6 +3396,7 @@ class DuskyMacroTUI:
 
             self._listener_rebind.clear()
             self.engine_state = "LISTENING"
+            RuntimeBeacon.write_state("LISTENING", active_cfg.profile_id)
 
             need_mouse = (
                 rec_matcher.needs_mouse_buttons
@@ -3081,19 +3475,20 @@ class DuskyMacroTUI:
                         active_cfg.notification_timeout_ms,
                     )
                 try:
-                    recorder = MacroRecorder(
-                        ipc=self.ipc,
-                        topology=self.topology,
-                        xkb=self.xkb,
-                        cfg=active_cfg,
-                        stop_hotkey=rec_matcher.spec,
-                    )
-                    doc = recorder.record(
-                        name=target_file.stem,
-                        initial_suppressed_keys=held_snapshot,
-                        abort_event=self._listener_stop,
-                    )
-                    target_file.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+                    with RuntimeBeacon.acquire_seat_lock():
+                        recorder = MacroRecorder(
+                            ipc=self.ipc,
+                            topology=self.topology,
+                            xkb=self.xkb,
+                            cfg=active_cfg,
+                            stop_hotkey=rec_matcher.spec,
+                        )
+                        doc = recorder.record(
+                            name=target_file.stem,
+                            initial_suppressed_keys=held_snapshot,
+                            abort_event=self._listener_stop,
+                        )
+                        target_file.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
                     self.refresh_macro_list()
                     self.log_event("SAVE", f"Saved {len(doc['events'])} events to {target_file.name}")
                     if active_cfg.notify_on_state_change:
@@ -3111,21 +3506,32 @@ class DuskyMacroTUI:
                 self.engine_state = "PLAYING"
                 self.log_event("PLAY", f"Triggered [{triggered_binding.hotkey.upper()}] -> {m_file.name}")
                 try:
-                    macro = json.loads(m_file.read_text(encoding="utf-8"))
-                    with WaylandWireInjector(self.xkb) as injector:
-                        player = MacroPlayer(
-                            ipc=self.ipc,
-                            topology=self.topology,
-                            injector=injector,
-                            cfg=active_cfg,
-                        )
-                        res = player.play(
-                            macro,
-                            override_mode=triggered_binding.coordinate_mode or self.override_mode,
-                            override_speed=triggered_binding.speed_multiplier or self.override_speed,
-                            override_repeat=triggered_binding.repeat_count or self.override_repeat,
-                        )
-                        self.log_event("DONE", f"Completed {m_file.name} ({res['executed_events']} events)")
+                    with RuntimeBeacon.acquire_seat_lock():
+                        macro = json.loads(m_file.read_text(encoding="utf-8"))
+                        with WaylandWireInjector(self.xkb) as injector:
+                            player = MacroPlayer(
+                                ipc=self.ipc,
+                                topology=self.topology,
+                                injector=injector,
+                                cfg=active_cfg,
+                            )
+                            res = player.play(
+                                macro,
+                                override_mode=triggered_binding.coordinate_mode or self.override_mode,
+                                override_speed=triggered_binding.speed_multiplier or self.override_speed,
+                                override_repeat=triggered_binding.repeat_count or self.override_repeat,
+                                override_click_current=(
+                                    triggered_binding.click_at_current_cursor
+                                    if triggered_binding.click_at_current_cursor is not None
+                                    else self.override_click_current
+                                ),
+                                override_bg_keys=(
+                                    triggered_binding.background_window_keys
+                                    if triggered_binding.background_window_keys is not None
+                                    else self.override_bg_keys
+                                ),
+                            )
+                            self.log_event("DONE", f"Completed {m_file.name} ({res['executed_events']} events)")
                 except SafetyAbortError as exc:
                     self.log_event("ABORT", str(exc))
                 except Exception as exc:
@@ -3166,7 +3572,6 @@ class DuskyMacroTUI:
         }
         badge_style = state_colors.get(state, "bold white")
 
-        # 1. Header Bar
         prov = self.ipc.config_provider().upper()
         header_text = Text.assemble(
             (" ⚡ DUSKY MACRO ", "bold black on cyan"),
@@ -3182,7 +3587,6 @@ class DuskyMacroTUI:
         )
         header_panel = Panel(header_text, border_style="cyan", padding=(0, 1))
 
-        # 2. Left Column: Desktop Telemetry + Active Profile
         cur_x, cur_y = 0, 0
         with contextlib.suppress(Exception):
             cur_x, cur_y = self.ipc.cursor_pos_fast()
@@ -3222,7 +3626,6 @@ class DuskyMacroTUI:
             Panel(prof_tbl, title="[bold magenta]Active Profile Configuration[/]", border_style="magenta"),
         )
 
-        # 3. Right Column: Macro Library Table + Selected Inspector + Live Log
         lib_tbl = Table(expand=True, box=None, pad_edge=False)
         lib_tbl.add_column("#", width=3, style="dim")
         lib_tbl.add_column("Macro File", style="bold")
@@ -3264,8 +3667,9 @@ class DuskyMacroTUI:
             "TUI Overrides",
             f"Mode=[bold]{self.override_mode or 'Profile'}[/]  "
             f"Speed=[bold]{self.override_speed:.2f}x[/]  "
-            f"Repeat=[bold]{self.override_repeat}x[/]  "
-            f"Delay=[bold]{self.countdown_s}s[/]",
+            f"Rep=[bold]{self.override_repeat}x[/]  "
+            f"CurClick=[bold]{self.override_click_current}[/]  "
+            f"BgKeys=[bold]{self.override_bg_keys}[/]",
         )
 
         log_lines: list[Text] = []
@@ -3276,7 +3680,7 @@ class DuskyMacroTUI:
             log_lines.append(Text("No activity yet.", style="dim"))
 
         right_group = Group(
-            Panel(lib_tbl, title=f"[bold green]Macro Library ({self.settings.recordings_dir.name}/)[/]", border_style="green"),
+            Panel(lib_tbl, title=f"[bold green]Macro Library ({self.settings.recordings_dir})[/]", border_style="green"),
             Panel(insp_tbl, title="[bold yellow]Selected Macro Inspector & Playback Dials[/]", border_style="yellow"),
             Panel(Group(*log_lines), title="[bold white]Live Activity Log[/]", border_style="bright_black"),
         )
@@ -3322,16 +3726,18 @@ class DuskyMacroTUI:
             )
             if default_name.endswith(".macro"):
                 default_name = default_name[:-6]
-            raw_name = Prompt.ask("Macro name (saved in recordings/)", default=default_name).strip()
+            raw_name = Prompt.ask(
+                f"Macro name (saved in {self.settings.recordings_dir})", default=default_name
+            ).strip()
             if not raw_name:
                 return
             filename = raw_name if raw_name.endswith(".json") else f"{raw_name}.macro.json"
-            out_path = self.settings.recordings_dir / filename
+            out_path = self.settings.resolve_macro_path(filename)
             out_path.parent.mkdir(parents=True, exist_ok=True)
 
             mode = Prompt.ask(
                 "Coordinate mode",
-                choices=["window_relative", "raw_relative", "absolute", "logical_relative"],
+                choices=["window_relative", "raw_relative", "absolute", "logical_relative", "current_position"],
                 default=self.cfg.coordinate_mode,
             )
             trigger_style = Prompt.ask(
@@ -3382,8 +3788,9 @@ class DuskyMacroTUI:
 
             console.print(f"[bold red]● RECORDING![/] Perform your actions, then press [bold yellow][{stop_hk.upper()}][/] to STOP.")
             self.ipc.notify(f"DuskyMacro: Recording {out_path.name}", self.cfg.notification_timeout_ms)
-            doc = recorder.record(name=out_path.stem, initial_suppressed_keys=held)
-            out_path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+            with RuntimeBeacon.acquire_seat_lock():
+                doc = recorder.record(name=out_path.stem, initial_suppressed_keys=held)
+                out_path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
             self.refresh_macro_list()
             for idx, p in enumerate(self.macro_files):
                 if p.resolve() == out_path.resolve():
@@ -3408,7 +3815,7 @@ class DuskyMacroTUI:
             console.rule("[bold yellow]DuskyMacro — Configure Playback Override Dials[/]")
             mode_choice = Prompt.ask(
                 "Coordinate Mode Override",
-                choices=["profile", "window_relative", "raw_relative", "absolute", "logical_relative"],
+                choices=["profile", "window_relative", "raw_relative", "absolute", "logical_relative", "current_position"],
                 default=self.override_mode or "profile",
             )
             self.override_mode = None if mode_choice == "profile" else mode_choice
@@ -3418,6 +3825,18 @@ class DuskyMacroTUI:
             rep = Prompt.ask("Repeat Count", default=str(self.override_repeat))
             with contextlib.suppress(ValueError):
                 self.override_repeat = max(1, int(rep))
+            cur_c = Prompt.ask(
+                "Click at current manual cursor position?",
+                choices=["profile", "true", "false"],
+                default="profile" if self.override_click_current is None else str(self.override_click_current).lower(),
+            )
+            self.override_click_current = None if cur_c == "profile" else (cur_c == "true")
+            bg_k = Prompt.ask(
+                "Send keys in background via Hyprland sendshortcut?",
+                choices=["profile", "true", "false"],
+                default="profile" if self.override_bg_keys is None else str(self.override_bg_keys).lower(),
+            )
+            self.override_bg_keys = None if bg_k == "profile" else (bg_k == "true")
             cd = Prompt.ask("Pre-Playback Focus Countdown Seconds (0-10)", default=str(self.countdown_s))
             with contextlib.suppress(ValueError):
                 self.countdown_s = max(0, min(10, int(cd)))
@@ -3441,7 +3860,7 @@ class DuskyMacroTUI:
             if not name:
                 return
             fname = name if name.endswith(".json") else f"{name}.macro.json"
-            target = (self.settings.recordings_dir / fname).resolve()
+            target = self.settings.resolve_macro_path(fname)
             target.parent.mkdir(parents=True, exist_ok=True)
             if not target.exists():
                 empty_doc = {
@@ -3501,21 +3920,24 @@ class DuskyMacroTUI:
             for rem in range(self.countdown_s, 0, -1):
                 self.ipc.notify(f"DuskyMacro: Playing {target.name} in {rem}s...", 900)
                 time.sleep(1.0)
-            macro = json.loads(target.read_text(encoding="utf-8"))
-            with WaylandWireInjector(self.xkb) as injector:
-                player = MacroPlayer(
-                    ipc=self.ipc,
-                    topology=self.topology,
-                    injector=injector,
-                    cfg=self.cfg,
-                )
-                res = player.play(
-                    macro,
-                    override_mode=self.override_mode,
-                    override_speed=self.override_speed,
-                    override_repeat=self.override_repeat,
-                )
-                self.log_event("PLAY", f"Played {target.name} ({res['executed_events']} events)")
+            with RuntimeBeacon.acquire_seat_lock():
+                macro = json.loads(target.read_text(encoding="utf-8"))
+                with WaylandWireInjector(self.xkb) as injector:
+                    player = MacroPlayer(
+                        ipc=self.ipc,
+                        topology=self.topology,
+                        injector=injector,
+                        cfg=self.cfg,
+                    )
+                    res = player.play(
+                        macro,
+                        override_mode=self.override_mode,
+                        override_speed=self.override_speed,
+                        override_repeat=self.override_repeat,
+                        override_click_current=self.override_click_current,
+                        override_bg_keys=self.override_bg_keys,
+                    )
+                    self.log_event("PLAY", f"Played {target.name} ({res['executed_events']} events)")
         except SafetyAbortError as exc:
             self.log_event("ABORT", str(exc))
         except Exception as exc:
@@ -3611,11 +4033,38 @@ class DuskyMacroTUI:
 
 
 # =============================================================================
-# SECTION 9: CLI VERBS (doctor, record, play, listen, profiles, inspect, tui)
+# SECTION 9: CLI VERBS (doctor, stop, record, play, listen, profiles, inspect, tui)
 # =============================================================================
 
 def prewarm_realtime_path(ipc: HyprlandSocketClient) -> XkbBridge:
     return XkbBridge(*ipc.active_keyboard_layout())
+
+
+def cmd_stop() -> int:
+    """Emergency stop CLI verb (like `hypruse stop`): signals any active dusky_macro
+    playback, recording, or daemon process via SIGTERM so it runs release_all() and exits."""
+    signaled_pids: list[int] = []
+    my_pid = os.getpid()
+
+    st = RuntimeBeacon.read_state()
+    if st and isinstance(st.get("pid"), int) and st["pid"] != my_pid:
+        pid = int(st["pid"])
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.kill(pid, signal.SIGTERM)
+            signaled_pids.append(pid)
+
+    lock_file = RuntimeBeacon.lock_path()
+    if lock_file.is_file():
+        with contextlib.suppress(ValueError, OSError):
+            lock_pid = int(lock_file.read_text(encoding="utf-8").strip())
+            if lock_pid != my_pid and lock_pid not in signaled_pids:
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    os.kill(lock_pid, signal.SIGTERM)
+                    signaled_pids.append(lock_pid)
+
+    RuntimeBeacon.clear_state()
+    print(json.dumps({"status": "stopped", "signaled_pids": signaled_pids}))
+    return 0
 
 
 def cmd_tui(settings: SettingsManager, profiles_mgr: ProfileManager) -> int:
@@ -3639,8 +4088,10 @@ def cmd_doctor(settings: SettingsManager, profiles_mgr: ProfileManager, json_out
         "python_version": sys.version.split()[0],
         "kernel": os.uname().release,
         "root_dir": str(settings.root_dir),
+        "recordings_dir": str(settings.recordings_dir),
         "settings_file": str(settings.settings_path),
         "profiles_loaded": list(profiles_mgr.profiles.keys()),
+        "runtime_beacon": RuntimeBeacon.read_state(),
         "checks": {},
         "ok": True,
     }
@@ -3650,12 +4101,14 @@ def cmd_doctor(settings: SettingsManager, profiles_mgr: ProfileManager, json_out
         prov = ipc.config_provider()
         pos = ipc.cursor_pos_fast()
         layout, variant, _ = ipc.active_keyboard_layout()
+        grp_idx, grp_cnt = ipc.layout_group()
         report["checks"]["hyprland_ipc"] = {
             "ok": True,
             "socket": str(ipc.socket_path),
             "config_provider": prov,
             "cursor": list(pos),
             "layout": f"{layout}({variant})" if variant else layout,
+            "layout_group": f"{grp_idx}/{grp_cnt}",
         }
     except Exception as exc:
         report["checks"]["hyprland_ipc"] = {"ok": False, "error": str(exc)}
@@ -3665,8 +4118,13 @@ def cmd_doctor(settings: SettingsManager, profiles_mgr: ProfileManager, json_out
     try:
         xkb = XkbBridge(*(ipc.active_keyboard_layout() if ipc else ("us", "", "")))
         km_len = len(xkb.keymap_bytes)
+        base_keys_mapped = len(xkb._evdev_to_base_sym)
         xkb.close()
-        report["checks"]["libxkbcommon"] = {"ok": True, "compiled_keymap_bytes": km_len}
+        report["checks"]["libxkbcommon"] = {
+            "ok": True,
+            "compiled_keymap_bytes": km_len,
+            "sendshortcut_base_keys": base_keys_mapped,
+        }
     except Exception as exc:
         report["checks"]["libxkbcommon"] = {"ok": False, "error": str(exc)}
         report["ok"] = False
@@ -3688,11 +4146,13 @@ def cmd_doctor(settings: SettingsManager, profiles_mgr: ProfileManager, json_out
     devices = EvdevDeviceScanner.scan(need_mouse=True, need_keyboard=True)
     mice = [d.name for d in devices if d.is_mouse]
     keyboards = [d.name for d in devices if d.is_keyboard]
+    grab_conflicts = EvdevDeviceScanner.probe_grab_conflicts(devices)
     evdev_ok = bool(mice and keyboards)
     report["checks"]["evdev_capture"] = {
         "ok": evdev_ok,
         "mice": mice,
         "keyboards": keyboards,
+        "grab_conflicts": [f"{g} (libinput/compositor held)" for g in grab_conflicts] if grab_conflicts else [],
         "hint": "" if evdev_ok else "Add your user to the 'input' group: sudo usermod -aG input $USER && re-login",
     }
     if not evdev_ok:
@@ -3702,6 +4162,7 @@ def cmd_doctor(settings: SettingsManager, profiles_mgr: ProfileManager, json_out
         print(json.dumps(report, indent=2))
     else:
         print(f"DuskyMacro v{__version__} Diagnostics (Python {report['python_version']}, Kernel {report['kernel']})")
+        print(f"  [INFO] recordings_dir: {settings.recordings_dir}")
         print(f"  [INFO] settings: {settings.settings_path} (profiles: {', '.join(profiles_mgr.profiles.keys()) or 'none'})")
         for name, detail in report["checks"].items():
             badge = "[OK]" if detail.get("ok") else "[FAIL]"
@@ -3770,7 +4231,7 @@ def cmd_record(settings: SettingsManager, profiles_mgr: ProfileManager, args: ar
     coord_mode = args.mode or cfg.coordinate_mode
     cap_mouse = False if args.no_mouse else cfg.capture_mouse
     cap_kb = False if args.no_keyboard else cfg.capture_keyboard
-    out_path = settings.resolve_path(args.output) if args.output else cfg.default_macro_file
+    out_path = settings.resolve_macro_path(args.output) if args.output else cfg.default_macro_file
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     abort_ev = threading.Event()
@@ -3782,61 +4243,62 @@ def cmd_record(settings: SettingsManager, profiles_mgr: ProfileManager, args: ar
     signal.signal(signal.SIGTERM, _sig_handler)
 
     try:
-        recorder = MacroRecorder(
-            ipc=ipc,
-            topology=topology,
-            xkb=xkb,
-            cfg=cfg,
-            stop_hotkey=stop_hk,
-            coordinate_mode=coord_mode,
-            capture_mouse=cap_mouse,
-            capture_keyboard=cap_kb,
-        )
-        held: set[int] = set()
-        if not args.immediate:
-            start_matcher = HotkeyMatcher(stop_hk)
-            print(
-                f"[Profile: {cfg.profile_id}] Waiting for start hotkey [{stop_hk.upper()}]... (Ctrl+C to cancel)",
-                file=sys.stderr,
+        with RuntimeBeacon.acquire_seat_lock():
+            recorder = MacroRecorder(
+                ipc=ipc,
+                topology=topology,
+                xkb=xkb,
+                cfg=cfg,
+                stop_hotkey=stop_hk,
+                coordinate_mode=coord_mode,
+                capture_mouse=cap_mouse,
+                capture_keyboard=cap_kb,
             )
-            with EvdevInputSession(
-                capture_mouse=start_matcher.needs_mouse_buttons,
-                capture_keyboard=True,
-                use_kernel_monotonic_ts=False,
-                rescan_interval_s=cfg.hotplug_rescan_interval_s,
-                ignore_virtual=cfg.ignore_virtual_devices,
-                extra_ignored=cfg.extra_ignored_keywords,
-            ) as session:
-                started = False
-                while not started and not abort_ev.is_set():
-                    for frame in session.poll_frames(timeout_s=0.015):
-                        for code, pressed in frame.keys + frame.buttons:
-                            held = session.update_held(frame.source_fd, code, pressed)
-                            if start_matcher.matches_press(code, pressed, held):
-                                started = True
+            held: set[int] = set()
+            if not args.immediate:
+                start_matcher = HotkeyMatcher(stop_hk)
+                print(
+                    f"[Profile: {cfg.profile_id}] Waiting for start hotkey [{stop_hk.upper()}]... (Ctrl+C to cancel)",
+                    file=sys.stderr,
+                )
+                with EvdevInputSession(
+                    capture_mouse=start_matcher.needs_mouse_buttons,
+                    capture_keyboard=True,
+                    use_kernel_monotonic_ts=False,
+                    rescan_interval_s=cfg.hotplug_rescan_interval_s,
+                    ignore_virtual=cfg.ignore_virtual_devices,
+                    extra_ignored=cfg.extra_ignored_keywords,
+                ) as session:
+                    started = False
+                    while not started and not abort_ev.is_set():
+                        for frame in session.poll_frames(timeout_s=0.015):
+                            for code, pressed in frame.keys + frame.buttons:
+                                held = session.update_held(frame.source_fd, code, pressed)
+                                if start_matcher.matches_press(code, pressed, held):
+                                    started = True
+                                    break
+                            if started:
                                 break
-                        if started:
-                            break
-            if abort_ev.is_set():
-                return 130
+                if abort_ev.is_set():
+                    return 130
 
-        if cfg.notify_on_state_change:
-            ipc.notify(f"DuskyMacro [{cfg.profile_id}]: Recording Started", cfg.notification_timeout_ms)
-        print(f"Recording started! Press [{stop_hk.upper()}] to stop...", file=sys.stderr)
-        doc = recorder.record(
-            name=out_path.stem,
-            max_duration_s=args.duration,
-            initial_suppressed_keys=held,
-            abort_event=abort_ev,
-        )
-        out_path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
-        if cfg.notify_on_state_change:
-            ipc.notify(
-                f"DuskyMacro: Saved {len(doc['events'])} events to {out_path.name}",
-                cfg.notification_timeout_ms,
+            if cfg.notify_on_state_change:
+                ipc.notify(f"DuskyMacro [{cfg.profile_id}]: Recording Started", cfg.notification_timeout_ms)
+            print(f"Recording started! Press [{stop_hk.upper()}] to stop...", file=sys.stderr)
+            doc = recorder.record(
+                name=out_path.stem,
+                max_duration_s=args.duration,
+                initial_suppressed_keys=held,
+                abort_event=abort_ev,
             )
-        print(f"Saved {len(doc['events'])} events to {out_path}", file=sys.stderr)
-        return 0
+            out_path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+            if cfg.notify_on_state_change:
+                ipc.notify(
+                    f"DuskyMacro: Saved {len(doc['events'])} events to {out_path.name}",
+                    cfg.notification_timeout_ms,
+                )
+            print(f"Saved {len(doc['events'])} events to {out_path}", file=sys.stderr)
+            return 0
     finally:
         topology.stop_event_listener()
         xkb.close()
@@ -3853,7 +4315,7 @@ def cmd_play(settings: SettingsManager, profiles_mgr: ProfileManager, args: argp
         )
     )
     cfg = settings.build_effective(prof)
-    macro_path = settings.resolve_path(args.macro_file) if args.macro_file else cfg.default_macro_file
+    macro_path = settings.resolve_macro_path(args.macro_file) if args.macro_file else cfg.default_macro_file
     if not macro_path.is_file():
         print(f"dusky_macro: error: macro file not found: {macro_path}", file=sys.stderr)
         return 1
@@ -3884,15 +4346,18 @@ def cmd_play(settings: SettingsManager, profiles_mgr: ProfileManager, args: argp
     atexit.register(injector.release_all)
 
     try:
-        result = player.play(
-            macro=macro,
-            override_mode=args.mode,
-            override_speed=args.speed,
-            override_repeat=args.repeat,
-            dry_run=args.dry_run,
-        )
-        print(json.dumps(result))
-        return 0
+        with RuntimeBeacon.acquire_seat_lock():
+            result = player.play(
+                macro=macro,
+                override_mode=args.mode,
+                override_speed=args.speed,
+                override_repeat=args.repeat,
+                override_click_current=args.current_cursor,
+                override_bg_keys=args.background_keys,
+                dry_run=args.dry_run,
+            )
+            print(json.dumps(result))
+            return 0
     except SafetyAbortError as exc:
         if cfg.notify_on_state_change:
             ipc.notify(f"DuskyMacro Aborted: {exc}", cfg.notification_timeout_ms)
@@ -3968,7 +4433,7 @@ def cmd_listen(settings: SettingsManager, profiles_mgr: ProfileManager, args: ar
                         MacroBinding(
                             name="CLI Macro",
                             hotkey=args.play_hotkey or active_cfg.play_hotkey,
-                            macro_file=settings.resolve_path(args.macro_file),
+                            macro_file=settings.resolve_macro_path(args.macro_file),
                         ),
                     ))
                 else:
@@ -3976,6 +4441,7 @@ def cmd_listen(settings: SettingsManager, profiles_mgr: ProfileManager, args: ar
                         slot_matchers.append((HotkeyMatcher(b.hotkey), b))
 
             profile_changed_ev.clear()
+            RuntimeBeacon.write_state("LISTENING", active_cfg.profile_id)
             mode_label = f"Locked ({locked_profile_id})" if locked_profile_id else "Auto-Window"
             print(
                 f"DuskyMacro Active — Profile: {active_cfg.profile_name} [{active_cfg.profile_id}] ({mode_label})\n"
@@ -4063,7 +4529,7 @@ def cmd_listen(settings: SettingsManager, profiles_mgr: ProfileManager, args: ar
 
             if triggered_action == "record":
                 target_file = (
-                    settings.resolve_path(args.macro_file)
+                    settings.resolve_macro_path(args.macro_file)
                     if args.macro_file
                     else (slot_matchers[0][1].macro_file if slot_matchers else active_cfg.default_macro_file)
                 )
@@ -4073,19 +4539,20 @@ def cmd_listen(settings: SettingsManager, profiles_mgr: ProfileManager, args: ar
                         f"DuskyMacro [{active_cfg.profile_id}]: Recording -> {target_file.name}",
                         active_cfg.notification_timeout_ms,
                     )
-                recorder = MacroRecorder(
-                    ipc=ipc,
-                    topology=topology,
-                    xkb=xkb,
-                    cfg=active_cfg,
-                    stop_hotkey=rec_matcher.spec,
-                )
-                doc = recorder.record(
-                    name=target_file.stem,
-                    initial_suppressed_keys=held_snapshot,
-                    abort_event=stop_daemon_ev,
-                )
-                target_file.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+                with RuntimeBeacon.acquire_seat_lock():
+                    recorder = MacroRecorder(
+                        ipc=ipc,
+                        topology=topology,
+                        xkb=xkb,
+                        cfg=active_cfg,
+                        stop_hotkey=rec_matcher.spec,
+                    )
+                    doc = recorder.record(
+                        name=target_file.stem,
+                        initial_suppressed_keys=held_snapshot,
+                        abort_event=stop_daemon_ev,
+                    )
+                    target_file.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
                 if active_cfg.notify_on_state_change:
                     ipc.notify(
                         f"DuskyMacro: Saved {len(doc['events'])} events ({target_file.name})",
@@ -4101,32 +4568,36 @@ def cmd_listen(settings: SettingsManager, profiles_mgr: ProfileManager, args: ar
                         )
                     continue
                 macro = json.loads(m_file.read_text(encoding="utf-8"))
-                with WaylandWireInjector(xkb) as injector:
-                    player = MacroPlayer(
-                        ipc=ipc,
-                        topology=topology,
-                        injector=injector,
-                        cfg=active_cfg,
-                        abort_hotkey=args.abort_hotkey or active_cfg.abort_hotkey,
-                    )
-                    try:
-                        player.play(
-                            macro,
-                            override_mode=triggered_binding.coordinate_mode,
-                            override_speed=triggered_binding.speed_multiplier,
-                            override_repeat=triggered_binding.repeat_count,
+                with RuntimeBeacon.acquire_seat_lock():
+                    with WaylandWireInjector(xkb) as injector:
+                        player = MacroPlayer(
+                            ipc=ipc,
+                            topology=topology,
+                            injector=injector,
+                            cfg=active_cfg,
+                            abort_hotkey=args.abort_hotkey or active_cfg.abort_hotkey,
                         )
-                    except SafetyAbortError as exc:
-                        if active_cfg.notify_on_state_change:
-                            ipc.notify(f"DuskyMacro Aborted: {exc}", active_cfg.notification_timeout_ms)
+                        try:
+                            player.play(
+                                macro,
+                                override_mode=triggered_binding.coordinate_mode,
+                                override_speed=triggered_binding.speed_multiplier,
+                                override_repeat=triggered_binding.repeat_count,
+                                override_click_current=triggered_binding.click_at_current_cursor,
+                                override_bg_keys=triggered_binding.background_window_keys,
+                            )
+                        except SafetyAbortError as exc:
+                            if active_cfg.notify_on_state_change:
+                                ipc.notify(f"DuskyMacro Aborted: {exc}", active_cfg.notification_timeout_ms)
     finally:
+        RuntimeBeacon.clear_state()
         topology.stop_event_listener()
         xkb.close()
     return 0
 
 
 def cmd_inspect(settings: SettingsManager, args: argparse.Namespace) -> int:
-    macro_path = settings.resolve_path(args.macro_file)
+    macro_path = settings.resolve_macro_path(args.macro_file)
     doc = json.loads(macro_path.read_text(encoding="utf-8"))
     events = doc.get("events", [])
     duration_ms = (events[-1]["t_us"] / 1000.0) if events else 0.0
@@ -4136,6 +4607,7 @@ def cmd_inspect(settings: SettingsManager, args: argparse.Namespace) -> int:
         counts[t] = counts.get(t, 0) + 1
     summary = {
         "name": doc.get("name"),
+        "file": str(macro_path),
         "profile_id": doc.get("profile_id"),
         "created_at": doc.get("created_at"),
         "coordinate_mode": doc.get("settings", {}).get("coordinate_mode"),
@@ -4168,6 +4640,7 @@ def build_parser() -> Any:
     sub = p.add_subparsers(dest="cmd", required=False)
 
     sub.add_parser("tui", help="Launch the interactive Rich Terminal UI")
+    sub.add_parser("stop", help="Emergency stop of any running dusky_macro playback or recording")
 
     doc_p = sub.add_parser("doctor", help="Verify Hyprland IPC, Wayland protocols, libxkbcommon, evdev, and TOML configs")
     doc_p.add_argument("--json", action="store_true", help="Output diagnostics as JSON")
@@ -4176,12 +4649,12 @@ def build_parser() -> Any:
     prof_p.add_argument("--json", action="store_true", help="Output profile list as JSON")
 
     rec_p = sub.add_parser("record", help="Record mouse and keyboard events to a macro JSON file")
-    rec_p.add_argument("output", nargs="?", default=None, help="Output .macro.json path (default from profile/settings)")
+    rec_p.add_argument("output", nargs="?", default=None, help="Output .macro.json path (default inside ~/.config/dusky/settings/dusky_macros)")
     rec_p.add_argument("--profile", default=None, help="Profile ID or filename stem to use")
     rec_p.add_argument("--hotkey", default=None, help="Override start/stop hotkey chord")
     rec_p.add_argument(
         "--mode",
-        choices=("absolute", "window_relative", "logical_relative", "raw_relative"),
+        choices=("absolute", "window_relative", "logical_relative", "raw_relative", "current_position"),
         default=None,
         help="Override default coordinate mode saved in macro settings",
     )
@@ -4191,16 +4664,18 @@ def build_parser() -> Any:
     rec_p.add_argument("--no-keyboard", action="store_true", help="Do not record keyboard events")
 
     play_p = sub.add_parser("play", help="Replay a recorded macro JSON file")
-    play_p.add_argument("macro_file", nargs="?", default=None, help="Path to .macro.json (default from profile/settings)")
+    play_p.add_argument("macro_file", nargs="?", default=None, help="Path or filename in ~/.config/dusky/settings/dusky_macros")
     play_p.add_argument("--profile", default=None, help="Profile ID or filename stem to use")
     play_p.add_argument(
         "--mode",
-        choices=("absolute", "window_relative", "logical_relative", "raw_relative"),
+        choices=("absolute", "window_relative", "logical_relative", "raw_relative", "current_position"),
         default=None,
         help="Override coordinate mode during playback",
     )
     play_p.add_argument("--speed", type=float, default=None, help="Playback speed multiplier (e.g. 2.0)")
     play_p.add_argument("--repeat", type=int, default=None, help="Number of times to repeat macro")
+    play_p.add_argument("--current-cursor", action="store_true", default=None, help="Click at current cursor position without moving mouse")
+    play_p.add_argument("--background-keys", action="store_true", default=None, help="Send keys to unfocused target window via Hyprland sendshortcut")
     play_p.add_argument("--abort-hotkey", default=None, help="Override emergency abort hotkey")
     play_p.add_argument("--pause-hotkey", default=None, help="Override pause/resume hotkey")
     play_p.add_argument("--allow-auth", action="store_true", help="Allow playback over polkit/launcher layers")
@@ -4214,7 +4689,7 @@ def build_parser() -> Any:
     listen_p.add_argument("--abort-hotkey", default=None, help="Override emergency abort hotkey")
 
     insp_p = sub.add_parser("inspect", help="Inspect metadata and event breakdown of a macro file")
-    insp_p.add_argument("macro_file", help="Path to .macro.json")
+    insp_p.add_argument("macro_file", help="Path or filename in ~/.config/dusky/settings/dusky_macros")
 
     return p
 
@@ -4223,6 +4698,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
+        if args.cmd == "stop":
+            return cmd_stop()
+
         settings_path = Path(args.settings) if args.settings else None
         settings = SettingsManager(root_dir=SCRIPT_ROOT, settings_path=settings_path)
         settings.ensure_directories_and_defaults()
