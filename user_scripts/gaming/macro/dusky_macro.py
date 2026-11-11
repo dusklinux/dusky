@@ -1,28 +1,34 @@
 #!/usr/bin/env python3
 """
-dusky_macro.py — Production Pure-Wayland Macro Recorder, Player & Profile Engine for Hyprland.
+dusky_macro.py — Production Pure-Wayland Macro Recorder, Player, Profile Engine & Interactive TUI.
 
 Target Environment:
   - Arch Linux (Linux Kernel 7.4+)
   - Hyprland (Wayland exclusively; zero X11 / XWayland dependencies)
-  - Python 3.15+ (Zero external pip packages; uses stdlib tomllib + ctypes libxkbcommon.so)
+  - Python 3.15+ (Stdlib tomllib + ctypes libxkbcommon.so + rich Interactive TUI)
 
-Key Reliability & Audit Features:
-  - Decoupled POSIX signal handling (SIGINT/SIGTERM/SIGHUP never perform socket I/O or lock
-    acquisition inside the signal frame; main thread wakes within <=12ms and runs release_all()).
-  - Pure in-memory keymap file descriptor passing via os.memfd_create() + SCM_RIGHTS.
-  - Wayland object ID recycling (wl_display.delete_id) and non-blocking event buffer draining.
-  - Kernel hardware interrupt timestamps via EVIOCSCLOCKID (CLOCK_MONOTONIC) on /dev/input/event*.
-  - Complete ring-buffer draining until EAGAIN/EWOULDBLOCK for 4000Hz/8000Hz gaming mice.
-  - First-class mouse button hotkeys (mouse4, mouse5, mousemiddle) and modifier chords.
-  - Multi-monitor nearest-edge Euclidean clamping and proportional window-relative scaling.
-  - Cascading TOML configuration (settings/settings.toml + profiles/*.toml) with live
-    Hyprland .socket2.sock window-based profile switching and hotkey cycling.
+Second-Pass Audit & Reliability Architecture:
+  1. Decoupled POSIX Signal Handling: SIGINT/SIGTERM/SIGHUP never perform socket I/O or lock
+     acquisition inside the signal frame; main thread wakes in <=12ms and executes release_all().
+  2. Per-FD Held-Key Tracking: Tracks depressed keys/buttons per /dev/input/event* file descriptor
+     and purges state automatically on USB/Bluetooth hotplug disconnect.
+  3. High-Resolution Scroll Wheel Support: Handles both REL_WHEEL/REL_HWHEEL notches and Kernel
+     7.4+ REL_WHEEL_HI_RES/REL_HWHEEL_HI_RES (120-unit) fractional scrolling without double-counting.
+  4. Pre-Compiled Wire Structs & Fast-Path IPC: Packs Wayland event + PTR_FRAME / VK_MODIFIERS into
+     single-syscall composite structs; recycles Wayland object IDs (wl_display.delete_id); uses
+     anonymous RAM-backed os.memfd_create() for XKB keymap uploads.
+  5. Strict CLOCK_MONOTONIC Domain Alignment: Hardware EVIOCSCLOCKID interrupt timestamps and
+     user-space PrecisionClock deadlines share time.clock_gettime_ns(time.CLOCK_MONOTONIC).
+  6. Multi-Monitor Euclidean Clamping, Empty-Workspace Fallback & TOML Hot-Reloading.
+  7. Rich Interactive TUI: Launches automatically when run with no arguments (or --tui / tui),
+     providing live desktop telemetry, embedded background hotkey listener, guided recording wizard,
+     playback override dials, and profile switcher while preserving all CLI subcommands.
 """
 
 from __future__ import annotations
 
 import atexit
+import collections
 import contextlib
 import ctypes
 import ctypes.util
@@ -31,6 +37,7 @@ import fcntl
 import json
 import os
 import re
+import select
 import selectors
 import signal
 import socket
@@ -44,7 +51,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 
 # Suppress SIGPIPE globally so broken Wayland/Hyprland sockets raise EPIPE instead of killing the process
 if hasattr(signal, "SIGPIPE"):
@@ -52,6 +59,13 @@ if hasattr(signal, "SIGPIPE"):
 
 # Default root directory: directory containing dusky_macro.py (e.g. ~/user_scripts/gaming/macro)
 SCRIPT_ROOT = Path(__file__).resolve().parent
+
+_CLOCK_MONOTONIC = getattr(time, "CLOCK_MONOTONIC", 1)
+
+
+def _monotonic_ns() -> int:
+    """Strict CLOCK_MONOTONIC nanosecond clock aligned with kernel EVIOCSCLOCKID timestamps."""
+    return time.clock_gettime_ns(_CLOCK_MONOTONIC)
 
 
 # =============================================================================
@@ -80,6 +94,7 @@ REL_HWHEEL = 0x06
 REL_WHEEL = 0x08
 REL_WHEEL_HI_RES = 0x0B
 REL_HWHEEL_HI_RES = 0x0C
+HI_RES_UNITS_PER_NOTCH = 120.0
 
 # Key / Button states
 KEY_RELEASED = 0
@@ -212,6 +227,13 @@ VK_MODIFIERS = 2
 VK_DESTROY = 3
 XKB_KEYMAP_FORMAT_TEXT_V1 = 1
 XKB_KEYCODE_OFFSET = 8  # XKB keycode = evdev keycode + 8
+
+# Pre-compiled composite Wayland wire structs (single-syscall packet packing)
+_WL_HDR_STRUCT = struct.Struct("<II")
+_WL_MOTION_FRAME_STRUCT = struct.Struct("<IIIiiII")       # PTR_MOTION (20B) + PTR_FRAME (8B) = 28B
+_WL_BUTTON_FRAME_STRUCT = struct.Struct("<IIIIIII")       # PTR_BUTTON (20B) + PTR_FRAME (8B) = 28B
+_WL_KEY_MODS_STRUCT = struct.Struct("<IIIIIIIIIII")       # VK_KEY (20B) + VK_MODIFIERS (24B) = 44B
+_WL_KEY_ONLY_STRUCT = struct.Struct("<IIIII")             # VK_KEY (20B)
 
 
 class DuskyMacroError(RuntimeError):
@@ -414,22 +436,31 @@ class EffectiveConfig:
 
 
 class SettingsManager:
-    """Loads settings/settings.toml and profiles/*.toml using stdlib tomllib,
-    resolves paths relative to root_dir, and computes EffectiveConfig."""
+    """Loads settings/settings.toml with hot-reload tracking and computes EffectiveConfig."""
 
     def __init__(self, root_dir: Path = SCRIPT_ROOT, settings_path: Path | None = None) -> None:
-        import tomllib
-
         self.root_dir = root_dir.expanduser().resolve()
         self.settings_path = (
             settings_path.expanduser().resolve()
             if settings_path
             else self.root_dir / "settings" / "settings.toml"
         )
+        self._last_mtime_ns: int = 0
+        self.raw: dict[str, Any] = {}
+        self.profiles_dir: Path = self.root_dir / "profiles"
+        self.recordings_dir: Path = self.root_dir / "recordings"
+        self.default_macro_file: Path = self.recordings_dir / "quick.macro.json"
+        self.reload()
+
+    def reload(self) -> None:
+        import tomllib
+
         if self.settings_path.is_file():
-            raw_bytes = self.settings_path.read_bytes()
-            self.raw: dict[str, Any] = tomllib.loads(raw_bytes.decode("utf-8"))
+            st = self.settings_path.stat()
+            self._last_mtime_ns = st.st_mtime_ns
+            self.raw = tomllib.loads(self.settings_path.read_text(encoding="utf-8"))
         else:
+            self._last_mtime_ns = 0
             self.raw = tomllib.loads(DEFAULT_SETTINGS_TOML)
 
         paths_cfg = self.raw.get("paths", {})
@@ -438,6 +469,17 @@ class SettingsManager:
         self.default_macro_file = self.resolve_path(
             paths_cfg.get("default_macro_file", "recordings/quick.macro.json")
         )
+
+    def reload_if_modified(self) -> bool:
+        try:
+            if self.settings_path.is_file():
+                mtime = self.settings_path.stat().st_mtime_ns
+                if mtime != self._last_mtime_ns:
+                    self.reload()
+                    return True
+        except OSError:
+            pass
+        return False
 
     def resolve_path(self, path_str: str | Path) -> Path:
         p = Path(path_str).expanduser()
@@ -451,6 +493,7 @@ class SettingsManager:
         self.recordings_dir.mkdir(parents=True, exist_ok=True)
         if not self.settings_path.is_file():
             self.settings_path.write_text(DEFAULT_SETTINGS_TOML, encoding="utf-8")
+            self.reload()
         default_prof_path = self.profiles_dir / "01_default.toml"
         if not default_prof_path.is_file():
             default_prof_path.write_text(DEFAULT_PROFILE_01_TOML, encoding="utf-8")
@@ -540,12 +583,13 @@ class SettingsManager:
 
 
 class ProfileManager:
-    """Loads, validates, matches, and cycles profiles from profiles/*.toml."""
+    """Loads, validates, matches, hot-reloads, and cycles profiles from profiles/*.toml."""
 
     def __init__(self, settings: SettingsManager) -> None:
         self.settings = settings
         self.profiles: dict[str, ProfileConfig] = {}
         self.ordered_ids: list[str] = []
+        self._mtimes: dict[Path, int] = {}
         self.reload()
 
     def reload(self) -> None:
@@ -553,12 +597,15 @@ class ProfileManager:
 
         self.profiles.clear()
         self.ordered_ids.clear()
+        self._mtimes.clear()
         if not self.settings.profiles_dir.is_dir():
             return
 
         loaded: list[ProfileConfig] = []
         for path in sorted(self.settings.profiles_dir.glob("*.toml")):
             try:
+                st = path.stat()
+                self._mtimes[path] = st.st_mtime_ns
                 data = tomllib.loads(path.read_text(encoding="utf-8"))
             except Exception as exc:
                 print(f"dusky_macro: warning: failed to parse profile {path}: {exc}", file=sys.stderr)
@@ -611,11 +658,29 @@ class ProfileManager:
             prof.compile_patterns()
             loaded.append(prof)
 
-        # Sort by priority descending, then filename ascending
         loaded.sort(key=lambda p: (-p.priority, p.source_path.name))
         for p in loaded:
             self.profiles[p.id] = p
             self.ordered_ids.append(p.id)
+
+    def reload_if_modified(self) -> bool:
+        changed = self.settings.reload_if_modified()
+        if not self.settings.profiles_dir.is_dir():
+            return changed
+        current_files = sorted(self.settings.profiles_dir.glob("*.toml"))
+        if set(current_files) != set(self._mtimes.keys()):
+            self.reload()
+            return True
+        for p in current_files:
+            try:
+                if p.stat().st_mtime_ns != self._mtimes.get(p):
+                    self.reload()
+                    return True
+            except OSError:
+                continue
+        if changed:
+            self.reload()
+        return changed
 
     def get(self, name_or_id: str | None) -> ProfileConfig | None:
         if not name_or_id:
@@ -869,7 +934,8 @@ def logical_monitor_rect(m: dict[str, Any]) -> tuple[int, int, int, int]:
 
 
 class HyprlandSocketClient:
-    """Direct AF_UNIX socket client for Hyprland's .socket.sock with zero subprocess overhead."""
+    """Direct AF_UNIX socket client for Hyprland's .socket.sock with fast-path movecursor
+    and rate-limited notification helpers."""
 
     LUA = "lua"
     HYPRLANG = "hyprlang"
@@ -878,6 +944,8 @@ class HyprlandSocketClient:
         self._timeout_s = timeout_s
         self.socket_path, self.socket2_path = self._discover_sockets()
         self._provider: str | None = None
+        self._last_notify_ns: int = 0
+        self._last_notify_msg: str = ""
 
     @staticmethod
     def _discover_sockets() -> tuple[Path, Path]:
@@ -1010,23 +1078,39 @@ class HyprlandSocketClient:
             raise DuskyMacroError(f"Hyprland dispatch {name} {args} failed: {reply}")
 
     def move_cursor(self, x: int | float, y: int | float) -> None:
-        self.dispatch("movecursor", str(int(round(x))), str(int(round(y))))
+        """Fast-path cursor movement bypassing generic tuple formatting."""
+        ix, iy = int(round(x)), int(round(y))
+        prov = self.config_provider()
+        if prov == self.LUA:
+            payload = f"dispatch hl.dsp.cursor.move({{ x = {ix}, y = {iy} }})".encode("ascii")
+        else:
+            payload = f"dispatch movecursor {ix} {iy}".encode("ascii")
+        reply = self.send_raw(payload)
+        if not reply.lower().startswith("ok"):
+            self.dispatch("movecursor", str(ix), str(iy))
 
     def notify(self, message: str, timeout_ms: int = 2000, icon: int = -1, color: str = "0") -> None:
+        """Rate-limited Hyprland OSD notification (coalesces identical messages within 150ms)."""
+        now_ns = _monotonic_ns()
+        if message == self._last_notify_msg and (now_ns - self._last_notify_ns) < 150_000_000:
+            return
+        self._last_notify_ns = now_ns
+        self._last_notify_msg = message
         with contextlib.suppress(Exception):
             clean = message.replace("\n", " ").strip()
             self.send_raw(f"notify {icon} {int(timeout_ms)} {color} {clean}".encode("utf-8"))
 
 
 class DesktopTopology:
-    """Maintains desktop monitor geometry, active window state, and subscribes to
-    Hyprland's .socket2.sock event stream with automatic reconnection."""
+    """Maintains desktop monitor geometry (including special scratchpad workspaces),
+    active window state, and subscribes to Hyprland's .socket2.sock event stream."""
 
     _SCHEMAS: dict[str, tuple[tuple[str, ...], int]] = {
         "openwindow": (("address", "workspace", "class", "title"), 3),
         "closewindow": (("address",), 0),
         "movewindow": (("address", "workspace"), 1),
         "workspace": (("name",), 0),
+        "activespecial": (("name", "monitor"), 1),
         "activewindowv2": (("address",), 0),
         "windowtitlev2": (("address", "title"), 1),
         "openlayer": (("namespace",), 0),
@@ -1066,6 +1150,7 @@ class DesktopTopology:
                     "scale": float(m.get("scale", 1.0)),
                     "transform": int(m.get("transform", 0)),
                     "active_workspace": workspace_ref(m.get("activeWorkspace")),
+                    "special_workspace": workspace_ref(m.get("specialWorkspace")),
                 }
                 for m in (monitors or [])
             ]
@@ -1164,8 +1249,6 @@ class DesktopTopology:
         return None
 
     def clamp_to_monitors(self, x: float, y: float) -> tuple[int, int]:
-        """Clamps (x, y) to the nearest monitor bounding box by Euclidean distance
-        so off-edge coordinates on secondary monitors never jump back to monitor 0."""
         ix, iy = int(round(x)), int(round(y))
         with self._lock:
             mons = list(self.monitors)
@@ -1242,9 +1325,11 @@ class DesktopTopology:
                             if not parsed:
                                 continue
                             ev_name, payload = parsed
-                            if ev_name in ("activewindowv2", "windowtitlev2", "movewindow", "openwindow", "closewindow"):
+                            if ev_name in (
+                                "activewindowv2", "windowtitlev2", "movewindow", "openwindow", "closewindow"
+                            ):
                                 self.refresh_active_window()
-                            elif ev_name in ("openlayer", "closelayer"):
+                            elif ev_name in ("openlayer", "closelayer", "workspace", "activespecial"):
                                 self.refresh_full_snapshot()
                             with self._event_cond:
                                 self._recent_events.append((time.monotonic(), ev_name, payload))
@@ -1286,11 +1371,11 @@ def _wl_to_fixed(val: float) -> int:
 
 def _wl_encode_msg(obj_id: int, opcode: int, body: bytes = b"") -> bytes:
     size = 8 + len(body)
-    return struct.pack("<II", obj_id, (size << 16) | (opcode & 0xFFFF)) + body
+    return _WL_HDR_STRUCT.pack(obj_id, (size << 16) | (opcode & 0xFFFF)) + body
 
 
 def _wl_now_ms() -> int:
-    return int(time.monotonic() * 1000) & 0xFFFFFFFF
+    return (_monotonic_ns() // 1_000_000) & 0xFFFFFFFF
 
 
 class InputStateTracker:
@@ -1328,7 +1413,7 @@ class InputStateTracker:
 class WaylandWireInjector:
     """Pure-Python Wayland client speaking zwlr_virtual_pointer_v1 and
     zwp_virtual_keyboard_v1 directly over $XDG_RUNTIME_DIR/$WAYLAND_DISPLAY.
-    Includes object ID recycling (wl_display.delete_id) and os.memfd_create keymap uploads."""
+    Uses pre-compiled composite structs, object ID recycling, and os.memfd_create."""
 
     def __init__(self, xkb: XkbBridge) -> None:
         self.xkb = xkb
@@ -1424,13 +1509,10 @@ class WaylandWireInjector:
         self._sock.sendall(_wl_encode_msg(obj_id, opcode, body))
 
     def _drain_nonblocking(self) -> None:
-        """Drains any pending wl_display.delete_id or seat events without blocking."""
         while True:
             try:
                 chunk = self._sock.recv(16384, socket.MSG_DONTWAIT)
-            except BlockingIOError:
-                break
-            except OSError:
+            except (BlockingIOError, OSError):
                 break
             if not chunk:
                 break
@@ -1445,7 +1527,7 @@ class WaylandWireInjector:
     ) -> bool:
         done = False
         while len(self._buf) >= 8:
-            obj, size_op = struct.unpack_from("<II", self._buf, 0)
+            obj, size_op = _WL_HDR_STRUCT.unpack_from(self._buf, 0)
             size, opcode = size_op >> 16, size_op & 0xFFFF
             if size < 8 or len(self._buf) < size:
                 break
@@ -1453,7 +1535,7 @@ class WaylandWireInjector:
             self._buf = self._buf[size:]
             if obj == WL_DISPLAY_ID:
                 if opcode == WL_DISPLAY_EV_ERROR:
-                    err_obj, code = struct.unpack_from("<II", body, 0)
+                    err_obj, code = _WL_HDR_STRUCT.unpack_from(body, 0)
                     slen = struct.unpack_from("<I", body, 8)[0]
                     msg = body[12 : 12 + slen - 1].decode("utf-8", errors="replace")
                     raise DuskyMacroError(f"wl_display.error(obj={err_obj}, code={code}): {msg}")
@@ -1485,7 +1567,6 @@ class WaylandWireInjector:
             self._buf += chunk
 
     def _upload_keymap(self, keymap_data: bytes) -> None:
-        """Uploads XKB keymap using an anonymous RAM-backed memfd (Linux Kernel 7.4+)."""
         if hasattr(os, "memfd_create"):
             fd = os.memfd_create("dusky_xkb", os.MFD_CLOEXEC)
             try:
@@ -1521,9 +1602,16 @@ class WaylandWireInjector:
 
     def move_relative(self, dx: float, dy: float, sync: bool = False) -> None:
         with self._lock:
-            payload = struct.pack("<Iii", _wl_now_ms(), _wl_to_fixed(dx), _wl_to_fixed(dy))
-            self._send(self._pointer_id, PTR_MOTION, payload)
-            self._send(self._pointer_id, PTR_FRAME)
+            pkt = _WL_MOTION_FRAME_STRUCT.pack(
+                self._pointer_id,
+                (20 << 16) | PTR_MOTION,
+                _wl_now_ms(),
+                _wl_to_fixed(dx),
+                _wl_to_fixed(dy),
+                self._pointer_id,
+                (8 << 16) | PTR_FRAME,
+            )
+            self._sock.sendall(pkt)
             if sync:
                 self._roundtrip()
             else:
@@ -1533,12 +1621,16 @@ class WaylandWireInjector:
         with self._lock:
             self.tracker.mark_button(button_code, pressed)
             state = KEY_PRESSED if pressed else KEY_RELEASED
-            self._send(
+            pkt = _WL_BUTTON_FRAME_STRUCT.pack(
                 self._pointer_id,
-                PTR_BUTTON,
-                struct.pack("<III", _wl_now_ms(), button_code, state),
+                (20 << 16) | PTR_BUTTON,
+                _wl_now_ms(),
+                button_code,
+                state,
+                self._pointer_id,
+                (8 << 16) | PTR_FRAME,
             )
-            self._send(self._pointer_id, PTR_FRAME)
+            self._sock.sendall(pkt)
             if sync:
                 self._roundtrip()
             else:
@@ -1575,17 +1667,21 @@ class WaylandWireInjector:
         with self._lock:
             self.tracker.mark_key(evdev_code, pressed)
             state = KEY_PRESSED if pressed else KEY_RELEASED
-            self._send(
-                self._keyboard_id,
-                VK_KEY,
-                struct.pack("<III", _wl_now_ms(), evdev_code, state),
-            )
             depressed, latched, locked, group = self.xkb.update_key_and_serialize_mods(evdev_code, pressed)
-            self._send(
+            pkt = _WL_KEY_MODS_STRUCT.pack(
                 self._keyboard_id,
-                VK_MODIFIERS,
-                struct.pack("<IIII", depressed, latched, locked, group),
+                (20 << 16) | VK_KEY,
+                _wl_now_ms(),
+                evdev_code,
+                state,
+                self._keyboard_id,
+                (24 << 16) | VK_MODIFIERS,
+                depressed,
+                latched,
+                locked,
+                group,
             )
+            self._sock.sendall(pkt)
             if sync:
                 self._roundtrip()
             else:
@@ -1600,11 +1696,17 @@ class WaylandWireInjector:
             char_to_code = {ch: idx + 1 for idx, ch in enumerate(unique_chars)}
             self._upload_keymap(temp_km)
             try:
+                t = _wl_now_ms()
+                buf = bytearray()
                 for ch in text:
                     code = char_to_code[ch]
-                    t = _wl_now_ms()
-                    self._send(self._keyboard_id, VK_KEY, struct.pack("<III", t, code, KEY_PRESSED))
-                    self._send(self._keyboard_id, VK_KEY, struct.pack("<III", t, code, KEY_RELEASED))
+                    buf += _WL_KEY_ONLY_STRUCT.pack(
+                        self._keyboard_id, (20 << 16) | VK_KEY, t, code, KEY_PRESSED
+                    )
+                    buf += _WL_KEY_ONLY_STRUCT.pack(
+                        self._keyboard_id, (20 << 16) | VK_KEY, t, code, KEY_RELEASED
+                    )
+                self._sock.sendall(buf)
                 self._roundtrip()
             finally:
                 self._upload_keymap(self.xkb.keymap_bytes)
@@ -1619,17 +1721,39 @@ class WaylandWireInjector:
             t = _wl_now_ms()
             for btn in held_buttons:
                 with contextlib.suppress(Exception):
-                    self._send(self._pointer_id, PTR_BUTTON, struct.pack("<III", t, btn, KEY_RELEASED))
-                    self._send(self._pointer_id, PTR_FRAME)
+                    self._sock.sendall(
+                        _WL_BUTTON_FRAME_STRUCT.pack(
+                            self._pointer_id,
+                            (20 << 16) | PTR_BUTTON,
+                            t,
+                            btn,
+                            KEY_RELEASED,
+                            self._pointer_id,
+                            (8 << 16) | PTR_FRAME,
+                        )
+                    )
             for fallback_btn in (BTN_LEFT, BTN_RIGHT, BTN_MIDDLE):
                 if fallback_btn not in held_buttons:
                     with contextlib.suppress(Exception):
-                        self._send(self._pointer_id, PTR_BUTTON, struct.pack("<III", t, fallback_btn, KEY_RELEASED))
-                        self._send(self._pointer_id, PTR_FRAME)
+                        self._sock.sendall(
+                            _WL_BUTTON_FRAME_STRUCT.pack(
+                                self._pointer_id,
+                                (20 << 16) | PTR_BUTTON,
+                                t,
+                                fallback_btn,
+                                KEY_RELEASED,
+                                self._pointer_id,
+                                (8 << 16) | PTR_FRAME,
+                            )
+                        )
 
             for key_code in held_keys:
                 with contextlib.suppress(Exception):
-                    self._send(self._keyboard_id, VK_KEY, struct.pack("<III", t, key_code, KEY_RELEASED))
+                    self._sock.sendall(
+                        _WL_KEY_ONLY_STRUCT.pack(
+                            self._keyboard_id, (20 << 16) | VK_KEY, t, key_code, KEY_RELEASED
+                        )
+                    )
 
             with contextlib.suppress(Exception):
                 self.xkb.reset_state()
@@ -1756,6 +1880,7 @@ class EvdevDeviceScanner:
 class AtomicInputFrame:
     """Represents a single hardware poll packet flushed upon EV_SYN / SYN_REPORT."""
     timestamp_ns: int
+    source_fd: int = -1
     rel_dx: int = 0
     rel_dy: int = 0
     wheel_dy: float = 0.0
@@ -1779,10 +1904,11 @@ class AtomicInputFrame:
 
 
 class SynReportAccumulator:
-    """Accumulates raw kernel input_event items for a single device and flushes
-    an AtomicInputFrame only when EV_SYN / SYN_REPORT arrives."""
+    """Accumulates raw kernel input_event items for a single device (including Kernel 7.4+
+    REL_WHEEL_HI_RES / REL_HWHEEL_HI_RES) and flushes an AtomicInputFrame on SYN_REPORT."""
 
-    def __init__(self, capture_mouse: bool = True, capture_keyboard: bool = True) -> None:
+    def __init__(self, source_fd: int, capture_mouse: bool = True, capture_keyboard: bool = True) -> None:
+        self.source_fd = source_fd
         self.capture_mouse = capture_mouse
         self.capture_keyboard = capture_keyboard
         self._reset()
@@ -1792,6 +1918,8 @@ class SynReportAccumulator:
         self._dy = 0
         self._wheel_dy = 0.0
         self._wheel_dx = 0.0
+        self._hi_res_dy = 0
+        self._hi_res_dx = 0
         self._buttons: list[tuple[int, bool]] = []
         self._keys: list[tuple[int, bool]] = []
 
@@ -1807,13 +1935,25 @@ class SynReportAccumulator:
                 self._reset()
                 return None
             if ev_code == SYN_REPORT:
-                ts_ns = kernel_ts_ns if kernel_ts_ns > 0 else time.perf_counter_ns()
+                ts_ns = kernel_ts_ns if kernel_ts_ns > 0 else _monotonic_ns()
+                # Prefer hi-res wheel delta (120 units/notch) if present without double-counting
+                final_w_dy = (
+                    round(self._hi_res_dy / HI_RES_UNITS_PER_NOTCH, 4)
+                    if self._hi_res_dy != 0
+                    else self._wheel_dy
+                )
+                final_w_dx = (
+                    round(self._hi_res_dx / HI_RES_UNITS_PER_NOTCH, 4)
+                    if self._hi_res_dx != 0
+                    else self._wheel_dx
+                )
                 frame = AtomicInputFrame(
                     timestamp_ns=ts_ns,
+                    source_fd=self.source_fd,
                     rel_dx=self._dx,
                     rel_dy=self._dy,
-                    wheel_dy=self._wheel_dy,
-                    wheel_dx=self._wheel_dx,
+                    wheel_dy=final_w_dy,
+                    wheel_dx=final_w_dx,
                     buttons=list(self._buttons),
                     keys=list(self._keys),
                 )
@@ -1830,6 +1970,10 @@ class SynReportAccumulator:
                 self._wheel_dy += float(-ev_value)
             elif ev_code == REL_HWHEEL:
                 self._wheel_dx += float(ev_value)
+            elif ev_code == REL_WHEEL_HI_RES:
+                self._hi_res_dy += -ev_value
+            elif ev_code == REL_HWHEEL_HI_RES:
+                self._hi_res_dx += ev_value
         elif ev_type == EV_KEY:
             if ev_value not in (KEY_PRESSED, KEY_RELEASED):
                 return None
@@ -1878,7 +2022,7 @@ class HotkeyMatcher:
 # =============================================================================
 
 class PrecisionClock:
-    """Achieves microsecond-accurate event pacing using time.perf_counter_ns()
+    """Achieves microsecond-accurate event pacing using CLOCK_MONOTONIC nanoseconds
     with a two-stage hybrid coarse sleep + busy-spin wait."""
 
     @staticmethod
@@ -1894,14 +2038,14 @@ class PrecisionClock:
             if abort_event.is_set():
                 return paused_ns_total
             if pause_event is not None and pause_event.is_set():
-                pause_start = time.perf_counter_ns()
+                pause_start = _monotonic_ns()
                 while pause_event.is_set() and not abort_event.is_set():
                     time.sleep(0.012)
-                paused_delta = time.perf_counter_ns() - pause_start
+                paused_delta = _monotonic_ns() - pause_start
                 paused_ns_total += paused_delta
                 target_ns += paused_delta
 
-            now_ns = time.perf_counter_ns()
+            now_ns = _monotonic_ns()
             remaining_ns = target_ns - now_ns
             if remaining_ns <= 0:
                 return paused_ns_total
@@ -1910,7 +2054,7 @@ class PrecisionClock:
                 sleep_s = min((remaining_ns - spin_threshold_ns) / 1_000_000_000.0, max_coarse_sleep_s)
                 time.sleep(sleep_s)
             else:
-                while time.perf_counter_ns() < target_ns:
+                while _monotonic_ns() < target_ns:
                     if abort_event.is_set():
                         return paused_ns_total
                 return paused_ns_total
@@ -1918,7 +2062,8 @@ class PrecisionClock:
 
 class EvdevInputSession:
     """Manages non-blocking epoll reading of /dev/input/event* with EVIOCSCLOCKID
-    monotonic timestamps, full ring-buffer draining until EAGAIN, and hotplug rescanning."""
+    monotonic timestamps, per-FD held-code state tracking (purged on disconnect),
+    full ring-buffer draining until EAGAIN, and 1-second hotplug rescanning."""
 
     def __init__(
         self,
@@ -1938,10 +2083,28 @@ class EvdevInputSession:
         self._selector = selectors.DefaultSelector()
         self._fds: dict[str, int] = {}
         self._accumulators: dict[int, SynReportAccumulator] = {}
+        self._held_by_fd: dict[int, set[int]] = {}
 
     def open_devices(self) -> int:
         self._reconcile_devices()
         return len(self._fds)
+
+    def update_held(self, source_fd: int, code: int, pressed: bool) -> set[int]:
+        """Updates depressed key/button state for a specific device FD and returns
+        the live union of held codes across all connected devices."""
+        fd_set = self._held_by_fd.setdefault(source_fd, set())
+        if pressed:
+            fd_set.add(code)
+        else:
+            fd_set.discard(code)
+        return self.held_codes
+
+    @property
+    def held_codes(self) -> set[int]:
+        union_set: set[int] = set()
+        for s in self._held_by_fd.values():
+            union_set |= s
+        return union_set
 
     def _reconcile_devices(self) -> None:
         target_infos = EvdevDeviceScanner.scan(
@@ -1956,7 +2119,7 @@ class EvdevInputSession:
             if path not in target_paths:
                 self._remove_path(path)
 
-        clock_mono_arg = struct.pack("<I", getattr(time, "CLOCK_MONOTONIC", 1))
+        clock_mono_arg = struct.pack("<I", _CLOCK_MONOTONIC)
         for info in target_infos:
             if info.path in self._fds:
                 continue
@@ -1966,7 +2129,9 @@ class EvdevInputSession:
                     with contextlib.suppress(OSError):
                         fcntl.ioctl(fd, EVIOCSCLOCKID, clock_mono_arg)
                 self._fds[info.path] = fd
+                self._held_by_fd[fd] = set()
                 self._accumulators[fd] = SynReportAccumulator(
+                    source_fd=fd,
                     capture_mouse=self.capture_mouse and info.is_mouse,
                     capture_keyboard=self.capture_keyboard and info.is_keyboard,
                 )
@@ -1982,6 +2147,7 @@ class EvdevInputSession:
             with contextlib.suppress(OSError):
                 os.close(fd)
             self._accumulators.pop(fd, None)
+            self._held_by_fd.pop(fd, None)
 
     def poll_frames(self, timeout_s: float = 0.010) -> list[AtomicInputFrame]:
         frames: list[AtomicInputFrame] = []
@@ -1992,7 +2158,6 @@ class EvdevInputSession:
             acc = self._accumulators.get(fd)
             if acc is None:
                 continue
-            # Drain kernel evdev ring buffer completely until EAGAIN
             while True:
                 try:
                     raw = os.read(fd, EVDEV_EVENT_SIZE * 128)
@@ -2085,7 +2250,6 @@ class MacroRecorder:
         prev_x, prev_y = init_x, init_y
 
         events: list[dict[str, Any]] = []
-        held_codes: set[int] = set()
         suppressed_up_codes: set[int] = set(initial_suppressed_keys or set())
 
         t0_ns: int | None = None
@@ -2123,12 +2287,9 @@ class MacroRecorder:
                 frames = session.poll_frames(timeout_s=self.cfg.epoll_poll_timeout_s)
 
                 for frame in frames:
-                    # 1. Process keyboard keys & check stop hotkey
+                    # 1. Process keyboard keys & check stop hotkey using per-FD held tracking
                     for code, pressed in frame.keys:
-                        if pressed:
-                            held_codes.add(code)
-                        else:
-                            held_codes.discard(code)
+                        held_codes = session.update_held(frame.source_fd, code, pressed)
 
                         if self.cfg.strip_trigger_chords and not pressed and code in suppressed_up_codes:
                             suppressed_up_codes.discard(code)
@@ -2161,10 +2322,7 @@ class MacroRecorder:
 
                     # 2. Check if a mouse button is the stop hotkey
                     for btn_code, pressed in frame.buttons:
-                        if pressed:
-                            held_codes.add(btn_code)
-                        else:
-                            held_codes.discard(btn_code)
+                        held_codes = session.update_held(frame.source_fd, btn_code, pressed)
                         if self.stop_matcher.matches_press(btn_code, pressed, held_codes):
                             stop_triggered = True
                             break
@@ -2240,7 +2398,7 @@ class MacroRecorder:
                                     "wy": wy,
                                 })
 
-                    # 4. Process scroll wheel
+                    # 4. Process scroll wheel (discrete or hi-res fractional)
                     if frame.wheel_dy or frame.wheel_dx:
                         if t0_ns is None:
                             t0_ns = frame.timestamp_ns
@@ -2299,8 +2457,8 @@ class MacroRecorder:
 
 class MacroPlayer:
     """High-precision macro playback engine with Coordinate Mode resolution,
-    proportional window-relative scaling, session-lock/auth-overlay safety guards,
-    background emergency abort monitoring, and guaranteed release_all() cleanup."""
+    empty-workspace fallback, proportional window-relative scaling, session-lock/auth-overlay
+    safety guards, background emergency abort monitoring, and release_all() cleanup."""
 
     def __init__(
         self,
@@ -2359,7 +2517,6 @@ class MacroPlayer:
                 )
 
     def _hotkey_watchdog_loop(self, stop_flag: threading.Event) -> None:
-        held: set[int] = set()
         need_mouse = self.abort_matcher.needs_mouse_buttons or self.pause_matcher.needs_mouse_buttons
         try:
             with EvdevInputSession(
@@ -2373,10 +2530,7 @@ class MacroPlayer:
                 while not stop_flag.is_set() and not self.abort_event.is_set():
                     for frame in session.poll_frames(timeout_s=0.012):
                         for code, pressed in frame.keys + frame.buttons:
-                            if pressed:
-                                held.add(code)
-                            else:
-                                held.discard(code)
+                            held = session.update_held(frame.source_fd, code, pressed)
                             if self.abort_matcher.matches_press(code, pressed, held):
                                 self.abort_event.set()
                                 return
@@ -2395,6 +2549,7 @@ class MacroPlayer:
         override_speed: float | None = None,
         override_repeat: int | None = None,
         dry_run: bool = False,
+        spawn_watchdog: bool = True,
     ) -> dict[str, Any]:
         m_settings = macro.get("settings", {})
         coord_mode = override_mode or m_settings.get("coordinate_mode") or self.cfg.coordinate_mode
@@ -2449,10 +2604,11 @@ class MacroPlayer:
 
         self.pause_event.clear()
         watchdog_stop = threading.Event()
-        watchdog = threading.Thread(
-            target=self._hotkey_watchdog_loop, args=(watchdog_stop,), name="AbortWatchdog", daemon=True
-        )
-        watchdog.start()
+        if spawn_watchdog:
+            watchdog = threading.Thread(
+                target=self._hotkey_watchdog_loop, args=(watchdog_stop,), name="AbortWatchdog", daemon=True
+            )
+            watchdog.start()
 
         check_interval = self.cfg.safety_check_interval_events
         sync_btn = self.cfg.sync_every_button
@@ -2464,7 +2620,7 @@ class MacroPlayer:
                 self._verify_safety_guards(expected_addr, abort_focus_loss)
                 cur_x, cur_y = self.ipc.cursor_pos_fast()
                 log_x, log_y = float(cur_x), float(cur_y)
-                t0_ns = time.perf_counter_ns()
+                t0_ns = _monotonic_ns()
 
                 for idx, ev in enumerate(events):
                     if self.abort_event.is_set():
@@ -2519,7 +2675,7 @@ class MacroPlayer:
                             self.topology.wait_for_event(
                                 str(ev["event"]), str(ev.get("match", "")), timeout_s=timeout_s
                             )
-                            t0_ns = time.perf_counter_ns() - target_offset_ns
+                            t0_ns = _monotonic_ns() - target_offset_ns
 
                     executed += 1
         finally:
@@ -2558,23 +2714,27 @@ class MacroPlayer:
         if coord_mode == "window_relative" and "wx" in ev and "wy" in ev:
             win = self.topology.active_window
             wrect = win.get("rect", [0, 0, 0, 0])
-            wx = float(ev["wx"])
-            wy = float(ev["wy"])
-            if (
-                scale_win_rel
-                and len(recorded_rect) == 4
-                and recorded_rect[2] > 0
-                and recorded_rect[3] > 0
-                and wrect[2] > 0
-                and wrect[3] > 0
-            ):
-                wx = wx * (wrect[2] / recorded_rect[2])
-                wy = wy * (wrect[3] / recorded_rect[3])
-            tx = wrect[0] + int(round(wx))
-            ty = wrect[1] + int(round(wy))
-            cx, cy = self.topology.clamp_to_monitors(tx, ty)
-            self.ipc.move_cursor(cx, cy)
-            return float(cx), float(cy)
+            # Fallback to recorded_rect if active workspace has no focused window
+            if (len(wrect) < 4 or wrect[2] <= 0 or wrect[3] <= 0) and len(recorded_rect) == 4:
+                wrect = recorded_rect
+            if len(wrect) == 4 and (wrect[2] > 0 or wrect[3] > 0):
+                wx = float(ev["wx"])
+                wy = float(ev["wy"])
+                if (
+                    scale_win_rel
+                    and len(recorded_rect) == 4
+                    and recorded_rect[2] > 0
+                    and recorded_rect[3] > 0
+                    and wrect[2] > 0
+                    and wrect[3] > 0
+                ):
+                    wx = wx * (wrect[2] / recorded_rect[2])
+                    wy = wy * (wrect[3] / recorded_rect[3])
+                tx = wrect[0] + int(round(wx))
+                ty = wrect[1] + int(round(wy))
+                cx, cy = self.topology.clamp_to_monitors(tx, ty)
+                self.ipc.move_cursor(cx, cy)
+                return float(cx), float(cy)
 
         tx = int(ev.get("x", log_x))
         ty = int(ev.get("y", log_y))
@@ -2584,13 +2744,893 @@ class MacroPlayer:
 
 
 # =============================================================================
-# SECTION 8: CLI VERBS (doctor, record, play, listen, profiles, inspect)
+# SECTION 8: RICH INTERACTIVE TERMINAL UI (DuskyMacroTUI)
+# =============================================================================
+
+class _CbreakTerminal:
+    """Context manager placing stdin into cbreak mode for instant single-key navigation,
+    and cleanly restoring canonical terminal settings for modal prompts or exit."""
+
+    def __init__(self) -> None:
+        self._fd: int | None = None
+        self._old_attrs: Any = None
+
+    def __enter__(self) -> _CbreakTerminal:
+        if sys.stdin.isatty():
+            import termios
+            import tty
+
+            self._fd = sys.stdin.fileno()
+            self._old_attrs = termios.tcgetattr(self._fd)
+            tty.setcbreak(self._fd)
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        if self._fd is not None and self._old_attrs is not None:
+            import termios
+
+            with contextlib.suppress(Exception):
+                termios.tcsetattr(self._fd, termios.TCSADRAIN, self._old_attrs)
+        self._fd = None
+        self._old_attrs = None
+
+    @staticmethod
+    def read_key(timeout_s: float = 0.10) -> str | None:
+        if not sys.stdin.isatty():
+            time.sleep(timeout_s)
+            return None
+        rlist, _, _ = select.select([sys.stdin], [], [], timeout_s)
+        if not rlist:
+            return None
+        ch = os.read(sys.stdin.fileno(), 1).decode("utf-8", errors="ignore")
+        if ch == "\x1b":
+            # Check for ANSI escape sequence (arrow keys)
+            r2, _, _ = select.select([sys.stdin], [], [], 0.015)
+            if r2:
+                seq = os.read(sys.stdin.fileno(), 2).decode("utf-8", errors="ignore")
+                if seq == "[A":
+                    return "UP"
+                if seq == "[B":
+                    return "DOWN"
+                if seq == "[C":
+                    return "RIGHT"
+                if seq == "[D":
+                    return "LEFT"
+            return "ESC"
+        return ch
+
+
+class DuskyMacroTUI:
+    """Full-screen Rich Interactive Terminal UI for DuskyMacro."""
+
+    def __init__(self, settings: SettingsManager, profiles_mgr: ProfileManager) -> None:
+        self.settings = settings
+        self.profiles_mgr = profiles_mgr
+        self.ipc = HyprlandSocketClient()
+        self.xkb = XkbBridge(*self.ipc.active_keyboard_layout())
+
+        self._lock = threading.RLock()
+        self.auto_switch = bool(settings.raw.get("profiles", {}).get("auto_switch_by_window", True))
+        self.locked_profile_id: str | None = None
+        self.topology = DesktopTopology(self.ipc, on_active_window_change=self._on_window_change)
+        self.topology.start_event_listener()
+
+        self.current_prof = self.profiles_mgr.resolve_for_window(
+            self.topology.active_window.get("class", ""),
+            self.topology.active_window.get("title", ""),
+        )
+        self.cfg = self.settings.build_effective(self.current_prof)
+
+        self.macro_files: list[Path] = []
+        self.selected_idx: int = 0
+        self._macro_summary_cache: dict[tuple[Path, int], dict[str, Any]] = {}
+
+        # Override dials for interactive TUI playback
+        self.override_mode: str | None = None
+        self.override_speed: float = 1.0
+        self.override_repeat: int = 1
+        self.countdown_s: int = 0
+
+        # Background listener state
+        self.listener_enabled: bool = True
+        self.engine_state: str = "LISTENING"  # IDLE | LISTENING | RECORDING | PLAYING
+        self._listener_stop = threading.Event()
+        self._listener_rebind = threading.Event()
+        self._listener_pause = threading.Event()
+        self._listener_thread: threading.Thread | None = None
+
+        self.activity_log: collections.deque[tuple[str, str, str]] = collections.deque(maxlen=10)
+        self._devices_summary: tuple[int, int] = (0, 0)
+        self._last_dev_scan: float = 0.0
+
+        self.refresh_macro_list()
+        self._update_device_counts()
+        self.log_event("INFO", f"Initialized DuskyMacro v{__version__} (Profile: {self.cfg.profile_id})")
+
+    def log_event(self, tag: str, message: str) -> None:
+        stamp = time.strftime("%H:%M:%S")
+        with self._lock:
+            self.activity_log.append((stamp, tag, message))
+
+    def _update_device_counts(self) -> None:
+        now = time.monotonic()
+        if now - self._last_dev_scan < 2.5:
+            return
+        self._last_dev_scan = now
+        devs = EvdevDeviceScanner.scan(
+            need_mouse=True,
+            need_keyboard=True,
+            ignore_virtual=self.cfg.ignore_virtual_devices,
+            extra_ignored=self.cfg.extra_ignored_keywords,
+        )
+        m_cnt = sum(1 for d in devs if d.is_mouse)
+        k_cnt = sum(1 for d in devs if d.is_keyboard)
+        self._devices_summary = (m_cnt, k_cnt)
+
+    def _on_window_change(self, win: dict[str, Any]) -> None:
+        with self._lock:
+            if not self.auto_switch or self.locked_profile_id is not None:
+                return
+            new_prof = self.profiles_mgr.resolve_for_window(win.get("class", ""), win.get("title", ""))
+            if new_prof and (self.current_prof is None or new_prof.id != self.current_prof.id):
+                self.current_prof = new_prof
+                self.cfg = self.settings.build_effective(self.current_prof)
+                self._listener_rebind.set()
+                self.log_event("PROF", f"Auto-switched -> {new_prof.name} [{new_prof.id}]")
+                if self.cfg.notify_on_state_change:
+                    self.ipc.notify(
+                        f"DuskyMacro Profile: {new_prof.name} ({new_prof.id})",
+                        self.cfg.notification_timeout_ms,
+                    )
+
+    def refresh_macro_list(self) -> None:
+        with self._lock:
+            seen: set[Path] = set()
+            ordered: list[Path] = []
+            # Include active profile bound macro files first, then all files in recordings_dir
+            for b in self.cfg.bindings:
+                p = b.macro_file.resolve()
+                if p not in seen:
+                    seen.add(p)
+                    ordered.append(p)
+            if self.settings.recordings_dir.is_dir():
+                for p in sorted(self.settings.recordings_dir.glob("*.json")):
+                    rp = p.resolve()
+                    if rp not in seen:
+                        seen.add(rp)
+                        ordered.append(rp)
+            self.macro_files = ordered
+            if self.selected_idx >= len(self.macro_files):
+                self.selected_idx = max(0, len(self.macro_files) - 1)
+
+    def get_macro_summary(self, path: Path) -> dict[str, Any]:
+        if not path.is_file():
+            return {"exists": False, "name": path.stem, "events": 0, "duration_s": 0.0, "mode": "-", "breakdown": {}}
+        try:
+            st = path.stat()
+            cache_key = (path, st.st_mtime_ns)
+            if cache_key in self._macro_summary_cache:
+                return self._macro_summary_cache[cache_key]
+            doc = json.loads(path.read_text(encoding="utf-8"))
+            evs = doc.get("events", [])
+            dur_s = (evs[-1]["t_us"] / 1_000_000.0) if evs else 0.0
+            counts: dict[str, int] = {}
+            for e in evs:
+                t = e.get("type", "other")
+                counts[t] = counts.get(t, 0) + 1
+            info = {
+                "exists": True,
+                "name": doc.get("name", path.stem),
+                "created_at": doc.get("created_at", "")[:19].replace("T", " "),
+                "mode": doc.get("settings", {}).get("coordinate_mode", "window_relative"),
+                "target_class": doc.get("target_context", {}).get("class") or "*",
+                "target_ws": doc.get("target_context", {}).get("workspace"),
+                "events": len(evs),
+                "duration_s": round(dur_s, 2),
+                "breakdown": counts,
+            }
+            self._macro_summary_cache[cache_key] = info
+            return info
+        except Exception:
+            return {"exists": False, "name": path.stem, "events": 0, "duration_s": 0.0, "mode": "err", "breakdown": {}}
+
+    def start_background_listener(self) -> None:
+        if self._listener_thread and self._listener_thread.is_alive():
+            return
+        self._listener_stop.clear()
+        self._listener_pause.clear()
+        self.listener_enabled = True
+        self.engine_state = "LISTENING"
+        self._listener_thread = threading.Thread(
+            target=self._background_listener_loop, name="TuiHotkeyListener", daemon=True
+        )
+        self._listener_thread.start()
+
+    def stop_background_listener(self) -> None:
+        self.listener_enabled = False
+        self._listener_stop.set()
+        self._listener_rebind.set()
+        if self._listener_thread and self._listener_thread.is_alive():
+            self._listener_thread.join(timeout=1.0)
+        self.engine_state = "IDLE"
+
+    def cycle_profile(self, delta: int = 1) -> None:
+        with self._lock:
+            enabled = self.profiles_mgr.enabled_profiles_sorted_by_id()
+            if not enabled:
+                return
+            if self.locked_profile_id is None:
+                # Lock onto first/next profile
+                cur_idx = next(
+                    (i for i, p in enumerate(enabled) if self.current_prof and p.id == self.current_prof.id),
+                    0,
+                )
+                next_idx = (cur_idx + delta) % (len(enabled) + 1)
+            else:
+                cur_idx = next((i for i, p in enumerate(enabled) if p.id == self.locked_profile_id), 0)
+                next_idx = (cur_idx + delta) % (len(enabled) + 1)
+
+            if next_idx == len(enabled):
+                self.locked_profile_id = None
+                win = self.topology.active_window
+                self.current_prof = self.profiles_mgr.resolve_for_window(
+                    win.get("class", ""), win.get("title", "")
+                )
+                self.cfg = self.settings.build_effective(self.current_prof)
+                self.log_event("PROF", f"Switched to AUTO Window-Match ({self.cfg.profile_id})")
+            else:
+                chosen = enabled[next_idx]
+                self.locked_profile_id = chosen.id
+                self.current_prof = chosen
+                self.cfg = self.settings.build_effective(self.current_prof)
+                self.log_event("PROF", f"Locked profile -> {chosen.name} [{chosen.id}]")
+
+            self.refresh_macro_list()
+            self._listener_rebind.set()
+
+    def _background_listener_loop(self) -> None:
+        while not self._listener_stop.is_set():
+            if self._listener_pause.is_set():
+                time.sleep(0.05)
+                continue
+
+            with self._lock:
+                active_cfg = self.cfg
+                rec_matcher = HotkeyMatcher(active_cfg.record_hotkey)
+                next_matcher = HotkeyMatcher(active_cfg.cycle_next_hotkey)
+                prev_matcher = HotkeyMatcher(active_cfg.cycle_prev_hotkey)
+                slot_matchers = [(HotkeyMatcher(b.hotkey), b) for b in active_cfg.bindings]
+
+            self._listener_rebind.clear()
+            self.engine_state = "LISTENING"
+
+            need_mouse = (
+                rec_matcher.needs_mouse_buttons
+                or next_matcher.needs_mouse_buttons
+                or prev_matcher.needs_mouse_buttons
+                or any(m.needs_mouse_buttons for m, _ in slot_matchers)
+            )
+
+            triggered_action: str | None = None
+            triggered_binding: MacroBinding | None = None
+            held_snapshot: set[int] = set()
+
+            try:
+                with EvdevInputSession(
+                    capture_mouse=need_mouse,
+                    capture_keyboard=True,
+                    use_kernel_monotonic_ts=False,
+                    rescan_interval_s=active_cfg.hotplug_rescan_interval_s,
+                    ignore_virtual=active_cfg.ignore_virtual_devices,
+                    extra_ignored=active_cfg.extra_ignored_keywords,
+                ) as session:
+                    last_scan = time.monotonic()
+                    while (
+                        triggered_action is None
+                        and not self._listener_stop.is_set()
+                        and not self._listener_rebind.is_set()
+                        and not self._listener_pause.is_set()
+                    ):
+                        last_scan = session.rescan_if_due(last_scan)
+                        for frame in session.poll_frames(timeout_s=active_cfg.epoll_poll_timeout_s):
+                            for code, pressed in frame.keys + frame.buttons:
+                                held = session.update_held(frame.source_fd, code, pressed)
+                                if rec_matcher.matches_press(code, pressed, held):
+                                    triggered_action = "record"
+                                    held_snapshot = set(held)
+                                    break
+                                if next_matcher.matches_press(code, pressed, held):
+                                    triggered_action = "cycle_next"
+                                    break
+                                if prev_matcher.matches_press(code, pressed, held):
+                                    triggered_action = "cycle_prev"
+                                    break
+                                for s_matcher, binding in slot_matchers:
+                                    if s_matcher.matches_press(code, pressed, held):
+                                        triggered_action = "play"
+                                        triggered_binding = binding
+                                        break
+                                if triggered_action:
+                                    break
+                            if triggered_action:
+                                break
+            except Exception as exc:
+                self.log_event("WARN", f"Evdev listener error: {exc}")
+                time.sleep(0.5)
+                continue
+
+            if self._listener_stop.is_set() or self._listener_pause.is_set():
+                continue
+
+            if triggered_action == "cycle_next":
+                self.cycle_profile(1)
+            elif triggered_action == "cycle_prev":
+                self.cycle_profile(-1)
+            elif triggered_action == "record":
+                target_file = (
+                    self.macro_files[self.selected_idx]
+                    if self.macro_files
+                    else active_cfg.default_macro_file
+                )
+                target_file.parent.mkdir(parents=True, exist_ok=True)
+                self.engine_state = "RECORDING"
+                self.log_event("REC", f"Recording started -> {target_file.name} (Press [{rec_matcher.spec.upper()}] to stop)")
+                if active_cfg.notify_on_state_change:
+                    self.ipc.notify(
+                        f"DuskyMacro: Recording -> {target_file.name}",
+                        active_cfg.notification_timeout_ms,
+                    )
+                try:
+                    recorder = MacroRecorder(
+                        ipc=self.ipc,
+                        topology=self.topology,
+                        xkb=self.xkb,
+                        cfg=active_cfg,
+                        stop_hotkey=rec_matcher.spec,
+                    )
+                    doc = recorder.record(
+                        name=target_file.stem,
+                        initial_suppressed_keys=held_snapshot,
+                        abort_event=self._listener_stop,
+                    )
+                    target_file.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+                    self.refresh_macro_list()
+                    self.log_event("SAVE", f"Saved {len(doc['events'])} events to {target_file.name}")
+                    if active_cfg.notify_on_state_change:
+                        self.ipc.notify(
+                            f"DuskyMacro: Saved {len(doc['events'])} events ({target_file.name})",
+                            active_cfg.notification_timeout_ms,
+                        )
+                except Exception as exc:
+                    self.log_event("ERR", f"Record failed: {exc}")
+            elif triggered_action == "play" and triggered_binding is not None:
+                m_file = triggered_binding.macro_file
+                if not m_file.is_file():
+                    self.log_event("WARN", f"Binding macro missing: {m_file.name}")
+                    continue
+                self.engine_state = "PLAYING"
+                self.log_event("PLAY", f"Triggered [{triggered_binding.hotkey.upper()}] -> {m_file.name}")
+                try:
+                    macro = json.loads(m_file.read_text(encoding="utf-8"))
+                    with WaylandWireInjector(self.xkb) as injector:
+                        player = MacroPlayer(
+                            ipc=self.ipc,
+                            topology=self.topology,
+                            injector=injector,
+                            cfg=active_cfg,
+                        )
+                        res = player.play(
+                            macro,
+                            override_mode=triggered_binding.coordinate_mode or self.override_mode,
+                            override_speed=triggered_binding.speed_multiplier or self.override_speed,
+                            override_repeat=triggered_binding.repeat_count or self.override_repeat,
+                        )
+                        self.log_event("DONE", f"Completed {m_file.name} ({res['executed_events']} events)")
+                except SafetyAbortError as exc:
+                    self.log_event("ABORT", str(exc))
+                except Exception as exc:
+                    self.log_event("ERR", f"Play error: {exc}")
+
+    def render_dashboard(self) -> Any:
+        from rich.console import Group
+        from rich.layout import Layout
+        from rich.panel import Panel
+        from rich.table import Table
+        from rich.text import Text
+
+        self._update_device_counts()
+        if self.profiles_mgr.reload_if_modified():
+            with self._lock:
+                self.current_prof = self.profiles_mgr.get(self.locked_profile_id)
+                self.cfg = self.settings.build_effective(self.current_prof)
+                self.refresh_macro_list()
+                self._listener_rebind.set()
+            self.log_event("CONF", "Hot-reloaded modified TOML configuration")
+
+        with self._lock:
+            cfg = self.cfg
+            win = self.topology.active_window
+            mons = self.topology.monitors
+            overlay = self.topology.has_blocking_overlay()
+            macro_files = list(self.macro_files)
+            sel_idx = self.selected_idx
+            logs = list(self.activity_log)
+            state = self.engine_state if self.listener_enabled else "IDLE"
+            sw_mode = f"LOCKED ({self.locked_profile_id})" if self.locked_profile_id else "AUTO (Window-Match)"
+
+        state_colors = {
+            "IDLE": "dim white",
+            "LISTENING": "bold green",
+            "RECORDING": "bold red",
+            "PLAYING": "bold cyan",
+        }
+        badge_style = state_colors.get(state, "bold white")
+
+        # 1. Header Bar
+        prov = self.ipc.config_provider().upper()
+        header_text = Text.assemble(
+            (" ⚡ DUSKY MACRO ", "bold black on cyan"),
+            (f" v{__version__} ", "bold cyan"),
+            ("│ ", "dim"),
+            (f"Kernel {os.uname().release.split('-')[0]} ", "white"),
+            ("│ ", "dim"),
+            (f"Hyprland ({prov}) ", "magenta"),
+            ("│ ", "dim"),
+            ("Wayland Wire: OK ", "green"),
+            ("│ ", "dim"),
+            (f"● {state} ", badge_style),
+        )
+        header_panel = Panel(header_text, border_style="cyan", padding=(0, 1))
+
+        # 2. Left Column: Desktop Telemetry + Active Profile
+        cur_x, cur_y = 0, 0
+        with contextlib.suppress(Exception):
+            cur_x, cur_y = self.ipc.cursor_pos_fast()
+
+        win_cls = win.get("class") or "(empty workspace)"
+        win_ttl = (win.get("title") or "")[:28]
+        win_addr = win.get("address") or "-"
+        win_rect = win.get("rect") or [0, 0, 0, 0]
+        ws_id = win.get("workspace") or (mons[0]["active_workspace"] if mons else "-")
+        mon_desc = f"{mons[0]['name']} @ {mons[0]['scale']}x" if mons else "unknown"
+        safety_str = f"[bold red]BLOCKED ({overlay})[/]" if overlay else "[bold green]READY (Unlocked)[/]"
+        m_cnt, k_cnt = self._devices_summary
+
+        telemetry_tbl = Table.grid(padding=(0, 1))
+        telemetry_tbl.add_column(style="bold cyan", width=14)
+        telemetry_tbl.add_column(style="white")
+        telemetry_tbl.add_row("Focused Win", f"{win_cls} [dim]{win_ttl!r}[/]")
+        telemetry_tbl.add_row("Win Geometry", f"{win_addr} {win_rect}")
+        telemetry_tbl.add_row("Workspace", f"{ws_id} [dim](Monitor: {mon_desc})[/]")
+        telemetry_tbl.add_row("Cursor Pos", f"({cur_x}, {cur_y})   [dim]Layout: {self.xkb.layout}[/]")
+        telemetry_tbl.add_row("Safety Guard", safety_str)
+        telemetry_tbl.add_row("Evdev Nodes", f"{m_cnt} Mice, {k_cnt} Keyboards [green](Epoll Ready)[/]")
+
+        prof_tbl = Table.grid(padding=(0, 1))
+        prof_tbl.add_column(style="bold magenta", width=14)
+        prof_tbl.add_column(style="white")
+        prof_tbl.add_row("Profile", f"[bold]{cfg.profile_name}[/] [{cfg.profile_id}]")
+        prof_tbl.add_row("Switch Mode", sw_mode)
+        prof_tbl.add_row("Default Mode", f"{cfg.coordinate_mode} ({cfg.speed_multiplier}x, rep={cfg.repeat_count})")
+        prof_tbl.add_row("Record Key", f"[bold yellow][{cfg.record_hotkey.upper()}][/]   Abort: [bold red][{cfg.abort_hotkey.upper()}][/]")
+        prof_tbl.add_row("Cycle Keys", f"[{cfg.cycle_prev_hotkey.upper()}] / [{cfg.cycle_next_hotkey.upper()}]")
+        binds_str = ", ".join(f"[bold green][{b.hotkey.upper()}][/]->{b.macro_file.stem}" for b in cfg.bindings)
+        prof_tbl.add_row("Bindings", binds_str or "(none)")
+
+        left_group = Group(
+            Panel(telemetry_tbl, title="[bold cyan]Desktop & Hardware Telemetry[/]", border_style="blue"),
+            Panel(prof_tbl, title="[bold magenta]Active Profile Configuration[/]", border_style="magenta"),
+        )
+
+        # 3. Right Column: Macro Library Table + Selected Inspector + Live Log
+        lib_tbl = Table(expand=True, box=None, pad_edge=False)
+        lib_tbl.add_column("#", width=3, style="dim")
+        lib_tbl.add_column("Macro File", style="bold")
+        lib_tbl.add_column("Mode", width=10)
+        lib_tbl.add_column("Events", justify="right", width=7)
+        lib_tbl.add_column("Duration", justify="right", width=8)
+
+        bound_files = {b.macro_file.resolve(): b.hotkey.upper() for b in cfg.bindings}
+        for idx, m_path in enumerate(macro_files):
+            info = self.get_macro_summary(m_path)
+            is_sel = idx == sel_idx
+            prefix = "▶ " if is_sel else "  "
+            hk_tag = f" [{bound_files[m_path]}]" if m_path in bound_files else ""
+            row_style = "bold black on bright_cyan" if is_sel else ("white" if info["exists"] else "dim yellow")
+            ev_str = str(info["events"]) if info["exists"] else "missing"
+            dur_str = f"{info['duration_s']:.2f}s" if info["exists"] else "-"
+            lib_tbl.add_row(
+                f"{prefix}{idx + 1}",
+                f"{m_path.name}{hk_tag}",
+                str(info["mode"])[:10],
+                ev_str,
+                dur_str,
+                style=row_style,
+            )
+
+        insp_tbl = Table.grid(padding=(0, 1))
+        insp_tbl.add_column(style="bold yellow", width=15)
+        insp_tbl.add_column(style="white")
+        if macro_files:
+            sel_path = macro_files[sel_idx]
+            s_info = self.get_macro_summary(sel_path)
+            bd_str = ", ".join(f"{k}:{v}" for k, v in s_info.get("breakdown", {}).items()) or "none"
+            insp_tbl.add_row("Selected File", str(sel_path.name))
+            insp_tbl.add_row("Target Context", f"class={s_info.get('target_class', '*')}  ws={s_info.get('target_ws', '*')}")
+            insp_tbl.add_row("Event Summary", f"{s_info['events']} total ({bd_str})")
+        else:
+            insp_tbl.add_row("Selected File", "(no macros found)")
+        insp_tbl.add_row(
+            "TUI Overrides",
+            f"Mode=[bold]{self.override_mode or 'Profile'}[/]  "
+            f"Speed=[bold]{self.override_speed:.2f}x[/]  "
+            f"Repeat=[bold]{self.override_repeat}x[/]  "
+            f"Delay=[bold]{self.countdown_s}s[/]",
+        )
+
+        log_lines: list[Text] = []
+        for stamp, tag, msg in logs[-5:]:
+            t_color = "green" if tag in ("DONE", "SAVE") else ("red" if tag in ("ERR", "ABORT") else "cyan")
+            log_lines.append(Text.assemble((f"{stamp} ", "dim"), (f"[{tag:5}] ", f"bold {t_color}"), (msg, "white")))
+        if not log_lines:
+            log_lines.append(Text("No activity yet.", style="dim"))
+
+        right_group = Group(
+            Panel(lib_tbl, title=f"[bold green]Macro Library ({self.settings.recordings_dir.name}/)[/]", border_style="green"),
+            Panel(insp_tbl, title="[bold yellow]Selected Macro Inspector & Playback Dials[/]", border_style="yellow"),
+            Panel(Group(*log_lines), title="[bold white]Live Activity Log[/]", border_style="bright_black"),
+        )
+
+        body = Table.grid(expand=True, padding=(0, 1))
+        body.add_column(ratio=1)
+        body.add_column(ratio=1)
+        body.add_row(left_group, right_group)
+
+        footer_text = Text.assemble(
+            (" [L]", "bold cyan"), (" Listener ON/OFF  ", "white"),
+            ("[R]", "bold red"), (" Record Wizard  ", "white"),
+            ("[P]", "bold green"), (" Play Selected  ", "white"),
+            ("[O]", "bold yellow"), (" Override Dials  ", "white"),
+            ("[S]", "bold magenta"), (" Switch Profile\n", "white"),
+            (" [↑/↓ or J/K]", "bold cyan"), (" Select Macro  ", "white"),
+            ("[N]", "bold cyan"), (" New Macro Slot  ", "white"),
+            ("[D]", "bold red"), (" Delete Macro  ", "white"),
+            ("[X]", "bold yellow"), (" Doctor Check  ", "white"),
+            ("[Q]", "bold red"), (" Quit", "white"),
+        )
+        footer_panel = Panel(footer_text, border_style="bright_black", padding=(0, 1))
+
+        root = Layout()
+        root.split_column(
+            Layout(header_panel, size=3),
+            Layout(body, ratio=1),
+            Layout(footer_panel, size=4),
+        )
+        return root
+
+    def _interactive_record_wizard(self, console: Any) -> None:
+        from rich.prompt import Confirm, Prompt
+
+        self._listener_pause.set()
+        try:
+            console.clear()
+            console.rule("[bold red]DuskyMacro — Guided Recording Wizard[/]")
+            default_name = (
+                self.macro_files[self.selected_idx].stem
+                if self.macro_files
+                else "quick.macro"
+            )
+            if default_name.endswith(".macro"):
+                default_name = default_name[:-6]
+            raw_name = Prompt.ask("Macro name (saved in recordings/)", default=default_name).strip()
+            if not raw_name:
+                return
+            filename = raw_name if raw_name.endswith(".json") else f"{raw_name}.macro.json"
+            out_path = self.settings.recordings_dir / filename
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+
+            mode = Prompt.ask(
+                "Coordinate mode",
+                choices=["window_relative", "raw_relative", "absolute", "logical_relative"],
+                default=self.cfg.coordinate_mode,
+            )
+            trigger_style = Prompt.ask(
+                "Start method",
+                choices=["hotkey", "countdown"],
+                default="hotkey",
+            )
+            stop_hk = self.cfg.record_hotkey
+            recorder = MacroRecorder(
+                ipc=self.ipc,
+                topology=self.topology,
+                xkb=self.xkb,
+                cfg=self.cfg,
+                stop_hotkey=stop_hk,
+                coordinate_mode=mode,
+            )
+
+            held: set[int] = set()
+            if trigger_style == "countdown":
+                secs = int(Prompt.ask("Countdown seconds before recording starts", default="3"))
+                for remaining in range(max(1, secs), 0, -1):
+                    console.print(f"  Starting in [bold yellow]{remaining}[/]s... (Focus your target window now!)")
+                    self.ipc.notify(f"DuskyMacro: Recording in {remaining}s...", 950)
+                    time.sleep(1.0)
+            else:
+                start_matcher = HotkeyMatcher(stop_hk)
+                console.print(
+                    f"\nFocus your target window and press [bold yellow][{stop_hk.upper()}][/] to START recording..."
+                )
+                with EvdevInputSession(
+                    capture_mouse=start_matcher.needs_mouse_buttons,
+                    capture_keyboard=True,
+                    use_kernel_monotonic_ts=False,
+                    rescan_interval_s=self.cfg.hotplug_rescan_interval_s,
+                    ignore_virtual=self.cfg.ignore_virtual_devices,
+                    extra_ignored=self.cfg.extra_ignored_keywords,
+                ) as session:
+                    started = False
+                    while not started:
+                        for frame in session.poll_frames(timeout_s=0.015):
+                            for code, pressed in frame.keys + frame.buttons:
+                                held = session.update_held(frame.source_fd, code, pressed)
+                                if start_matcher.matches_press(code, pressed, held):
+                                    started = True
+                                    break
+                            if started:
+                                break
+
+            console.print(f"[bold red]● RECORDING![/] Perform your actions, then press [bold yellow][{stop_hk.upper()}][/] to STOP.")
+            self.ipc.notify(f"DuskyMacro: Recording {out_path.name}", self.cfg.notification_timeout_ms)
+            doc = recorder.record(name=out_path.stem, initial_suppressed_keys=held)
+            out_path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+            self.refresh_macro_list()
+            for idx, p in enumerate(self.macro_files):
+                if p.resolve() == out_path.resolve():
+                    self.selected_idx = idx
+                    break
+            self.log_event("SAVE", f"Wizard recorded {len(doc['events'])} events -> {out_path.name}")
+            self.ipc.notify(f"DuskyMacro: Saved {len(doc['events'])} events", self.cfg.notification_timeout_ms)
+            if Confirm.ask(f"Saved {len(doc['events'])} events to {out_path.name}. Return to dashboard?", default=True):
+                return
+        except KeyboardInterrupt:
+            self.log_event("INFO", "Recording wizard cancelled")
+        finally:
+            self._listener_pause.clear()
+            self._listener_rebind.set()
+
+    def _interactive_override_dials(self, console: Any) -> None:
+        from rich.prompt import Prompt
+
+        self._listener_pause.set()
+        try:
+            console.clear()
+            console.rule("[bold yellow]DuskyMacro — Configure Playback Override Dials[/]")
+            mode_choice = Prompt.ask(
+                "Coordinate Mode Override",
+                choices=["profile", "window_relative", "raw_relative", "absolute", "logical_relative"],
+                default=self.override_mode or "profile",
+            )
+            self.override_mode = None if mode_choice == "profile" else mode_choice
+            spd = Prompt.ask("Playback Speed Multiplier (e.g. 0.5, 1.0, 2.0)", default=str(self.override_speed))
+            with contextlib.suppress(ValueError):
+                self.override_speed = max(0.05, float(spd))
+            rep = Prompt.ask("Repeat Count", default=str(self.override_repeat))
+            with contextlib.suppress(ValueError):
+                self.override_repeat = max(1, int(rep))
+            cd = Prompt.ask("Pre-Playback Focus Countdown Seconds (0-10)", default=str(self.countdown_s))
+            with contextlib.suppress(ValueError):
+                self.countdown_s = max(0, min(10, int(cd)))
+            self.log_event(
+                "DIAL",
+                f"Dials -> mode={self.override_mode or 'profile'}, speed={self.override_speed}x, rep={self.override_repeat}",
+            )
+        except KeyboardInterrupt:
+            pass
+        finally:
+            self._listener_pause.clear()
+
+    def _interactive_new_slot(self, console: Any) -> None:
+        from rich.prompt import Prompt
+
+        self._listener_pause.set()
+        try:
+            console.clear()
+            console.rule("[bold cyan]DuskyMacro — Create New Macro Target File[/]")
+            name = Prompt.ask("New macro filename stem (e.g. boss_combo)").strip()
+            if not name:
+                return
+            fname = name if name.endswith(".json") else f"{name}.macro.json"
+            target = (self.settings.recordings_dir / fname).resolve()
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if not target.exists():
+                empty_doc = {
+                    "schema_version": 1,
+                    "name": target.stem,
+                    "created_at": "",
+                    "profile_id": self.cfg.profile_id,
+                    "settings": {"coordinate_mode": self.cfg.coordinate_mode, "speed_multiplier": 1.0},
+                    "target_context": {"class": "", "title_pattern": "", "workspace": None, "recorded_window_rect": [0, 0, 0, 0]},
+                    "events": [],
+                }
+                target.write_text(json.dumps(empty_doc, indent=2) + "\n", encoding="utf-8")
+            self.refresh_macro_list()
+            for i, p in enumerate(self.macro_files):
+                if p == target:
+                    self.selected_idx = i
+                    break
+            self.log_event("NEW", f"Selected macro target -> {target.name}")
+        except KeyboardInterrupt:
+            pass
+        finally:
+            self._listener_pause.clear()
+
+    def _interactive_delete_selected(self, console: Any) -> None:
+        from rich.prompt import Confirm
+
+        if not self.macro_files:
+            return
+        target = self.macro_files[self.selected_idx]
+        if not target.is_file():
+            return
+        self._listener_pause.set()
+        try:
+            console.clear()
+            if Confirm.ask(f"Delete macro file [bold red]{target}[/]?", default=False):
+                target.unlink(missing_ok=True)
+                self.refresh_macro_list()
+                self.log_event("DEL", f"Deleted {target.name}")
+        except KeyboardInterrupt:
+            pass
+        finally:
+            self._listener_pause.clear()
+
+    def _play_selected_from_tui(self) -> None:
+        if not self.macro_files:
+            self.log_event("WARN", "No macro file selected")
+            return
+        target = self.macro_files[self.selected_idx]
+        if not target.is_file():
+            self.log_event("WARN", f"Macro file does not exist yet: {target.name} (Press [R] to record)")
+            return
+
+        self._listener_pause.set()
+        prev_state = self.engine_state
+        self.engine_state = "PLAYING"
+        try:
+            for rem in range(self.countdown_s, 0, -1):
+                self.ipc.notify(f"DuskyMacro: Playing {target.name} in {rem}s...", 900)
+                time.sleep(1.0)
+            macro = json.loads(target.read_text(encoding="utf-8"))
+            with WaylandWireInjector(self.xkb) as injector:
+                player = MacroPlayer(
+                    ipc=self.ipc,
+                    topology=self.topology,
+                    injector=injector,
+                    cfg=self.cfg,
+                )
+                res = player.play(
+                    macro,
+                    override_mode=self.override_mode,
+                    override_speed=self.override_speed,
+                    override_repeat=self.override_repeat,
+                )
+                self.log_event("PLAY", f"Played {target.name} ({res['executed_events']} events)")
+        except SafetyAbortError as exc:
+            self.log_event("ABORT", str(exc))
+        except Exception as exc:
+            self.log_event("ERR", f"Playback failed: {exc}")
+        finally:
+            self.engine_state = prev_state
+            self._listener_pause.clear()
+
+    def run(self) -> int:
+        from rich.console import Console
+        from rich.live import Live
+
+        console = Console()
+        self.start_background_listener()
+
+        stop_ui = False
+
+        def _sig_handler(_signum: int, _frame: object) -> None:
+            nonlocal stop_ui
+            stop_ui = True
+
+        signal.signal(signal.SIGINT, _sig_handler)
+        signal.signal(signal.SIGTERM, _sig_handler)
+
+        try:
+            while not stop_ui:
+                action_to_run: str | None = None
+                with Live(
+                    self.render_dashboard(),
+                    console=console,
+                    screen=True,
+                    refresh_per_second=10,
+                ) as live:
+                    with _CbreakTerminal() as term:
+                        while not stop_ui and action_to_run is None:
+                            live.update(self.render_dashboard())
+                            key = term.read_key(timeout_s=0.10)
+                            if key is None:
+                                continue
+                            low = key.lower()
+                            if low == "q":
+                                stop_ui = True
+                                break
+                            if key in ("UP", "k", "K"):
+                                if self.macro_files:
+                                    self.selected_idx = (self.selected_idx - 1) % len(self.macro_files)
+                            elif key in ("DOWN", "j", "J"):
+                                if self.macro_files:
+                                    self.selected_idx = (self.selected_idx + 1) % len(self.macro_files)
+                            elif low == "l":
+                                if self.listener_enabled:
+                                    self.stop_background_listener()
+                                    self.log_event("INFO", "Background hotkey listener stopped")
+                                else:
+                                    self.start_background_listener()
+                                    self.log_event("INFO", "Background hotkey listener started")
+                            elif low == "s":
+                                self.cycle_profile(1)
+                            elif low == "x":
+                                self._last_dev_scan = 0.0
+                                self._update_device_counts()
+                                m_cnt, k_cnt = self._devices_summary
+                                self.log_event(
+                                    "DIAG",
+                                    f"Doctor OK: IPC={self.ipc.config_provider()}, Mice={m_cnt}, Keyboards={k_cnt}",
+                                )
+                            elif low in ("p", "\r", "\n"):
+                                action_to_run = "play"
+                            elif low == "r":
+                                action_to_run = "record"
+                            elif low == "o":
+                                action_to_run = "override"
+                            elif low == "n":
+                                action_to_run = "new_slot"
+                            elif low == "d":
+                                action_to_run = "delete"
+
+                if action_to_run == "play":
+                    self._play_selected_from_tui()
+                elif action_to_run == "record":
+                    self._interactive_record_wizard(console)
+                elif action_to_run == "override":
+                    self._interactive_override_dials(console)
+                elif action_to_run == "new_slot":
+                    self._interactive_new_slot(console)
+                elif action_to_run == "delete":
+                    self._interactive_delete_selected(console)
+        finally:
+            self.stop_background_listener()
+            self.topology.stop_event_listener()
+            self.xkb.close()
+        return 0
+
+
+# =============================================================================
+# SECTION 9: CLI VERBS (doctor, record, play, listen, profiles, inspect, tui)
 # =============================================================================
 
 def prewarm_realtime_path(ipc: HyprlandSocketClient) -> XkbBridge:
-    """Eagerly loads ctypes libxkbcommon and compiles the active layout before
-    any real-time recording or playback loop begins."""
     return XkbBridge(*ipc.active_keyboard_layout())
+
+
+def cmd_tui(settings: SettingsManager, profiles_mgr: ProfileManager) -> int:
+    try:
+        import rich  # noqa: F401
+    except ImportError:
+        print(
+            "dusky_macro: note: 'rich' library not found for interactive TUI "
+            "(install via: sudo pacman -S python-rich). Showing CLI --help instead:\n",
+            file=sys.stderr,
+        )
+        build_parser().print_help()
+        return 1
+    tui = DuskyMacroTUI(settings, profiles_mgr)
+    return tui.run()
 
 
 def cmd_doctor(settings: SettingsManager, profiles_mgr: ProfileManager, json_out: bool = False) -> int:
@@ -2605,7 +3645,6 @@ def cmd_doctor(settings: SettingsManager, profiles_mgr: ProfileManager, json_out
         "ok": True,
     }
 
-    # 1. Check Hyprland IPC sockets
     try:
         ipc = HyprlandSocketClient()
         prov = ipc.config_provider()
@@ -2623,7 +3662,6 @@ def cmd_doctor(settings: SettingsManager, profiles_mgr: ProfileManager, json_out
         report["ok"] = False
         ipc = None
 
-    # 2. Check libxkbcommon
     try:
         xkb = XkbBridge(*(ipc.active_keyboard_layout() if ipc else ("us", "", "")))
         km_len = len(xkb.keymap_bytes)
@@ -2633,7 +3671,6 @@ def cmd_doctor(settings: SettingsManager, profiles_mgr: ProfileManager, json_out
         report["checks"]["libxkbcommon"] = {"ok": False, "error": str(exc)}
         report["ok"] = False
 
-    # 3. Check Wayland virtual pointer & virtual keyboard wire protocols + memfd
     try:
         xkb_temp = XkbBridge(*(ipc.active_keyboard_layout() if ipc else ("us", "", "")))
         with WaylandWireInjector(xkb_temp) as inj:
@@ -2648,7 +3685,6 @@ def cmd_doctor(settings: SettingsManager, profiles_mgr: ProfileManager, json_out
         report["checks"]["wayland_protocols"] = {"ok": False, "error": str(exc)}
         report["ok"] = False
 
-    # 4. Check /dev/input/event* capture permissions
     devices = EvdevDeviceScanner.scan(need_mouse=True, need_keyboard=True)
     mice = [d.name for d in devices if d.is_mouse]
     keyboards = [d.name for d in devices if d.is_keyboard]
@@ -2674,7 +3710,6 @@ def cmd_doctor(settings: SettingsManager, profiles_mgr: ProfileManager, json_out
 
 
 def cmd_profiles(settings: SettingsManager, profiles_mgr: ProfileManager, args: argparse.Namespace) -> int:
-    ipc: HyprlandSocketClient | None = None
     active_win: dict[str, Any] = {}
     with contextlib.suppress(Exception):
         ipc = HyprlandSocketClient()
@@ -2739,10 +3774,8 @@ def cmd_record(settings: SettingsManager, profiles_mgr: ProfileManager, args: ar
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     abort_ev = threading.Event()
-    signal_num: list[int] = []
 
-    def _sig_handler(signum: int, _frame: object) -> None:
-        signal_num.append(signum)
+    def _sig_handler(_signum: int, _frame: object) -> None:
         abort_ev.set()
 
     signal.signal(signal.SIGINT, _sig_handler)
@@ -2778,10 +3811,7 @@ def cmd_record(settings: SettingsManager, profiles_mgr: ProfileManager, args: ar
                 while not started and not abort_ev.is_set():
                     for frame in session.poll_frames(timeout_s=0.015):
                         for code, pressed in frame.keys + frame.buttons:
-                            if pressed:
-                                held.add(code)
-                            else:
-                                held.discard(code)
+                            held = session.update_held(frame.source_fd, code, pressed)
                             if start_matcher.matches_press(code, pressed, held):
                                 started = True
                                 break
@@ -2843,7 +3873,6 @@ def cmd_play(settings: SettingsManager, profiles_mgr: ProfileManager, args: argp
 
     signal_num: list[int] = []
 
-    # Decoupled signal handler: never performs socket I/O or lock acquisition inside signal frame!
     def _decoupled_signal_handler(signum: int, _frame: object) -> None:
         signal_num.append(signum)
         player.abort_event.set()
@@ -2876,9 +3905,6 @@ def cmd_play(settings: SettingsManager, profiles_mgr: ProfileManager, args: argp
 
 
 def cmd_listen(settings: SettingsManager, profiles_mgr: ProfileManager, args: argparse.Namespace) -> int:
-    """Interactive profile-aware hotkey daemon:
-    - Automatically switches profiles when Hyprland active window changes (or locks via --profile / cycle key)
-    - Supports multiple [[bindings]] macro slots per profile + record toggle + profile cycling."""
     ipc = HyprlandSocketClient()
     state_lock = threading.RLock()
     profile_changed_ev = threading.Event()
@@ -2925,6 +3951,11 @@ def cmd_listen(settings: SettingsManager, profiles_mgr: ProfileManager, args: ar
 
     try:
         while not stop_daemon_ev.is_set():
+            if profiles_mgr.reload_if_modified():
+                with state_lock:
+                    current_prof = profiles_mgr.get(locked_profile_id)
+                    cfg = settings.build_effective(current_prof)
+
             with state_lock:
                 active_cfg = cfg
                 rec_matcher = HotkeyMatcher(args.record_hotkey or active_cfg.record_hotkey)
@@ -2963,7 +3994,7 @@ def cmd_listen(settings: SettingsManager, profiles_mgr: ProfileManager, args: ar
                 or any(m.needs_mouse_buttons for m, _ in slot_matchers)
             )
 
-            held: set[int] = set()
+            held_snapshot: set[int] = set()
             triggered_action: str | None = None
             triggered_binding: MacroBinding | None = None
 
@@ -2984,13 +4015,10 @@ def cmd_listen(settings: SettingsManager, profiles_mgr: ProfileManager, args: ar
                     last_scan = session.rescan_if_due(last_scan)
                     for frame in session.poll_frames(timeout_s=active_cfg.epoll_poll_timeout_s):
                         for code, pressed in frame.keys + frame.buttons:
-                            if pressed:
-                                held.add(code)
-                            else:
-                                held.discard(code)
-
+                            held = session.update_held(frame.source_fd, code, pressed)
                             if rec_matcher.matches_press(code, pressed, held):
                                 triggered_action = "record"
+                                held_snapshot = set(held)
                                 break
                             if next_matcher.matches_press(code, pressed, held):
                                 triggered_action = "cycle_next"
@@ -3054,7 +4082,7 @@ def cmd_listen(settings: SettingsManager, profiles_mgr: ProfileManager, args: ar
                 )
                 doc = recorder.record(
                     name=target_file.stem,
-                    initial_suppressed_keys=held,
+                    initial_suppressed_keys=held_snapshot,
                     abort_event=stop_daemon_ev,
                 )
                 target_file.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
@@ -3125,14 +4153,21 @@ def build_parser() -> Any:
 
     p = argparse.ArgumentParser(
         prog="dusky_macro",
-        description="Standalone Pure-Wayland Macro Recorder, Player & Profile Engine for Hyprland",
+        description="Standalone Pure-Wayland Macro Recorder, Player, Profile Engine & Rich TUI for Hyprland",
     )
     p.add_argument(
         "--settings",
         default=None,
         help="Optional path to settings.toml (default: ~/user_scripts/gaming/macro/settings/settings.toml)",
     )
-    sub = p.add_subparsers(dest="cmd", required=True)
+    p.add_argument(
+        "--tui",
+        action="store_true",
+        help="Launch the interactive Rich Terminal UI (default when invoked with no subcommand)",
+    )
+    sub = p.add_subparsers(dest="cmd", required=False)
+
+    sub.add_parser("tui", help="Launch the interactive Rich Terminal UI")
 
     doc_p = sub.add_parser("doctor", help="Verify Hyprland IPC, Wayland protocols, libxkbcommon, evdev, and TOML configs")
     doc_p.add_argument("--json", action="store_true", help="Output diagnostics as JSON")
@@ -3171,7 +4206,7 @@ def build_parser() -> Any:
     play_p.add_argument("--allow-auth", action="store_true", help="Allow playback over polkit/launcher layers")
     play_p.add_argument("--dry-run", action="store_true", help="Validate target and guards without injecting input")
 
-    listen_p = sub.add_parser("listen", help="Run profile-aware hotkey daemon (F8 record, bindings play, Ctrl+Shift+F12 cycle)")
+    listen_p = sub.add_parser("listen", help="Run profile-aware hotkey daemon in CLI mode")
     listen_p.add_argument("macro_file", nargs="?", default=None, help="Optional single macro file override")
     listen_p.add_argument("--profile", default=None, help="Lock listener to a specific profile initially")
     listen_p.add_argument("--record-hotkey", default=None, help="Override record toggle hotkey")
@@ -3192,6 +4227,9 @@ def main(argv: list[str] | None = None) -> int:
         settings = SettingsManager(root_dir=SCRIPT_ROOT, settings_path=settings_path)
         settings.ensure_directories_and_defaults()
         profiles_mgr = ProfileManager(settings)
+
+        if args.tui or args.cmd in (None, "tui"):
+            return cmd_tui(settings, profiles_mgr)
 
         match args.cmd:
             case "doctor":
