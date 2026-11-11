@@ -1,44 +1,71 @@
-# Stock upstream kernel; strict target hardware census. See README.md for the workflow.
+# Stock upstream Linux 7.4+ kernel; strict target hardware census.
+# Tuned for maximum throughput and lowest scheduling/I/O latency without pathological bloat.
 
 [meta]
 name = "performance"
-description = "Native CPU tuning for interactive performance; increased power use"
+description = "Maximum throughput and low-latency tuning for desktop, workstation and gaming"
 suffix = "dusky-performance"
 priority = 70
-tags = ["hardware-tailored"]
+tags = ["hardware-tailored", "performance", "low-latency"]
+
+[rseq]
+slice_extension = true
+slice_ext_nsec = 20000
+
+[dusky]
+enhanced = true
 
 [cpu]
 governor = "performance"
+amd_pstate = "active"
 epp = "performance"
 mitigations = "off"
 
 [timing]
+hz = 1000
+tickless = "idle"
 preempt = "full"
+preempt_dynamic = true
 
 [memory]
+footprint = "lean"
+thp = "madvise"
+thp_defrag = "defer+madvise"
+thp_shmem = "advise"
+mglru = true
 mglru_min_ttl_ms = 0
 zram_size_pct = 50
 zram_multi_comp = false
 swappiness = 60
-vfs_cache_pressure = 100
+vfs_cache_pressure = 80
 watermark_scale_factor = 50
+compaction_proactiveness = 0
 dirty_bytes_mb = 256
-numa_balancing = true
+# _ops_memory automatically disables CONFIG_NUMA on single-node machines;
+# keeping numa = true + numa_balancing = false supports multi-node targets cleanly without overhead.
+numa = true
+numa_balancing = false
 ksm = false
 hugetlbfs = false
 kallsyms_all = false
+log_buf_shift = 16
 tracing = "minimal"
 kexec = false
 
 [compiler]
+# "o2" + ThinLTO + -march=native is optimal for kernel L1i cache locality on stock Linux 7.4;
+# change to "o3" only if you want raw -O3 injected via KCFLAGS.
+optimize = "o2"
+lto = "thin"
 debug_info = "none"
 rust = true
 
 [security]
 profile = "extreme"
 init_on_alloc = false
+init_on_free = false
 hardened_usercopy = false
-stackprotector = "regular"
+stackprotector = "none"
 slab_freelist_hardened = false
 slab_freelist_random = false
 randomize_kstack = false
@@ -46,13 +73,24 @@ ubsan_bounds = false
 acknowledge_risk = true
 
 [gaming]
-max_map_count = 1048576
+ntsync = true
+uclamp = true
+max_map_count = 2147483642
+split_lock_mitigate = false
 
 [storage]
-io_scheduler = "keep"
+io_scheduler = "none"
+blk_wbt = true
 
 [power]
+wq_power_efficient = false
+cpu_idle_governor = "teo"
+rcu_lazy = false
+energy_model = false
 pcie_aspm = "performance"
+hda_power_save = 0
 
 [network]
+congestion = "bbr"
+qdisc = "fq"
 mptcp = false

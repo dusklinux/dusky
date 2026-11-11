@@ -3507,7 +3507,8 @@ def _ops_timing(mx: Matrix, p: KernelProfile, d: Derived) -> None:
             mx.y("CPU_ISOLATION")
     sel = {"lazy": "PREEMPT_LAZY", "full": "PREEMPT", "rt": "PREEMPT_RT"}[t["preempt"]]
     mx.choice(("PREEMPT_NONE", "PREEMPT_VOLUNTARY", "PREEMPT", "PREEMPT_LAZY", "PREEMPT_RT"), sel, why=f"preempt={t['preempt']}")
-    mx.flag("PREEMPT_DYNAMIC", t["preempt_dynamic"] and t["preempt"] != "rt")
+    dyn = t["preempt_dynamic"] and t["preempt"] != "rt"
+    mx.flag("PREEMPT_DYNAMIC", dyn, optional=not dyn, why="PREEMPT_LAZY selects PREEMPT_DYNAMIC on x86_64")
     mx.y("HIGH_RES_TIMERS")
     mx.y("POSIX_TIMERS")
     mx.y("IRQ_TIME_ACCOUNTING")
@@ -3580,7 +3581,6 @@ def _ops_memory(mx: Matrix, p: KernelProfile, d: Derived) -> None:
     tiny = m["slub_tiny"]
     mx.y("SLUB")
     mx.flag("SLUB_TINY", tiny, why="minimal allocator footprint")
-    mx.flag("SLUB_CPU_PARTIAL", not tiny and not lean and s["timing"]["preempt"] != "rt", optional=tiny)
     mx.flag("SLUB_DEBUG", not lean and not tiny)
     mx.n("SLUB_DEBUG_ON")
     mx.n("SLUB_STATS")
@@ -3609,8 +3609,16 @@ def _ops_memory(mx: Matrix, p: KernelProfile, d: Derived) -> None:
     mx.flag("MEMCG_V1", m["memcg"] and not lean)
     mx.flag("CPUSETS_V1", not lean)
     retained = parse_dotconfig(_read(d.tree / ".config")) if is_valid_kernel_tree(d.tree) else {}
-    recorded_virtio_mem = retained.get("VIRTIO_MEM") in ("y", "m")
-    hotplug = vm or not lean or bool(set(f.gpus) & {"amd", "nvidia"}) or recorded_virtio_mem
+    explicit = {str(sym).removeprefix("CONFIG_") for sym in p.g("modules", "keep_symbols")}
+    explicit.update(str(sym).removeprefix("CONFIG_") for sym, value in p.g("dusky", "extra_config").items() if value in (True, "y", "m"))
+    recorded_virtio_mem = (retained.get("VIRTIO_MEM") in ("y", "m") or "VIRTIO_MEM" in explicit) and not p.g("meta", "bare_metal_only")
+    svm_gpu_syms = ("DRM_AMDGPU", "DRM_NOUVEAU", "DRM_XE", "DRM_GPUSVM")
+    svm_gpu_retained = any(retained.get(sym) in ("y", "m") or sym in explicit for sym in svm_gpu_syms)
+    active_dgpu = svm_gpu_retained or (
+        bool(set(f.gpus) & {"amd", "nvidia"})
+        and (broad_hardware(p) or p.g("modules", "mode") != "strict" or _has_nvidia_dkms(f.dkms_modules))
+    )
+    hotplug = vm or not lean or active_dgpu or recorded_virtio_mem
     mx.flag("MEMORY_HOTPLUG", hotplug, why="ZONE_DEVICE/DEVICE_PRIVATE (GPU SVM) and VM balloons need it")
     mx.flag("MEMORY_HOTREMOVE", hotplug)
     mx.flag("ZONE_DEVICE", hotplug and not embedded, optional=True)
@@ -3719,7 +3727,7 @@ def _ops_compiler(mx: Matrix, p: KernelProfile, d: Derived) -> None:
         mx.n("GCC_PLUGINS")
     mx.choice(("RANDSTRUCT_NONE", "RANDSTRUCT_FULL", "RANDSTRUCT_PERFORMANCE"), "RANDSTRUCT_NONE")
     mx.choice(("UNWINDER_ORC", "UNWINDER_FRAME_POINTER"), "UNWINDER_ORC")
-    mx.choice(("INIT_STACK_NONE", "INIT_STACK_ALL_PATTERN", "INIT_STACK_ALL_ZERO"), "INIT_STACK_NONE" if extreme else "INIT_STACK_ALL_ZERO")
+    mx.choice(("INIT_STACK_NONE", "INIT_STACK_ALL_PATTERN", "INIT_STACK_ALL_ZERO"), "INIT_STACK_ALL_ZERO" if (sec["init_on_alloc"] and not extreme) else "INIT_STACK_NONE")
     mx.flag("ZERO_CALL_USED_REGS", hardened)
     mx.flag("FORTIFY_SOURCE", not extreme)
     mx.flag("BUG_ON_DATA_CORRUPTION", not extreme)
@@ -4020,16 +4028,17 @@ def _ops_gpu(mx: Matrix, p: KernelProfile, d: Derived) -> None:
              "'modprobed-db store' before rebuilding; if the disable is intentional, ignore this.")
     if "nvidia" in gpus or portable:
         nvidia_dkms = _has_nvidia_dkms(f.dkms_modules)
-        if portable or not nvidia_dkms:
-            if portable:
-                reason = "portable target (host DKMS says nothing about the target machine)"
-            else:
-                reason = (f"NVIDIA GPU without nvidia-dkms "
-                          f"({', '.join(f.dkms_modules) or 'no DKMS'} installed)")
-            mx.m("DRM_NOUVEAU", why=reason)
-        else:
-            # localmodconfig's seed may already contain Nouveau; explicitly prune it.
+        pruned = parse_dotconfig(_read(d.tree / ".config")) if is_valid_kernel_tree(d.tree) else {}
+        explicit = {str(sym).removeprefix("CONFIG_") for sym in p.g("modules", "keep_symbols")}
+        explicit.update(str(sym).removeprefix("CONFIG_") for sym, value in p.g("dusky", "extra_config").items() if value in (True, "y", "m"))
+        strict_pruned = p.g("modules", "mode") == "strict" and not portable and d.seed_source and (d.tree / ".config").is_file()
+        if nvidia_dkms and not portable:
             mx.n("DRM_NOUVEAU", why="target uses NVIDIA DKMS; do not add a second GPU driver for RC kernels")
+        elif strict_pruned and pruned.get("DRM_NOUVEAU") not in ("y", "m") and "DRM_NOUVEAU" not in explicit:
+            mx.n("DRM_NOUVEAU", why="NVIDIA dGPU unused in strict target census (no nouveau in modprobed.db and no nvidia-dkms)")
+        else:
+            reason = "portable target" if portable else "NVIDIA GPU with nouveau in census"
+            mx.m("DRM_NOUVEAU", why=reason)
     for gpu, sym in (("virtio", "DRM_VIRTIO_GPU"), ("qxl", "DRM_QXL"), ("bochs", "DRM_BOCHS"), ("vmware", "DRM_VMWGFX")):
         if gpu in gpus or portable:
             mx.m(sym, optional=True)
@@ -4574,6 +4583,7 @@ def stage_runtime_package(tree: Path, p: KernelProfile, d: Derived) -> None:
     unit = f"{p.pkgbase}-tuning.service"
     body = (f"[Unit]\nDescription=Kernel tuning for {p.pkgbase}\nConditionKernelVersion={d.kernelrelease}\n"
             "After=systemd-sysctl.service systemd-modules-load.service swap.target sys-kernel-debug.mount\n"
+            "Before=tlp.service power-profiles-daemon.service tuned.service\n"
             f"[Service]\nType=oneshot\nExecStart=/usr/bin/python {base}/runtime.py {base}/profile.json\nRemainAfterExit=yes\n")
     units = []
     if p.g("runtime", "enabled"):

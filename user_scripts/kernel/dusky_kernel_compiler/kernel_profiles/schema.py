@@ -469,7 +469,7 @@ WIZARD_STEPS: Final[tuple[WizardStep, ...]] = (
 SECURITY_BUNDLES: Final[dict[str, dict[str, Any]]] = {
     "balanced": {"init_on_alloc": True, "init_on_free": False, "hardened_usercopy": True, "stackprotector": "strong",
                  "slab_freelist_hardened": True, "slab_freelist_random": True, "randomize_kstack": True, "ubsan_bounds": True, "lockdown_early": False},
-    "extreme": {"init_on_alloc": False, "init_on_free": False, "hardened_usercopy": False, "stackprotector": "regular",
+    "extreme": {"init_on_alloc": False, "init_on_free": False, "hardened_usercopy": False, "stackprotector": "none",
                 "slab_freelist_hardened": False, "slab_freelist_random": False, "randomize_kstack": False, "ubsan_bounds": False, "lockdown_early": False},
     "hardened": {"init_on_alloc": True, "init_on_free": True, "hardened_usercopy": True, "stackprotector": "strong",
                  "slab_freelist_hardened": True, "slab_freelist_random": True, "randomize_kstack": True, "ubsan_bounds": True, "lockdown_early": True},
