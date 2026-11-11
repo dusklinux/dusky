@@ -170,6 +170,7 @@ Because Arch is a rolling release, an upstream package change can occasionally t
 
 ## Acknowledgments
 
+* [**hypruse**](https://github.com/IlyasKhallouki/hypruse) — For the ingenious pure-Python Wayland wire protocols (`zwlr_virtual_pointer_v1` & `zwp_virtual_keyboard_v1`) and Hyprland socket IPC that power the Dusky Macro engine.
 * [**hyprmoncfg**](https://github.com/crmne/hyprmoncfg) — For doing the heavy lifting behind the TUI monitor configuration.
 * [**Omarchy**](https://github.com/basecamp/omarchy) — Our audio source switcher, network TUI, AI crash report generator, and fingerprint setup were partly borrowed from them with further tweaks and optimizations.
 * [**linux-cachyos**](https://github.com/dusklinux/linux-cachyos) & [**linux-tkg**](https://github.com/Frogging-Family/linux-tkg) — For inspiring the Dusky Kernel.
