@@ -1346,6 +1346,8 @@ pub fn read_battery_state(power_supply: &Path) -> BatteryState {
     nodes.sort();
 
     let mut n = 0usize;
+    let mut csum = 0u64;
+    let mut ccnt = 0usize;
     let mut esum = 0u64;
     let mut ecnt = 0usize;
     let mut efsum = 0u64;
@@ -1424,6 +1426,20 @@ pub fn read_battery_state(power_supply: &Path) -> BatteryState {
         if let Some(ef) = efull_uwh.filter(|&ef| ef > 0) {
             efsum = efsum.saturating_add(ef);
             efcnt += 1;
+        }
+
+        let cap = read_sysfs_u64(&path.join("capacity"), false)
+            .filter(|&c| c <= 100)
+            .or_else(|| {
+                let enow = enow_uwh?;
+                let efull = efull_uwh.filter(|&ef| ef > 0)?;
+                Some(((enow as u128 * 100 + (efull as u128 / 2)) / efull as u128) as u64)
+            })
+            .map(|c| c.min(100));
+
+        if let Some(c) = cap {
+            csum = csum.saturating_add(c);
+            ccnt += 1;
         }
 
         // Keep an instantaneous zero instead of substituting a stale average.
@@ -1540,11 +1556,26 @@ pub fn read_battery_state(power_supply: &Path) -> BatteryState {
         }
     };
 
+    let battery_pct = if n == 1 && ccnt == 1 {
+        Some(csum)
+    } else if ecnt == n && efcnt == n && efsum > 0 {
+        Some((((esum as u128 * 100) + (efsum as u128 / 2)) / efsum as u128).min(100) as u64)
+    } else if ccnt == n {
+        Some((((csum as u128) + (ccnt as u128 / 2)) / ccnt as u128).min(100) as u64)
+    } else {
+        None
+    };
+
+    let battery_header = match battery_pct {
+        Some(pct) => format!("Battery: {pct}%"),
+        None => format!("Battery: {}", state.as_str()),
+    };
+
     BatteryState {
         present: true,
         status: state,
         watts,
-        tooltip: format!("Battery: {}\nRemaining: {remaining}", state.as_str()),
+        tooltip: format!("{battery_header}\nRemaining: {remaining}"),
         text,
     }
 }
@@ -2166,7 +2197,7 @@ mod tests {
         assert!(state.present);
         assert_eq!(state.status, BatteryStatus::Discharging);
         assert_eq!(state.text, "24.60W");
-        assert_eq!(state.tooltip, "Battery: Discharging\nRemaining: 2h 21m");
+        assert_eq!(state.tooltip, "Battery: 72%\nRemaining: 2h 21m");
         assert!((state.watts - 24.6).abs() < 1e-6);
 
         // Fallback to current_now (µA) * voltage_now (µV) / 1_000_000 and charge_now/charge_full
@@ -2185,7 +2216,7 @@ mod tests {
         assert!(state.present);
         assert_eq!(state.status, BatteryStatus::Charging);
         assert_eq!(state.text, "6.42W");
-        assert_eq!(state.tooltip, "Battery: Charging\nRemaining: 10h 31m");
+        assert_eq!(state.tooltip, "Battery: 6%\nRemaining: 10h 31m");
         assert!((state.watts - 6.42).abs() < 1e-6);
 
         std::fs::remove_dir_all(root).unwrap();
