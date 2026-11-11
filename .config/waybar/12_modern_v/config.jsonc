@@ -91,6 +91,7 @@
 
     "cpu": {
         "justify": "center",
+        "align": 0.5,
         "format": "\n{usage}",
         "interval": 2,
         "on-click": "dusky-run kitty --class htop -e htop",
@@ -102,6 +103,7 @@
 
     "memory": {
         "justify": "center",
+        "align": 0.5,
         "format": "\n{percentage}",
         "interval": 2,
         "on-click": "dusky-run kitty --class dusky_disk_monitor_io.py -e $HOME/user_scripts/drives/dusky_disk_monitor_io.py",
@@ -125,6 +127,7 @@
 
     "clock": {
         "justify": "center",
+        "align": 0.5,
         "format": "{:%I\n%M}",
         "tooltip-format": "<tt>{calendar}</tt>",
         "interval": 60,
@@ -192,6 +195,7 @@
 
     "backlight": {
         "justify": "center",
+        "align": 0.5,
         "format": "{icon}\n{percent}",
         "format-icons": ["","","","","","","","","","","","","","",""],
         "tooltip": true,
@@ -199,12 +203,12 @@
         "on-click": "\"$HOME/.local/bin/dusky-tray\"",
         "on-scroll-up": "brightnessctl set +5%",
         "on-scroll-down": "brightnessctl set 5%-",
-        "min-length": 4,
         "interval": 60
     },
 
     "bluetooth": {
         "justify": "center",
+        "align": 0.5,
         "format": "",
         "format-disabled": "󰂲",
         "format-connected": "\n{num_connections}",
@@ -215,8 +219,9 @@
 
     "custom/network": {
         "justify": "center",
+        "align": 0.5,
         "return-type": "json",
-        "exec": "$HOME/.local/bin/dusky-network watch vertical",
+        "exec": "$HOME/.local/bin/dusky-network watch --vertical",
         "restart-interval": 3,
         "on-click": "foot --app-id=dusky_tui python $HOME/user_scripts/dusky_tui/python/main/main.py $HOME/user_scripts/network_manager/tui_dusky_network.py",
         "on-click-right": "nmcli radio wifi on",
@@ -225,6 +230,7 @@
 
     "battery": {
         "justify": "center",
+        "align": 0.5,
         "format": "{icon}\n{capacity}",
         "format-charging": "\n{capacity}",
         "format-icons": ["󰂎", "󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹"],
@@ -234,6 +240,7 @@
 
     "custom/power": {
         "justify": "center",
+        "align": 0.5,
         "format": "",
         "tooltip": true,
         "tooltip-format": "Power Menu\nLMB: Power Menu\nRMB: Dusky Center",

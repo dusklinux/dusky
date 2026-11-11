@@ -126,8 +126,9 @@ box#updates-drawer {
     margin: 4px 0;
 }
 
-/* Custom modules contain a non-expanding label inside a horizontal box.
- * Use the original compact rail's 23px content width for centered labels. */
+/* Waybar v0.16.0 moves .module onto the label inside the anonymous horizontal box.
+ * Force all custom module labels to span the full 23px rail width so xalign/justify centers them. */
+widget > box > label.module,
 box.module > label {
     min-width: 23px;
 }
@@ -264,7 +265,7 @@ widget > box {
 #custom-notification,
 #custom-updates,
 #custom-updates-trigger {
-    min-width: 14px;
+    min-width: 23px;
     padding: 0px;
     margin: 3px 0px;
 }

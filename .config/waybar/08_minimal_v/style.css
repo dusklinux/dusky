@@ -50,6 +50,13 @@ window#waybar {
     color: @on_surface;
 }
 
+/* Force all Waybar v0.16.0 custom module labels inside horizontal boxes to span
+ * the full 28px inner capsule width (30px bar width - 2px horizontal margin). */
+widget > box > label.module,
+box.module > label {
+    min-width: 28px;
+}
+
 /* UNIFIED CAPSULE STYLE */
 #clock,
 #workspaces,
@@ -160,14 +167,14 @@ window#waybar {
 
 #custom-inhibit-suspend {
     font-size: 14px;
-    padding: 6px 4px 6px 10px;
+    padding: 6px 0px;
 }
 
 #custom-power {
     font-size: 16px;
     border-radius: 100px;
     margin: 3px 1px;
-    padding: 3px 4px 3px 10px;
+    padding: 3px 0px;
     box-shadow: none;
 }
 
