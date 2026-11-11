@@ -2107,7 +2107,7 @@ class EvdevDeviceScanner:
     filters out virtual/synthetic devices, and probes for exclusive EVIOCGRAB conflicts."""
 
     VIRTUAL_KEYWORDS = (
-        "virtual", "wlroots", "hyprland", "uinput", "crossmacro", "ydotool", "hyprmacro", "dusky"
+        "virtual", "wlroots", "hyprland", "uinput", "ydotool", "dusky"
     )
 
     @classmethod
@@ -4072,7 +4072,7 @@ def prewarm_realtime_path(ipc: HyprlandSocketClient) -> XkbBridge:
 
 
 def cmd_stop() -> int:
-    """Emergency stop CLI verb (like `hypruse stop`): signals any active dusky_macro
+    """Emergency stop CLI verb: signals any active dusky_macro
     playback, recording, or daemon process via SIGTERM so it runs release_all() and exits."""
     signaled_pids: list[int] = []
     my_pid = os.getpid()
