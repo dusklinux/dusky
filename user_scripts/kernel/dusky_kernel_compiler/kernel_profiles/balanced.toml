@@ -2,11 +2,11 @@
 # Tuned for maximum desktop & laptop power efficiency without sacrificing Wayland/Hyprland smoothness.
 
 [meta]
-name = "powersave"
+name = "balanced"
 description = "Maximum power efficiency and deep C-state residency for laptops and desktops"
-suffix = "dusky-powersave"
+suffix = "dusky-balanced"
 priority = 60
-tags = ["powersave", "battery", "efficiency", "desktop", "laptop"]
+tags = ["balanced", "battery", "efficiency", "desktop", "laptop"]
 
 [dusky]
 enhanced = true
@@ -85,7 +85,7 @@ cpu_idle_governor = "teo"
 rcu_lazy = true
 energy_model = false
 pcie_aspm = "powersupersave"
-hda_power_save = 5
+hda_power_save = 3
 
 [network]
 congestion = "bbr"

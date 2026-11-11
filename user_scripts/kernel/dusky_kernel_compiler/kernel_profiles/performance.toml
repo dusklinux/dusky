@@ -88,7 +88,7 @@ cpu_idle_governor = "teo"
 rcu_lazy = false
 energy_model = false
 pcie_aspm = "performance"
-hda_power_save = 0
+hda_power_save = 10
 
 [network]
 congestion = "bbr"

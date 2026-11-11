@@ -938,9 +938,20 @@ def print_profile_table(profiles: Sequence[KernelProfile], facts: "HostFacts | N
     for i, p in enumerate(profiles, 1):
         s = p.sections
         mark = f" {C.GREEN}★{C.RESET}" if rec is p else ""
-        rows.append([str(i), p.name + mark, s["release"]["channel"], s["cpu"]["arch"], s["scheduler"]["type"] + ("+" + s["scheduler"]["scx"][4:] if s["scheduler"]["scx"] != "none" else ""),
-                     str(s["timing"]["hz"]), s["timing"]["preempt"], s["memory"]["footprint"], s["compiler"]["lto"], s["modules"]["mode"][:3]])
-    table(["#", "name", "channel", "arch", "sched", "hz", "preempt", "footprint", "lto", "mods"], rows)
+        gov_epp = f"{s['cpu']['governor'][:4]}/{s['cpu']['epp'][:4]}"
+        rows.append([
+            str(i),
+            p.name + mark,
+            str(s["timing"]["hz"]),
+            s["timing"]["preempt"],
+            gov_epp,
+            s["power"]["pcie_aspm"][:7],
+            f"{s['power']['hda_power_save']}s",
+            s["compiler"]["lto"],
+            "off" if s["cpu"]["mitigations"] == "off" else "on",
+            p.description[:38] + ("…" if len(p.description) > 38 else ""),
+        ])
+    table(["#", "name", "hz", "preempt", "gov/epp", "aspm", "audio", "lto", "mitig", "description / focus"], rows)
     if rec is not None:
         note(f"★ recommended for this host: {rec.name}")
 
@@ -962,6 +973,26 @@ def select_profile(profiles: Sequence[KernelProfile], wanted: str | None, facts:
         raise ProfileError("Non-interactive session requires --profile NAME")
     rule("Select build profile")
     print_profile_table(profiles, facts)
+    if len(profiles) == 2 and not any(p.name in ("custom",) for p in profiles):
+        p_bal, p_perf = (profiles[0], profiles[1]) if profiles[0].priority <= profiles[1].priority else (profiles[1], profiles[0])
+        diff_rows = [
+            ["Focus / Target", "Battery / Deep C-States / Cool Operation", "Maximum Throughput / Low Latency / Gaming"],
+            ["CPU Clock Governor", f"{p_bal.g('cpu', 'governor')} (dynamic autonomous scaling)", f"{p_perf.g('cpu', 'governor')} (pegged at top turbo boost)"],
+            ["Energy Preference (EPP)", f"{p_bal.g('cpu', 'epp')} (efficient 1.6-2.0 GHz floor)", f"{p_perf.g('cpu', 'epp')} (immediate full turbo ramp)"],
+            ["Timer Tick (HZ)", f"{p_bal.g('timing', 'hz')} Hz (70% fewer CPU wakeups)", f"{p_perf.g('timing', 'hz')} Hz (3.3x faster queue sampling)"],
+            ["Preemption Model", f"{p_bal.g('timing', 'preempt')} (clean task completion)", f"{p_perf.g('timing', 'preempt')} (clean task completion)"],
+            ["Audio Power Save", f"{p_bal.g('power', 'hda_power_save')}s (sleep after 3s silence)", f"{p_perf.g('power', 'hda_power_save')}s (sleep after 10s silence)"],
+            ["PCIe Link Power (ASPM)", f"{p_bal.g('power', 'pcie_aspm')} (deep L1.1/L1.2 states)", f"{p_perf.g('power', 'pcie_aspm')} (instant wake, active links)"],
+            ["RCU Callback Laziness", "lazy (batches callbacks to stay in C8-C10)", "immediate (fast zero-delay memory reclaim)"],
+            ["Workqueues", "power-efficient (grouped onto cool cores)", "standard (runs on local CPU for cache speed)"],
+            ["User-space Lock Window", "10 µs (default RSEQ time slice)", f"{p_perf.g('rseq', 'slice_ext_nsec') // 1000} µs (extended slice prevents lock stalls)"],
+            ["Hybrid Task Clamping", "disabled (symmetric core allocation)", "uclamp enabled (GameMode/Hyprland favor P-cores)"],
+            ["Transparent Hugepages", "madvise only (no background scanning)", "defer+madvise + shared-memory hugepages"],
+        ]
+        say("")
+        say(f"  {C.CYAN}{C.BOLD}Profile Comparison Matrix:{C.RESET}")
+        table(["Subsystem / Metric", p_bal.name.capitalize(), p_perf.name.capitalize()], diff_rows)
+        say("")
     default = 1
     if facts is not None:
         rec = recommend_profile(profiles, facts)
