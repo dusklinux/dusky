@@ -11,6 +11,9 @@ tags = ["balanced", "battery", "efficiency", "desktop", "laptop"]
 [dusky]
 enhanced = true
 
+[boot]
+set_default = true
+
 [cpu]
 governor = "powersave"
 amd_pstate = "active"
