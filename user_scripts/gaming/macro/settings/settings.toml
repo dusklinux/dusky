@@ -33,6 +33,7 @@ coalesce_mouse_move_us = 1000        # Minimum interval (us) between cursorpos I
 [recording]
 capture_mouse = true
 capture_keyboard = true
+swap_mouse_buttons = "auto"          # "auto" (detects Hyprland left_handed), true, or false
 strip_trigger_chords = true          # Strip start/stop hotkey presses/releases from recorded events
 ignore_virtual_devices = true        # Exclude compositor/virtual devices to prevent feedback loops
 extra_ignored_device_keywords = []   # Optional additional substring filters for /dev/input/event* names

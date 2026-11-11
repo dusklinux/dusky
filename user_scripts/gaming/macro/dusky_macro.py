@@ -480,6 +480,7 @@ class EffectiveConfig:
     pre_click_settle_ns: int
     capture_mouse: bool
     capture_keyboard: bool
+    swap_mouse_buttons: str
     strip_trigger_chords: bool
     ignore_virtual_devices: bool
     extra_ignored_keywords: tuple[str, ...]
@@ -642,6 +643,7 @@ class SettingsManager:
             pre_click_settle_ns=int(tm.get("pre_click_settle_us", 1500)) * 1000,
             capture_mouse=bool(rec.get("capture_mouse", True)),
             capture_keyboard=bool(rec.get("capture_keyboard", True)),
+            swap_mouse_buttons=str(rec.get("swap_mouse_buttons", "auto")),
             strip_trigger_chords=bool(rec.get("strip_trigger_chords", True)),
             ignore_virtual_devices=bool(rec.get("ignore_virtual_devices", True)),
             extra_ignored_keywords=tuple(str(x).lower() for x in rec.get("extra_ignored_device_keywords", [])),
@@ -2584,15 +2586,14 @@ class MacroRecorder:
         last_rescan = start_mono
 
         need_mouse_open = self.capture_mouse or self.stop_matcher.needs_mouse_buttons
-        is_left_handed = self.ipc.is_left_handed()
 
-        def _map_button(code: int) -> int:
-            if is_left_handed:
-                if code == BTN_LEFT:
-                    return BTN_RIGHT
-                if code == BTN_RIGHT:
-                    return BTN_LEFT
-            return code
+        # Resolve whether to swap mouse buttons so physical right button records as primary (left) click
+        should_swap = False
+        swap_opt = str(self.cfg.swap_mouse_buttons).strip().lower()
+        if swap_opt in ("true", "1", "yes", "on"):
+            should_swap = True
+        elif swap_opt == "auto":
+            should_swap = self.ipc.is_left_handed()
 
         RuntimeBeacon.write_state("RECORDING", self.cfg.profile_id, name)
         try:
@@ -2705,24 +2706,32 @@ class MacroRecorder:
                                     coalesced_raw_dx = 0
                                     coalesced_raw_dy = 0
 
-                                for raw_btn_code, pressed in frame.buttons:
+                                for btn_code, pressed in frame.buttons:
                                     if (
                                         self.cfg.strip_trigger_chords
                                         and not pressed
-                                        and raw_btn_code in suppressed_up_codes
+                                        and btn_code in suppressed_up_codes
                                     ):
-                                        suppressed_up_codes.discard(raw_btn_code)
+                                        suppressed_up_codes.discard(btn_code)
                                         continue
-                                    logical_btn = _map_button(raw_btn_code)
+
+                                    # When swap is active (left_handed), physical right click (0x111) is the user's primary (left) action
+                                    logical_code = btn_code
+                                    if should_swap:
+                                        if btn_code == BTN_RIGHT:
+                                            logical_code = BTN_LEFT
+                                        elif btn_code == BTN_LEFT:
+                                            logical_code = BTN_RIGHT
+
                                     d_us = max(0, t_us - prev_t_us)
                                     prev_t_us = t_us
                                     events.append({
                                         "t_us": t_us,
                                         "d_us": d_us,
                                         "type": "mouse_button",
-                                        "button": BUTTON_CODE_TO_NAME.get(logical_btn, "left"),
-                                        "code": logical_btn,
-                                        "raw_code": raw_btn_code,
+                                        "button": BUTTON_CODE_TO_NAME.get(logical_code, "left"),
+                                        "code": logical_code,
+                                        "raw_code": btn_code,
                                         "state": "down" if pressed else "up",
                                         "x": cur_x,
                                         "y": cur_y,
@@ -3047,17 +3056,8 @@ class MacroPlayer:
                             btn_code = int(
                                 ev.get("code") or BUTTON_NAME_TO_CODE.get(ev.get("button", "left"), BTN_LEFT)
                             )
-                            # If Hyprland has left_handed enabled on input, the compositor swaps BTN_LEFT <-> BTN_RIGHT.
-                            # We translate logical btn_code into the physical code that Hyprland maps to this button.
-                            wire_btn = btn_code
-                            if self.ipc.is_left_handed():
-                                if btn_code == BTN_LEFT:
-                                    wire_btn = BTN_RIGHT
-                                elif btn_code == BTN_RIGHT:
-                                    wire_btn = BTN_LEFT
-
                             self.injector.emit_button(
-                                wire_btn, pressed=(ev.get("state") == "down"), sync=sync_btn
+                                btn_code, pressed=(ev.get("state") == "down"), sync=sync_btn
                             )
                         case "mouse_scroll":
                             if not bg_keys:
