@@ -24,7 +24,7 @@ mitigations = "off"
 [timing]
 hz = 1000
 tickless = "idle"
-preempt = "full"
+preempt = "lazy"
 preempt_dynamic = true
 
 [memory]
