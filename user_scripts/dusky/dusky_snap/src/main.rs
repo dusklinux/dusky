@@ -92,7 +92,9 @@ fn main() {
         None => Ok(()),
     });
     if let Err(error) = result {
-        eprintln!("dusky_snap: {error}");
+        let msg = error.to_string();
+        eprintln!("dusky_snap: {msg}");
+        output::notify_error("Dusky Snap Error", &msg);
         std::process::exit(1);
     }
 }

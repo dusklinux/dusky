@@ -1193,7 +1193,11 @@ impl App {
                         }
                         self.status = "Done".into();
                     }
-                    Err(e) => self.status = e,
+                    Err(e) => {
+                        #[cfg(not(test))]
+                        crate::output::notify_error("Dusky Snap Export Failed", &e);
+                        self.status = e;
+                    }
                 }
             }
             Message::Notice(Err(e)) => {
@@ -3326,7 +3330,9 @@ impl canvas::Program<Message> for Surface<'_> {
                 && !app.picker_controls
                 && hover.is_none_or(|p| view.screen(p).y < bounds.height - 48.0)
             {
-                let prompt = if app.options.mode == "scroll" {
+                let prompt = if !app.status.is_empty() {
+                    app.status.as_str()
+                } else if app.options.mode == "scroll" {
                     "Scroll mode active · drag a region or click a window to start · Tab options · Esc cancel"
                 } else {
                     "Drag a region · click a window · Tab options · Esc cancel"

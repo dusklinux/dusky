@@ -118,15 +118,63 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> Result<()> {
     let _ = fs::remove_file(tmp);
     result
 }
+pub fn notify_error(title: &str, message: &str) {
+    let mut cmd = std::process::Command::new("notify-send");
+    crate::gpu::inherit_session_environment(&mut cmd);
+    cmd.args(["-a", "Dusky Snap", "-u", "critical", title, message]);
+    let _ = cmd.spawn();
+}
+
+pub fn clipboard_service_warning() -> Option<String> {
+    let is_active = std::process::Command::new("systemctl")
+        .args(["--user", "is-active", "--quiet", "dusky_clipboard.service"])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if !is_active {
+        let is_enabled = std::process::Command::new("systemctl")
+            .args(["--user", "is-enabled", "--quiet", "dusky_clipboard.service"])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+
+        let status_desc = if is_enabled { "stopped" } else { "disabled" };
+        let msg = format!(
+            "dusky_clipboard.service is {status_desc}. Run: systemctl --user enable --now dusky_clipboard.service"
+        );
+        return Some(msg);
+    }
+    None
+}
+
 pub fn copy(bytes: Vec<u8>, mime: &str) -> Result<()> {
-    command(
+    if let Err(err) = command(
         "wl-copy",
         &["--type", mime],
         Some(bytes),
         Duration::from_secs(5),
-    )?;
-    let types = command("wl-paste", &["--list-types"], None, Duration::from_secs(3))?;
+    ) {
+        if let Some(warn_msg) = clipboard_service_warning() {
+            return Err(format!("wl-copy failed ({err}) — {warn_msg}").into());
+        }
+        return Err(err);
+    }
+
+    let types = match command("wl-paste", &["--list-types"], None, Duration::from_secs(3)) {
+        Ok(t) => t,
+        Err(err) => {
+            if let Some(warn_msg) = clipboard_service_warning() {
+                return Err(format!("Clipboard verification failed ({err}) — {warn_msg}").into());
+            }
+            return Err(err);
+        }
+    };
+
     if !String::from_utf8_lossy(&types).lines().any(|s| s == mime) {
+        if let Some(warn_msg) = clipboard_service_warning() {
+            return Err(format!("Clipboard did not advertise {mime} — {warn_msg}").into());
+        }
         return Err("Clipboard did not advertise the copied format".into());
     }
     Ok(())
