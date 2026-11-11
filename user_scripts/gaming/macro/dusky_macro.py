@@ -253,8 +253,8 @@ schema_version = 1
 
 [paths]
 profiles_dir = "profiles"
-recordings_dir = "recordings"
-default_macro_file = "recordings/quick.macro.json"
+recordings_dir = "~/.config/dusky/settings/dusky_macros"
+default_macro_file = "~/.config/dusky/settings/dusky_macros/quick.macro.json"
 
 [hotkeys]
 record_toggle = "f8"
@@ -448,7 +448,7 @@ class SettingsManager:
         self._last_mtime_ns: int = 0
         self.raw: dict[str, Any] = {}
         self.profiles_dir: Path = self.root_dir / "profiles"
-        self.recordings_dir: Path = self.root_dir / "recordings"
+        self.recordings_dir: Path = Path("~/.config/dusky/settings/dusky_macros").expanduser()
         self.default_macro_file: Path = self.recordings_dir / "quick.macro.json"
         self.reload()
 

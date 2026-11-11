@@ -6,10 +6,10 @@
 schema_version = 1
 
 [paths]
-# Relative paths are resolved against ~/user_scripts/gaming/macro (or script dir)
+# Profiles remain versioned alongside the scripts; macro recordings are stored dynamically in user config
 profiles_dir = "profiles"
-recordings_dir = "recordings"
-default_macro_file = "recordings/quick.macro.json"
+recordings_dir = "~/.config/dusky/settings/dusky_macros"
+default_macro_file = "~/.config/dusky/settings/dusky_macros/quick.macro.json"
 
 [hotkeys]
 # Global default hotkeys (can be overridden per profile).

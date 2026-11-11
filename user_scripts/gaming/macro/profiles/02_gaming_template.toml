@@ -40,7 +40,7 @@ coalesce_mouse_move_us = 500
 [[bindings]]
 name = "Primary Gaming Macro"
 hotkey = "f9"
-macro_file = "recordings/game_quick.macro.json"
+macro_file = "~/.config/dusky/settings/dusky_macros/game_quick.macro.json"
 coordinate_mode = "raw_relative"
 speed_multiplier = 1.0
 repeat_count = 1
@@ -48,7 +48,7 @@ repeat_count = 1
 [[bindings]]
 name = "Mouse Side Button 4 Combo"
 hotkey = "mouse4"
-macro_file = "recordings/side_combo.macro.json"
+macro_file = "~/.config/dusky/settings/dusky_macros/side_combo.macro.json"
 coordinate_mode = "window_relative"
 speed_multiplier = 1.25
 repeat_count = 1

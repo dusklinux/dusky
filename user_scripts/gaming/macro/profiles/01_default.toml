@@ -40,7 +40,7 @@ coalesce_mouse_move_us = 1000
 [[bindings]]
 name = "Quick Slot 1"
 hotkey = "f9"
-macro_file = "recordings/quick.macro.json"
+macro_file = "~/.config/dusky/settings/dusky_macros/quick.macro.json"
 coordinate_mode = "window_relative"
 speed_multiplier = 1.0
 repeat_count = 1
