@@ -5,7 +5,8 @@ set -euo pipefail
 export LC_ALL=C
 SYNC_ID=sys-osd
 RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$UID}
-MEDIA_IPC=$(dirname -- "${BASH_SOURCE[0]}")/media_ipc.py
+MEDIA_IPC=${BASH_SOURCE[0]%/*}/media_ipc.py
+declare -A ICON_CACHE=()
 
 notify() {
     local icon=$1 title=$2 value=${3:-}
@@ -14,11 +15,16 @@ notify() {
         gpm-brightness-lcd|display-brightness-*) name=xfpm-brightness-lcd ;;
         keyboard-brightness) name=input-keyboard-brightness ;;
     esac
-    # Direct files avoid an expensive theme lookup on every held-key repeat.
-    # Papirus is shipped with the ISO; retain named icons on other installations.
-    for candidate in /usr/share/icons/Papirus/{32x32,24x24}/{status,panel,actions,devices}/"$name.svg"; do
-        if [[ -f $candidate ]]; then icon=$candidate; break; fi
-    done
+    if [[ -n ${ICON_CACHE[$name]+present} ]]; then
+        icon=${ICON_CACHE[$name]}
+    else
+        # Direct files avoid an expensive theme lookup on every held-key repeat.
+        # Papirus is shipped with the ISO; retain named icons on other installations.
+        for candidate in /usr/share/icons/Papirus/{32x32,24x24}/{status,panel,actions,devices}/"$name.svg"; do
+            if [[ -f $candidate ]]; then icon=$candidate; break; fi
+        done
+        ICON_CACHE[$name]=$icon
+    fi
     local -a args=(-a OSD -h "string:x-canonical-private-synchronous:$SYNC_ID" -i "$icon")
     if [[ -n $value ]]; then
         # Notification progress is 0–100 even if external tools enabled amplification.
@@ -38,7 +44,7 @@ ui_worker() (
     local group=$1 snapshot latest worker_icon worker_title worker_value
     exec 9> "$RUNTIME_DIR/osd_${group}_ui.lock"
     flock -n 9 || exit 0
-    exec {worker_fd}> "$RUNTIME_DIR/osd_$group.lock"
+    exec {worker_fd}> "$RUNTIME_DIR/osd_${group}_state.lock"
     while true; do
         flock -x "$worker_fd"
         snapshot=$(< "$state_file")
@@ -62,12 +68,19 @@ ui_worker() (
     done
 )
 
+publish_state() {
+    local group=$1 state_lock_fd
+    exec {state_lock_fd}> "$RUNTIME_DIR/osd_${group}_state.lock"
+    flock -x "$state_lock_fd"
+    printf '%s|%s|%s\n' "$icon" "$title" "$value" > "$state_file"
+    exec {state_lock_fd}>&-
+    ui_worker "$group" </dev/null >/dev/null &
+}
+
 publish() {
     local group=$1
-    # All readers and writers use the control lock: no temporary file or mv needed.
-    printf '%s|%s|%s\n' "$icon" "$title" "$value" > "$state_file"
     exec {lock_fd}>&-
-    ui_worker "$group" </dev/null >/dev/null &
+    publish_state "$group"
 }
 
 # Parse brightnessctl's machine format, using raw values for consistent rounding.
@@ -388,65 +401,203 @@ media() {
 }
 
 main() {
-    local action=${1:-} step=${2:-5}
-    if (( $# > 2 )) || [[ ! $step =~ ^[0-9]{1,3}$ ]] || (( 10#$step < 1 || 10#$step > 100 )); then
-        printf 'Step must be an integer from 1 to 100; at most two arguments are accepted.\n' >&2
+    local action=${1:-} step=${2:-5} gesture_id=${3:-}
+    if (( $# > 3 )) || [[ ! $step =~ ^[0-9]{1,3}$ ]] || (( 10#$step < 1 || 10#$step > 100 )) || [[ ! $gesture_id =~ ^[A-Za-z0-9_.:-]*$ ]]; then
+        printf 'Step must be an integer from 1 to 100; at most three arguments are accepted.\n' >&2
         return 1
     fi
     step=$((10#$step))
     local icon title value='' lock_fd state_file device current maximum row volume
     case $action in
-        --vol-up|--vol-down|--vol-mute|--mic-mute)
+        --vol-up|--vol-down)
+            local group=audio
+            local delta_file=$RUNTIME_DIR/osd_audio_delta.txt
+            local cache_file=$RUNTIME_DIR/osd_audio_cache.txt
+            local q_lock_fd pending=0 signed_step=$step
+            [[ $action == --vol-down ]] && signed_step=$(( -step ))
+            state_file=$RUNTIME_DIR/osd_audio_state.txt
+
+            # Deposit signed step into the shared accumulator and return immediately if a worker is already active.
+            exec {q_lock_fd}> "$RUNTIME_DIR/osd_audio_q.lock"
+            flock -x "$q_lock_fd"
+            if [[ -f $delta_file ]]; then
+                pending=$(< "$delta_file")
+                [[ $pending =~ ^-?[0-9]+$ ]] || pending=0
+            fi
+            pending=$(( pending + signed_step ))
+            printf '%s\n' "$pending" > "$delta_file"
+            flock -u "$q_lock_fd"
+
+            exec {lock_fd}> "$RUNTIME_DIR/osd_audio.lock"
+            if ! flock -n "$lock_fd"; then
+                exec {q_lock_fd}>&- {lock_fd}>&-
+                return 0
+            fi
+
+            local backend=''
+            if command -v wpctl >/dev/null 2>&1; then
+                backend=wpctl
+            elif command -v pamixer >/dev/null 2>&1; then
+                backend=pamixer
+            else
+                exec {q_lock_fd}>&- {lock_fd}>&-
+                printf 'Neither wpctl nor pamixer found.\n' >&2
+                return 1
+            fi
+
+            local net_delta=0 now_us cache_ts=0 cur_val=-1 cur_muted=0 target new_muted wp_out
+            while true; do
+                flock -x "$q_lock_fd"
+                net_delta=0
+                if [[ -f $delta_file ]]; then
+                    net_delta=$(< "$delta_file")
+                    [[ $net_delta =~ ^-?[0-9]+$ ]] || net_delta=0
+                fi
+                if (( net_delta == 0 )); then
+                    # Release the hardware lock while still holding the queue lock so any
+                    # incoming writer is guaranteed to acquire the worker lock after depositing.
+                    exec {lock_fd}>&-
+                    flock -u "$q_lock_fd"
+                    exec {q_lock_fd}>&-
+                    break
+                fi
+                printf '0\n' > "$delta_file"
+                flock -u "$q_lock_fd"
+
+                now_us=${EPOCHREALTIME/./}
+                if (( cur_val < 0 )) && [[ -f $cache_file ]]; then
+                    IFS=' ' read -r cache_ts cur_val cur_muted < "$cache_file" || true
+                    if [[ ! $cache_ts =~ ^[0-9]+$ || ! $cur_val =~ ^[0-9]+$ || ! $cur_muted =~ ^[01]$ ]] || (( now_us - cache_ts > 2000000 )); then
+                        cur_val=-1
+                        cur_muted=0
+                    fi
+                fi
+
+                if [[ $backend == wpctl ]]; then
+                    if (( cur_val < 0 )); then
+                        wp_out=$(wpctl get-volume @DEFAULT_AUDIO_SINK@)
+                        cur_muted=0
+                        [[ $wp_out == *'[MUTED]'* ]] && cur_muted=1
+                        if [[ $wp_out =~ ([0-9]+)\.([0-9]{2}) ]]; then
+                            cur_val=$(( 10#${BASH_REMATCH[1]} * 100 + 10#${BASH_REMATCH[2]} ))
+                        else
+                            printf 'Invalid wpctl output: %s\n' "$wp_out" >&2
+                            return 1
+                        fi
+                    fi
+                    target=$(( cur_val + net_delta ))
+                    (( target > 100 )) && target=100
+                    (( target < 0 )) && target=0
+                    new_muted=$cur_muted
+                    (( net_delta > 0 )) && new_muted=0
+                    if (( new_muted != cur_muted )); then
+                        wpctl set-mute @DEFAULT_AUDIO_SINK@ "$new_muted"
+                    fi
+                    if (( target != cur_val )); then
+                        wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ "${target}%"
+                    fi
+                    cur_val=$target
+                    cur_muted=$new_muted
+                    now_us=${EPOCHREALTIME/./}
+                    printf '%s %s %s\n' "$now_us" "$cur_val" "$cur_muted" > "$cache_file"
+                else
+                    if (( cur_val < 0 )); then
+                        local -a mixer=(pamixer)
+                        if (( net_delta > 0 )); then
+                            mixer+=(-u --increase "$net_delta")
+                        else
+                            mixer+=(--decrease "$(( -net_delta ))")
+                        fi
+                        volume=$("${mixer[@]}" --get-volume-human)
+                        if [[ $volume == muted ]]; then
+                            cur_muted=1
+                            cur_val=-1
+                            rm -f "$cache_file"
+                        elif [[ $volume =~ ^([0-9]+)%$ ]]; then
+                            cur_muted=0
+                            cur_val=$(( 10#${BASH_REMATCH[1]} ))
+                            now_us=${EPOCHREALTIME/./}
+                            printf '%s %s 0\n' "$now_us" "$cur_val" > "$cache_file"
+                        else
+                            printf 'Invalid pamixer output: %s\n' "$volume" >&2
+                            return 1
+                        fi
+                    else
+                        target=$(( cur_val + net_delta ))
+                        (( target > 100 )) && target=100
+                        (( target < 0 )) && target=0
+                        new_muted=$cur_muted
+                        (( net_delta > 0 )) && new_muted=0
+                        if (( new_muted != cur_muted && target != cur_val )); then
+                            pamixer -u --set-volume "$target"
+                        elif (( new_muted != cur_muted )); then
+                            pamixer -u
+                        elif (( target != cur_val )); then
+                            pamixer --set-volume "$target"
+                        fi
+                        cur_val=$target
+                        cur_muted=$new_muted
+                        now_us=${EPOCHREALTIME/./}
+                        printf '%s %s %s\n' "$now_us" "$cur_val" "$cur_muted" > "$cache_file"
+                    fi
+                fi
+
+                if (( cur_muted )); then
+                    icon=audio-volume-muted title='Audio Muted' value=''
+                else
+                    value=$cur_val
+                    icon=audio-volume-high title="Volume: $value%"
+                fi
+                publish_state audio
+            done
+            ;;
+        --vol-mute|--mic-mute)
             local group=audio
             if [[ $action == --mic-mute ]]; then
                 group=mic
+            else
+                local q_lock_fd
+                exec {q_lock_fd}> "$RUNTIME_DIR/osd_audio_q.lock"
+                flock -x "$q_lock_fd"
+                rm -f "$RUNTIME_DIR/osd_audio_delta.txt" "$RUNTIME_DIR/osd_audio_cache.txt"
+                exec {q_lock_fd}>&-
             fi
             lock_control "$group"
-            if command -v pamixer >/dev/null 2>&1; then
-                local -a mixer=(pamixer)
-                [[ $group == mic ]] && mixer+=(--default-source)
-                case $action in
-                    --vol-up)   mixer+=(-u --increase "$step") ;;
-                    --vol-down) mixer+=(--decrease "$step") ;;
-                    *)          mixer+=(--toggle-mute) ;;
-                esac
-                volume=$("${mixer[@]}" --get-volume-human)
-                if [[ $volume == muted ]]; then
-                    value=0
-                elif [[ $volume =~ ^([0-9]+)%$ ]]; then
-                    value=$((10#${BASH_REMATCH[1]}))
-                else
-                    printf 'Invalid pamixer output: %s\n' "$volume" >&2
-                    return 1
-                fi
-            elif command -v wpctl >/dev/null 2>&1; then
-                local target='@DEFAULT_AUDIO_SINK@' wp_out
+            if command -v wpctl >/dev/null 2>&1; then
+                local target='@DEFAULT_AUDIO_SINK@' wp_out raw_val=0
                 [[ $group == mic ]] && target='@DEFAULT_AUDIO_SOURCE@'
-                case $action in
-                    --vol-up)
-                        wpctl set-mute "$target" 0
-                        wpctl set-volume -l 1.0 "$target" "${step}%+"
-                        ;;
-                    --vol-down)
-                        wpctl set-volume -l 1.0 "$target" "${step}%-"
-                        ;;
-                    *)
-                        wpctl set-mute "$target" toggle
-                        ;;
-                esac
+                wpctl set-mute "$target" toggle
                 wp_out=$(wpctl get-volume "$target")
-                if [[ $wp_out == *'[MUTED]'* ]]; then
-                    volume=muted
-                    value=0
-                elif [[ $wp_out =~ ([0-9]+)\.([0-9]{2}) ]]; then
-                    value=$(( 10#${BASH_REMATCH[1]} * 100 + 10#${BASH_REMATCH[2]} ))
-                    volume="${value}%"
+                if [[ $wp_out =~ ([0-9]+)\.([0-9]{2}) ]]; then
+                    raw_val=$(( 10#${BASH_REMATCH[1]} * 100 + 10#${BASH_REMATCH[2]} ))
                 else
                     printf 'Invalid wpctl output: %s\n' "$wp_out" >&2
                     return 1
                 fi
+                if [[ $wp_out == *'[MUTED]'* ]]; then
+                    volume=muted
+                    value=0
+                    [[ $group == audio ]] && printf '%s %s 1\n' "${EPOCHREALTIME/./}" "$raw_val" > "$RUNTIME_DIR/osd_audio_cache.txt"
+                else
+                    value=$raw_val
+                    volume="${value}%"
+                    [[ $group == audio ]] && printf '%s %s 0\n' "${EPOCHREALTIME/./}" "$raw_val" > "$RUNTIME_DIR/osd_audio_cache.txt"
+                fi
+            elif command -v pamixer >/dev/null 2>&1; then
+                local -a mixer=(pamixer)
+                [[ $group == mic ]] && mixer+=(--default-source)
+                volume=$("${mixer[@]}" --toggle-mute --get-volume-human)
+                if [[ $volume == muted ]]; then
+                    value=0
+                elif [[ $volume =~ ^([0-9]+)%$ ]]; then
+                    value=$((10#${BASH_REMATCH[1]}))
+                    [[ $group == audio ]] && printf '%s %s 0\n' "${EPOCHREALTIME/./}" "$value" > "$RUNTIME_DIR/osd_audio_cache.txt"
+                else
+                    printf 'Invalid pamixer output: %s\n' "$volume" >&2
+                    return 1
+                fi
             else
-                printf 'Neither pamixer nor wpctl found.\n' >&2
+                printf 'Neither wpctl nor pamixer found.\n' >&2
                 return 1
             fi
             icon=audio-volume-high
@@ -472,21 +623,27 @@ main() {
             if ! backlight_device; then
                 return 0
             fi
-            local last_title='' _ignored floor woke=0 dpms_off=0 delta target
+            local last_title='' _ignored floor woke=0 dpms_off=0 delta target can_turn_off=0 wake_locked=0
             local floor_ts_file=$RUNTIME_DIR/osd_display_floor_ts.txt
             local off_ts_file=$RUNTIME_DIR/osd_display_off_ts.txt
             local active_ts_file=$RUNTIME_DIR/osd_display_active_ts.txt
-            local now_us=${EPOCHREALTIME/./} last_floor_us=0 last_off_us=0 last_active_us=0
+            local wake_ts_file=$RUNTIME_DIR/osd_display_wake_ts.txt
+            local now_us=${EPOCHREALTIME/./} last_floor_us=0 last_off_us=0 last_active_us=0 last_wake_us=0
+            local floor_gid='' off_gid='' active_gid='' wake_gid=''
             if [[ -f $state_file ]]; then
                 IFS='|' read -r _ignored last_title _ignored < "$state_file" || true
             fi
             if [[ -f $floor_ts_file ]]; then
-                last_floor_us=$(< "$floor_ts_file")
-                [[ $last_floor_us =~ ^[0-9]+$ ]] || last_floor_us=0
+                IFS=' ' read -r last_floor_us floor_gid < "$floor_ts_file" || true
+                [[ $last_floor_us =~ ^[0-9]+$ ]] || { last_floor_us=0; floor_gid=''; }
             fi
             if [[ -f $off_ts_file ]]; then
-                last_off_us=$(< "$off_ts_file")
-                [[ $last_off_us =~ ^[0-9]+$ ]] || last_off_us=0
+                IFS=' ' read -r last_off_us off_gid < "$off_ts_file" || true
+                [[ $last_off_us =~ ^[0-9]+$ ]] || { last_off_us=0; off_gid=''; }
+            fi
+            if [[ -f $wake_ts_file ]]; then
+                IFS=' ' read -r last_wake_us wake_gid < "$wake_ts_file" || true
+                [[ $last_wake_us =~ ^[0-9]+$ ]] || { last_wake_us=0; wake_gid=''; }
             fi
             floor=$(( (maximum + 99) / 100 ))
             (( floor < 1 )) && floor=1
@@ -494,54 +651,105 @@ main() {
             (( delta < 1 )) && delta=1
             icon=gpm-brightness-lcd
             if [[ $action == --bright-down ]]; then
+                rm -f "$wake_ts_file"
                 if (( current <= floor )); then
-                    printf '%s\n' "$now_us" > "$floor_ts_file"
-                    get_dpms
+                    if [[ -n "$gesture_id" && -n "$off_gid" && $gesture_id == "$off_gid" ]]; then
+                        dpms_off=1
+                    else
+                        get_dpms
+                    fi
                     if (( dpms_off )); then
                         icon=display-brightness-off title='Screen Off' value=0
-                    elif [[ $last_title == 'Swipe again to turn off' ]] && (( now_us - last_floor_us > 400000 )); then
-                        set_dpms disable
-                        printf '%s\n' "$now_us" > "$off_ts_file"
-                        rm -f "$active_ts_file"
-                        icon=display-brightness-off title='Screen Off' value=0
-else
-                        write_backlight "$floor"
-                        icon=display-brightness-warning title='Swipe again to turn off'
+                    else
+                        if [[ $last_title == 'Swipe again to turn off' ]] && (( last_floor_us > 0 )); then
+                            if [[ -n "$gesture_id" ]]; then
+                                if [[ $gesture_id != "$floor_gid" ]] && (( now_us - last_floor_us > 150000 )); then
+                                    can_turn_off=1
+                                fi
+                            elif (( now_us - last_floor_us > 400000 )); then
+                                can_turn_off=1
+                            fi
+                        fi
+                        if (( can_turn_off )); then
+                            set_dpms disable
+                            now_us=${EPOCHREALTIME/./}
+                            printf '%s %s\n' "$now_us" "$gesture_id" > "$off_ts_file"
+                            rm -f "$active_ts_file" "$floor_ts_file"
+                            icon=display-brightness-off title='Screen Off' value=0
+                        else
+                            write_backlight "$floor"
+                            if [[ $last_title != 'Swipe again to turn off' || -z "$gesture_id" || $gesture_id == "$floor_gid" ]]; then
+                                printf '%s %s\n' "$now_us" "$gesture_id" > "$floor_ts_file"
+                            fi
+                            icon=display-brightness-warning title='Swipe again to turn off'
+                        fi
                     fi
                 else
                     target=$(( current - delta ))
                     (( target < floor )) && target=$floor
                     write_backlight "$target"
+                    rm -f "$off_ts_file"
                     if (( current <= floor )); then
-                        printf '%s\n' "$now_us" > "$floor_ts_file"
+                        printf '%s %s\n' "$now_us" "$gesture_id" > "$floor_ts_file"
+                        icon=display-brightness-warning title='Swipe again to turn off'
+                    else
+                        rm -f "$floor_ts_file"
+                        title="Brightness: $value%"
                     fi
-                    title="Brightness: $value%"
                 fi
             else
                 # Ignore lift-off rebound for 600ms immediately after turning screen off
                 if (( last_off_us > 0 && now_us - last_off_us < 600000 )); then
                     return 0
                 fi
-                rm -f "$floor_ts_file" "$off_ts_file"
                 if [[ -f $active_ts_file ]]; then
-                    last_active_us=$(< "$active_ts_file")
-                    [[ $last_active_us =~ ^[0-9]+$ ]] || last_active_us=0
+                    IFS=' ' read -r last_active_us active_gid < "$active_ts_file" || true
+                    [[ $last_active_us =~ ^[0-9]+$ ]] || { last_active_us=0; active_gid=''; }
                 fi
-                # Query DPMS if outside the 2-second active window or if previously off
-                if (( now_us - last_active_us > 2000000 )) || [[ $last_title == 'Screen Off' ]]; then
-                    get_dpms
-                    if (( dpms_off )); then
-                        set_dpms enable
-                        sleep 0.15
-                        woke=1
+                # Lock remaining ticks of the wake gesture (or 400ms non-gesture wake window) to floor
+                if (( last_wake_us > 0 )); then
+                    if [[ -n "$gesture_id" ]]; then
+                        if [[ $gesture_id == "$wake_gid" ]] || (( now_us - last_wake_us < 150000 )); then
+                            wake_locked=1
+                        fi
+                    elif (( now_us - last_wake_us < 400000 )); then
+                        wake_locked=1
                     fi
                 fi
-                printf '%s\n' "$now_us" > "$active_ts_file"
-                target=$(( current + delta ))
-                (( target > maximum )) && target=$maximum
-                write_backlight "$target"
-                title="Brightness: $value%"
-                if (( woke )); then title="Screen On: $value%"; fi
+                if (( wake_locked )); then
+                    if (( current != floor )); then
+                        write_backlight "$floor"
+                    fi
+                    if [[ -z "$gesture_id" || -z "$wake_gid" || $gesture_id == "$wake_gid" ]]; then
+                        printf '%s %s\n' "$now_us" "${gesture_id:-$wake_gid}" > "$wake_ts_file"
+                    fi
+                    printf '%s %s\n' "$now_us" "$gesture_id" > "$active_ts_file"
+                    title="Screen On: $value%"
+                else
+                    rm -f "$floor_ts_file" "$off_ts_file" "$wake_ts_file"
+                    # Query DPMS on new gesture, outside the 2-second active window, or if previously off
+                    if [[ -z "$gesture_id" || $gesture_id != "$active_gid" ]] || (( now_us - last_active_us > 2000000 )) || [[ $last_title == 'Screen Off' ]]; then
+                        get_dpms
+                        if (( dpms_off )); then
+                            write_backlight "$floor"
+                            set_dpms enable
+                            sleep 0.15
+                            write_backlight "$floor"
+                            woke=1
+                        fi
+                    fi
+                    now_us=${EPOCHREALTIME/./}
+                    printf '%s %s\n' "$now_us" "$gesture_id" > "$active_ts_file"
+                    if (( woke )); then
+                        printf '%s %s\n' "$now_us" "$gesture_id" > "$wake_ts_file"
+                        title="Screen On: $value%"
+                    else
+                        target=$(( current + delta ))
+                        (( target > maximum )) && target=$maximum
+                        write_backlight "$target"
+                        title="Brightness: $value%"
+                    fi
+                fi
             fi
             publish display
             ;;

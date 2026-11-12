@@ -38,11 +38,13 @@ hl.gesture({
     direction = "vertical",
     action    = {
         start = function(e)
-            _G._dusky_vol_acc = (-e.delta.y) * 0.25
-            _G._dusky_vol_ms  = e.time_ms or 0
+            local now = (e and e.time_ms) or 0
+            _G._dusky_vol_acc = (-((e and e.delta and e.delta.y) or 0)) * 0.25
+            _G._dusky_vol_ms  = now
+            _G._dusky_vol_dir = 0
         end,
         update = function(e)
-            local d = (-e.delta.y) * 0.25
+            local d = (-((e and e.delta and e.delta.y) or 0)) * 0.25
             local acc = (_G._dusky_vol_acc or 0)
             -- Clear opposing fractional remainder on direction reversal to prevent lift-off jitter
             if (d > 0 and acc < 0) or (d < 0 and acc > 0) then
@@ -50,13 +52,15 @@ hl.gesture({
             end
             acc = acc + d
             local step = math.floor(math.abs(acc))
-            local now = e.time_ms or 0
+            local now = (e and e.time_ms) or 0
             local last = _G._dusky_vol_ms or 0
-            if step >= 2 and (now < last or (now - last) >= 25) then
+            if step >= 2 and (now < last or (now - last) >= 35) then
                 if step > 100 then step = 100 end
-                local flag = acc > 0 and "--vol-up " or "--vol-down "
-                _G._dusky_vol_acc = acc - (acc > 0 and step or -step)
+                local dir = acc > 0 and 1 or -1
+                local flag = dir > 0 and "--vol-up " or "--vol-down "
+                _G._dusky_vol_acc = acc - (dir > 0 and step or -step)
                 _G._dusky_vol_ms  = now
+                _G._dusky_vol_dir = dir
                 hl.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh " .. flag .. step)
             else
                 _G._dusky_vol_acc = acc
@@ -64,12 +68,16 @@ hl.gesture({
         end,
         finish = function(e)
             local acc = (_G._dusky_vol_acc or 0)
+            local last_dir = _G._dusky_vol_dir or 0
             _G._dusky_vol_acc = 0
+            _G._dusky_vol_dir = 0
             if not (e and e.cancelled) then
                 local step = math.floor(math.abs(acc))
-                if step >= 1 then
+                local dir = acc > 0 and 1 or -1
+                -- Suppress opposite-direction finger-lift rebound while preserving same-direction and micro-swipe steps
+                if step >= 1 and (last_dir == 0 or dir == last_dir) then
                     if step > 100 then step = 100 end
-                    local flag = acc > 0 and "--vol-up " or "--vol-down "
+                    local flag = dir > 0 and "--vol-up " or "--vol-down "
                     hl.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh " .. flag .. step)
                 end
             end
@@ -83,11 +91,16 @@ hl.gesture({
     direction = "horizontal",
     action    = {
         start = function(e)
-            _G._dusky_bright_acc = e.delta.x * 0.25
-            _G._dusky_bright_ms  = e.time_ms or 0
+            local now = (e and e.time_ms) or 0
+            local seq = (_G._dusky_bright_seq or 0) + 1
+            _G._dusky_bright_seq = seq
+            _G._dusky_bright_id  = tostring(math.abs(math.floor(now))) .. "_" .. tostring(seq)
+            _G._dusky_bright_acc = ((e and e.delta and e.delta.x) or 0) * 0.25
+            _G._dusky_bright_ms  = now
+            _G._dusky_bright_dir = 0
         end,
         update = function(e)
-            local d = e.delta.x * 0.25
+            local d = ((e and e.delta and e.delta.x) or 0) * 0.25
             local acc = (_G._dusky_bright_acc or 0)
             -- Clear opposing fractional remainder on direction reversal to prevent lift-off jitter
             if (d > 0 and acc < 0) or (d < 0 and acc > 0) then
@@ -95,27 +108,36 @@ hl.gesture({
             end
             acc = acc + d
             local step = math.floor(math.abs(acc))
-            local now = e.time_ms or 0
+            local now = (e and e.time_ms) or 0
             local last = _G._dusky_bright_ms or 0
             if step >= 2 and (now < last or (now - last) >= 25) then
                 if step > 100 then step = 100 end
-                local flag = acc > 0 and "--bright-up " or "--bright-down "
-                _G._dusky_bright_acc = acc - (acc > 0 and step or -step)
+                local dir = acc > 0 and 1 or -1
+                local flag = dir > 0 and "--bright-up " or "--bright-down "
+                local gid = _G._dusky_bright_id or "0"
+                _G._dusky_bright_acc = acc - (dir > 0 and step or -step)
                 _G._dusky_bright_ms  = now
-                hl.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh " .. flag .. step)
+                _G._dusky_bright_dir = dir
+                hl.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh " .. flag .. step .. " " .. gid)
             else
                 _G._dusky_bright_acc = acc
             end
         end,
         finish = function(e)
             local acc = (_G._dusky_bright_acc or 0)
+            local gid = _G._dusky_bright_id or "0"
+            local last_dir = _G._dusky_bright_dir or 0
             _G._dusky_bright_acc = 0
+            _G._dusky_bright_id  = nil
+            _G._dusky_bright_dir = 0
             if not (e and e.cancelled) then
                 local step = math.floor(math.abs(acc))
-                if step >= 1 then
+                local dir = acc > 0 and 1 or -1
+                -- Suppress opposite-direction finger-lift rebound while preserving same-direction and micro-swipe steps
+                if step >= 1 and (last_dir == 0 or dir == last_dir) then
                     if step > 100 then step = 100 end
-                    local flag = acc > 0 and "--bright-up " or "--bright-down "
-                    hl.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh " .. flag .. step)
+                    local flag = dir > 0 and "--bright-up " or "--bright-down "
+                    hl.exec_cmd(dusky_scripts .. "mako_osd/osd_router/osd_router.sh " .. flag .. step .. " " .. gid)
                 end
             end
         end,
