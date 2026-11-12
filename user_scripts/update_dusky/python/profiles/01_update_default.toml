@@ -62,7 +62,7 @@ search_dirs = [
 tasks = [
     # ================= CUSTOM =====================
 
-    "S | temp_python_315_installer.py install",
+    "S | once | temp_python_315_installer.py install",
     # "S | once | temp_python_315_installer.py --undo",
 
     "U | once | backup_hyprlang_files.sh",
