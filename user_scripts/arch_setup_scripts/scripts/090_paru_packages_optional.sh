@@ -43,6 +43,7 @@ Tools       | evince                | Document viewer (PDF, PostScript, XPS, djv
 Tools       | aria2                 | High-speed download utility (Pair with uget)
 Tools       | uget                  | Download Manager GUI (Pair with aria2)
 Tools       | libdvdcss             | Portable abstraction library for DVD decryption
+Tools       | gvfs-gphoto2          | Digital camera PTP mount support for GVFS
 Internet    | filezilla             | Fast and reliable FTP/SFTP client
 Internet    | zapret2               | Deep Packet Inspection circumvention for blocked sites
 Internet    | qbittorrent           | Feature-rich BitTorrent client (Qt-based)

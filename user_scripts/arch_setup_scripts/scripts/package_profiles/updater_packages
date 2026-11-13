@@ -19,7 +19,6 @@ gvfs
 gvfs-mtp
 gvfs-nfs
 gvfs-smb
-gvfs-gphoto2
 gvfs-afc
 gvfs-dnssd
 catfish

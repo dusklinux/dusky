@@ -245,7 +245,7 @@ ALL_GROUPS: dict[str, list[str]] = {
         "thunar", "thunar-archive-plugin", "thunar-volman", "thunar-media-tags-plugin",
         "thunar-shares-plugin", "thunar-vcs-plugin", "tumbler", "ffmpegthumbnailer",
         "webp-pixbuf-loader", "poppler-glib", "libgsf", "libgepub", "libopenraw", "resvg",
-        "gvfs", "gvfs-mtp", "gvfs-nfs", "gvfs-smb", "gvfs-gphoto2", "gvfs-afc", "gvfs-dnssd",
+        "gvfs", "gvfs-mtp", "gvfs-nfs", "gvfs-smb", "gvfs-afc", "gvfs-dnssd",
         "catfish", "gnome-keyring", "meld", "xreader", "imagemagick", "kio-admin",
     ],
     "network": [
