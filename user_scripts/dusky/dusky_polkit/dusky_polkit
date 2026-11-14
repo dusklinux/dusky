@@ -21,7 +21,9 @@ import socket
 import struct
 lazy import subprocess
 import sys
+lazy import termios
 import time
+lazy import tty
 from collections import deque
 
 BUS_NAME = "org.freedesktop.PolicyKit1"
@@ -786,7 +788,7 @@ class Agent:
             extra = [
                 "--app-id=dusky-polkit",
                 "--title=Dusky Polkit",
-                "--window-size-chars=66x10",
+                "--window-size-chars=66x12",
                 "--override=pad=16x16",
             ]
         elif base == "kitty":
@@ -1168,6 +1170,94 @@ class Agent:
         self.sel.close()
 
 
+def _is_standalone_escape(fd: int) -> bool:
+    """Return True if no escape-sequence bytes follow \\x1b within 25ms."""
+    if not select.select([fd], [], [], 0.025)[0]:
+        return True
+    while select.select([fd], [], [], 0.005)[0]:
+        if not os.read(fd, 64):
+            break
+    return False
+
+
+def _read_prompt(fd: int, prompt: str, echo: bool) -> str:
+    """Read a line in cbreak mode; cancel on standalone Escape, Ctrl+C, or Ctrl+D."""
+    sys.stdout.write(prompt)
+    sys.stdout.flush()
+    buf = bytearray()
+    while True:
+        ch = os.read(fd, 1)
+        if not ch or ch == b"\x04":
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+            raise EOFError
+        if ch == b"\x03":
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+            raise KeyboardInterrupt
+        if ch == b"\x1b":
+            if _is_standalone_escape(fd):
+                sys.stdout.write("\n")
+                sys.stdout.flush()
+                raise KeyboardInterrupt
+            continue
+        if ch in (b"\r", b"\n"):
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+            return buf.decode("utf-8", "replace")
+        if ch in (b"\x7f", b"\x08"):
+            if buf:
+                while buf and (buf[-1] & 0xC0) == 0x80:
+                    buf.pop()
+                if buf:
+                    buf.pop()
+                if echo:
+                    sys.stdout.write("\b \b")
+                    sys.stdout.flush()
+            continue
+        if ch == b"\x15":
+            if echo and buf:
+                n = len(buf.decode("utf-8", "replace"))
+                sys.stdout.write("\b \b" * n)
+                sys.stdout.flush()
+            buf.clear()
+            continue
+        b0 = ch[0]
+        if b0 >= 32 or ch == b"\t":
+            need = (1 if 0xC0 <= b0 < 0xE0 else
+                    2 if 0xE0 <= b0 < 0xF0 else
+                    3 if 0xF0 <= b0 < 0xF8 else 0)
+            while need > 0 and select.select([fd], [], [], 0.01)[0]:
+                more = os.read(fd, need)
+                if not more:
+                    break
+                ch += more
+                need -= len(more)
+            buf.extend(ch)
+            if echo:
+                sys.stdout.write(ch.decode("utf-8", "replace"))
+                sys.stdout.flush()
+
+
+def _recv_ui_event(sk: socket.socket, fd: int, rbuf: bytes) -> tuple[dict | None, bytes]:
+    """Wait for the next JSON line from the daemon while allowing Escape to cancel."""
+    while b"\n" not in rbuf:
+        readable, _, _ = select.select([sk, fd], [], [])
+        if fd in readable:
+            ch = os.read(fd, 1)
+            if not ch or ch in (b"\x03", b"\x04"):
+                raise KeyboardInterrupt
+            if ch == b"\x1b" and _is_standalone_escape(fd):
+                raise KeyboardInterrupt
+        if sk in readable:
+            chunk = sk.recv(4096)
+            if not chunk:
+                return None, rbuf
+            rbuf += chunk
+    raw, _, rbuf = rbuf.partition(b"\n")
+    return json.loads(raw), rbuf
+
+
 def run_ui() -> int:
     """One transient terminal handles the entire PAM conversation."""
     try:
@@ -1179,51 +1269,58 @@ def run_ui() -> int:
         console = None
     if not sys.stdin.isatty():
         return 1
+    fd = sys.stdin.fileno()
+    old_term = termios.tcgetattr(fd)
     try:
+        tty.setcbreak(fd, termios.TCSADRAIN)
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sk:
             sk.connect(os.environ["DUSKY_UI_SOCKET"])
-            with sk.makefile("r", encoding="utf-8") as stream:
-                for line in stream:
-                    event = json.loads(line)
-                    kind = event["type"]
-                    if kind == "init":
-                        # Preserve the supplied action message, including pkexec's
-                        # program/user context, and treat it as literal text.
-                        message = event["message"] or "Authentication required"
-                        body = f"{message}\n\nAction: {event['action']}"
-                        program = event["details"].get("program")
-                        if program:
-                            body += f"\nProgram: {program}"
-                        if console:
-                            console.print(Panel(Text(body), title="Dusky Polkit",
-                                                border_style="#89b4fa"))
-                        else:
-                            print(body)
-                        users = event["users"]
-                        index = 0
-                        if len(users) > 1:
-                            for i, user in enumerate(users, 1):
-                                print(f"  {i}. {user}")
-                            while True:
-                                answer = input("Authenticate as [1]: ").strip() or "1"
-                                if answer.isdecimal() and 1 <= int(answer) <= len(users):
-                                    index = int(answer) - 1
-                                    break
-                        print(f"User: {users[index]}", flush=True)
-                        reply = {"user": users[index]}
-                    elif kind == "prompt":
-                        prompt = event["text"]
-                        response = input(prompt) if event["echo"] else getpass.getpass(prompt)
-                        reply = {"response": response}
-                    elif kind == "info":
-                        print(event["text"], flush=True)
-                        continue
+            rbuf = b""
+            while True:
+                event, rbuf = _recv_ui_event(sk, fd, rbuf)
+                if event is None:
+                    break
+                kind = event["type"]
+                if kind == "init":
+                    # Preserve the supplied action message, including pkexec's
+                    # program/user context, and treat it as literal text.
+                    message = event["message"] or "Authentication required"
+                    body = f"{message}\n\nAction: {event['action']}"
+                    program = event["details"].get("program")
+                    if program:
+                        body += f"\nProgram: {program}"
+                    if console:
+                        console.print(Panel(Text(body), title="Dusky Polkit",
+                                            border_style="#89b4fa"))
                     else:
-                        return 1
-                    sk.sendall(json.dumps(reply).encode() + b"\n")
+                        print(body)
+                    users = event["users"]
+                    index = 0
+                    if len(users) > 1:
+                        for i, user in enumerate(users, 1):
+                            print(f"  {i}. {user}")
+                        while True:
+                            answer = _read_prompt(fd, "Authenticate as [1]: ", True).strip() or "1"
+                            if answer.isdecimal() and 1 <= int(answer) <= len(users):
+                                index = int(answer) - 1
+                                break
+                    print(f"User: {users[index]}", flush=True)
+                    reply = {"user": users[index]}
+                elif kind == "prompt":
+                    prompt = event["text"]
+                    response = _read_prompt(fd, prompt, bool(event["echo"]))
+                    reply = {"response": response}
+                elif kind == "info":
+                    print(event["text"], flush=True)
+                    continue
+                else:
+                    return 1
+                sk.sendall(json.dumps(reply).encode() + b"\n")
         return 0
     except (KeyboardInterrupt, EOFError, OSError, ValueError, KeyError):
         return 1
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_term)
 
 
 def main() -> int:
