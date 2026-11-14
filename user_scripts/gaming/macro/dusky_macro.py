@@ -1055,7 +1055,7 @@ _LUA_SAFE_BYTES = frozenset(range(0x20, 0x7F)) - {0x22, 0x5C}
 _LUA_FULLSCREEN_MODES = {"0": "fullscreen", "1": "maximized"}
 
 LAYER_LEVELS = ("background", "bottom", "top", "overlay")
-AUTH_LAYER_MARKS = ("polkit", "dusky-polkit", "org.dusky.polkit")
+AUTH_LAYER_MARKS = ("polkit", "dusky_polkit", "org.dusky.polkit")
 _LAYER_KINDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "launcher",
@@ -1075,7 +1075,7 @@ _LAYER_KINDS: tuple[tuple[str, tuple[str, ...]], ...] = (
 
 # Client window classes and titles that represent privilege/authentication dialogs
 AUTH_WINDOW_CLASSES = (
-    "dusky-polkit",
+    "dusky_polkit",
     "org.dusky.polkit",
     "hyprpolkitagent",
     "polkit-gnome-authentication-agent-1",
@@ -1342,7 +1342,7 @@ class HyprlandSocketClient:
 
 class DesktopTopology:
     """Maintains desktop monitor geometry, normalized client window properties,
-    layer-shell & authentication guards (including dusky-polkit / org.dusky.polkit),
+    layer-shell & authentication guards (including dusky_polkit / org.dusky.polkit),
     and state-first .socket2.sock event waiting."""
 
     _SCHEMAS: dict[str, tuple[tuple[str, ...], int]] = {
@@ -1469,7 +1469,7 @@ class DesktopTopology:
 
     def has_blocking_overlay(self, block_auth: bool = True, block_launcher: bool = True) -> str | None:
         """Checks active window class/title and visible clients/layers for authentication dialogs
-        (including dusky-polkit / org.dusky.polkit / 'Dusky Polkit') or launchers."""
+        (including dusky_polkit / org.dusky.polkit / 'Dusky Polkit') or launchers."""
         with self._lock:
             if block_auth:
                 win_cls = (self.active_window.get("class") or "").lower()
@@ -2802,7 +2802,7 @@ class MacroRecorder:
 class MacroPlayer:
     """High-precision macro playback engine with Coordinate Mode resolution,
     pre-click cursor settle, click_at_current_cursor, background sendshortcut key delivery,
-    dusky-polkit / session-lock safety guards, and guaranteed release_all() cleanup."""
+    dusky_polkit / session-lock safety guards, and guaranteed release_all() cleanup."""
 
     def __init__(
         self,

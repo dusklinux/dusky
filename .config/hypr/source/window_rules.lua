@@ -1532,8 +1532,8 @@ hl.window_rule({
 
 --- Dusky Polkit Agent ---
 hl.window_rule({
-    name = "pin-dusky-polkit-agent",
-    match = { class = "^(dusky-polkit|org\\.dusky\\.polkit)$" },
+    name = "pin_dusky_polkit_agent",
+    match = { class = "^(dusky_polkit|org\\.dusky\\.polkit)$" },
     float = true,
     center = true,
     size = {640, 240},

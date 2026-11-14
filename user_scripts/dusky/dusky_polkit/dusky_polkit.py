@@ -98,7 +98,7 @@ class BusError(Exception):
 
 
 def log(msg: str) -> None:
-    print(f"[dusky-polkit] {msg}", file=sys.stderr, flush=True)
+    print(f"[dusky_polkit] {msg}", file=sys.stderr, flush=True)
 
 
 def bus_address(address: str) -> str:
@@ -734,7 +734,7 @@ class Agent:
 
     def runtime_dir(self) -> str:
         runtime = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
-        path = os.path.join(runtime, "dusky-polkit")
+        path = os.path.join(runtime, "dusky_polkit")
         os.makedirs(path, mode=0o700, exist_ok=True)
         return path
 
@@ -786,16 +786,16 @@ class Agent:
         base = os.path.basename(cmd[0])
         if base == "foot":
             extra = [
-                "--app-id=dusky-polkit",
+                "--app-id=dusky_polkit",
                 "--title=Dusky Polkit",
                 "--window-size-chars=66x12",
                 "--override=pad=16x16",
             ]
         elif base == "kitty":
-            extra = ["--app-id=dusky-polkit", "--title=Dusky Polkit",
+            extra = ["--app-id=dusky_polkit", "--title=Dusky Polkit",
                      "--single-instance=no", "--detach=no"]
         elif base == "alacritty":
-            extra = ["--class=dusky-polkit", "--title=Dusky Polkit", "-e"]
+            extra = ["--class=dusky_polkit", "--title=Dusky Polkit", "-e"]
         elif base == "ghostty":
             extra = ["--class=org.dusky.polkit", "--title=Dusky Polkit",
                      "--gtk-single-instance=false", "-e"]

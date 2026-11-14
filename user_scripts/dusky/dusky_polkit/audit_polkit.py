@@ -48,7 +48,7 @@ def hash_file(path):
         return f"Error: {e}"
 
 def load_agent():
-    loader = SourceFileLoader("dusky_polkit", str(Path(__file__).resolve().parent / "dusky_polkit"))
+    loader = SourceFileLoader("dusky_polkit", str(Path(__file__).resolve().parent / "dusky_polkit.py"))
     spec = spec_from_loader(loader.name, loader)
     module = module_from_spec(spec)
     sys.modules[spec.name] = module
