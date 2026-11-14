@@ -69,6 +69,7 @@ hl_env("XDG_MENU_PREFIX", "arch-") -- fixes empty Open With in Dolphin/digiKam o
 
 -- 5. Prefer Wayland; allow X11 backends when XWayland is enabled.
 hl_env("GDK_BACKEND", "wayland,x11,*")
+hl_env("GDK_WAYLAND_DISABLE", "ext_background_effect_manager_v1")
 hl_env("QT_QPA_PLATFORM", "wayland;xcb")
 hl_env("QT_QPA_PLATFORMTHEME", "qt6ct")
 hl_env("QT_WAYLAND_DISABLE_WINDOWDECORATION", "1")
