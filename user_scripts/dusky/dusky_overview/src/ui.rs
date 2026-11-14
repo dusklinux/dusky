@@ -1353,7 +1353,7 @@ pub fn view(&self) -> Element<'_, Message> {
             .height(Length::Fill)
             .on_press(Message::Dismiss)
             .style(move |_theme: &Theme, _status: button::Status| button::Style {
-                background: Some(Background::Color(with_alpha(p.bg, 0.58 * entrance))),
+                background: Some(Background::Color(with_alpha(p.bg, 0.58 * entrance.max(0.02)))),
                 text_color: p.fg,
                 border: Border::default(),
                 shadow: Shadow::default(),

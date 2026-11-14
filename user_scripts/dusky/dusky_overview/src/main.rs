@@ -6,7 +6,7 @@ mod icons;
 mod ui;
 
 use iced::Color;
-use iced_exwlshell::reexport::{Anchor, KeyboardInteractivity, Layer};
+use iced_exwlshell::reexport::{Anchor, BlurOption, KeyboardInteractivity, Layer};
 use iced_exwlshell::settings::LayerShellSettings;
 use std::env;
 use std::io::Write;
@@ -262,6 +262,27 @@ fn optimize_gpu_environment() {
     }
 }
 
+unsafe extern "C" {
+    fn signal(sig: i32, handler: extern "C" fn(i32)) -> usize;
+}
+
+extern "C" fn handle_termination_signal(_sig: i32) {
+    hyprland::restore_blur_now();
+    let _ = std::fs::remove_file(instance_socket_path());
+    std::process::exit(0);
+}
+
+fn install_signal_handlers() {
+    const SIGHUP: i32 = 1;
+    const SIGINT: i32 = 2;
+    const SIGTERM: i32 = 15;
+    unsafe {
+        signal(SIGHUP, handle_termination_signal);
+        signal(SIGINT, handle_termination_signal);
+        signal(SIGTERM, handle_termination_signal);
+    }
+}
+
 fn main() -> Result<(), iced_exwlshell::Error> {
     let args: Vec<String> = env::args().collect();
     let mut reverse = false;
@@ -345,11 +366,14 @@ fn main() -> Result<(), iced_exwlshell::Error> {
     fonts::initialize();
 
     let palette = ui::ThemePalette::load();
+    install_signal_handlers();
+    let blur_guard = hyprland::BlurOverrideGuard::acquire();
 
     let settings = iced_exwlshell::Settings {
         default_font: iced_core::Font::with_name(fonts::DEFAULT_FAMILY),
         layer_settings: LayerShellSettings {
             layer: Layer::Overlay,
+            blur_option: BlurOption::FullRegion,
             keyboard_interactivity: KeyboardInteractivity::Exclusive,
             anchor: Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right,
             exclusive_zone: -1,
@@ -374,6 +398,7 @@ fn main() -> Result<(), iced_exwlshell::Error> {
     .settings(settings)
     .run();
 
+    drop(blur_guard);
     let _ = std::fs::remove_file(&sock_path);
 
     if let Some(action) = ui::take_post_exit_action() {

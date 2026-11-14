@@ -725,3 +725,122 @@ pub fn focus_workspace(target: &WorkspaceKey) -> Result<(), HyprError> {
     }
     Ok(())
 }
+
+use std::sync::atomic::{AtomicI64, Ordering};
+
+static ACTIVE_BLUR_SIZE_RESTORE: AtomicI64 = AtomicI64::new(0);
+static ACTIVE_BLUR_PASSES_RESTORE: AtomicI64 = AtomicI64::new(0);
+
+fn blur_state_file_path() -> PathBuf {
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join("dusky_overview.blur_size")
+}
+
+fn is_blur_enabled() -> bool {
+    if let Ok(resp) = send_socket_command("getoption decoration:blur:enabled") {
+        for line in resp.lines() {
+            let trimmed = line.trim();
+            if trimmed == "bool: true" || trimmed == "int: 1" {
+                return true;
+            }
+            if trimmed == "bool: false" || trimmed == "int: 0" {
+                return false;
+            }
+        }
+    }
+    false
+}
+
+fn query_int_option(option: &str) -> Option<i64> {
+    let cmd = format!("getoption {option}");
+    let resp = send_socket_command(&cmd).ok()?;
+    for line in resp.lines() {
+        if let Some(val) = line.trim().strip_prefix("int:")
+            && let Ok(parsed) = val.trim().parse::<i64>()
+        {
+            return Some(parsed);
+        }
+    }
+    None
+}
+
+fn read_saved_blur_state(path: &Path) -> Option<(i64, i64)> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    let mut parts = raw.split_whitespace();
+    let size = parts.next()?.parse::<i64>().ok().filter(|&v| v > 0)?;
+    let passes = parts
+        .next()
+        .and_then(|s| s.parse::<i64>().ok())
+        .filter(|&v| v > 0)
+        .unwrap_or(2);
+    Some((size, passes))
+}
+
+pub fn restore_blur_now() {
+    let orig_size = ACTIVE_BLUR_SIZE_RESTORE.swap(0, Ordering::SeqCst);
+    let orig_passes = ACTIVE_BLUR_PASSES_RESTORE.swap(0, Ordering::SeqCst);
+    if orig_size > 0 && orig_passes > 0 {
+        let cmd = format!(
+            "[[BATCH]]keyword decoration:blur:size {orig_size};keyword decoration:blur:passes {orig_passes}"
+        );
+        let _ = send_socket_command(&cmd);
+        let _ = std::fs::remove_file(blur_state_file_path());
+    }
+}
+
+pub struct BlurOverrideGuard;
+
+impl BlurOverrideGuard {
+    pub fn acquire() -> Self {
+        if !is_blur_enabled() {
+            return Self;
+        }
+
+        let live_size = query_int_option("decoration:blur:size").unwrap_or(0);
+        let live_passes = query_int_option("decoration:blur:passes").unwrap_or(0);
+        if live_size <= 0 || live_passes <= 0 {
+            return Self;
+        }
+
+        let state_file = blur_state_file_path();
+        // Only use the crash-recovery file if Hyprland is currently stuck at (1, 1) from an uncatchable SIGKILL.
+        let (orig_size, orig_passes) = if live_size == 1
+            && live_passes == 1
+            && let Some(saved) = read_saved_blur_state(&state_file)
+        {
+            saved
+        } else {
+            (live_size, live_passes)
+        };
+
+        let target_size = (orig_size / 4).max(1);
+        let target_passes = (orig_passes / 2).max(1);
+
+        if target_size == orig_size && target_passes == orig_passes {
+            return Self;
+        }
+
+        let _ = std::fs::write(&state_file, format!("{orig_size} {orig_passes}"));
+        ACTIVE_BLUR_SIZE_RESTORE.store(orig_size, Ordering::SeqCst);
+        ACTIVE_BLUR_PASSES_RESTORE.store(orig_passes, Ordering::SeqCst);
+
+        let cmd = format!(
+            "[[BATCH]]keyword decoration:blur:size {target_size};keyword decoration:blur:passes {target_passes}"
+        );
+        if send_socket_command(&cmd).is_err() {
+            ACTIVE_BLUR_SIZE_RESTORE.store(0, Ordering::SeqCst);
+            ACTIVE_BLUR_PASSES_RESTORE.store(0, Ordering::SeqCst);
+            let _ = std::fs::remove_file(&state_file);
+        }
+
+        Self
+    }
+}
+
+impl Drop for BlurOverrideGuard {
+    fn drop(&mut self) {
+        restore_blur_now();
+    }
+}
