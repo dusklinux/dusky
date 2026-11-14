@@ -870,7 +870,7 @@ show_help_menu() {
                 run_app "$SCRIPTS_DIR/hypr/input/rofi_keybinds/keybindings.sh"
                 ;;
             '  Keybind Cheatsheet')
-                run_term "DuskyKeybindsCheatsheet" python3.14 "$SCRIPTS_DIR/hypr/input/keybinds_cheatsheet.py"
+                run_term "DuskyKeybindsCheatsheet" python3 "$SCRIPTS_DIR/hypr/input/keybinds_cheatsheet.py"
                 ;;
             '  Edit Keybinds')
                 run_term_hold "dusky_keybinds" "$SCRIPTS_DIR/hypr/input/dusky_keybinds.py"
