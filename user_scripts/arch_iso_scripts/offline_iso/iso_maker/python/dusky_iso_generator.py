@@ -228,7 +228,7 @@ ALL_GROUPS: dict[str, list[str]] = {
         "fontconfig", "python-pyquery", "python-textual", "python-rich", "python-regex", "python-pillow", "papirus-icon-theme",
     ],
     "desktop": [
-        "awww", "hyprlock", "hypridle", "hyprsunset", "hyprpicker", "rofi", "hyprshutdown",
+        "awww", "waybar", "hyprlock", "hypridle", "hyprsunset", "hyprpicker", "rofi", "hyprshutdown",
         "libdbusmenu-qt5", "libdbusmenu-glib", "brightnessctl",
     ],
     "audio": [
@@ -293,7 +293,6 @@ AUR_SEED: tuple[str, ...] = (
     "tray-tui",
     "xdg-terminal-exec",
     "paru",
-    "waybar-git",
     "papirus-folders",
     "bibata-cursor-theme-bin",
 )
