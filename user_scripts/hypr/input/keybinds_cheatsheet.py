@@ -57,13 +57,13 @@ CACHE_DIR: Final[Path] = (
     _XDG_CACHE if _XDG_CACHE.is_absolute() else (Path.home() / ".cache")
 ) / "dusky"
 CACHE_FILE: Final[Path] = CACHE_DIR / "keybinds_cache.json"
-CACHE_SCHEMA_VERSION: Final[str] = "dusky-cheatsheet-v3"
+CACHE_SCHEMA_VERSION: Final[str] = "dusky-cheatsheet-v4"
 
 SOURCE_LUA: Final[Path] = CONFIG_ROOT / "hypr/source/keybinds.lua"
 CUSTOM_LUA: Final[Path] = CONFIG_ROOT / "hypr/edit_here/source/keybinds.lua"
 MATUGEN_PATH: Final[Path] = CONFIG_ROOT / "matugen/generated/dusky_tui.json"
 
-MAX_CHORD_WIDTH: Final[int] = 21
+MAX_CHORD_WIDTH: Final[int] = 28
 DEFAULT_CARD_LIMIT: Final[int] = 9
 
 
@@ -1560,8 +1560,27 @@ def action_cell(b: Bind) -> Text:
     return cell
 
 
-def build_card(cat: Category, index: int, *, show_all: bool = False) -> Panel:
-    """One category card — 2 clean columns, zero dots truncation."""
+def _chord_display_len(keys: KeyTuple) -> int:
+    """Exact rendered character width of a chord pill sequence."""
+    if not keys:
+        return 0
+    total = len(keys[0].strip())
+    for i in range(1, len(keys)):
+        sep = 1 if (keys[i] == "/" or keys[i - 1] == "/") else 3
+        total += sep + len(keys[i].strip())
+    return total
+
+
+def build_card(
+    cat: Category,
+    index: int,
+    *,
+    show_all: bool = False,
+    two_columns: bool = False,
+) -> Panel:
+    """Category card — dynamic non-truncating chord width; 2-up sub-columns in full mode."""
+    visible_binds = cat.binds if show_all else cat.binds[:DEFAULT_CARD_LIMIT]
+
     tbl = Table(
         show_header=True,
         header_style=f"bold underline {C.FG}",
@@ -1571,12 +1590,51 @@ def build_card(cat: Category, index: int, *, show_all: bool = False) -> Panel:
         pad_edge=False,
         padding=(0, 1),
     )
-    tbl.add_column("COMBINATION", justify="left", no_wrap=True, width=MAX_CHORD_WIDTH)
-    tbl.add_column("ACTION", justify="left", no_wrap=True)
 
-    visible_binds = cat.binds if show_all else cat.binds[:DEFAULT_CARD_LIMIT]
-    for b in visible_binds:
-        tbl.add_row(chord(b.keys, cat.accent), action_cell(b))
+    if two_columns and len(visible_binds) > 1:
+        mid = (len(visible_binds) + 1) // 2
+        left_binds = visible_binds[:mid]
+        right_binds = visible_binds[mid:]
+
+        left_w = max(18, max((_chord_display_len(b.keys) for b in left_binds), default=18) + 1)
+        right_w = max(18, max((_chord_display_len(b.keys) for b in right_binds), default=18) + 1)
+
+        tbl.add_column("COMBINATION", justify="left", no_wrap=True, min_width=left_w, width=left_w)
+        tbl.add_column("ACTION", justify="left", no_wrap=True, ratio=1, overflow="ellipsis")
+        tbl.add_column("│", justify="center", no_wrap=True, width=3, header_style=f"dim {C.FG}")
+        tbl.add_column("COMBINATION", justify="left", no_wrap=True, min_width=right_w, width=right_w)
+        tbl.add_column("ACTION", justify="left", no_wrap=True, ratio=1, overflow="ellipsis")
+
+        sep_cell = Text("│", style=f"dim {cat.accent}")
+        for row_idx in range(mid):
+            lb = left_binds[row_idx]
+            if row_idx < len(right_binds):
+                rb = right_binds[row_idx]
+                tbl.add_row(
+                    chord(lb.keys, cat.accent),
+                    action_cell(lb),
+                    sep_cell,
+                    chord(rb.keys, cat.accent),
+                    action_cell(rb),
+                )
+            else:
+                tbl.add_row(
+                    chord(lb.keys, cat.accent),
+                    action_cell(lb),
+                    sep_cell,
+                    Text(""),
+                    Text(""),
+                )
+    else:
+        chord_w = max(
+            20,
+            max((_chord_display_len(b.keys) for b in visible_binds), default=20) + 1,
+        )
+        tbl.add_column("COMBINATION", justify="left", no_wrap=True, min_width=chord_w, width=chord_w)
+        tbl.add_column("ACTION", justify="left", no_wrap=True, ratio=1, overflow="ellipsis")
+
+        for b in visible_binds:
+            tbl.add_row(chord(b.keys, cat.accent), action_cell(b))
 
     title = Text()
     title.append(f" {cat.icon} ", style=f"bold {cat.accent}")
@@ -1609,10 +1667,14 @@ def render(
     *,
     show_all: bool = False,
 ) -> Group:
-    """Pure minimal dashboard — centered header title + 2x2 category grid + hint bar."""
-    cards = [build_card(cat, i, show_all=show_all) for i, cat in enumerate(catalogue, 1)]
+    """Pure minimal dashboard — 2x2 grid in summary view; full-width 2-column cards in show_all."""
+    wide = console.width >= 110
+    cards = [
+        build_card(cat, i, show_all=show_all, two_columns=(show_all and wide))
+        for i, cat in enumerate(catalogue, 1)
+    ]
 
-    if console.width >= 110 and len(cards) >= 4:
+    if not show_all and wide and len(cards) >= 4:
         grid = Table.grid(expand=True, padding=(0, 2))
         grid.add_column(ratio=1)
         grid.add_column(ratio=1)
