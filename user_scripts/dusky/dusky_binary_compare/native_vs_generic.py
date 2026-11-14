@@ -2,12 +2,13 @@
 """
 native_vs_generic.py - Comprehensive Microarchitectural & Performance Benchmark Tool.
 Profiles and compares compiled binaries (Rust, C/C++, Go, etc.) for CPU cycles,
-ISA specialization (AVX2, BMI2, FMA), execution latency, and memory footprint.
+IPC, ISA specialization (AVX-512, AVX2, AVX-VNNI, FMA3, BMI2, VAES/SHA-NI),
+execution latency, scheduler context switches, and memory footprint.
 
 Supports:
 - Single Binary Profiling (records metrics & auto-diffs against historical runs)
 - Head-to-Head Comparison (Native vs. Generic with interleaved ABBA execution)
-- Fast-Path CLI & Full Wayland GUI Lifecycle testing
+- Fast-Path CLI & Full Wayland GUI Lifecycle testing (direct Hyprland IPC socket)
 
 Target: Arch Linux | Kernel 7.3+ | Python 3.15+ | Hyprland (Wayland)
 """
@@ -15,7 +16,7 @@ Target: Arch Linux | Kernel 7.3+ | Python 3.15+ | Hyprland (Wayland)
 from __future__ import annotations
 
 import argparse
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 import contextlib
 import dataclasses
 import fcntl
@@ -28,6 +29,7 @@ import re
 import shlex
 import shutil
 import signal
+import socket
 import statistics
 import subprocess
 import sys
@@ -46,7 +48,11 @@ try:
 except ImportError:
     RICH_AVAILABLE = False
 
-console = Console(width=max(126, shutil.get_terminal_size((126, 24)).columns)) if RICH_AVAILABLE else None
+console = (
+    Console(width=max(128, shutil.get_terminal_size((128, 24)).columns))
+    if RICH_AVAILABLE
+    else None
+)
 
 HISTORY_DIR = (
     Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
@@ -55,10 +61,106 @@ HISTORY_DIR = (
     / "binary_compare"
 )
 HISTORY_FILE = HISTORY_DIR / "history.json"
+MAX_HISTORY_ENTRIES = 100
+
+# Active child process group IDs (PGIDs) for signal-safe teardown
+_ACTIVE_PGIDS: set[int] = set()
+
+# Pre-allocated O(1) ISA classification tables for zero-regex streaming disassembly
+_NON_SIMD_V_OPS: frozenset[str] = frozenset({
+    "verr", "verw", "vmcall", "vmlaunch", "vmresume", "vmxoff", "vmxon",
+    "vmread", "vmwrite", "vmclear", "vmptrld", "vmptrst", "vmmcall",
+    "vmload", "vmsave", "vmrun", "vzeroall", "vzeroupper",
+})
+
+_EVEX_MNEMONIC_PREFIXES: tuple[str, ...] = (
+    "vpternlog", "vpcompress", "vpexpand", "vpermt2", "vpermi2", "vpmovm2",
+    "vpmovb2m", "vpmovw2m", "vpmovd2m", "vpmovq2m", "vfpclass", "vrcp14",
+    "vrsqrt14", "vscalef", "vfixupimm", "valignd", "valignq", "vdbpsadbw",
+    "vplzcnt", "vpopcnt", "vpshld", "vpshrd", "vprorv", "vprolv",
+)
+
+_AVX_VNNI_OPS: frozenset[str] = frozenset({
+    "vpdpbusd", "vpdpbusds", "vpdpwssd", "vpdpwssds", "vpdpbssd", "vpdpbssds",
+})
+
+_FMA3_PREFIXES: tuple[str, ...] = (
+    "vfmadd", "vfmsub", "vfnmadd", "vfnmsub", "vfmaddsub", "vfmsubadd",
+)
+
+_VEC_CRYPTO_OPS: frozenset[str] = frozenset({
+    "vaesenc", "vaesenclast", "vaesdec", "vaesdeclast", "vpclmulqdq",
+    "vgf2p8affineqb", "vgf2p8affineinvqb", "vgf2p8mulb",
+    "vsha512rnds2", "vsha512msg1", "vsha512msg2", "vsm3msg1", "vsm3msg2",
+    "vsm3rnds2", "vsm4key4", "vsm4rnds4",
+})
+
+_VEC_NT_OPS: frozenset[str] = frozenset({
+    "vmovntdq", "vmovntdqa", "vmovntps", "vmovntpd",
+})
+
+_BMI1_BMI2_OPS: frozenset[str] = frozenset({
+    "andn", "bextr", "blsi", "blsmsk", "blsr",
+    "bzhi", "mulx", "pdep", "pext", "rorx", "sarx", "shlx", "shrx",
+})
+
+_BITMANIP_SCALAR_OPS: frozenset[str] = frozenset({
+    "lzcnt", "tzcnt", "popcnt", "movbe", "adcx", "adox",
+    "lzcntw", "lzcntl", "lzcntq", "tzcntw", "tzcntl", "tzcntq",
+    "popcntw", "popcntl", "popcntq", "movbew", "movbel", "movbeq",
+})
+
+_SCALAR_CRYPTO_OPS: frozenset[str] = frozenset({
+    "aesenc", "aesenclast", "aesdec", "aesdeclast", "aesimc", "aeskeygenassist",
+    "pclmulqdq", "sha1rnds4", "sha1nexte", "sha1msg1", "sha1msg2",
+    "sha256rnds2", "sha256msg1", "sha256msg2",
+    "gf2p8affineqb", "gf2p8affineinvqb", "gf2p8mulb",
+    "crc32", "crc32b", "crc32w", "crc32l", "crc32q",
+})
+
+_SCALAR_CACHE_NT_OPS: frozenset[str] = frozenset({
+    "movntdq", "movntdqa", "movnti", "movntil", "movntiq", "movntps", "movntpd",
+    "prefetcht0", "prefetcht1", "prefetcht2", "prefetchnta", "prefetchw",
+    "prefetchwt1", "clflush", "clflushopt", "clwb",
+})
 
 
 # ---------------------------------------------------------------------------
-# Telemetry Data Structures
+# Subprocess Environment & Process Group Lifecycle Management
+# ---------------------------------------------------------------------------
+
+
+def _clean_c_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env["LC_ALL"] = "C"
+    env["LANG"] = "C"
+    return env
+
+
+def cleanup_active_pgids() -> None:
+    if not _ACTIVE_PGIDS:
+        return
+    snapshot = list(_ACTIVE_PGIDS)
+    for pgid in snapshot:
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+    time.sleep(0.03)
+    for pgid in snapshot:
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+        try:
+            os.waitpid(-pgid, os.WNOHANG)
+        except (ChildProcessError, OSError):
+            pass
+        _ACTIVE_PGIDS.discard(pgid)
+
+
+# ---------------------------------------------------------------------------
+# Telemetry Data Structures & Statistical Engine
 # ---------------------------------------------------------------------------
 
 
@@ -77,9 +179,25 @@ class SampleMetrics:
     pcore_instructions: int = 0
     ecore_cycles: int = 0
     ecore_instructions: int = 0
+    cache_refs: int = 0
     task_clock_ms: float = 0.0
     gui_ready_ms: float = 0.0
     gui_teardown_ms: float = 0.0
+    gui_mapped: bool = False
+
+
+_SAMPLE_FIELD_NAMES: frozenset[str] = frozenset(
+    f.name for f in dataclasses.fields(SampleMetrics)
+)
+
+
+def sample_ipc(s: SampleMetrics) -> float:
+    if s.pcore_cycles > 0:
+        return s.pcore_instructions / s.pcore_cycles
+    total_cyc = s.pcore_cycles + s.ecore_cycles
+    if total_cyc > 0:
+        return (s.pcore_instructions + s.ecore_instructions) / total_cyc
+    return 0.0
 
 
 @dataclasses.dataclass(slots=True)
@@ -102,8 +220,13 @@ def compute_stats(values: list[float]) -> StatSummary:
     mean = statistics.fmean(s)
     median = statistics.median(s)
     stdev = statistics.stdev(s) if n > 1 else 0.0
-    cv_pct = (stdev / mean * 100.0) if mean != 0 else 0.0
+    cv_pct = (stdev / abs(mean) * 100.0) if (n > 1 and mean != 0.0) else 0.0
     p95_idx = min(n - 1, max(0, math.ceil(0.95 * n) - 1))
+    if n >= 2:
+        q1, _, q3 = statistics.quantiles(s, n=4)
+        iqr = q3 - q1
+    else:
+        iqr = 0.0
     return StatSummary(
         mean=mean,
         median=median,
@@ -112,21 +235,22 @@ def compute_stats(values: list[float]) -> StatSummary:
         min_val=s[0],
         max_val=s[-1],
         p95=s[p95_idx],
-        iqr=s[(3 * n) // 4] - s[n // 4],
+        iqr=iqr,
     )
 
 
 def mann_whitney_u_pvalue(x: list[float], y: list[float]) -> float:
     n1, n2 = len(x), len(y)
-    if n1 == 0 or n2 == 0:
+    if n1 < 5 or n2 < 5:
         return 1.0
     combined = sorted([(v, 0) for v in x] + [(v, 1) for v in y], key=lambda item: item[0])
     ranks = [0.0] * len(combined)
     tie_sum = 0.0
     i = 0
-    while i < len(combined):
+    n = n1 + n2
+    while i < n:
         j = i
-        while j < len(combined) and combined[j][0] == combined[i][0]:
+        while j < n and combined[j][0] == combined[i][0]:
             j += 1
         avg_rank = (i + 1 + j) / 2.0
         for k in range(i, j):
@@ -140,10 +264,9 @@ def mann_whitney_u_pvalue(x: list[float], y: list[float]) -> float:
     u1 = r1 - (n1 * (n1 + 1)) / 2.0
     u = min(u1, n1 * n2 - u1)
     mu = (n1 * n2) / 2.0
-    n = n1 + n2
     tie_corr = tie_sum / (n * (n - 1)) if n > 1 else 0.0
     sigma_sq = (n1 * n2 / 12.0) * ((n + 1) - tie_corr)
-    if sigma_sq <= 0:
+    if sigma_sq < 1e-12:
         return 1.0
     z = max(0.0, abs(u - mu) - 0.5) / math.sqrt(sigma_sq)
     return max(0.0, min(1.0, math.erfc(z / math.sqrt(2.0))))
@@ -183,7 +306,10 @@ def scoped_cpu_affinity(cpus: set[int] | None) -> Iterator[None]:
             os.sched_setaffinity(0, cpus)
         yield
     finally:
-        os.sched_setaffinity(0, orig)
+        try:
+            os.sched_setaffinity(0, orig)
+        except OSError:
+            pass
 
 
 def get_cpu_model() -> str:
@@ -199,15 +325,18 @@ def get_cpu_model() -> str:
 def get_scaling_governor() -> str:
     try:
         gov = Path("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor").read_text(encoding="utf-8").strip()
-        epp = Path("/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference").read_text(encoding="utf-8").strip()
-        return f"{gov} ({epp})"
+        epp_path = Path("/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference")
+        if epp_path.is_file():
+            epp = epp_path.read_text(encoding="utf-8").strip()
+            return f"{gov} ({epp})"
+        return gov
     except (OSError, ValueError):
         pass
     return "Default"
 
 
 # ---------------------------------------------------------------------------
-# Static ISA & Disassembly Audit (Streaming)
+# Static ISA & Disassembly Audit (Streaming, Zero-Regex, Single-Split)
 # ---------------------------------------------------------------------------
 
 
@@ -224,10 +353,14 @@ def analyze_binary_isa(binary: Path) -> dict[str, Any]:
         "size_bytes": binary.stat().st_size,
         "sha256": sha256_short(binary),
         "total_insns": 0,
+        "avx512_evex_insns": 0,
         "avx_vex_insns": 0,
+        "avx_vnni_insns": 0,
         "fma3_insns": 0,
         "bmi1_bmi2_insns": 0,
         "bitmanip_cnt_insns": 0,
+        "crypto_hash_insns": 0,
+        "cache_nt_insns": 0,
     }
     objdump = shutil.which("objdump")
     if not objdump:
@@ -238,34 +371,85 @@ def analyze_binary_isa(binary: Path) -> dict[str, Any]:
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         text=True,
+        encoding="utf-8",
         errors="replace",
+        env=_clean_c_env(),
     )
-    bmi_set = {
-        "andn", "bextr", "blsi", "blsmsk", "blsr",
-        "bzhi", "mulx", "pdep", "pext", "rorx", "sarx", "shlx", "shrx",
-    }
-    cnt_set = {"lzcnt", "tzcnt", "popcnt"}
-    fma_prefixes = ("vfmadd", "vfmsub", "vfnmadd", "vfnmsub", "vfmaddsub", "vfmsubadd")
 
-    if proc.stdout:
-        for line in proc.stdout:
-            if not line.startswith(" ") or ":" not in line:
-                continue
-            _, _, rest = line.partition(":")
-            tokens = rest.strip().split()
-            if not tokens:
-                continue
-            m = tokens[0].lower()
-            info["total_insns"] += 1
-            if m.startswith("v"):
-                info["avx_vex_insns"] += 1
-            if m.startswith(fma_prefixes):
-                info["fma3_insns"] += 1
-            if m in bmi_set:
-                info["bmi1_bmi2_insns"] += 1
-            if m in cnt_set:
-                info["bitmanip_cnt_insns"] += 1
-    proc.wait()
+    total_insns = 0
+    avx512_evex = 0
+    avx_vex = 0
+    avx_vnni = 0
+    fma3 = 0
+    bmi1_bmi2 = 0
+    bitmanip_cnt = 0
+    crypto_hash = 0
+    cache_nt = 0
+
+    try:
+        if proc.stdout:
+            for line in proc.stdout:
+                if not line.startswith(" "):
+                    continue
+                colon_idx = line.find(":")
+                if colon_idx == -1:
+                    continue
+                rest = line[colon_idx + 1 :].lstrip()
+                if not rest:
+                    continue
+                parts = rest.split(None, 1)
+                m = parts[0].lower()
+                if m in ("lock", "rep", "repz", "repnz", "repe", "repne", "data16", "rex64", "bnd"):
+                    if len(parts) < 2:
+                        continue
+                    parts = parts[1].split(None, 1)
+                    m = parts[0].lower()
+                operands = parts[1].lower() if len(parts) > 1 else ""
+
+                total_insns += 1
+
+                if m[0] == "v":
+                    if m in _NON_SIMD_V_OPS:
+                        continue
+                    if (
+                        "zmm" in operands
+                        or "{k" in operands
+                        or "{z}" in operands
+                        or "{1to" in operands
+                        or m.startswith(_EVEX_MNEMONIC_PREFIXES)
+                    ):
+                        avx512_evex += 1
+                    elif m in _AVX_VNNI_OPS:
+                        avx_vnni += 1
+                    elif m.startswith(_FMA3_PREFIXES):
+                        fma3 += 1
+                    elif m in _VEC_CRYPTO_OPS:
+                        crypto_hash += 1
+                    elif m in _VEC_NT_OPS:
+                        cache_nt += 1
+                    else:
+                        avx_vex += 1
+                else:
+                    if m in _BMI1_BMI2_OPS:
+                        bmi1_bmi2 += 1
+                    elif m in _BITMANIP_SCALAR_OPS:
+                        bitmanip_cnt += 1
+                    elif m in _SCALAR_CRYPTO_OPS:
+                        crypto_hash += 1
+                    elif m in _SCALAR_CACHE_NT_OPS:
+                        cache_nt += 1
+    finally:
+        proc.wait()
+
+    info["total_insns"] = total_insns
+    info["avx512_evex_insns"] = avx512_evex
+    info["avx_vex_insns"] = avx_vex
+    info["avx_vnni_insns"] = avx_vnni
+    info["fma3_insns"] = fma3
+    info["bmi1_bmi2_insns"] = bmi1_bmi2
+    info["bitmanip_cnt_insns"] = bitmanip_cnt
+    info["crypto_hash_insns"] = crypto_hash
+    info["cache_nt_insns"] = cache_nt
     return info
 
 
@@ -274,23 +458,40 @@ def analyze_binary_isa(binary: Path) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def detect_perf_events() -> list[str]:
+def detect_perf_events(allow_hybrid: bool = False) -> list[str]:
     perf = shutil.which("perf")
     if not perf:
         return []
-    events = ["task-clock"]
-    if Path("/sys/devices/cpu_core").exists():
-        events.extend(["cpu_core/cycles/", "cpu_core/instructions/"])
-    else:
-        events.extend(["cycles", "instructions"])
-    if Path("/sys/devices/cpu_atom").exists():
-        events.extend(["cpu_atom/cycles/", "cpu_atom/instructions/"])
-    res = subprocess.run([perf, "stat", "-x", ";", "-e", ",".join(events), "--", "true"], capture_output=True, text=True, check=False)
-    if res.returncode == 0 and "<not supported>" not in res.stderr:
-        return events
-    fallback = ["task-clock", "cycles", "instructions"]
-    res2 = subprocess.run([perf, "stat", "-x", ";", "-e", ",".join(fallback), "--", "true"], capture_output=True, text=True, check=False)
-    return fallback if res2.returncode == 0 else []
+    env = _clean_c_env()
+    has_pcore = Path("/sys/devices/cpu_core").exists()
+    has_ecore = Path("/sys/devices/cpu_atom").exists()
+
+    candidates: list[list[str]] = []
+    if has_pcore:
+        base_hybrid = ["task-clock", "cpu_core/cycles/", "cpu_core/instructions/", "cache-references"]
+        if has_ecore and allow_hybrid:
+            base_hybrid.extend(["cpu_atom/cycles/", "cpu_atom/instructions/"])
+        candidates.append(base_hybrid)
+
+        no_cache_hybrid = ["task-clock", "cpu_core/cycles/", "cpu_core/instructions/"]
+        if has_ecore and allow_hybrid:
+            no_cache_hybrid.extend(["cpu_atom/cycles/", "cpu_atom/instructions/"])
+        candidates.append(no_cache_hybrid)
+
+    candidates.append(["task-clock", "cycles", "instructions", "cache-references"])
+    candidates.append(["task-clock", "cycles", "instructions"])
+
+    for events in candidates:
+        res = subprocess.run(
+            [perf, "stat", "-x", ";", "-e", ",".join(events), "--", "true"],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        if res.returncode == 0 and "<not supported>" not in res.stderr:
+            return events
+    return []
 
 
 def parse_perf_csv(stderr_text: str, sample: SampleMetrics) -> None:
@@ -299,16 +500,21 @@ def parse_perf_csv(stderr_text: str, sample: SampleMetrics) -> None:
         if len(parts) < 3:
             continue
         raw_val, event_raw = parts[0].strip(), parts[2].strip()
-        event_name = event_raw.split(":")[0].rstrip("/")
         if not raw_val or raw_val.startswith("<"):
             continue
+        event_name = event_raw.split(":")[0].strip("/")
+        for suffix in ("/u", "/k", "/uk", "/ku"):
+            if event_name.endswith(suffix):
+                event_name = event_name[: -len(suffix)].strip("/")
+                break
         try:
             val = float(raw_val.replace(",", ""))
         except ValueError:
             continue
+
         if event_name == "task-clock":
             sample.task_clock_ms = val
-        elif event_name in ("cpu_core/cycles", "cycles"):
+        elif event_name in ("cpu_core/cycles", "cycles", "cpu-cycles"):
             sample.pcore_cycles = int(val)
         elif event_name in ("cpu_core/instructions", "instructions"):
             sample.pcore_instructions = int(val)
@@ -316,10 +522,12 @@ def parse_perf_csv(stderr_text: str, sample: SampleMetrics) -> None:
             sample.ecore_cycles = int(val)
         elif event_name == "cpu_atom/instructions":
             sample.ecore_instructions = int(val)
+        elif event_name in ("cache-references", "cpu_core/cache-references"):
+            sample.cache_refs = int(val)
 
 
 # ---------------------------------------------------------------------------
-# Process Execution & Telemetry Capture
+# Process Execution, Direct Hyprland Socket Polling & Telemetry Capture
 # ---------------------------------------------------------------------------
 
 
@@ -330,55 +538,156 @@ def read_proc_memory_kib(pid: int) -> tuple[int, int]:
             if line.startswith("VmHWM:"):
                 vm_hwm = int(line.split()[1])
                 break
-    except (OSError, ValueError):
+    except (OSError, ValueError, IndexError):
         pass
     try:
         for line in Path(f"/proc/{pid}/smaps_rollup").read_text(encoding="utf-8").splitlines():
             if line.startswith("Pss:"):
                 pss = int(line.split()[1])
                 break
-    except (OSError, ValueError):
+    except (OSError, ValueError, IndexError):
         pass
     return vm_hwm, pss
 
 
 def reap_popen(proc: subprocess.Popen[Any], timeout_s: float = 2.0) -> Any:
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
+    pid = proc.pid
+    try:
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            try:
+                pid_done, status, rusage = os.wait4(pid, os.WNOHANG)
+                if pid_done == pid:
+                    proc.returncode = os.waitstatus_to_exitcode(status)
+                    return rusage
+            except ChildProcessError:
+                return None
+            time.sleep(0.0005)
+
         try:
-            pid_done, status, rusage = os.wait4(proc.pid, os.WNOHANG)
-            if pid_done == proc.pid:
-                proc.returncode = os.waitstatus_to_exitcode(status)
-                return rusage
+            os.killpg(pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+
+        grace_deadline = time.monotonic() + 0.15
+        while time.monotonic() < grace_deadline:
+            try:
+                pid_done, status, rusage = os.wait4(pid, os.WNOHANG)
+                if pid_done == pid:
+                    proc.returncode = os.waitstatus_to_exitcode(status)
+                    return rusage
+            except ChildProcessError:
+                return None
+            time.sleep(0.002)
+
+        try:
+            os.killpg(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+
+        try:
+            _, status, rusage = os.wait4(pid, 0)
+            proc.returncode = os.waitstatus_to_exitcode(status)
+            return rusage
         except ChildProcessError:
-            break
-        time.sleep(0.0005)
-    try:
-        os.killpg(proc.pid, signal.SIGTERM)
-    except (ProcessLookupError, PermissionError):
-        pass
-    try:
-        _, status, rusage = os.wait4(proc.pid, 0)
-        proc.returncode = os.waitstatus_to_exitcode(status)
-        return rusage
-    except ChildProcessError:
-        pass
+            return None
+    finally:
+        _ACTIVE_PGIDS.discard(pid)
+
+
+def _get_hyprland_socket_path() -> Path | None:
+    sig = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
+    if not sig:
+        return None
+    xdg_run = os.environ.get("XDG_RUNTIME_DIR")
+    if xdg_run:
+        candidate = Path(xdg_run) / "hypr" / sig / ".socket.sock"
+        if candidate.is_socket():
+            return candidate
+    fallback = Path("/tmp/hypr") / sig / ".socket.sock"
+    if fallback.is_socket():
+        return fallback
     return None
 
 
-def check_hyprland_surface_mapped(pid: int) -> bool:
-    hyprctl = shutil.which("hyprctl")
-    if not hyprctl or not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
-        return False
+def _query_hyprland_socket(sock_path: Path, command: bytes) -> str | None:
     try:
-        res = subprocess.run([hyprctl, "clients", "-j"], capture_output=True, text=True, timeout=0.15, check=False)
-        if res.returncode == 0 and f'"pid": {pid}' in res.stdout:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+            s.settimeout(0.05)
+            s.connect(str(sock_path))
+            s.sendall(command)
+            chunks: list[bytes] = []
+            while True:
+                data = s.recv(65536)
+                if not data:
+                    break
+                chunks.append(data)
+            return b"".join(chunks).decode("utf-8", errors="replace")
+    except OSError:
+        return None
+
+
+def _pid_matches_pgid(candidate_pid: Any, target_pid: int) -> bool:
+    if not isinstance(candidate_pid, int) or candidate_pid <= 0:
+        return False
+    if candidate_pid == target_pid:
+        return True
+    try:
+        return os.getpgid(candidate_pid) == target_pid
+    except (ProcessLookupError, PermissionError, OSError):
+        return False
+
+
+def _json_contains_matching_pid(node: Any, target_pid: int) -> bool:
+    if isinstance(node, dict):
+        if "pid" in node and _pid_matches_pgid(node["pid"], target_pid):
             return True
-        res_l = subprocess.run([hyprctl, "layers", "-j"], capture_output=True, text=True, timeout=0.15, check=False)
-        if res_l.returncode == 0 and f'"pid": {pid}' in res_l.stdout:
-            return True
-    except (OSError, subprocess.TimeoutExpired):
-        pass
+        return any(_json_contains_matching_pid(v, target_pid) for v in node.values())
+    if isinstance(node, list):
+        return any(_json_contains_matching_pid(item, target_pid) for item in node)
+    return False
+
+
+def check_hyprland_surface_mapped(pid: int) -> bool:
+    if not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        return False
+
+    sock_path = _get_hyprland_socket_path()
+    if sock_path is not None:
+        for cmd in (b"j/clients", b"j/layers"):
+            raw = _query_hyprland_socket(sock_path, cmd)
+            if raw:
+                try:
+                    parsed = json.loads(raw)
+                    if _json_contains_matching_pid(parsed, pid):
+                        return True
+                except json.JSONDecodeError:
+                    if f'"pid": {pid}' in raw or f'"pid":{pid}' in raw:
+                        return True
+        return False
+
+    hyprctl = shutil.which("hyprctl")
+    if not hyprctl:
+        return False
+    for subcmd in ("clients", "layers"):
+        try:
+            res = subprocess.run(
+                [hyprctl, subcmd, "-j"],
+                capture_output=True,
+                text=True,
+                timeout=0.12,
+                check=False,
+            )
+            if res.returncode == 0 and res.stdout:
+                try:
+                    parsed = json.loads(res.stdout)
+                    if _json_contains_matching_pid(parsed, pid):
+                        return True
+                except json.JSONDecodeError:
+                    if f'"pid": {pid}' in res.stdout:
+                        return True
+        except (OSError, subprocess.TimeoutExpired):
+            pass
     return False
 
 
@@ -391,9 +700,13 @@ def run_cli_sample(binary: Path, args: list[str], perf_events: list[str]) -> Sam
         stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
-    _, status, rusage = os.wait4(proc.pid, 0)
-    t1 = time.perf_counter_ns()
-    proc.returncode = os.waitstatus_to_exitcode(status)
+    _ACTIVE_PGIDS.add(proc.pid)
+    try:
+        _, status, rusage = os.wait4(proc.pid, 0)
+        t1 = time.perf_counter_ns()
+        proc.returncode = os.waitstatus_to_exitcode(status)
+    finally:
+        _ACTIVE_PGIDS.discard(proc.pid)
 
     sample = SampleMetrics(
         wall_ms=(t1 - t0) / 1e6,
@@ -408,16 +721,22 @@ def run_cli_sample(binary: Path, args: list[str], perf_events: list[str]) -> Sam
 
     if perf_events:
         perf_bin = shutil.which("perf")
-        assert perf_bin is not None
-        p_res = subprocess.run(
-            [perf_bin, "stat", "-x", ";", "-e", ",".join(perf_events), "--", str(binary), *args],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-        )
-        parse_perf_csv(p_res.stderr, sample)
+        if perf_bin is not None:
+            p_proc = subprocess.Popen(
+                [perf_bin, "stat", "-x", ";", "-e", ",".join(perf_events), "--", str(binary), *args],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=_clean_c_env(),
+                start_new_session=True,
+            )
+            _ACTIVE_PGIDS.add(p_proc.pid)
+            try:
+                _, p_stderr = p_proc.communicate()
+                parse_perf_csv(p_stderr, sample)
+            finally:
+                _ACTIVE_PGIDS.discard(p_proc.pid)
     return sample
 
 
@@ -437,43 +756,60 @@ def run_gui_sample(
         stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
+    _ACTIVE_PGIDS.add(proc.pid)
 
     surface_ready_ns = 0
+    gui_mapped = False
+    early_rusage: Any = None
+    early_exit_ns = 0
     deadline = time.monotonic() + timeout_s
 
-    def is_alive(pid: int) -> bool:
-        try:
-            os.kill(pid, 0)
-            return True
-        except (ProcessLookupError, PermissionError):
-            return False
-
     while time.monotonic() < deadline:
-        if not is_alive(proc.pid):
+        try:
+            pid_done, status, rusage_done = os.wait4(proc.pid, os.WNOHANG)
+            if pid_done == proc.pid:
+                proc.returncode = os.waitstatus_to_exitcode(status)
+                early_rusage = rusage_done
+                early_exit_ns = time.perf_counter_ns()
+                _ACTIVE_PGIDS.discard(proc.pid)
+                break
+        except ChildProcessError:
+            early_exit_ns = time.perf_counter_ns()
+            _ACTIVE_PGIDS.discard(proc.pid)
             break
+
         if check_hyprland_surface_mapped(proc.pid):
             surface_ready_ns = time.perf_counter_ns()
+            gui_mapped = True
             break
-        time.sleep(0.002)
+        time.sleep(0.008)
 
-    if surface_ready_ns == 0:
-        surface_ready_ns = time.perf_counter_ns()
+    if early_exit_ns != 0:
+        surface_ready_ns = early_exit_ns
+        t_dismiss_start = early_exit_ns
+        t_dismiss_end = early_exit_ns
+        vm_hwm_kib, pss_kib = 0, 0
+        rusage = early_rusage
+    else:
+        if surface_ready_ns == 0:
+            surface_ready_ns = time.perf_counter_ns()
+        if settle_ms > 0.0:
+            time.sleep(settle_ms / 1000.0)
+        vm_hwm_kib, pss_kib = read_proc_memory_kib(proc.pid)
 
-    time.sleep(settle_ms / 1000.0)
-    vm_hwm_kib, pss_kib = read_proc_memory_kib(proc.pid)
-
-    t_dismiss_start = time.perf_counter_ns()
-    try:
-        os.killpg(proc.pid, signal.SIGTERM)
-    except (ProcessLookupError, PermissionError):
-        pass
-    rusage = reap_popen(proc, timeout_s=2.0)
-    t_dismiss_end = time.perf_counter_ns()
+        t_dismiss_start = time.perf_counter_ns()
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+        rusage = reap_popen(proc, timeout_s=2.0)
+        t_dismiss_end = time.perf_counter_ns()
 
     sample = SampleMetrics(
         wall_ms=(t_dismiss_end - t0) / 1e6,
         gui_ready_ms=(surface_ready_ns - t0) / 1e6,
         gui_teardown_ms=(t_dismiss_end - t_dismiss_start) / 1e6,
+        gui_mapped=gui_mapped,
         user_cpu_ms=rusage.ru_utime * 1000.0 if rusage else 0.0,
         sys_cpu_ms=rusage.ru_stime * 1000.0 if rusage else 0.0,
         max_rss_kib=max(vm_hwm_kib, rusage.ru_maxrss if rusage else 0),
@@ -486,24 +822,38 @@ def run_gui_sample(
 
     if perf_events:
         perf_bin = shutil.which("perf")
-        assert perf_bin is not None
-        p_proc = subprocess.Popen(
-            [perf_bin, "stat", "-x", ";", "-e", ",".join(perf_events), "--", str(binary), *args],
-            cwd=binary.parent,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            text=True,
-            start_new_session=True,
-        )
-        time.sleep(settle_ms / 1000.0 + 0.05)
-        subprocess.run(["pkill", "-TERM", "-P", str(p_proc.pid)], check=False)
-        try:
-            _, p_stderr = p_proc.communicate(timeout=3.0)
-            parse_perf_csv(p_stderr, sample)
-        except subprocess.TimeoutExpired:
-            p_proc.kill()
-            p_proc.communicate()
+        if perf_bin is not None:
+            p_proc = subprocess.Popen(
+                [perf_bin, "stat", "-x", ";", "-e", ",".join(perf_events), "--", str(binary), *args],
+                cwd=binary.parent,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=_clean_c_env(),
+                start_new_session=True,
+            )
+            _ACTIVE_PGIDS.add(p_proc.pid)
+            try:
+                wait_window_s = max(0.02, ( sample.gui_ready_ms + settle_ms ) / 1000.0)
+                time.sleep(min(wait_window_s, timeout_s))
+                subprocess.run(["pkill", "-TERM", "-P", str(p_proc.pid)], check=False)
+                try:
+                    _, p_stderr = p_proc.communicate(timeout=2.5)
+                    parse_perf_csv(p_stderr, sample)
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.killpg(p_proc.pid, signal.SIGKILL)
+                    except (ProcessLookupError, PermissionError, OSError):
+                        p_proc.kill()
+                    _, p_stderr = p_proc.communicate()
+                    parse_perf_csv(p_stderr, sample)
+            finally:
+                try:
+                    os.killpg(p_proc.pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError, OSError):
+                    pass
+                _ACTIVE_PGIDS.discard(p_proc.pid)
 
     return sample
 
@@ -518,12 +868,21 @@ def history_lock() -> Iterator[None]:
     HISTORY_DIR.mkdir(parents=True, exist_ok=True)
     with (HISTORY_DIR / ".lock").open("a", encoding="utf-8") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        yield
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
 
 
 def atomic_json(path: Path, data: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", delete=False) as s:
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        delete=False,
+    ) as s:
         tmp = Path(s.name)
         try:
             json.dump(data, s, indent=2)
@@ -539,20 +898,30 @@ def load_history() -> list[dict[str, Any]]:
     try:
         data = json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
         return data if isinstance(data, list) else []
-    except (FileNotFoundError, ValueError, json.JSONDecodeError):
+    except (FileNotFoundError, ValueError, json.JSONDecodeError, OSError):
         return []
 
 
-def save_run_record(entry: dict[str, Any]) -> None:
+def save_run_record(entry: dict[str, Any]) -> list[dict[str, Any]]:
     try:
         with history_lock():
             history = load_history()
             history.append(entry)
-            retained = history[-100:]
+            if len(history) > MAX_HISTORY_ENTRIES:
+                evicted = history[:-MAX_HISTORY_ENTRIES]
+                retained = history[-MAX_HISTORY_ENTRIES:]
+                for old in evicted:
+                    old_id = old.get("id")
+                    if isinstance(old_id, str) and old_id.startswith("run_"):
+                        (HISTORY_DIR / f"{old_id}.json").unlink(missing_ok=True)
+            else:
+                retained = history
             atomic_json(HISTORY_FILE, retained)
             atomic_json(HISTORY_DIR / f"{entry['id']}.json", entry)
+            return retained
     except (OSError, ValueError) as err:
         print(f"[WARN] Failed to write history: {err}", file=sys.stderr)
+        return []
 
 
 def clear_history() -> None:
@@ -568,6 +937,20 @@ def clear_history() -> None:
 # ---------------------------------------------------------------------------
 
 
+_ISA_METRICS_SCHEMA: tuple[tuple[str, str, str, bool], ...] = (
+    ("size_bytes", "Binary Footprint Size", "Bytes", False),
+    ("total_insns", "Total Disassembled Insns", "insn", False),
+    ("avx512_evex_insns", "AVX-512 / EVEX Instructions", "insn", True),
+    ("avx_vex_insns", "AVX / AVX2 VEX Instructions", "insn", True),
+    ("avx_vnni_insns", "AVX-VNNI Neural/Dot-Product", "insn", True),
+    ("fma3_insns", "FMA3 Fused Multiply-Add", "insn", True),
+    ("bmi1_bmi2_insns", "BMI1 / BMI2 Bit Manipulation", "insn", True),
+    ("bitmanip_cnt_insns", "Bit Count & Endian (LZ/TZ/POPCNT/MOVBE)", "insn", True),
+    ("crypto_hash_insns", "Crypto & Hash (VAES/AES/SHA/PCLMUL/CRC)", "insn", True),
+    ("cache_nt_insns", "Cache & Non-Temporal (MOVNT/PREFETCH)", "insn", True),
+)
+
+
 def render_banner(
     native: Path,
     generic: Path | None,
@@ -579,17 +962,19 @@ def render_banner(
     gui_mode: bool,
 ) -> None:
     if not RICH_AVAILABLE or console is None:
-        print("=" * 114)
-        print(" MICROARCHITECTURAL BINARY BENCHMARK")
-        print("=" * 114)
+        print("=" * 118)
+        print(" MICROARCHITECTURAL & PERFORMANCE BINARY BENCHMARK")
+        print("=" * 118)
         print(f"Target Primary : {native}")
         if generic:
             print(f"Target Baseline: {generic}")
         print(f"Arguments      : {args if args else '(None)'}")
         print(f"Mode           : {'Wayland GUI Lifecycle' if gui_mode else 'Direct CLI Fast-Path'}")
         print(f"Iterations     : {warmup} warm-up, {runs} measured runs")
-        print(f"CPU Affinity   : {'Pinned to P-cores ' + str(sorted(affinity)) if affinity else 'Unpinned (OS Scheduler)'}")
-        print(f"Perf PMU       : {', '.join(perf_events) if perf_events else 'Disabled'}")
+        print(
+            f"CPU Affinity   : {'Pinned to P-cores ' + str(sorted(affinity)) if affinity else 'Unpinned (OS Hybrid Scheduler)'}"
+        )
+        print(f"Perf PMU       : {', '.join(perf_events) if perf_events else 'Disabled (kernel rusage)'}")
         return
 
     text = Text()
@@ -601,40 +986,83 @@ def render_banner(
     text.append("• Arguments      : ", style="bold bright_cyan")
     text.append(f"{' '.join(args) if args else '(None)'}\n", style="bright_white")
     text.append("• Execution Mode : ", style="bold bright_cyan")
-    text.append(f"{'Wayland GUI Lifecycle' if gui_mode else 'Direct CLI Fast-Path'}\n", style="bright_white")
+    text.append(
+        f"{'Wayland GUI Lifecycle (Hyprland Socket Polling)' if gui_mode else 'Direct CLI Fast-Path'} "
+        f"({warmup} warm-up, {runs} measured)\n",
+        style="bright_white",
+    )
     text.append("• CPU & Governor : ", style="bold bright_cyan")
     text.append(f"{get_cpu_model()} | {get_scaling_governor()}\n", style="bright_white")
     text.append("• Topology / Pin : ", style="bold bright_cyan")
-    text.append(f"{'Pinned to P-cores ' + str(sorted(affinity)) if affinity else 'Unpinned (OS Scheduler)'}\n", style="bright_white")
+    text.append(
+        f"{'Pinned to Golden Cove P-cores ' + str(sorted(affinity)) if affinity else 'Unpinned (OS Hybrid Scheduler)'}\n",
+        style="bright_white",
+    )
     text.append("• Hardware PMU   : ", style="bold bright_cyan")
-    text.append(f"{', '.join(perf_events) if perf_events else 'Disabled (kernel rusage)'}", style="bright_white")
+    text.append(
+        f"{', '.join(perf_events) if perf_events else 'Disabled (kernel rusage only)'}",
+        style="bright_white",
+    )
 
     title = "[bold bright_white]MICROARCHITECTURAL & PERFORMANCE BENCHMARK[/bold bright_white]"
     panel = Panel(text, title=title, border_style="bright_cyan", box=box.ROUNDED)
     console.print(panel)
 
 
+def render_single_isa(isa: dict[str, Any], name: str) -> None:
+    if not isa or not isa.get("total_insns"):
+        return
+    tot = max(1, int(isa.get("total_insns", 1)))
+
+    if not RICH_AVAILABLE or console is None:
+        print(f"\n### Static Disassembly & ISA Breakdown: {name} (SHA256: {isa.get('sha256', '?')})")
+        print(f"| {'ISA Metric':<42} | {'Count / Value':<22} | {'Share of Insns':<16} |")
+        print(f"|{'-'*44}|{'-'*24}|{'-'*18}|")
+        for key, label, unit, is_feat in _ISA_METRICS_SCHEMA:
+            val = int(isa.get(key, 0))
+            share = f"{(val / tot * 100.0):6.2f}%" if is_feat else "—"
+            print(f"| {label:<42} | {val:16,d} {unit:<5} | {share:<16} |")
+        return
+
+    table = Table(
+        title=f"[bold bright_cyan]Static Binary ISA Breakdown: {name} (SHA256: {isa.get('sha256', '?')})[/bold bright_cyan]",
+        box=box.ROUNDED,
+        header_style="bold bright_cyan",
+        border_style="bright_cyan",
+        expand=True,
+    )
+    table.add_column("Instruction Set / Metric", min_width=36, ratio=1, no_wrap=True)
+    table.add_column("Count / Value", justify="right", style="bold bright_white")
+    table.add_column("Density (% of Total Insns)", justify="right", min_width=18)
+
+    for idx, (key, label, unit, is_feat) in enumerate(_ISA_METRICS_SCHEMA):
+        if idx == 2:
+            table.add_section()
+        val = int(isa.get(key, 0))
+        if not is_feat:
+            share_str = "[dim]—[/dim]"
+        elif val == 0:
+            share_str = "[dim]0.00%[/dim]"
+        else:
+            share_str = f"[bold bright_green]{(val / tot * 100.0):.2f}%[/bold bright_green]"
+        table.add_row(label, f"{val:,d} {unit}", share_str)
+
+    console.print(table)
+
+
 def render_isa_comparison(n_isa: dict[str, Any], g_isa: dict[str, Any], n_name: str, g_name: str) -> None:
     if not n_isa or not g_isa:
         return
 
-    metrics = [
-        ("size_bytes", "Binary Size", "Bytes", False),
-        ("total_insns", "Total Disassembled Insns", "insn", False),
-        ("avx_vex_insns", "AVX / AVX2 VEX Instructions", "insn", True),
-        ("fma3_insns", "FMA3 Fused Multiply-Add", "insn", True),
-        ("bmi1_bmi2_insns", "BMI1 / BMI2 Bit Manipulation", "insn", True),
-        ("bitmanip_cnt_insns", "LZCNT / TZCNT / POPCNT", "insn", True),
-    ]
-
     if not RICH_AVAILABLE or console is None:
         print("\n### Static Disassembly & ISA Audit (objdump -d)")
-        print(f"| {'Metric':<30} | {n_name:<28} | {g_name:<28} | {'Delta':<14} |")
-        print(f"|{'-'*32}|{'-'*30}|{'-'*30}|{'-'*16}|")
-        for key, label, unit, _ in metrics:
-            nv, gv = n_isa[key], g_isa[key]
+        print(f"| {'Metric':<40} | {n_name:<22} | {g_name:<22} | {'Delta':<20} |")
+        print(f"|{'-'*42}|{'-'*24}|{'-'*24}|{'-'*22}|")
+        for key, label, unit, _ in _ISA_METRICS_SCHEMA:
+            nv, gv = int(n_isa.get(key, 0)), int(g_isa.get(key, 0))
             diff = nv - gv
-            print(f"| {label:<30} | {nv:<28,d} | {gv:<28,d} | {diff:+14,d} |")
+            pct = f"({diff / gv * 100.0:+.1f}%)" if gv > 0 and diff != 0 else ""
+            print(f"| {label:<40} | {nv:16,d} {unit:<5} | {gv:16,d} {unit:<5} | {diff:+11,d} {pct:<8} |")
         return
 
     table = Table(
@@ -644,23 +1072,87 @@ def render_isa_comparison(n_isa: dict[str, Any], g_isa: dict[str, Any], n_name: 
         border_style="bright_cyan",
         expand=True,
     )
-    table.add_column("ISA Metric", min_width=28, ratio=1, no_wrap=True)
+    table.add_column("ISA Category / Metric", min_width=36, ratio=1, no_wrap=True)
     table.add_column(f"Primary ({n_name})", justify="right", style="bold bright_white")
     table.add_column(f"Baseline ({g_name})", justify="right", style="bright_white")
-    table.add_column("Difference", justify="right", min_width=14)
+    table.add_column("Delta (Δ Count & %)", justify="right", min_width=20)
 
-    for key, label, unit, is_feature in metrics:
-        nv, gv = n_isa[key], g_isa[key]
+    for idx, (key, label, unit, is_feature) in enumerate(_ISA_METRICS_SCHEMA):
+        if idx == 2:
+            table.add_section()
+        nv, gv = int(n_isa.get(key, 0)), int(g_isa.get(key, 0))
         diff = nv - gv
+        pct_str = f" ({diff / gv * 100.0:+.1f}%)" if gv > 0 else (" (new)" if nv > 0 else "")
         if diff == 0:
             diff_str = "[dim white]0 —[/dim white]"
         elif is_feature:
-            diff_str = f"[bold bright_green]+{diff:,d} ▲[/bold bright_green]" if diff > 0 else f"[bold bright_red]{diff:,d} ▼[/bold bright_red]"
+            if diff > 0:
+                diff_str = f"[bold bright_green]+{diff:,d}{pct_str} ▲[/bold bright_green]"
+            else:
+                diff_str = f"[bold bright_red]{diff:,d}{pct_str} ▼[/bold bright_red]"
         else:
-            diff_str = f"[bright_yellow]{diff:+,d}[/bright_yellow]"
+            diff_str = f"[bright_yellow]{diff:+,d}{pct_str}[/bright_yellow]"
         table.add_row(label, f"{nv:,d} {unit}", f"{gv:,d} {unit}", diff_str)
 
     console.print(table)
+
+
+def _build_metric_sections(
+    samples_a: list[SampleMetrics],
+    samples_b: list[SampleMetrics] | None,
+    gui_mode: bool,
+    perf_events: list[str],
+) -> list[tuple[str, list[tuple[str, str, Callable[[SampleMetrics], float], bool]]]]:
+    all_samples = samples_a + (samples_b if samples_b else [])
+
+    latency_rows: list[tuple[str, str, Callable[[SampleMetrics], float], bool]] = [
+        ("Wall Clock Latency", "ms", lambda s: s.wall_ms, True),
+    ]
+    if gui_mode:
+        latency_rows.extend([
+            ("GUI Surface Mapped", "ms", lambda s: s.gui_ready_ms, True),
+            ("GUI Teardown Latency", "ms", lambda s: s.gui_teardown_ms, True),
+        ])
+    if perf_events:
+        latency_rows.append(("Task Clock Time", "ms", lambda s: s.task_clock_ms, True))
+
+    compute_rows: list[tuple[str, str, Callable[[SampleMetrics], float], bool]] = [
+        ("User CPU Time", "ms", lambda s: s.user_cpu_ms, True),
+        ("Kernel / System CPU Time", "ms", lambda s: s.sys_cpu_ms, True),
+    ]
+    if perf_events:
+        compute_rows.extend([
+            ("P-Core CPU Cycles", "K", lambda s: s.pcore_cycles / 1e3, True),
+            ("Retired Instructions", "K", lambda s: s.pcore_instructions / 1e3, True),
+            ("Instructions Per Cycle (IPC)", "insn/cyc", sample_ipc, False),
+        ])
+        if any(s.cache_refs > 0 for s in all_samples):
+            compute_rows.append(("Cache References", "K", lambda s: s.cache_refs / 1e3, True))
+        if any(s.ecore_cycles > 0 or s.ecore_instructions > 0 for s in all_samples):
+            compute_rows.extend([
+                ("E-Core CPU Cycles", "K", lambda s: s.ecore_cycles / 1e3, True),
+                ("E-Core Instructions", "K", lambda s: s.ecore_instructions / 1e3, True),
+            ])
+
+    memory_rows: list[tuple[str, str, Callable[[SampleMetrics], float], bool]] = [
+        ("Peak RSS Memory", "KiB", lambda s: float(s.max_rss_kib), True),
+    ]
+    if gui_mode or any(s.pss_kib > 0 for s in all_samples):
+        memory_rows.append(("Proportional Set Size (PSS)", "KiB", lambda s: float(s.pss_kib), True))
+
+    sched_rows: list[tuple[str, str, Callable[[SampleMetrics], float], bool]] = [
+        ("Minor Page Faults", "flt", lambda s: float(s.min_flt), True),
+        ("Major Page Faults", "flt", lambda s: float(s.maj_flt), True),
+        ("Voluntary Context Switches", "ctx", lambda s: float(s.vol_ctxt), True),
+        ("Involuntary Context Switches", "ctx", lambda s: float(s.invol_ctxt), True),
+    ]
+
+    return [
+        ("Latency & Lifecycle", latency_rows),
+        ("CPU Compute & PMU", compute_rows),
+        ("Memory Footprint", memory_rows),
+        ("Kernel Scheduling & Faults", sched_rows),
+    ]
 
 
 def render_comparison_table(
@@ -671,48 +1163,34 @@ def render_comparison_table(
     gui_mode: bool,
     perf_events: list[str],
 ) -> None:
-    rows_meta: list[tuple[str, str, str, Any, bool]] = [
-        ("Wall Clock Latency", "ms", "latency", lambda s: s.wall_ms, True),
-    ]
-    if gui_mode:
-        rows_meta.extend([
-            ("GUI Surface Mapped", "ms", "latency", lambda s: s.gui_ready_ms, True),
-            ("GUI Teardown Latency", "ms", "latency", lambda s: s.gui_teardown_ms, True),
-        ])
-    rows_meta.extend([
-        ("User CPU Time", "ms", "cpu", lambda s: s.user_cpu_ms, True),
-        ("Kernel / System CPU Time", "ms", "cpu", lambda s: s.sys_cpu_ms, True),
-    ])
-    if perf_events:
-        rows_meta.extend([
-            ("Task Clock", "ms", "latency", lambda s: s.task_clock_ms, True),
-            ("P-Core CPU Cycles", "K", "cycles", lambda s: s.pcore_cycles / 1e3, True),
-            ("Retired Instructions", "K", "insn", lambda s: s.pcore_instructions / 1e3, True),
-        ])
-    rows_meta.append(("Peak RSS Memory", "KiB", "memory", lambda s: float(s.max_rss_kib), True))
-    if gui_mode:
-        rows_meta.append(("Proportional Set (PSS)", "KiB", "memory", lambda s: float(s.pss_kib), True))
-    rows_meta.append(("Minor Page Faults", "flt", "faults", lambda s: float(s.min_flt), True))
+    sections = _build_metric_sections(primary_samples, baseline_samples, gui_mode, perf_events)
+    low_sample = len(primary_samples) < 5 or len(baseline_samples) < 5
 
     if not RICH_AVAILABLE or console is None:
         print(f"\n### Dynamic Execution Benchmark ({len(primary_samples)} ABBA Iterations)")
-        header = f"| {'Metric':<28} | {p_name:<42} | {b_name:<42} | {'Delta%':<7} | {'p-val':<7} |"
-        sep = f"|{'-'*30}|{'-'*44}|{'-'*44}|{'-'*9}|{'-'*9}|"
+        header = f"| {'Category / Metric':<30} | {p_name:<42} | {b_name:<42} | {'Delta%':<8} | {'p-val':<9} |"
+        sep = f"|{'-'*32}|{'-'*44}|{'-'*44}|{'-'*10}|{'-'*11}|"
         print(header)
         print(sep)
-        for label, unit, _, extractor, lower_better in rows_meta:
-            p_vals = [extractor(x) for x in primary_samples]
-            b_vals = [extractor(x) for x in baseline_samples]
-            ps, bs = compute_stats(p_vals), compute_stats(b_vals)
-            pval = mann_whitney_u_pvalue(p_vals, b_vals)
-            delta = ((ps.mean - bs.mean) / bs.mean * 100.0) if bs.mean != 0 else 0.0
-            sig = "*" if pval < 0.05 else " "
-            print(
-                f"| {label:<28} | "
-                f"{ps.mean:7.2f} ± {ps.stdev:4.2f} (med {ps.median:6.2f}, p95 {ps.p95:6.2f}) {unit:<4} | "
-                f"{bs.mean:7.2f} ± {bs.stdev:4.2f} (med {bs.median:6.2f}, p95 {bs.p95:6.2f}) {unit:<4} | "
-                f"{delta:+6.2f}% | {pval:6.4f}{sig} |"
-            )
+        for sec_title, rows in sections:
+            print(f"| **[{sec_title}]** {'':<15} | {'':<42} | {'':<42} | {'':<8} | {'':<9} |")
+            for label, unit, extractor, lower_better in rows:
+                p_vals = [extractor(x) for x in primary_samples]
+                b_vals = [extractor(x) for x in baseline_samples]
+                ps, bs = compute_stats(p_vals), compute_stats(b_vals)
+                pval = mann_whitney_u_pvalue(p_vals, b_vals)
+                delta = ((ps.mean - bs.mean) / bs.mean * 100.0) if bs.mean != 0.0 else 0.0
+                if low_sample:
+                    p_col = "N/A(n<5)"
+                else:
+                    sig = "*" if pval < 0.05 else " "
+                    p_col = f"{pval:6.4f}{sig}"
+                print(
+                    f"| {label:<30} | "
+                    f"{ps.mean:7.2f} ± {ps.stdev:4.2f} (med {ps.median:6.2f}, p95 {ps.p95:6.2f}) {unit:<4} | "
+                    f"{bs.mean:7.2f} ± {bs.stdev:4.2f} (med {bs.median:6.2f}, p95 {bs.p95:6.2f}) {unit:<4} | "
+                    f"{delta:+7.2f}% | {p_col:<9} |"
+                )
         return
 
     table = Table(
@@ -722,67 +1200,79 @@ def render_comparison_table(
         border_style="bright_cyan",
         expand=True,
     )
-    table.add_column("Performance Metric", min_width=24, ratio=1, no_wrap=True)
+    table.add_column("Telemetry Metric", min_width=28, ratio=1, no_wrap=True)
     table.add_column(f"Primary ({p_name})", justify="right", style="bold bright_white")
     table.add_column(f"Baseline ({b_name})", justify="right", style="bright_white")
-    table.add_column("Δ Relative", justify="right", min_width=10)
-    table.add_column("p-value", justify="right", min_width=8)
+    table.add_column("Δ Relative", justify="right", min_width=12)
+    table.add_column("Confidence (p)", justify="right", min_width=12)
 
-    for label, unit, mode, extractor, lower_better in rows_meta:
-        p_vals = [extractor(x) for x in primary_samples]
-        b_vals = [extractor(x) for x in baseline_samples]
-        ps, bs = compute_stats(p_vals), compute_stats(b_vals)
-        pval = mann_whitney_u_pvalue(p_vals, b_vals)
-        delta = ((ps.mean - bs.mean) / bs.mean * 100.0) if bs.mean != 0 else 0.0
+    for sec_idx, (sec_title, rows) in enumerate(sections):
+        if sec_idx > 0:
+            table.add_section()
+        table.add_row(
+            f"[bold bright_cyan]▸ {sec_title}[/bold bright_cyan]",
+            "",
+            "",
+            "",
+            "",
+        )
+        for label, unit, extractor, lower_better in rows:
+            p_vals = [extractor(x) for x in primary_samples]
+            b_vals = [extractor(x) for x in baseline_samples]
+            ps, bs = compute_stats(p_vals), compute_stats(b_vals)
+            pval = mann_whitney_u_pvalue(p_vals, b_vals)
+            delta = ((ps.mean - bs.mean) / bs.mean * 100.0) if bs.mean != 0.0 else 0.0
 
-        p_str = f"{ps.mean:.2f} [dim]±{ps.stdev:.2f}[/dim] (med {ps.median:.2f}) {unit}"
-        b_str = f"{bs.mean:.2f} [dim]±{bs.stdev:.2f}[/dim] (med {bs.median:.2f}) {unit}"
+            p_str = f"{ps.mean:.2f} [dim]±{ps.stdev:.2f} (med {ps.median:.2f})[/dim] {unit}"
+            b_str = f"{bs.mean:.2f} [dim]±{bs.stdev:.2f} (med {bs.median:.2f})[/dim] {unit}"
 
-        if abs(delta) < 0.1:
-            d_str = "[dim white]0.0% —[/dim white]"
-        else:
-            is_good = (delta < 0) if lower_better else (delta > 0)
-            col = "bold bright_green" if is_good else "bold bright_red"
-            arr = "▼" if delta < 0 else "▲"
-            d_str = f"[{col}]{delta:+.2f}% {arr}[/{col}]"
+            if abs(delta) < 0.1 or (ps.mean == 0.0 and bs.mean == 0.0):
+                d_str = "[dim white]0.0% —[/dim white]"
+            else:
+                is_good = (delta < 0.0) if lower_better else (delta > 0.0)
+                arr = "▼" if delta < 0.0 else "▲"
+                if not low_sample and pval < 0.05:
+                    col = "bold bright_green" if is_good else "bold bright_red"
+                else:
+                    col = "green" if is_good else "red"
+                d_str = f"[{col}]{delta:+.2f}% {arr}[/{col}]"
 
-        pval_str = f"[bold bright_yellow]{pval:.4f}*[/bold bright_yellow]" if pval < 0.05 else f"[dim]{pval:.4f}[/dim]"
-        table.add_row(label, p_str, b_str, d_str, pval_str)
+            if low_sample:
+                pval_str = "[dim]N/A (n<5)[/dim]"
+            elif pval < 0.05:
+                pval_str = f"[bold bright_yellow]{pval:.4f} ★[/bold bright_yellow]"
+            else:
+                pval_str = f"[dim]{pval:.4f}[/dim]"
+
+            table.add_row(f"  {label}", p_str, b_str, d_str, pval_str)
 
     console.print(table)
 
 
-def render_single_table(samples: list[SampleMetrics], name: str, gui_mode: bool, perf_events: list[str]) -> None:
-    rows = [
-        ("Wall Clock Latency", "ms", [s.wall_ms for s in samples]),
-    ]
-    if gui_mode:
-        rows.extend([
-            ("GUI Surface Mapped", "ms", [s.gui_ready_ms for s in samples]),
-            ("GUI Teardown Latency", "ms", [s.gui_teardown_ms for s in samples]),
-        ])
-    rows.extend([
-        ("User CPU Time", "ms", [s.user_cpu_ms for s in samples]),
-        ("Kernel / System CPU Time", "ms", [s.sys_cpu_ms for s in samples]),
-    ])
-    if perf_events:
-        rows.extend([
-            ("Task Clock Time", "ms", [s.task_clock_ms for s in samples]),
-            ("P-Core CPU Cycles", "K", [s.pcore_cycles / 1e3 for s in samples]),
-            ("Retired Instructions", "K", [s.pcore_instructions / 1e3 for s in samples]),
-        ])
-    rows.append(("Peak RSS Memory", "KiB", [float(s.max_rss_kib) for s in samples]))
-    if gui_mode:
-        rows.append(("Proportional Set (PSS)", "KiB", [float(s.pss_kib) for s in samples]))
-    rows.append(("Minor Page Faults", "flt", [float(s.min_flt) for s in samples]))
+def render_single_table(
+    samples: list[SampleMetrics],
+    name: str,
+    gui_mode: bool,
+    perf_events: list[str],
+) -> None:
+    sections = _build_metric_sections(samples, None, gui_mode, perf_events)
 
     if not RICH_AVAILABLE or console is None:
         print(f"\n### Standalone Profiling Report: {name} ({len(samples)} runs)")
-        print(f"| {'Metric':<28} | {'Mean ± SD':<22} | {'Median':<12} | {'Min – Max':<18} | {'P95':<12} |")
-        print(f"|{'-'*30}|{'-'*24}|{'-'*14}|{'-'*20}|{'-'*14}|")
-        for label, unit, vals in rows:
-            st = compute_stats(vals)
-            print(f"| {label:<28} | {st.mean:7.2f} ± {st.stdev:4.2f} {unit:<4} | {st.median:7.2f} {unit:<4} | {st.min_val:6.2f} – {st.max_val:6.2f} | {st.p95:7.2f} {unit:<4} |")
+        print(f"| {'Metric':<30} | {'Mean ± SD (CV%)':<26} | {'Median (IQR)':<20} | {'Min – Max':<18} | {'P95':<12} |")
+        print(f"|{'-'*32}|{'-'*28}|{'-'*22}|{'-'*20}|{'-'*14}|")
+        for sec_title, rows in sections:
+            print(f"| **[{sec_title}]** {'':<15} | {'':<26} | {'':<20} | {'':<18} | {'':<12} |")
+            for label, unit, extractor, _ in rows:
+                vals = [extractor(s) for s in samples]
+                st = compute_stats(vals)
+                print(
+                    f"| {label:<30} | "
+                    f"{st.mean:7.2f} ± {st.stdev:4.2f} ({st.cv_pct:4.1f}%) {unit:<3} | "
+                    f"{st.median:7.2f} (IQR {st.iqr:5.2f}) | "
+                    f"{st.min_val:6.2f} – {st.max_val:6.2f} | "
+                    f"{st.p95:7.2f} {unit:<4} |"
+                )
         return
 
     table = Table(
@@ -792,19 +1282,24 @@ def render_single_table(samples: list[SampleMetrics], name: str, gui_mode: bool,
         border_style="bright_cyan",
         expand=True,
     )
-    table.add_column("Metric", min_width=24, ratio=1, no_wrap=True)
-    table.add_column("Mean ± SD", justify="right", style="bold bright_white")
-    table.add_column("Median (P50)", justify="right", style="bright_white")
+    table.add_column("Telemetry Metric", min_width=28, ratio=1, no_wrap=True)
+    table.add_column("Mean ± SD (CV%)", justify="right", style="bold bright_white")
+    table.add_column("Median (IQR)", justify="right", style="bright_white")
     table.add_column("Min – Max", justify="center", style="white")
     table.add_column("95th % (P95)", justify="right", style="bright_white")
 
-    for label, unit, vals in rows:
-        st = compute_stats(vals)
-        mean_str = f"{st.mean:.2f} [dim]±{st.stdev:.2f}[/dim] {unit}"
-        med_str = f"{st.median:.2f} {unit}"
-        mm_str = f"{st.min_val:.1f} – {st.max_val:.1f}"
-        p95_str = f"{st.p95:.2f} {unit}"
-        table.add_row(label, mean_str, med_str, mm_str, p95_str)
+    for sec_idx, (sec_title, rows) in enumerate(sections):
+        if sec_idx > 0:
+            table.add_section()
+        table.add_row(f"[bold bright_cyan]▸ {sec_title}[/bold bright_cyan]", "", "", "", "")
+        for label, unit, extractor, _ in rows:
+            vals = [extractor(s) for s in samples]
+            st = compute_stats(vals)
+            mean_str = f"{st.mean:.2f} [dim]±{st.stdev:.2f} ({st.cv_pct:.1f}%)[/dim] {unit}"
+            med_str = f"{st.median:.2f} [dim](IQR {st.iqr:.2f})[/dim] {unit}"
+            mm_str = f"{st.min_val:.2f} – {st.max_val:.2f}"
+            p95_str = f"{st.p95:.2f} {unit}"
+            table.add_row(f"  {label}", mean_str, med_str, mm_str, p95_str)
 
     console.print(table)
 
@@ -814,59 +1309,123 @@ def render_verdict_panel(
     baseline_samples: list[SampleMetrics],
     p_name: str,
     b_name: str,
+    gui_mode: bool = False,
 ) -> None:
-    p_wall = [s.wall_ms for s in primary_samples]
-    b_wall = [s.wall_ms for s in baseline_samples]
-    ps_w, bs_w = compute_stats(p_wall), compute_stats(b_wall)
-    pval_w = mann_whitney_u_pvalue(p_wall, b_wall)
-    delta_w = ((ps_w.mean - bs_w.mean) / bs_w.mean * 100.0) if bs_w.mean != 0 else 0.0
+    low_sample = len(primary_samples) < 5 or len(baseline_samples) < 5
+
+    if gui_mode and any(s.gui_mapped for s in primary_samples + baseline_samples):
+        lat_label = "GUI Surface Mapping Latency"
+        p_lat = [s.gui_ready_ms for s in primary_samples]
+        b_lat = [s.gui_ready_ms for s in baseline_samples]
+    else:
+        lat_label = "Wall Clock Latency"
+        p_lat = [s.wall_ms for s in primary_samples]
+        b_lat = [s.wall_ms for s in baseline_samples]
+
+    ps_w, bs_w = compute_stats(p_lat), compute_stats(b_lat)
+    pval_w = mann_whitney_u_pvalue(p_lat, b_lat)
+    delta_w = ((ps_w.mean - bs_w.mean) / bs_w.mean * 100.0) if bs_w.mean != 0.0 else 0.0
 
     p_in = [float(s.pcore_instructions) for s in primary_samples]
     b_in = [float(s.pcore_instructions) for s in baseline_samples]
+    has_pmu = any(p_in) and any(b_in)
     delta_in = 0.0
     pval_in = 1.0
-    if any(p_in) and any(b_in):
+    delta_ipc = 0.0
+    ps_ipc_mean = 0.0
+    bs_ipc_mean = 0.0
+
+    if has_pmu:
         ps_in, bs_in = compute_stats(p_in), compute_stats(b_in)
         pval_in = mann_whitney_u_pvalue(p_in, b_in)
-        delta_in = ((ps_in.mean - bs_in.mean) / bs_in.mean * 100.0) if bs_in.mean != 0 else 0.0
+        delta_in = ((ps_in.mean - bs_in.mean) / bs_in.mean * 100.0) if bs_in.mean != 0.0 else 0.0
 
-    if not RICH_AVAILABLE or console is None:
-        print("\n" + "=" * 114)
-        print(" VERDICT & INTERPRETATION")
-        print("=" * 114)
-        if abs(delta_w) < 4.0 or pval_w >= 0.05:
-            print(f"• Latency: {p_name} is {abs(delta_w):.2f}% {'faster' if delta_w < 0 else 'slower'} ({ps_w.mean:.2f}ms vs {bs_w.mean:.2f}ms, p={pval_w:.4f}).")
-            print("           The difference is MINOR / PRACTICALLY IDENTICAL in real-world usage.")
-        else:
-            print(f"• Latency: {p_name} is SIGNIFICANTLY {'faster' if delta_w < 0 else 'slower'} by {abs(delta_w):.2f}% ({ps_w.mean:.2f}ms vs {bs_w.mean:.2f}ms, p={pval_w:.4f}).")
-        if delta_in != 0.0:
-            print(f"• Compute: {p_name} executes {abs(delta_in):.2f}% {'fewer' if delta_in < 0 else 'more'} CPU instructions (p={pval_in:.4f}).")
-        print("=" * 114)
-        return
-
-    text = Text()
-    if abs(delta_w) < 4.0 or pval_w >= 0.05:
-        text.append("• Execution Latency: ", style="bold bright_cyan")
-        text.append(f"{p_name} is {abs(delta_w):.2f}% {'faster' if delta_w < 0 else 'slower'} ", style="bold white")
-        text.append(f"({ps_w.mean:.2f} ms vs {bs_w.mean:.2f} ms, p={pval_w:.4f}).\n", style="white")
-        text.append("  [dim]Result:[/dim] [bold bright_yellow]Practically Identical[/bold bright_yellow]. The timing variance is within ordinary scheduler margins.\n", style="white")
-    else:
-        text.append("• Execution Latency: ", style="bold bright_cyan")
-        text.append(f"{p_name} is SIGNIFICANTLY {'faster' if delta_w < 0 else 'slower'} by {abs(delta_w):.2f}% ", style="bold bright_green" if delta_w < 0 else "bold bright_red")
-        text.append(f"({ps_w.mean:.2f} ms vs {bs_w.mean:.2f} ms, p={pval_w:.4f}).\n", style="white")
-
-    if delta_in != 0.0:
-        text.append("• Instruction Load : ", style="bold bright_cyan")
-        text.append(f"{p_name} retires {abs(delta_in):.2f}% {'fewer' if delta_in < 0 else 'more'} CPU instructions ", style="bold bright_green" if delta_in < 0 else "bold bright_red")
-        text.append(f"due to compiler vectorization (p={pval_in:.4f}).\n", style="white")
+        p_ipc_vals = [sample_ipc(s) for s in primary_samples]
+        b_ipc_vals = [sample_ipc(s) for s in baseline_samples]
+        ps_ipc, bs_ipc = compute_stats(p_ipc_vals), compute_stats(b_ipc_vals)
+        ps_ipc_mean, bs_ipc_mean = ps_ipc.mean, bs_ipc.mean
+        delta_ipc = ((ps_ipc.mean - bs_ipc.mean) / bs_ipc.mean * 100.0) if bs_ipc.mean != 0.0 else 0.0
 
     p_rss = compute_stats([float(s.max_rss_kib) for s in primary_samples]).mean
     b_rss = compute_stats([float(s.max_rss_kib) for s in baseline_samples]).mean
-    d_rss = ((p_rss - b_rss) / b_rss * 100.0) if b_rss != 0 else 0.0
-    text.append("• RAM Consumption  : ", style="bold bright_cyan")
-    text.append(f"{p_name} uses {abs(d_rss):.1f}% {'less' if d_rss < 0 else 'more'} Peak RSS ({p_rss:.0f} KiB vs {b_rss:.0f} KiB).", style="white")
+    d_rss = ((p_rss - b_rss) / b_rss * 100.0) if b_rss != 0.0 else 0.0
 
-    panel = Panel(text, title="[bold bright_white]EXECUTIVE VERDICT & INTERPRETATION[/bold bright_white]", border_style="bright_cyan", box=box.ROUNDED)
+    p_vctx = compute_stats([float(s.vol_ctxt) for s in primary_samples]).mean
+
+    if not RICH_AVAILABLE or console is None:
+        print("\n" + "=" * 118)
+        print(" EXECUTIVE VERDICT & MICROARCHITECTURAL INTERPRETATION")
+        print("=" * 118)
+        p_tag = "N/A (n<5)" if low_sample else f"p={pval_w:.4f}"
+        if low_sample or abs(delta_w) < 3.5 or pval_w >= 0.05:
+            print(
+                f"• {lat_label}: {p_name} is {abs(delta_w):.2f}% {'faster' if delta_w < 0 else 'slower'} "
+                f"({ps_w.mean:.2f} ms vs {bs_w.mean:.2f} ms, {p_tag})."
+            )
+            print("  Verdict: PRACTICALLY IDENTICAL. Variance is within normal OS scheduler / compositor noise.")
+        else:
+            print(
+                f"• {lat_label}: {p_name} is STATISTICALLY {'FASTER' if delta_w < 0 else 'SLOWER'} by {abs(delta_w):.2f}% "
+                f"({ps_w.mean:.2f} ms vs {bs_w.mean:.2f} ms, {p_tag})."
+            )
+        if has_pmu:
+            print(
+                f"• Compute & IPC: {p_name} retires {abs(delta_in):.2f}% {'fewer' if delta_in < 0 else 'more'} instructions "
+                f"(p={pval_in:.4f}) with IPC {ps_ipc_mean:.2f} vs {bs_ipc_mean:.2f} ({delta_ipc:+.2f}%)."
+            )
+        print(
+            f"• Memory & IPC Wait: Peak RSS is {p_rss:.0f} KiB vs {b_rss:.0f} KiB ({d_rss:+.1f}%), "
+            f"averaging {p_vctx:.1f} voluntary context switches/run."
+        )
+        print("=" * 118)
+        return
+
+    text = Text()
+    p_tag = "N/A (n<5)" if low_sample else f"p={pval_w:.4f}"
+    text.append(f"• {lat_label:<28}: ", style="bold bright_cyan")
+    if low_sample or abs(delta_w) < 3.5 or pval_w >= 0.05:
+        text.append(
+            f"{p_name} is {abs(delta_w):.2f}% {'faster' if delta_w < 0 else 'slower'} ",
+            style="bold white",
+        )
+        text.append(f"({ps_w.mean:.2f} ms vs {bs_w.mean:.2f} ms, {p_tag}).\n", style="white")
+        text.append("  • Practical Verdict        : ", style="dim")
+        text.append("Practically Identical", style="bold bright_yellow")
+        text.append(
+            ". End-to-end timing is bounded by dynamic loader/IPC/compositor round-trips rather than CPU loops.\n",
+            style="white",
+        )
+    else:
+        col = "bold bright_green" if delta_w < 0 else "bold bright_red"
+        word = "FASTER" if delta_w < 0 else "SLOWER"
+        text.append(f"{p_name} is SIGNIFICANTLY {word} by {abs(delta_w):.2f}% ", style=col)
+        text.append(f"({ps_w.mean:.2f} ms vs {bs_w.mean:.2f} ms, {p_tag}).\n", style="white")
+
+    if has_pmu:
+        text.append(f"• {'Instruction & IPC Efficiency':<28}: ", style="bold bright_cyan")
+        in_col = "bold bright_green" if delta_in < 0 else ("bold bright_red" if delta_in > 0 else "white")
+        text.append(
+            f"{p_name} retires {abs(delta_in):.2f}% {'fewer' if delta_in < 0 else 'more'} instructions ",
+            style=in_col,
+        )
+        text.append(
+            f"(p={pval_in:.4f}) | IPC: {ps_ipc_mean:.2f} vs {bs_ipc_mean:.2f} ({delta_ipc:+.2f}%).\n",
+            style="white",
+        )
+
+    text.append(f"• {'Memory & Scheduler Profile':<28}: ", style="bold bright_cyan")
+    text.append(
+        f"Peak RSS {p_rss:,.0f} KiB vs {b_rss:,.0f} KiB ({d_rss:+.1f}%) | "
+        f"Avg {p_vctx:.1f} voluntary context switches (I/O & socket waits).",
+        style="white",
+    )
+
+    panel = Panel(
+        text,
+        title="[bold bright_white]EXECUTIVE VERDICT & MICROARCHITECTURAL INTERPRETATION[/bold bright_white]",
+        border_style="bright_cyan",
+        box=box.ROUNDED,
+    )
     console.print(panel)
 
 
@@ -875,14 +1434,20 @@ def render_history_list(history: list[dict[str, Any]], count: int = 10) -> None:
         print(f"[INFO] No previous benchmark history found in {HISTORY_DIR}")
         return
 
-    runs = history[-count:]
+    runs = history[-max(1, count) :]
     if not RICH_AVAILABLE or console is None:
         print(f"\n=== BENCHMARK HISTORY (Last {len(runs)} Runs) ===")
-        print(f"| {'ID':<16} | {'Timestamp':<20} | {'Binary':<24} | {'Wall (ms)':<10} | {'Cycles (K)':<12} | {'RSS (KiB)':<10} |")
-        print(f"|{'-'*18}|{'-'*22}|{'-'*26}|{'-'*12}|{'-'*14}|{'-'*12}|")
+        print(
+            f"| {'ID':<24} | {'Timestamp':<19} | {'Binary':<22} | {'Wall (ms)':<10} | {'Cycles (K)':<11} | {'IPC':<6} | {'RSS (KiB)':<10} |"
+        )
+        print(f"|{'-'*26}|{'-'*21}|{'-'*24}|{'-'*12}|{'-'*13}|{'-'*8}|{'-'*12}|")
         for r in runs:
             m = r.get("metrics", {})
-            print(f"| {r.get('id','?'):<16} | {r.get('timestamp','?'):<20} | {r.get('binary_name','?'):<24} | {m.get('wall_ms', 0.0):<10.2f} | {m.get('cycles_k', 0.0):<12.1f} | {m.get('max_rss_kib', 0):<10} |")
+            print(
+                f"| {r.get('id','?'):<24} | {r.get('timestamp','?'):<19} | {r.get('binary_name','?'):<22} | "
+                f"{m.get('wall_ms', 0.0):<10.2f} | {m.get('cycles_k', 0.0):<11.1f} | "
+                f"{m.get('ipc', 0.0):<6.2f} | {m.get('max_rss_kib', 0):<10,d} |"
+            )
         return
 
     table = Table(
@@ -892,20 +1457,31 @@ def render_history_list(history: list[dict[str, Any]], count: int = 10) -> None:
         border_style="bright_cyan",
         expand=True,
     )
-    table.add_column("Run ID", style="bold white", min_width=16)
+    table.add_column("Run ID", style="bold white", min_width=22)
     table.add_column("Timestamp", style="dim", min_width=19)
-    table.add_column("Target Binary", style="bold bright_cyan", min_width=20)
+    table.add_column("Target Binary", style="bold bright_cyan", min_width=18)
     table.add_column("Args", style="white")
     table.add_column("Wall Latency", justify="right", style="bold bright_white")
     table.add_column("P-Core Cycles", justify="right", style="bright_white")
+    table.add_column("IPC", justify="right", style="bright_green")
     table.add_column("Peak RSS", justify="right", style="white")
 
     for r in runs:
         m = r.get("metrics", {})
         wall_str = f"{m.get('wall_ms', 0.0):.2f} ms"
         cyc_str = f"{m.get('cycles_k', 0.0):.1f} K"
-        rss_str = f"{m.get('max_rss_kib', 0):,d} KiB"
-        table.add_row(r.get("id", "?"), r.get("timestamp", "?"), r.get("binary_name", "?"), r.get("args", ""), wall_str, cyc_str, rss_str)
+        ipc_str = f"{m.get('ipc', 0.0):.2f}"
+        rss_str = f"{int(m.get('max_rss_kib', 0)):,d} KiB"
+        table.add_row(
+            str(r.get("id", "?")),
+            str(r.get("timestamp", "?")),
+            str(r.get("binary_name", "?")),
+            str(r.get("args", "")),
+            wall_str,
+            cyc_str,
+            ipc_str,
+            rss_str,
+        )
 
     console.print(table)
 
@@ -915,29 +1491,7 @@ def render_history_list(history: list[dict[str, Any]], count: int = 10) -> None:
 # ---------------------------------------------------------------------------
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(
-        description=__doc__,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    parser.add_argument("binary", type=Path, help="Primary binary (or Native build when comparing two)")
-    parser.add_argument("baseline", type=Path, nargs="?", default=None, help="Optional secondary binary (Generic baseline) for head-to-head comparison")
-    parser.add_argument("-a", "--args", type=str, default="--help", help="Arguments to pass to binaries (default: '--help')")
-    parser.add_argument("-n", "--runs", type=int, default=50, help="Number of measured runs (default: 50)")
-    parser.add_argument("-w", "--warmup", type=int, default=5, help="Number of warmup runs (default: 5)")
-    parser.add_argument("--gui", action="store_true", help="Enable Wayland GUI lifecycle mode (tracks surface mapping & teardown)")
-    parser.add_argument("--gui-settle", type=float, default=50.0, help="Settle time in ms for GUI before dismissal (default: 50ms)")
-    parser.add_argument("--gui-timeout", type=float, default=5.0, help="Timeout in seconds for GUI mapping (default: 5.0s)")
-    parser.add_argument("--allow-hybrid", action="store_true", help="Do not pin execution to Golden Cove P-cores")
-    parser.add_argument("-s", "--skip-isa", action="store_true", help="Skip static objdump ISA disassembly audit")
-    parser.add_argument("-o", "--json", type=Path, default=None, help="Save complete telemetry report to JSON")
-    parser.add_argument("--diff-last", action="store_true", help="Compare single binary against the most recent historical run")
-    parser.add_argument("--compare", type=str, default=None, help="Compare single binary against a specific historical Run ID")
-    parser.add_argument("--history", type=int, nargs="?", const=10, default=None, help="Display recent historical runs and exit")
-    parser.add_argument("--clear-history", action="store_true", help="Clear all stored benchmark history and exit")
-
-    args = parser.parse_args()
-
+def _run_benchmark_suite(args: argparse.Namespace) -> int:
     if args.clear_history:
         clear_history()
         return 0
@@ -945,8 +1499,28 @@ def main() -> int:
     history = load_history()
 
     if args.history is not None:
+        if args.history < 1:
+            print("[ERR] --history count must be >= 1", file=sys.stderr)
+            return 1
         render_history_list(history, count=args.history)
         return 0
+
+    if args.binary is None:
+        print("[ERR] Primary binary path is required unless using --history or --clear-history.", file=sys.stderr)
+        return 1
+
+    if args.runs < 1:
+        print("[ERR] --runs must be >= 1.", file=sys.stderr)
+        return 1
+    if args.warmup < 0:
+        print("[ERR] --warmup must be >= 0.", file=sys.stderr)
+        return 1
+    if args.gui_settle < 0.0:
+        print("[ERR] --gui-settle must be >= 0.0.", file=sys.stderr)
+        return 1
+    if args.gui_timeout <= 0.0:
+        print("[ERR] --gui-timeout must be > 0.0.", file=sys.stderr)
+        return 1
 
     primary = args.binary.resolve()
     if not primary.is_file() or not os.access(primary, os.X_OK):
@@ -959,33 +1533,35 @@ def main() -> int:
         return 1
 
     parsed_args = [] if (args.args == "--help" and args.gui) else shlex.split(args.args)
-    p_cores, e_cores = detect_hybrid_cpus()
+    p_cores, _ = detect_hybrid_cpus()
     affinity = None if args.allow_hybrid or not p_cores else p_cores
-    perf_events = detect_perf_events()
-
-    render_banner(primary, baseline, parsed_args, args.runs, args.warmup, affinity, perf_events, args.gui)
-
-    # 1. Static ISA Disassembly Audit
-    n_isa, g_isa = {}, {}
-    if not args.skip_isa:
-        n_isa = analyze_binary_isa(primary)
-        if baseline:
-            g_isa = analyze_binary_isa(baseline)
-            render_isa_comparison(n_isa, g_isa, primary.name, baseline.name)
-
-    # 2. Benchmark Execution
-    runner = (
-        (lambda b: run_gui_sample(b, parsed_args, perf_events, args.gui_settle, args.gui_timeout))
-        if args.gui
-        else (lambda b: run_cli_sample(b, parsed_args, perf_events))
-    )
-
-    primary_samples: list[SampleMetrics] = []
-    baseline_samples: list[SampleMetrics] = []
 
     with scoped_cpu_affinity(affinity):
+        perf_events = detect_perf_events(allow_hybrid=args.allow_hybrid)
+        render_banner(primary, baseline, parsed_args, args.runs, args.warmup, affinity, perf_events, args.gui)
+
+        # 1. Static ISA Disassembly Audit
+        n_isa: dict[str, Any] = {}
+        g_isa: dict[str, Any] = {}
+        if not args.skip_isa:
+            n_isa = analyze_binary_isa(primary)
+            if baseline:
+                g_isa = analyze_binary_isa(baseline)
+                render_isa_comparison(n_isa, g_isa, primary.name, baseline.name)
+            else:
+                render_single_isa(n_isa, primary.name)
+
+        # 2. Benchmark Execution
+        runner: Callable[[Path], SampleMetrics] = (
+            (lambda b: run_gui_sample(b, parsed_args, perf_events, args.gui_settle, args.gui_timeout))
+            if args.gui
+            else (lambda b: run_cli_sample(b, parsed_args, perf_events))
+        )
+
+        primary_samples: list[SampleMetrics] = []
+        baseline_samples: list[SampleMetrics] = []
+
         if baseline:
-            # Dual Binary ABBA Interleaved Execution
             for _ in range(args.warmup):
                 runner(primary)
                 runner(baseline)
@@ -997,7 +1573,6 @@ def main() -> int:
                     baseline_samples.append(runner(baseline))
                     primary_samples.append(runner(primary))
         else:
-            # Single Binary Standalone Execution
             for _ in range(args.warmup):
                 runner(primary)
             for _ in range(args.runs):
@@ -1010,6 +1585,7 @@ def main() -> int:
 
     primary_stat_wall = compute_stats([s.wall_ms for s in primary_samples])
     primary_stat_cyc = compute_stats([float(s.pcore_cycles) / 1e3 for s in primary_samples])
+    primary_stat_ipc = compute_stats([sample_ipc(s) for s in primary_samples])
     primary_stat_rss = compute_stats([float(s.max_rss_kib) for s in primary_samples])
 
     entry: dict[str, Any] = {
@@ -1022,6 +1598,7 @@ def main() -> int:
         "metrics": {
             "wall_ms": round(primary_stat_wall.mean, 2),
             "cycles_k": round(primary_stat_cyc.mean, 1),
+            "ipc": round(primary_stat_ipc.mean, 3),
             "max_rss_kib": int(primary_stat_rss.mean),
         },
         "isa": n_isa,
@@ -1031,6 +1608,7 @@ def main() -> int:
     if baseline:
         b_stat_wall = compute_stats([s.wall_ms for s in baseline_samples])
         b_stat_cyc = compute_stats([float(s.pcore_cycles) / 1e3 for s in baseline_samples])
+        b_stat_ipc = compute_stats([sample_ipc(s) for s in baseline_samples])
         b_stat_rss = compute_stats([float(s.max_rss_kib) for s in baseline_samples])
         entry["baseline"] = {
             "name": baseline.name,
@@ -1038,55 +1616,115 @@ def main() -> int:
             "metrics": {
                 "wall_ms": round(b_stat_wall.mean, 2),
                 "cycles_k": round(b_stat_cyc.mean, 1),
+                "ipc": round(b_stat_ipc.mean, 3),
                 "max_rss_kib": int(b_stat_rss.mean),
             },
             "isa": g_isa,
             "samples": [dataclasses.asdict(x) for x in baseline_samples],
         }
 
-    save_run_record(entry)
+    updated_history = save_run_record(entry)
+    active_history = updated_history if updated_history else history
 
     # 4. Rendering Output Tables
     if baseline:
         render_comparison_table(primary_samples, baseline_samples, primary.name, baseline.name, args.gui, perf_events)
-        render_verdict_panel(primary_samples, baseline_samples, primary.name, baseline.name)
+        render_verdict_panel(primary_samples, baseline_samples, primary.name, baseline.name, gui_mode=args.gui)
     else:
         render_single_table(primary_samples, primary.name, args.gui, perf_events)
 
-        # Check for historical comparison request
         comp_entry: dict[str, Any] | None = None
         if args.compare:
-            for item in history:
+            for item in active_history:
                 if item.get("id") == args.compare:
                     comp_entry = item
                     break
             if not comp_entry:
+                candidate_file = HISTORY_DIR / f"{args.compare}.json"
+                if candidate_file.is_file():
+                    try:
+                        comp_entry = json.loads(candidate_file.read_text(encoding="utf-8"))
+                    except (OSError, json.JSONDecodeError):
+                        pass
+            if not comp_entry:
                 print(f"[WARN] Target historical Run ID '{args.compare}' not found.", file=sys.stderr)
         elif args.diff_last:
-            matching = [x for x in history if x.get("binary_name") == primary.name and x.get("id") != run_id]
+            matching = [x for x in active_history if x.get("binary_name") == primary.name and x.get("id") != run_id]
             if matching:
                 comp_entry = matching[-1]
-            elif history and history[-1].get("id") != run_id:
-                comp_entry = history[-1]
+            else:
+                prior = [x for x in active_history if x.get("id") != run_id]
+                if prior:
+                    comp_entry = prior[-1]
 
-        if comp_entry and "samples" in comp_entry:
-            hist_samples = [SampleMetrics(**{k: v for k, v in d.items() if k in SampleMetrics.__annotations__}) for d in comp_entry["samples"]]
-            label_hist = f"Historical ({comp_entry.get('id', '?')[:12]})"
-            print()
-            render_comparison_table(primary_samples, hist_samples, primary.name, label_hist, args.gui, perf_events)
-            render_verdict_panel(primary_samples, hist_samples, primary.name, label_hist)
+        if comp_entry and isinstance(comp_entry.get("samples"), list):
+            hist_samples = [
+                SampleMetrics(**{k: v for k, v in d.items() if k in _SAMPLE_FIELD_NAMES})
+                for d in comp_entry["samples"]
+                if isinstance(d, dict)
+            ]
+            if hist_samples:
+                label_hist = f"Historical ({str(comp_entry.get('id', '?'))[:14]})"
+                print()
+                render_comparison_table(primary_samples, hist_samples, primary.name, label_hist, args.gui, perf_events)
+                render_verdict_panel(primary_samples, hist_samples, primary.name, label_hist, gui_mode=args.gui)
 
     if args.json:
-        args.json.parent.mkdir(parents=True, exist_ok=True)
-        args.json.write_text(json.dumps(entry, indent=2) + "\n", encoding="utf-8")
+        atomic_json(args.json.resolve(), entry)
         print(f"[OK] Full benchmark report exported to {args.json}")
 
     return 0
 
 
-if __name__ == "__main__":
-    signal.signal(signal.SIGTERM, lambda signum, _frame: sys.exit(128 + signum))
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "binary",
+        type=Path,
+        nargs="?",
+        default=None,
+        help="Primary binary (or Native build when comparing two)",
+    )
+    parser.add_argument(
+        "baseline",
+        type=Path,
+        nargs="?",
+        default=None,
+        help="Optional secondary binary (Generic baseline) for head-to-head comparison",
+    )
+    parser.add_argument("-a", "--args", type=str, default="--help", help="Arguments to pass to binaries (default: '--help')")
+    parser.add_argument("-n", "--runs", type=int, default=50, help="Number of measured runs (default: 50, min: 1)")
+    parser.add_argument("-w", "--warmup", type=int, default=5, help="Number of warmup runs (default: 5, min: 0)")
+    parser.add_argument("--gui", action="store_true", help="Enable Wayland GUI lifecycle mode (tracks surface mapping & teardown)")
+    parser.add_argument("--gui-settle", type=float, default=50.0, help="Settle time in ms for GUI before dismissal (default: 50.0ms)")
+    parser.add_argument("--gui-timeout", type=float, default=5.0, help="Timeout in seconds for GUI mapping (default: 5.0s)")
+    parser.add_argument("--allow-hybrid", action="store_true", help="Do not pin execution to Golden Cove P-cores")
+    parser.add_argument("-s", "--skip-isa", action="store_true", help="Skip static objdump ISA disassembly audit")
+    parser.add_argument("-o", "--json", type=Path, default=None, help="Save complete telemetry report to JSON")
+    parser.add_argument("--diff-last", action="store_true", help="Compare single binary against the most recent historical run")
+    parser.add_argument("--compare", type=str, default=None, help="Compare single binary against a specific historical Run ID")
+    parser.add_argument("--history", type=int, nargs="?", const=10, default=None, help="Display recent historical runs and exit")
+    parser.add_argument("--clear-history", action="store_true", help="Clear all stored benchmark history and exit")
+
+    args = parser.parse_args()
+
+    def _handle_sigterm(signum: int, _frame: Any) -> None:
+        cleanup_active_pgids()
+        sys.exit(128 + signum)
+
+    signal.signal(signal.SIGTERM, _handle_sigterm)
     try:
-        sys.exit(main())
+        rc = _run_benchmark_suite(args)
     except (KeyboardInterrupt, BrokenPipeError):
+        cleanup_active_pgids()
         sys.exit(130)
+    finally:
+        cleanup_active_pgids()
+    sys.exit(rc)
+
+
+if __name__ == "__main__":
+    main()
