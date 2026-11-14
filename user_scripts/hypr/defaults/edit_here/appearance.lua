@@ -246,7 +246,7 @@ hl.window_rule({
 -- Maximized window (f[1] = workspace has a maximized window)
 hl.window_rule({
     name  = "maximized_window_style",
-    match = { float = true, workspace = "f[1]s[false]" },
+    match = { float = false, workspace = "f[1]s[false]" },
 
     rounding      = 10,
     opacity       = 1.0, -- Inherit the global opacity.
