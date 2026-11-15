@@ -1,0 +1,150 @@
+# ==============================================================================
+# Obsidian Local AI Writing Assistance Configuration
+# Target location: ~/user_scripts/llm/obsidian_ai_writing/config.toml
+# ==============================================================================
+
+[paths]
+vault_dir = "~/Documents/pensive"
+obsidian_config_dir = "~/Documents/pensive/.obsidian"
+instructions_file = "/mnt/media/downloads/llm/instructions.md"
+manual_guide_note = "~/Documents/pensive/linux/Post Install Setup/More +/LM studio Text Generator setup.md"
+lmstudio_appimage = "/mnt/media/downloads/llm/lmstudio/Bionic-1.2.0-2-linux-x64.AppImage"
+lms_cli = "~/.lmstudio/bin/lms"
+models_dir = "/mnt/media/downloads/llm/models"
+# Local cache for offline / air-gapped installation of Obsidian plugins
+plugin_cache_dir = "/mnt/media/downloads/llm/obsidian_plugin_cache"
+# Runtime state file tracking last loaded (model, gpu_offload, context_length)
+state_file = "~/user_scripts/llm/obsidian_ai_writing/.last_load_state.json"
+
+[server]
+host = "127.0.0.1"
+port = 1234
+cors = true
+startup_timeout_sec = 30
+# Reference note parameters:
+# Endpoint: http://127.0.0.1:1234/v1/chat/completions
+# API Key:  http://127.0.0.1:1234/
+# Profile:  fastgpu
+chat_completions_path = "/v1/chat/completions"
+base_v1_path = "/v1"
+api_key_placeholder = "http://127.0.0.1:1234/"
+provider_profile_name = "fastgpu"
+# Keep false when server.cors = true so standard fetch() SSE streaming works in Obsidian
+cors_bypass_in_plugin = false
+
+[hardware]
+# Global placement mode:
+# - "auto": uses each model's preferred_gpu_offload on dGPU; falls back to CPU if no dGPU
+# - "gpu":  uses GPU offload (up to preferred_gpu_offload) when dGPU is available
+# - "cpu":  GLOBAL CPU OVERRIDE — forces --gpu off for ALL models (unless overridden via CLI --gpu-offload)
+mode = "auto"
+gpu_offload_when_dedicated = "max"
+gpu_offload_partial_retry = "0.5"
+gpu_offload_when_igpu_or_cpu = "off"
+# What to do when a model's GGUF size exceeds total VRAM while offload is set to "max":
+# - "cpu":     force --gpu off (pure CPU/RAM execution)
+# - "partial": use gpu_offload_partial_retry (e.g. "0.5" or "0.15")
+oversized_model_policy = "cpu"
+# Minimum total and free VRAM (in MiB) on RTX 3050 Ti Mobile (4096 MiB total)
+min_total_vram_mib = 3072
+min_free_vram_mib = 2200
+# Reserve MiB in VRAM for KV cache + Wayland compositor overhead when checking full offload fit
+vram_kv_reserve_mib = 512
+# Unload other resident models before loading target model to prevent 4GB VRAM OOM
+unload_existing_before_load = true
+# Set true to always unload and reload the active model even if state matches
+force_reload_on_run = false
+fallback_to_cpu_on_error = true
+load_timeout_sec = 180
+vram_release_timeout_sec = 4.0
+
+[models]
+# Master model selector:
+# - "auto": automatically selects `default_gpu_model` when using GPU, or `default_cpu_model` on CPU
+# - Or set explicitly to any catalog key: "qwen3.5-4b", "nanbeige4.2-3b", "lfm3-1.7b", "huihui-qwen3.6-35b-a3b"
+active_model = "auto"
+# Default model for RTX 3050 Ti Mobile (4GB VRAM) when active_model = "auto"
+default_gpu_model = "qwen3.5-4b"
+# Default model when running on Intel Iris Xe iGPU / CPU-only fallback when active_model = "auto"
+default_cpu_model = "nanbeige4.2-3b"
+# Ultra-light model for rapid inline completions or low-memory states
+ultralight_model = "lfm3-1.7b"
+# High-capacity MoE model (35B total, 3B active)
+heavy_model = "huihui-qwen3.6-35b-a3b-abliterated-ggml-model"
+# Default context length (can be overridden per model below or via CLI)
+default_context_length = 8192
+fallback_context_length = 4096
+
+[models.catalog."lfm3-1.7b"]
+lms_id = "lfm3-1.7b"
+relative_gguf = "LiquidAI/LFM3-1.7B-Q4_K_M-GGUF/LFM3-1.7B-Q4_K_M.gguf"
+preferred_gpu_offload = "max"
+preferred_context_length = 8192
+min_free_vram_mib = 1400
+min_system_ram_mib = 4096
+description = "LiquidAI LFM3 1.7B Q4_K_M (~1.1 GB) - Ultra-fast inline generation"
+
+[models.catalog."nanbeige4.2-3b"]
+lms_id = "nanbeige4.2-3b"
+relative_gguf = "owao/Nanbeige4.2-3B-GGUF/Nanbeige4.2-3B-Q4_K_M.gguf"
+preferred_gpu_offload = "max"
+preferred_context_length = 8192
+min_free_vram_mib = 2100
+min_system_ram_mib = 6144
+description = "Nanbeige 4.2 3B Q4_K_M (~2.57 GB) - High reasoning density for CPU or 4GB VRAM"
+
+[models.catalog."qwen3.5-4b"]
+lms_id = "qwen3.5-4b"
+relative_gguf = "unsloth/Qwen3.5-4B-GGUF/Qwen3.5-4B-Q4_K_S.gguf"
+preferred_gpu_offload = "max"
+preferred_context_length = 6144
+min_free_vram_mib = 2600
+min_system_ram_mib = 8192
+description = "Qwen 3.5 4B Q4_K_S (~2.59 GB) - Optimal daily driver for RTX 3050 Ti Mobile"
+
+[models.catalog."huihui-qwen3.6-35b-a3b"]
+lms_id = "huihui-qwen3.6-35b-a3b-abliterated-ggml-model"
+relative_gguf = "Huihui/Huihui-Qwen3.6-35B-A3B-abliterated-ggml-model-Q4_K-GGUF/Huihui-Qwen3.6-35B-A3B-abliterated-ggml-model-Q4_K.gguf"
+# 35B Q4_K is ~21.7 GB; cannot fit in 4GB VRAM. Default to CPU ("off") or partial offload ("0.15")
+preferred_gpu_offload = "off"
+preferred_context_length = 4096
+min_free_vram_mib = 2000
+min_system_ram_mib = 24576
+description = "Huihui Qwen 3.6 35B-A3B MoE Q4_K (~21.7 GB) - Heavy model, defaults to CPU mode or partial offload"
+
+[generation]
+max_tokens = 2048
+temperature = 0.35
+frequency_penalty = 0.1
+presence_penalty = 0.0
+streaming = true
+
+[plugins]
+# Primary inline writing & Handlebars template engine
+install_text_generator = true
+seed_writing_templates = true
+prompts_relative_dir = "textgenerator/prompts"
+backup_existing_data_json = true
+# Cache-first plugin installation: use local cache in `plugin_cache_dir` without hitting GitHub unless `--update-plugins` is passed
+prefer_local_cache = true
+
+# Optional Cursor-style sidebar chat + one-click diff editor
+install_smart_composer = true
+
+# Optional agentic sidebar plugin
+install_copilot = false
+
+[plugins.registry.text_generator]
+plugin_id = "obsidian-textgenerator-plugin"
+github_repo = "nhaouari/obsidian-textgenerator-plugin"
+assets = ["main.js", "manifest.json", "styles.css"]
+
+[plugins.registry.smart_composer]
+plugin_id = "smart-composer"
+github_repo = "glowingjade/obsidian-smart-composer"
+assets = ["main.js", "manifest.json", "styles.css"]
+
+[plugins.registry.copilot]
+plugin_id = "copilot"
+github_repo = "logancyang/obsidian-copilot"
+assets = ["main.js", "manifest.json", "styles.css"]

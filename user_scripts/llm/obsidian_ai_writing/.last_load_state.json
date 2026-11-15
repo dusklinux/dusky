@@ -1,0 +1,6 @@
+{
+  "lms_id": "qwen3.5-4b",
+  "gpu_offload": "max",
+  "context_length": 6144,
+  "updated_at": 1794759903
+}
