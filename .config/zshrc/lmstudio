@@ -1,33 +1,73 @@
 #!/usr/bin/env zsh
 # =============================================================================
-# LM Studio Launcher — ~/.config/zshrc/lmstudio
+# LM Studio Launcher & Tooling Suite — ~/.config/zshrc/lmstudio
 # =============================================================================
+
+# Ensure ~/.lmstudio/bin is in PATH for direct `lms` CLI access
+if [[ -d "$HOME/.lmstudio/bin" ]] && (( ! ${path[(I)$HOME/.lmstudio/bin]} )); then
+  path+=("$HOME/.lmstudio/bin")
+fi
 
 llm() {
   emulate -L zsh
   setopt localoptions extendedglob nullglob
   unsetopt nocaseglob nomatch globdots
 
-  local dir="${LM_STUDIO_DIR:-/mnt/media/downloads/llm/lmstudio}"
+  # ---------------------------------------------------------------------------
+  # Directory Discovery (Environment override -> Candidate scan -> Fallback)
+  # ---------------------------------------------------------------------------
+  local dir="${LM_STUDIO_DIR:-}"
+  if [[ -z "$dir" || ! -d "$dir" ]]; then
+    local candidate
+    for candidate in \
+      "/mnt/media/downloads/llm/lmstudio" \
+      "$HOME/Applications/lmstudio" \
+      "$HOME/Applications" \
+      "$HOME/Downloads/llm/lmstudio" \
+      "$HOME/Downloads" \
+      "$HOME/.local/share/lmstudio"; do
+      if [[ -d "$candidate" ]]; then
+        local -a test_matches=(
+          $candidate/(#i)*(bionic|lm-studio|lm_studio|lmstudio)*.appimage(N.om)
+          $candidate/(#i)*(bionic|lm-studio|lm_studio|lmstudio)*(N.om)
+          $candidate/*.appimage(N.om)
+        )
+        if (( ${#test_matches[@]} > 0 )); then
+          dir="$candidate"
+          break
+        fi
+      fi
+    done
+  fi
+  dir="${dir:-/mnt/media/downloads/llm/lmstudio}"
   dir="${dir%/}"
 
   # ---------------------------------------------------------------------------
-  # CLI Options
+  # CLI Options & Subcommands
   # ---------------------------------------------------------------------------
   local skip_fzf=0
+  local run_bg=0
   local -a app_args=()
 
   case "$1" in
     -h|--help)
-      printf '\e[1;34m󰚩 \e[1mllm\e[0m — LM Studio AppImage Launcher\n\n'
+      printf '\e[1;34m󰚩 \e[1mllm\e[0m — LM Studio AppImage & Assistant Suite\n\n'
       printf '\e[1mUSAGE:\e[0m\n'
-      printf '  llm [OPTIONS] [APPIMAGE_ARGS...]\n\n'
+      printf '  llm [OPTIONS] [APPIMAGE_ARGS...]\n'
+      printf '  llm <COMMAND> [ARGS...]\n\n'
+      printf '\e[1mCOMMANDS:\e[0m\n'
+      printf '  cli [args...]    Execute LM Studio CLI (lms)\n'
+      printf '  server [action]  Manage LM Studio local server (start|stop|status)\n'
+      printf '  setup [args...]  Run Obsidian AI writing setup & model loader\n'
+      printf '  status           Show live server, daemon, and loaded model status\n\n'
       printf '\e[1mOPTIONS:\e[0m\n'
       printf '  -h, --help       Show this help message\n'
       printf '  -l, --list       List available AppImages with size & date\n'
-      printf '  -n, --newest     Launch newest AppImage (skip interactive picker)\n\n'
+      printf '  -n, --newest     Launch newest AppImage directly (skip interactive picker)\n'
+      printf '  -b, --bg         Launch AppImage detached in the background\n'
+      printf '  -s, --status     Show live server, daemon, and loaded model status\n\n'
       printf '\e[1mENVIRONMENT:\e[0m\n'
-      printf '  LM_STUDIO_DIR    Custom directory (default: /mnt/media/downloads/llm/lmstudio)\n'
+      printf '  LM_STUDIO_DIR    Custom directory (default: auto-discovered)\n'
       return 0
       ;;
     -l|--list)
@@ -36,6 +76,57 @@ llm() {
       skip_fzf=1
       shift
       app_args=("$@")
+      ;;
+    -b|--bg|--background)
+      run_bg=1
+      shift
+      if [[ "$1" == "-n" || "$1" == "--newest" ]]; then
+        skip_fzf=1
+        shift
+      fi
+      app_args=("$@")
+      ;;
+    -s|--status|status)
+      local lms_bin="${commands[lms]:-$HOME/.lmstudio/bin/lms}"
+      if [[ -x "$lms_bin" ]]; then
+        printf '\e[1;34m󰚩 \e[1mLM Studio Server & Model Status:\e[0m\n'
+        "$lms_bin" server status
+        printf '\n\e[1;34m󰚩 \e[1mLoaded Models:\e[0m\n'
+        "$lms_bin" ps
+      else
+        printf '\e[1;33m LMS CLI not found at ~/.lmstudio/bin/lms\e[0m\n' >&2
+      fi
+      return 0
+      ;;
+    cli)
+      shift
+      local lms_bin="${commands[lms]:-$HOME/.lmstudio/bin/lms}"
+      if [[ ! -x "$lms_bin" ]]; then
+        printf '\e[1;31m Error:\e[0m LMS CLI binary not found at ~/.lmstudio/bin/lms\n' >&2
+        return 1
+      fi
+      "$lms_bin" "$@"
+      return $?
+      ;;
+    server)
+      shift
+      local lms_bin="${commands[lms]:-$HOME/.lmstudio/bin/lms}"
+      if [[ ! -x "$lms_bin" ]]; then
+        printf '\e[1;31m Error:\e[0m LMS CLI binary not found at ~/.lmstudio/bin/lms\n' >&2
+        return 1
+      fi
+      "$lms_bin" server "$@"
+      return $?
+      ;;
+    setup|writing)
+      shift
+      local setup_script="$HOME/user_scripts/llm/obsidian_ai_writing/setup_obsidian_ai_assistance.py"
+      if [[ ! -f "$setup_script" ]]; then
+        printf '\e[1;31m Error:\e[0m Setup script not found at %s\n' "$setup_script" >&2
+        return 1
+      fi
+      python3 "$setup_script" "$@"
+      return $?
       ;;
     *)
       app_args=("$@")
@@ -57,12 +148,13 @@ llm() {
   # AppImage Discovery (Native Zsh Globbing, Case-Insensitive, Mtime-Sorted)
   # ---------------------------------------------------------------------------
   typeset -U -a matches=(
-    $dir/(#i)lm-studio*.appimage(N.om)
-    $dir/(#i)lm-studio*(N.om)
+    $dir/(#i)*(bionic|lm-studio|lm_studio|lmstudio)*.appimage(N.om)
+    $dir/(#i)*(bionic|lm-studio|lm_studio|lmstudio)*(N.om)
+    $dir/*.appimage(N.om)
   )
 
   if (( ${#matches[@]} == 0 )); then
-    printf '\e[1;31m Error:\e[0m No LM-Studio AppImage found in %s.\n' "$dir" >&2
+    printf '\e[1;31m Error:\e[0m No LM Studio or Bionic AppImage found in %s.\n' "$dir" >&2
     return 1
   fi
 
@@ -153,12 +245,18 @@ llm() {
   # ---------------------------------------------------------------------------
   # Execution
   # ---------------------------------------------------------------------------
-  "$app" "${app_args[@]}"
-  local ec=$?
-  if (( ec == 126 || ec == 127 )); then
-    printf '\e[1;33m Hint:\e[0m If the AppImage fails to launch, check FUSE availability (e.g. \e[2msudo modprobe fuse\e[0m or install \e[2mfuse2\e[0m).\n' >&2
+  if (( run_bg )); then
+    printf '\e[1;34m󰚩 Launching in background:\e[0m %s\n' "${app:t}"
+    ("$app" "${app_args[@]}" >/dev/null 2>&1 &!)
+    return 0
+  else
+    "$app" "${app_args[@]}"
+    local ec=$?
+    if (( ec == 126 || ec == 127 )); then
+      printf '\e[1;33m Hint:\e[0m If the AppImage fails to launch, check FUSE availability (e.g. \e[2msudo modprobe fuse\e[0m or install \e[2mfuse2\e[0m).\n' >&2
+    fi
+    return $ec
   fi
-  return $ec
 }
 
 # -----------------------------------------------------------------------------
@@ -173,6 +271,15 @@ _llm_completions() {
     "--list[List available AppImages with size & date]"
     "-n[Launch newest AppImage without interactive picker]"
     "--newest[Launch newest AppImage without interactive picker]"
+    "-b[Launch AppImage detached in the background]"
+    "--bg[Launch AppImage detached in the background]"
+    "--background[Launch AppImage detached in the background]"
+    "-s[Show live LM Studio server & daemon status]"
+    "--status[Show live LM Studio server & daemon status]"
+    "cli[Execute LM Studio CLI (lms) commands]"
+    "server[Manage LM Studio local server (start|stop|status)]"
+    "setup[Configure Obsidian AI writing assistance]"
+    "writing[Configure Obsidian AI writing assistance]"
   )
   _describe -t flags "llm options" flags
 }
