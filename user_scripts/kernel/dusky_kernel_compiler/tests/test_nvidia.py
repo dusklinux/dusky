@@ -219,7 +219,7 @@ assert "kernel_nvidia" not in sys.modules
                 write.assert_not_called()
 
     def test_other_driver_version_never_receives_known_patch(self):
-        for version in ['616.0-1', '1:616.0-2']:
+        for version in ['615.78.08-1', '621.0-1', '1:621.0-2']:
             cp = subprocess.CompletedProcess([], 0, f'nvidia-open-dkms {version}\n')
             with patch.object(k, '_gpu_vendors', return_value=('amd', 'nvidia')), patch.object(k, 'run', return_value=cp), patch.object(n, 'repair_files') as repair:
                 self.assertFalse(k.prepare_nvidia_compat())
@@ -249,7 +249,7 @@ assert "kernel_nvidia" not in sys.modules
             k.verify_nvidia_compat('7.4-target')
 
     def test_install_prepares_before_pacman_and_verifies_before_initramfs(self):
-        p = k.load_profile(k.SCRIPT_DIR / 'kernel_profiles/battery.toml')
+        p = k.load_profile(k.SCRIPT_DIR / 'kernel_profiles/balanced.toml')
         events = []
         def privileged(cmd, **kwargs):
             events.append(cmd[0])

@@ -1,7 +1,6 @@
 # Linux 7.4 open-module build fix (VM_SPECIAL/is_vm_hugetlb_page removal and
-# drm_fb_helper.h move). Verified to apply to the tested NVIDIA 615.78.08 open
-# source with offsets (conftest.sh -104 lines, uvm_hmm.c fuzz 1); internally
-# version-guarded for Linux >= 7.4 and a no-op on older trees.
+# drm_fb_helper.h move). Verified to apply cleanly to the tested NVIDIA 620.70.06
+# open source; internally version-guarded for Linux >= 7.4 and a no-op on older trees.
 From e67f2b878ace00dda25f3d0c799bb70ef6830712 Mon Sep 17 00:00:00 2001
 From: Peter Jung <admin@ptr1337.dev>
 Date: Thu, 5 Nov 2026 19:09:35 +0100
@@ -125,4 +124,3 @@ index 6f38ef4..d7025e2 100644
  static NV_STATUS hmm_ats_pte_snapshot_locked(uvm_va_block_t *va_block,
 -- 
 2.56.0
-

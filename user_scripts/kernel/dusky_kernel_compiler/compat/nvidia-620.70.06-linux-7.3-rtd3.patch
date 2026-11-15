@@ -1,14 +1,10 @@
 --- a/kernel-open/nvidia/nv-pci.c
 +++ b/kernel-open/nvidia/nv-pci.c
-@@ -36,6 +36,7 @@
- #include <linux/completion.h>
- #include <linux/iommu.h>
+@@ -46,2 +46,3 @@
  #include <linux/kthread.h>
 +#include <linux/fs_struct.h>
  
- #include <linux/clk.h>
- #include <linux/device.h>
-@@ -439,7 +440,13 @@
+@@ -479,7 +480,13 @@
                     NV_PCI_SLOT_NUMBER(pci_dev));
      if (ret > 0 && ret < sizeof(filename))
      {

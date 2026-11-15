@@ -1,12 +1,12 @@
-# NVIDIA open 615.78.08: runtime D3cold on Linux 7.3 + build fix for Linux 7.4
+# NVIDIA open 620.70.06: runtime D3cold on Linux 7.3 + build fix for Linux 7.4
 
 Linux 7.3 starts kernel threads in a private empty nullfs. The NVIDIA open
-615.78.08 package tested here probes the GPU from a dedicated kthread and uses
+620.70.06 package tested here probes the GPU from a dedicated kthread and uses
 `filp_open()` to retain its PCI sysfs config file. The open returns ENOENT,
 the saved file pointer remains NULL, and NVIDIA reports RTD3 as unsupported.
 Successful DKMS compilation does not detect this runtime failure.
 
-`nvidia-615.78.08-linux-7.3-rtd3.patch` uses the kernel's
+`nvidia-620.70.06-linux-7.3-rtd3.patch` uses the kernel's
 `scoped_with_init_fs()` API around that one open. It preserves NVIDIA's sysfs
 validation, saved file handling, runtime PM callbacks, and ACPI checks.
 It adds no kernel options, drivers, resident services or polling.
@@ -35,9 +35,9 @@ See the [kernel maintainer's explanation of the filesystem change](https://patch
 
 Linux 7.4 removed `VM_SPECIAL`/`VMA_SPECIAL_FLAGS`, renamed
 `is_vm_hugetlb_page()` to `vma_is_hugetlb()`, and moved
-`drm/drm_fb_helper.h` to `drm/clients/drm_fbdev_helper.h`. The 615.78.08
+`drm/drm_fb_helper.h` to `drm/clients/drm_fbdev_helper.h`. The 620.70.06
 open module still uses the old names, so it does not compile without
-`nvidia-615.78.08-linux-7.4.patch`. The patch is internally version-guarded
+`nvidia-620.70.06-linux-7.4.patch`. The patch is internally version-guarded
 and a no-op on older trees. It also teaches `header-presence-tests.mk` and
 `conftest.sh` about the new fbdev header; without that, the conftests treat
 the failed include as "function present" and misdetect the fbdev helpers.
@@ -45,7 +45,7 @@ the failed include as "function present" and misdetect the fbdev helpers.
 ## Compiler integration
 
 The compiler prepares this overlay automatically during local package
-installation when NVIDIA PCI hardware and nvidia-open-dkms 615.78.08 are
+installation when NVIDIA PCI hardware and nvidia-open-dkms 620.70.06 are
 present. It checks the PCI-probe/runtime-PM hashes for the 7.3 repair and the
 `uvm_hmm.c`/`nvidia-drm-drv.c`/`conftest.sh`/`header-presence-tests.mk` hashes
 for the 7.4 repair, preserves existing DKMS overrides, and runs before pacman's
@@ -65,14 +65,14 @@ after boot. They do not force suspend or require a display-driving GPU to sleep.
 
 ## Manual driver-only installation
 
-From this directory, with nvidia-open-dkms 615.78.08 and dkms 3.4.4 installed:
+From this directory, with nvidia-open-dkms 620.70.06 and dkms 3.4.4 installed:
 
 ```sh
-sudo install -Dm644 nvidia-615.78.08-linux-7.3-rtd3.patch /etc/dkms/nvidia/patches/nvidia-615.78.08-linux-7.3-rtd3.patch
-sudo install -Dm644 nvidia-615.78.08-linux-7.4.patch /etc/dkms/nvidia/patches/nvidia-615.78.08-linux-7.4.patch
-sudo install -Dm644 nvidia-615.78.08.conf /etc/dkms/nvidia-615.78.08.conf
-sudo dkms build nvidia/615.78.08 -k "$(uname -r)" --force
-sudo dkms install nvidia/615.78.08 -k "$(uname -r)" --force
+sudo install -Dm644 nvidia-620.70.06-linux-7.3-rtd3.patch /etc/dkms/nvidia/patches/nvidia-620.70.06-linux-7.3-rtd3.patch
+sudo install -Dm644 nvidia-620.70.06-linux-7.4.patch /etc/dkms/nvidia/patches/nvidia-620.70.06-linux-7.4.patch
+sudo install -Dm644 nvidia-620.70.06.conf /etc/dkms/nvidia-620.70.06.conf
+sudo dkms build nvidia/620.70.06 -k "$(uname -r)" --force
+sudo dkms install nvidia/620.70.06 -k "$(uname -r)" --force
 ```
 
 Merge with an existing version-specific override if one exists. The override
@@ -92,4 +92,4 @@ GPL-exported. Do not apply it to the proprietary module flavor.
 
 The older `nvidia-615.71.09-linux-7.3.patch` is a historical, unused artifact.
 It replaces runtime PM callbacks and is not the fix validated here. Only the
-source-validated 615.78.08 repair is integrated into the compiler.
+source-validated 620.70.06 repair is integrated into the compiler.

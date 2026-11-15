@@ -9,7 +9,7 @@ lazy import lzma
 lazy import subprocess
 lazy from compression import zstd
 
-VERSION = "615.78.08"
+VERSION = "620.70.06"
 
 # --- Linux 7.3: kthreads are isolated in nullfs ---------------------------------
 # The open module probes PCI from a dedicated kthread; its unscoped
@@ -18,9 +18,9 @@ VERSION = "615.78.08"
 # reaches runtime D3cold (it stays in D0). This patch is the D3cold/sleep fix.
 RTD3_PATCH_NAME = f"nvidia-{VERSION}-linux-7.3-rtd3.patch"
 RTD3_FILES = ("kernel-open/nvidia/nv-pci.c",)
-ORIGINAL_SHA256 = "6a5e39f37d86bd6d09cc5867647ecbc8e240298bc138bf651ad7d9346bc1b1c8"
-REPAIRED_SHA256 = "0afbf2ed8a66c9eed39bb892a8d41844afb45f0fdc612a297327dad402f6a9f5"
-PM_CALLBACKS_SHA256 = "ce04946d288cf0251668a2d847acceb2a39af9dac2f13bb005f53759c774dbf7"
+ORIGINAL_SHA256 = "ef8315e9a82c601a34c88f975a00381c049480ae35fb17fc6b8d584f59701a3a"
+REPAIRED_SHA256 = "a2b63c909b3b150f833c8d1677abe46e68e9d9cd3be1e2736661f2059a4ff7b9"
+PM_CALLBACKS_SHA256 = "e744d8d7fec01dda39269241246438e83c32ac0e0bcc09d1b50c9e01fd031304"
 
 # --- Linux 7.4: VM_SPECIAL / is_vm_hugetlb_page removal, drm_fb_helper.h move ----
 # Internally version-guarded; a no-op on older trees.
@@ -32,16 +32,16 @@ BUILD_FILES = (
     "kernel-open/header-presence-tests.mk",
 )
 BUILD_ORIGINAL_SHA256 = {
-    "kernel-open/nvidia-uvm/uvm_hmm.c": "aef3e216ca94a5de98062e1360aa8b101c8c74fe659950a9e6b0d9a32f431bf4",
-    "kernel-open/nvidia-drm/nvidia-drm-drv.c": "e8af7b5286eb3a8cfaee5f9d161d1e5474aba0b9c9ba49199e6ab72ba524349a",
-    "kernel-open/conftest.sh": "a03e67ecc8e3ec11814b233435a6940f3a906bd8585dc9986ac2a9d812b82d15",
-    "kernel-open/header-presence-tests.mk": "013d9c923f550389940fb4822bbe124e106340aa02be4f28ba58c195c32c1c45",
+    "kernel-open/nvidia-uvm/uvm_hmm.c": "6694801342b8a971ff1e83dbd1996070e92e7e55b12ad32251a656c08c072074",
+    "kernel-open/nvidia-drm/nvidia-drm-drv.c": "69998070b00424a3548493b50c68e67717a5322083874361a0abcdd52ec4ba14",
+    "kernel-open/conftest.sh": "6518c5a65174adc5bee614794e7ca8cb8f6704a5b0550804f78c002ba250edf6",
+    "kernel-open/header-presence-tests.mk": "7353d799e50bfd0dee3724faadb1b19707319c690e437896f7262a2a98f3267a",
 }
 BUILD_REPAIRED_SHA256 = {
-    "kernel-open/nvidia-uvm/uvm_hmm.c": "f833fa339d26ee16d22eb7224980fe4078131aeda3ca08e709cd1ffea6319324",
-    "kernel-open/nvidia-drm/nvidia-drm-drv.c": "bbd2320b926a6ed5c346d1eac992bb3270830335586995700cbdb9a56b8c3c11",
-    "kernel-open/conftest.sh": "a156f277a60992d055ceadd5d3769961c8c20c970d27da91b4f0326e93fff456",
-    "kernel-open/header-presence-tests.mk": "f0008198dbd2f5416fdf1d96f31dd625158f62a41fff2c928a492d9a2873c841",
+    "kernel-open/nvidia-uvm/uvm_hmm.c": "3f5de38bd8f5a4a3815af75db46f8d3c7f298b0765bc59ea919658af467fa62c",
+    "kernel-open/nvidia-drm/nvidia-drm-drv.c": "049e05ec3d564e293cafc154dbbc7efc364bdc54e6e644c2860dc3267ecfbd6c",
+    "kernel-open/conftest.sh": "873216c91ad58b5b29af8162b47ae41e7cdf1dc46f3fc68c40425904f6b6f6b0",
+    "kernel-open/header-presence-tests.mk": "23603dd5d1a073f87d567ae44b7dc43624fcad6b99d49e5f4a6fdbf873a69721",
 }
 
 # DKMS override blocks. Each is independently idempotent so a config written by

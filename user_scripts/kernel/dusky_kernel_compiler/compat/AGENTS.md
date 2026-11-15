@@ -7,7 +7,7 @@ forcing runtime suspend, or changing a user's compositor/rendering choice.
 ## Established regression
 
 Linux 7.3 isolates kernel threads in nullfs. The tested Arch NVIDIA open
-615.78.08 package runs PCI probe in a dedicated kthread. Its unscoped
+620.70.06 package runs PCI probe in a dedicated kthread. Its unscoped
 `filp_open(/sys/bus/pci/devices/.../config)` returned ENOENT, leaving
 `nvl->sysfs_config_file` NULL; `nv_dynamic_power_available()` consequently
 returned false and the GPU remained D0 instead of reaching runtime D3cold.
@@ -24,9 +24,9 @@ diagnostic did that and faulted on IBT. No such calls are in production code.
 
 Linux 7.4 removed `VM_SPECIAL`/`VMA_SPECIAL_FLAGS`, renamed
 `is_vm_hugetlb_page()` to `vma_is_hugetlb()`, and moved
-`drm/drm_fb_helper.h` to `drm/clients/drm_fbdev_helper.h`. The same 615.78.08
+`drm/drm_fb_helper.h` to `drm/clients/drm_fbdev_helper.h`. The same 620.70.06
 open source therefore fails to compile on 7.4 without
-`nvidia-615.78.08-linux-7.4.patch`. The patch is internally version-guarded
+`nvidia-620.70.06-linux-7.4.patch`. The patch is internally version-guarded
 and also fixes the fbdev header-presence tests, which otherwise treat a failed
 include as "function present". Verify the four repaired-file hashes, not just
 the PCI source, before applying it.
