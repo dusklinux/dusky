@@ -1,0 +1,21 @@
+# Dusky Arch ISO Factory — AUR Seed Packages (02_aur.toml)
+# Comment out any package with '#' to skip building it during the AUR phase.
+
+packages = [
+    "wlogout",
+    "adwaita-qt6",
+    "adwaita-qt5",
+    "adwsteamgtk",
+    "hyprshade",
+    "peaclock",
+    "tray-tui",
+    "xdg-terminal-exec",
+    "paru",
+    "papirus-folders",
+    "bibata-cursor-theme-bin",
+]
+
+# Subset of `packages` whose build failure aborts the AUR phase.
+required = [
+    "paru",
+]

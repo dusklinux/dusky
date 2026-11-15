@@ -1,0 +1,13 @@
+# Dusky Arch ISO Factory — Custom Local Recipe Packages (03_dusky.toml)
+# Each entry must match a recipe directory with a valid recipe.toml and PKGBUILD
+# inside iso_maker/python/dusky_packages_compile/.
+# Comment out any entry with '#' to disable compiling and shipping that package.
+
+packages = [
+    "dusky-center",
+    "dusky-network",
+    "dusky-overview",
+    "dusky-papers",
+    "dusky-snap",
+    "dusky-tray",
+]

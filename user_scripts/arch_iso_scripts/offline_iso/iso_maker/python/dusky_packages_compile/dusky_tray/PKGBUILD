@@ -5,11 +5,11 @@ pkgdesc='Dusky Tray control center for Hyprland'
 arch=('x86_64')
 license=('custom')
 depends=('glibc' 'gcc-libs' 'wayland' 'libxkbcommon' 'vulkan-icd-loader' 'mesa' 'libglvnd')
-makedepends=('cargo' 'python' 'gcc')
+makedepends=('cargo' 'python' 'gcc' 'wayland')
 build() {
   cp -aL -- "$DUSKY_PACKAGE_SOURCE/dusky_tray" "$srcdir/project"
   mkdir -- "$srcdir/click_away_to_dismiss"
-  cp -- "$DUSKY_PACKAGE_SOURCE/click_away_to_dismiss/"{dusky.c,hyprland_focus_grab_v1_client_protocol.c,hyprland_focus_grab_v1_client_protocol.h} "$srcdir/click_away_to_dismiss/"
+  cp -- "$DUSKY_PACKAGE_SOURCE/click_away_to_dismiss/"{dusky.c,hyprland_focus_grab_v1.xml} "$srcdir/click_away_to_dismiss/"
   python "$DUSKY_BUILD_RUST" "$srcdir/project" "$srcdir/binary-output/dusky_tray"
 }
 
@@ -22,13 +22,16 @@ package() {
     "$pkgdir/usr/share/dusky-tray/ignored_apps.toml"
   install -Dm644 "$srcdir/project/config.toml" \
     "$pkgdir/usr/share/dusky-tray/config.toml"
-  python - "$srcdir/project" > "$pkgdir/usr/share/dusky-tray/source.sha256" <<'PY'
+  python - "$srcdir/project" "$DUSKY_BUILD_RUST" > "$pkgdir/usr/share/dusky-tray/source.sha256" <<'PY'
 import hashlib
 import os
 import sys
 from pathlib import Path
 
 project = Path(sys.argv[1])
+sys.path.insert(0, str(Path(sys.argv[2]).resolve().parent))
+from build_rust import shared
+
 files = [project / "Cargo.toml", project / "Cargo.lock"]
 for relative in (
     "build.rs", "rust-toolchain", "rust-toolchain.toml",
@@ -39,11 +42,11 @@ for relative in (
         files.append(path)
 if (project / "src").is_dir():
     files.extend(sorted(path for path in (project / "src").rglob("*") if path.is_file()))
+files.extend(shared.font_source_files())
 
 files.extend(project.parent / "click_away_to_dismiss" / name for name in (
     "dusky.c",
-    "hyprland_focus_grab_v1_client_protocol.c",
-    "hyprland_focus_grab_v1_client_protocol.h",
+    "hyprland_focus_grab_v1.xml",
 ))
 
 # Same inputs and recipe marker as 152_dusky_tray_setup.py.
