@@ -43,14 +43,14 @@ Keep generated binaries and package archives out of Git. A package installed
 from the ISO remains installed after the offline repository is removed, but
 later binary updates require a new package source or another update mechanism.
 
-`dusky-network` uses the network meter's shared `setup.py --generic` builder:
+`dusky_network` uses the network meter's shared `setup.py --generic` builder:
 frozen/offline Cargo, RAM-aware tmpfs/disk selection, and baseline x86-64 flags. The
 package includes its exact binary/source manifest and disables makepkg stripping
 because the builder already strips the executable. User setup step 154 reuses a
 matching package without a compiler, or builds natively after source edits.
 
 The five GUI recipes (`dusky_center`, `dusky_overview`, `dusky_papers`, `dusky_snap`,
-`dusky_tray`) call the shared `build_rust.py` adapter and
+`dusky_tray`) along with `dusky_network` call the shared `build_rust.py` adapter and
 `147_rust_compiles_shared_NOT_STANDALONE.py` storage policy directly. The factory
 passes the canonical adapter path to `makepkg` as `DUSKY_BUILD_RUST`; the adapter
 locates the helper relative to its own path. The factory fingerprints both shared

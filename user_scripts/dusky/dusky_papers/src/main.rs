@@ -42,7 +42,7 @@ impl iced_futures::Executor for BackgroundExecutor {
 
 fn print_help() {
     println!("Dusky Papers");
-    println!("Usage: dusky-papers [OPTIONS]\n");
+    println!("Usage: dusky_papers [OPTIONS]\n");
     println!("Options:");
     println!("  --next-fav       Cycle to next favorite wallpaper and exit");
     println!("  --prev-fav       Cycle to previous favorite wallpaper and exit");
@@ -84,7 +84,7 @@ fn cycle_favorite(direction_next: bool, config: &Config) -> bool {
         let _ = std::process::Command::new("notify-send")
             .args([
                 "-a",
-                "dusky-papers",
+                "dusky_papers",
                 "No Favorites",
                 "No favorite wallpapers found.",
             ])
@@ -208,7 +208,7 @@ impl SingleInstanceGuard {
         let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")
             .map(std::path::PathBuf::from)
             .ok_or("XDG_RUNTIME_DIR is not set")?;
-        let path = runtime_dir.join("dusky-papers.lock");
+        let path = runtime_dir.join("dusky_papers.lock");
         let file = std::fs::File::create(&path)
             .map_err(|e| format!("Could not open {}: {e}", path.display()))?;
         match file.try_lock() {
@@ -229,9 +229,9 @@ impl Drop for SocketGuard {
 
 fn instance_socket_path() -> PathBuf {
     if let Ok(runtime_dir) = env::var("XDG_RUNTIME_DIR") {
-        PathBuf::from(runtime_dir).join("dusky-papers.sock")
+        PathBuf::from(runtime_dir).join("dusky_papers.sock")
     } else {
-        PathBuf::from("/tmp/dusky-papers.sock")
+        PathBuf::from("/tmp/dusky_papers.sock")
     }
 }
 
@@ -440,7 +440,7 @@ fn main() -> iced_exwlshell::Result {
     }
 
     if matches!(option, Some("--version" | "-v" | "-V")) {
-        println!("dusky-papers {}", env!("CARGO_PKG_VERSION"));
+        println!("dusky_papers {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
 
@@ -505,7 +505,7 @@ fn main() -> iced_exwlshell::Result {
             Some(SocketGuard(sock_path))
         }
         Err(error) => {
-            eprintln!("Warning: could not bind dusky-papers toggle socket: {error}");
+            eprintln!("Warning: could not bind dusky_papers toggle socket: {error}");
             None
         }
     };
@@ -528,7 +528,7 @@ fn main() -> iced_exwlshell::Result {
     let app_config = config.clone();
     iced_exwlshell::layershell::application(
         move || DuskyPapersApp::new(app_config.clone()),
-        "dusky-papers",
+        "dusky_papers",
         DuskyPapersApp::update,
         DuskyPapersApp::view,
     )

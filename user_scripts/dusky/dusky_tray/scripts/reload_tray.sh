@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Restart the installed Dusky Tray, then open it on demand.
 set -euo pipefail
-readonly BIN="$HOME/.local/bin/dusky-tray"
+readonly BIN="$HOME/.local/bin/dusky_tray"
 if [[ ! -x "$BIN" ]]; then
     printf 'Missing %s. Run 152_dusky_tray_setup.py first.\n' "$BIN" >&2
     exit 1
@@ -20,5 +20,5 @@ while IFS= read -r pid; do
     if [[ "$executable" == "$EXECUTABLE" || "$executable" == "$EXECUTABLE (deleted)" ]]; then
         kill -KILL -- "$pid" 2>/dev/null || true
     fi
-done < <(pgrep -u "$UID" -f '(^|/)dusky-tray([[:space:]]|$)' || true)
+done < <(pgrep -u "$UID" -f '(^|/)dusky_tray([[:space:]]|$)' || true)
 exec "$BIN" "$@"

@@ -100,7 +100,7 @@ def get_friendly_name(block_str: str) -> str:
             return "Custom Lua Action"
         return next((label for label, code in ACTION_MAP.items() if code == '"'+native+'"'), "Custom Lua Action")
     block_str = ' '.join(t[1] for t in tokens(action))
-    if "dusky-tray" in block_str or "dusky_tray" in block_str: return "Open Dusky Tray"
+    if "dusky_tray" in block_str: return "Open Dusky Tray"
     if "waybar_toggle.sh" in block_str: return "Toggle Waybar"
     if "hypr_blur_opacity_shadow_toggle.sh" in block_str: return "Toggle Blur & Opacity"
     if "--play-pause" in block_str: return "Media: Play / Pause"

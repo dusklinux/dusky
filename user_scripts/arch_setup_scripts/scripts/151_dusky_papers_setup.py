@@ -24,8 +24,8 @@ build_support = import_module("147_rust_compiles_shared_NOT_STANDALONE")
 
 
 TARGET = "x86_64-unknown-linux-gnu"
-SYSTEM_BINARY = Path("/usr/bin/dusky-papers")
-SYSTEM_SOURCE_DIGEST = Path("/usr/share/dusky-papers/source.sha256")
+SYSTEM_BINARY = Path("/usr/bin/dusky_papers")
+SYSTEM_SOURCE_DIGEST = Path("/usr/share/dusky_papers/source.sha256")
 
 
 def env_int(name: str, default: int, *, minimum: int = 1, maximum: int = 3600) -> int:
@@ -104,7 +104,7 @@ def binary_runs(binary: Path) -> bool:
             timeout=10,
             check=False,
         )
-        return result.returncode == 0 and "dusky-papers" in result.stdout
+        return result.returncode == 0 and "dusky_papers" in result.stdout
     except (OSError, subprocess.TimeoutExpired):
         return False
 
@@ -388,7 +388,7 @@ def link_system_binary(system_binary: Path, binary: Path) -> bool:
         temporary_binary.unlink(missing_ok=True)
 
 
-@build_support.temporary_build("dusky-papers-build-")
+@build_support.temporary_build("dusky_papers-build-")
 def build_native(project: Path, binary: Path, manifest_path: Path, version: str,
                  *, workspace: build_support.Workspace) -> bool:
     cargo = shutil.which("cargo")
@@ -426,7 +426,7 @@ def build_native(project: Path, binary: Path, manifest_path: Path, version: str,
 
     before = source_digest(project)
     log("INFO", f"Compiling native release binary for this CPU (v{version})")
-    command = [cargo, "build", "--release", "--frozen", "--target", TARGET, "--jobs", str(jobs)]
+    command = [cargo, "build", "--release", "--frozen", "--target", TARGET, "--jobs", str(jobs), "--bin", "dusky_papers"]
     returncode, _, stderr, timed_out = run_bounded(
         command,
         cwd=project,
@@ -442,7 +442,7 @@ def build_native(project: Path, binary: Path, manifest_path: Path, version: str,
         log("WARN", f"Cargo build failed:\n{stderr[-12000:]}")
         return False
 
-    built = target_dir / TARGET / "release" / "dusky-papers"
+    built = target_dir / TARGET / "release" / "dusky_papers"
     if not binary_runs(built):
         log("WARN", "Built binary failed its executable smoke test")
         return False
@@ -504,7 +504,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     install_dir = home / ".local/share/dusky/dusky_papers"
-    binary = install_dir / "dusky-papers"
+    binary = install_dir / "dusky_papers"
     manifest_path = install_dir / "binary_manifest.json"
     local_bin = home / ".local/bin/dusky_papers"
     thumb_dir = home / ".cache/dusky_images/dusky_papers/thumbs"
@@ -584,13 +584,6 @@ def main(argv: list[str] | None = None) -> int:
             if not (local_bin.is_symlink() and local_bin.readlink() == binary):
                 temporary_link.symlink_to(binary)
                 os.replace(temporary_link, local_bin)
-            legacy_link = local_bin.parent / "dusky-papers"
-            try:
-                legacy_tmp = legacy_link.with_name(f".{legacy_link.name}.{os.getpid()}.tmp")
-                legacy_tmp.symlink_to(local_bin)
-                os.replace(legacy_tmp, legacy_link)
-            except OSError:
-                pass
         except OSError as error:
             temporary_link.unlink(missing_ok=True)
             log("WARN", f"Could not create launcher symlink: {error}")

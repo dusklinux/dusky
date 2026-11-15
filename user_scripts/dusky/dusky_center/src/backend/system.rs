@@ -14,7 +14,7 @@ use std::time::Duration;
 
 /// Tmpfs-only runtime directory.
 ///
-/// Priority: `$XDG_RUNTIME_DIR/dusky-tray` → `/run/user/$UID/dusky-tray`
+/// Priority: `$XDG_RUNTIME_DIR/dusky_tray` → `/run/user/$UID/dusky_tray`
 /// → `/dev/shm/...` → the temporary directory, verifying tmpfs in each case.
 pub fn runtime_dir() -> PathBuf {
     static DIRECTORY: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
@@ -32,8 +32,8 @@ pub fn runtime_dir() -> PathBuf {
             ];
             let directories = candidates.into_iter().flatten().map(|base| {
                 if base == *"/dev/shm" || base == temp {
-                    base.join(format!("dusky-tray-{uid}"))
-                } else { base.join("dusky-tray") }
+                    base.join(format!("dusky_tray-{uid}"))
+                } else { base.join("dusky_tray") }
             });
             if let Some(directory) = select_runtime_dir(directories) { return directory; }
             eprintln!("Could not find a writable tmpfs directory for Dusky Center");
@@ -98,7 +98,7 @@ pub fn mako_blacklist_file() -> PathBuf {
 /// The alpha mask excludes the fullscreen click catcher from layer blur.
 pub fn configure_panel_blur(enabled: bool) {
     let rule = format!(
-        "hl.layer_rule({{name=\"dusky_tray\",match={{namespace=\"dusky-tray\"}},blur={enabled},xray=false,ignore_alpha=0.1}})"
+        "hl.layer_rule({{name=\"dusky_tray\",match={{namespace=\"dusky_tray\"}},blur={enabled},xray=false,ignore_alpha=0.1}})"
     );
     let reply = run_command(
         &["hyprctl".into(), "eval".into(), rule],
@@ -1413,8 +1413,8 @@ mod tests {
         let file = root.join("file");
         std::fs::write(&file, "fixture").unwrap();
         let directory = root.join("new/nested");
-        let invalid = PathBuf::from(format!("/proc/dusky-center-non-tmpfs-{}", std::process::id()));
-        let relative = PathBuf::from(format!("dusky-center-relative-{}", std::process::id()));
+        let invalid = PathBuf::from(format!("/proc/dusky_center-non-tmpfs-{}", std::process::id()));
+        let relative = PathBuf::from(format!("dusky_center-relative-{}", std::process::id()));
         let result = select_runtime_dir([relative.clone(), invalid.clone(), file.join("child"), directory.clone()]);
         assert_eq!(result, Some(directory.clone()));
         assert!(directory.is_dir());

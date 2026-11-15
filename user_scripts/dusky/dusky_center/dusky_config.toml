@@ -2309,7 +2309,7 @@ icon = "preferences-color-symbolic"
 style = "suggested"
 [pages.layout.items.on_press]
 type = "exec"
-command = "$HOME/.local/bin/dusky-tray"
+command = "$HOME/.local/bin/dusky_tray"
 
 [[pages.layout]]
 type = "section"

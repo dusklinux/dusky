@@ -22,7 +22,7 @@ build_support = import_module("147_rust_compiles_shared_NOT_STANDALONE")
 
 TARGET = "x86_64-unknown-linux-gnu"
 SYSTEM_BINARY = Path("/usr/bin/dusky_snap")
-SYSTEM_SOURCE_DIGEST = Path("/usr/share/dusky-snap/source.sha256")
+SYSTEM_SOURCE_DIGEST = Path("/usr/share/dusky_snap/source.sha256")
 BUILD_RECIPE = "snap-rust-v3-native-first-frozen-tmpfs"
 
 
@@ -242,7 +242,7 @@ def fetch_dependencies(cargo: str, project: Path, env: dict[str, str]) -> bool:
     return True
 
 
-@build_support.temporary_build("dusky-snap-build-")
+@build_support.temporary_build("dusky_snap-build-")
 def build_native(project: Path, binary: Path, manifest_path: Path, version: str,
                  *, workspace: build_support.Workspace) -> bool:
     cargo = shutil.which("cargo")
@@ -365,7 +365,7 @@ def install_defaults(project: Path, install_dir: Path) -> None:
     config_dir.mkdir(parents=True, exist_ok=True)
     source = project / "config.json"
     if not source.is_file():
-        source = Path("/usr/share/dusky-snap/config.json")
+        source = Path("/usr/share/dusky_snap/config.json")
     destination = config_dir / "config.json"
     if source.is_file() and not destination.exists():
         temporary = destination.with_name(f".{destination.name}.{os.getpid()}.tmp")
@@ -440,13 +440,6 @@ def setup(project: Path, install_dir: Path, force: bool) -> int:
     launcher.parent.mkdir(parents=True, exist_ok=True)
     if not link_system_binary(binary, launcher):
         return 1
-    old_launcher = launcher.with_name("dusky-snap")
-    old_binary = install_dir / "dusky-snap"
-    if old_launcher.is_symlink() and old_launcher.resolve() == old_binary.resolve():
-        old_launcher.unlink()
-    old_binary.unlink(missing_ok=True)
-    applications = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share") / "applications"
-    (applications / "dusky-snap.desktop").unlink(missing_ok=True)
     log("OK", f"Dusky Snap ready at {launcher}")
     return 0
 

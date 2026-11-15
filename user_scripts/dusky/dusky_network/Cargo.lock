@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "dusky-network"
+name = "dusky_network"
 version = "1.0.0"

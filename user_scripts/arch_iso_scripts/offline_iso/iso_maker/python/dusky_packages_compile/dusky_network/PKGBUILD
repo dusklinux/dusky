@@ -1,4 +1,4 @@
-pkgname=dusky-network
+pkgname=dusky_network
 pkgver=1.0.0
 pkgrel=3
 pkgdesc='Dusky shared network meter for Waybar and Dusky Glance'
@@ -18,8 +18,8 @@ build() {
 }
 
 package() {
-  install -Dm755 "$srcdir/binary-output/dusky-network" "$pkgdir/usr/bin/dusky-network"
+  install -Dm755 "$srcdir/binary-output/dusky_network" "$pkgdir/usr/bin/dusky_network"
   # Keep the exact build hash: makepkg must not strip the already stripped binary.
   install -Dm644 "$srcdir/binary-output/binary_manifest.json" \
-    "$pkgdir/usr/share/dusky-network/binary_manifest.json"
+    "$pkgdir/usr/share/dusky_network/binary_manifest.json"
 }

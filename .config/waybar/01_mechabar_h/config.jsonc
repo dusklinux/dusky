@@ -101,7 +101,7 @@
 	},
 
 	"custom/net-speed": {
-		"exec": "$HOME/.local/bin/dusky-network watch --horizontal",
+		"exec": "$HOME/.local/bin/dusky_network watch --horizontal",
 		"return-type": "json",
 		"format": "{}",
 		"restart-interval": 3,
@@ -178,8 +178,8 @@
 
 	"custom/distro": {
 		"format": "󰌽",
-		"on-click": "\"$HOME/.local/bin/dusky-center\"",
-		"on-click-right": "\"$HOME/.local/bin/dusky-tray\"",
+		"on-click": "\"$HOME/.local/bin/dusky_center\"",
+		"on-click-right": "\"$HOME/.local/bin/dusky_tray\"",
 		"tooltip-format": "LMB: Dusky Center\nRMB: Dusky Tray"
 	},
 
@@ -379,8 +379,8 @@
 		"format-icons": [
 			"", "", "", "", "", "", "", "", ""
 		],
-		"on-click": "\"$HOME/.local/bin/dusky-tray\"",
-		"on-click-right": "\"$HOME/.local/bin/dusky-tray\"",
+		"on-click": "\"$HOME/.local/bin/dusky_tray\"",
+		"on-click-right": "\"$HOME/.local/bin/dusky_tray\"",
 		"on-scroll-up": "brightnessctl set +5%",
 		"on-scroll-down": "brightnessctl set 5%-",
 		"tooltip": false

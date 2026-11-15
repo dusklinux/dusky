@@ -775,7 +775,7 @@ mod tests {
     fn isolated_user_service_enable_start_disable_stop() {
         let runtime =
             PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").expect("user runtime required"));
-        let unit = format!("dusky-center-fixture-{}.service", std::process::id());
+        let unit = format!("dusky_center-fixture-{}.service", std::process::id());
         let path = runtime.join("systemd/user").join(&unit);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         struct Cleanup {

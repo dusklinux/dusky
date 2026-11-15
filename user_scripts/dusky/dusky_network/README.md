@@ -15,7 +15,7 @@ otherwise matching installed binary; use `--force-rebuild` to refresh it deliber
 Compilation is frozen/offline, preferring executable tmpfs with disk fallback;
 build artifacts use temporary storage outside this source directory. The installed
 binary, manifest and build lock live in
-`~/.local/share/dusky/dusky_network/`; the launcher is `~/.local/bin/dusky-network`.
+`~/.local/share/dusky/dusky_network/`; the launcher is `~/.local/bin/dusky_network`.
 `Cargo.lock` is Cargo metadata required for frozen builds.
 
 The ISO factory recipe builds a generic x86-64 package with the same setup file

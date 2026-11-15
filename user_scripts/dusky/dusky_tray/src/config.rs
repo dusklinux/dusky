@@ -93,7 +93,7 @@ impl Appearance {
                 }
             }
         }
-        let packaged = PathBuf::from("/usr/share/dusky-tray/appearance.toml");
+        let packaged = PathBuf::from("/usr/share/dusky_tray/appearance.toml");
         if packaged.is_file() { packaged } else { xdg }
     }
 

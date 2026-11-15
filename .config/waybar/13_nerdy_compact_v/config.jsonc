@@ -118,8 +118,8 @@
             "format-icons": ["","","","","","","","","","","","","","",""],
             "tooltip": true,
             "tooltip-format": "LMB: Brightness Slider\nRMB: hyprsunset Slider\nMMB: Shaders",
-            "on-click": "\"$HOME/.local/bin/dusky-tray\"",
-            "on-click-right": "\"$HOME/.local/bin/dusky-tray\"",
+            "on-click": "\"$HOME/.local/bin/dusky_tray\"",
+            "on-click-right": "\"$HOME/.local/bin/dusky_tray\"",
             "on-click-middle": "dusky-run \"$HOME/user_scripts/rofi/shader_menu.sh\"",
             "on-scroll-up": "brightnessctl set +5%",
             "on-scroll-down": "brightnessctl set 5%-",
@@ -200,7 +200,7 @@
             "on-click-right": "systemctl --user restart dusky_network.service && nmcli radio wifi on && notify-send 'Turned ON WiFi'",
             "on-click-middle": "nmcli radio wifi off && notify-send 'Turned OFF WiFi'",
             "restart-interval": 3,
-            "exec": "$HOME/.local/bin/dusky-network watch --vertical"
+            "exec": "$HOME/.local/bin/dusky_network watch --vertical"
         },
 
         "custom/updates-trigger": {
@@ -258,7 +258,7 @@
             "tooltip-format": "Wallpaper and Appearance\nLMB: Dark Mode\nRMB: Light Mode\nMMB: Dusky Papers",
             "on-click": "dusky-run \"$HOME/user_scripts/theme_matugen/theme_ctl.sh\" set --mode dark",
             "on-click-right": "dusky-run \"$HOME/user_scripts/theme_matugen/theme_ctl.sh\" set --mode light",
-            "on-click-middle": "\"$HOME/.local/bin/dusky-papers\""
+            "on-click-middle": "\"$HOME/.local/bin/dusky_papers\""
         },
 
 

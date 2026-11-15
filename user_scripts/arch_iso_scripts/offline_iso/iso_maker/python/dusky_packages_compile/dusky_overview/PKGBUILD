@@ -1,4 +1,4 @@
-pkgname=dusky-overview
+pkgname=dusky_overview
 pkgver=0.1.0
 pkgrel=1
 pkgdesc='Dusky Overview workspace switcher for Hyprland'
@@ -15,12 +15,10 @@ build() {
 package() {
   install -Dm755 "$srcdir/binary-output/dusky_overview" \
     "$pkgdir/usr/bin/dusky_overview"
-  ln -sf "dusky_overview" "$pkgdir/usr/bin/dusky-overview"
 
-  install -d "$pkgdir/usr/share/dusky-overview"
   install -d "$pkgdir/usr/share/dusky_overview"
 
-  python - "$srcdir/project" "$DUSKY_BUILD_RUST" > "$pkgdir/usr/share/dusky-overview/source.sha256" <<'PY'
+  python - "$srcdir/project" "$DUSKY_BUILD_RUST" > "$pkgdir/usr/share/dusky_overview/source.sha256" <<'PY'
 import hashlib
 import sys
 from pathlib import Path
@@ -52,6 +50,4 @@ for path in files:
     digest.update(file_hash)
 print(digest.hexdigest())
 PY
-
-  cp -a "$pkgdir/usr/share/dusky-overview/source.sha256" "$pkgdir/usr/share/dusky_overview/source.sha256"
 }

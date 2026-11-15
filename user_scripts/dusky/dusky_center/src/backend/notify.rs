@@ -48,7 +48,7 @@ pub fn ignored_apps_file() -> PathBuf {
             }
         }
     }
-    let packaged = PathBuf::from("/usr/share/dusky-tray/ignored_apps.toml");
+    let packaged = PathBuf::from("/usr/share/dusky_tray/ignored_apps.toml");
     if packaged.is_file() {
         packaged
     } else {

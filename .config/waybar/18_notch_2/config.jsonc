@@ -111,8 +111,8 @@
         "backlight": {
             "format": "{icon} {percent}",
             "tooltip-format": "Brightness: {percent}%\n\n LMB  Brightness\n RMB  Night Light\n MMB  Shaders",
-            "on-click": "\"$HOME/.local/bin/dusky-tray\"",
-            "on-click-right": "\"$HOME/.local/bin/dusky-tray\"",
+            "on-click": "\"$HOME/.local/bin/dusky_tray\"",
+            "on-click-right": "\"$HOME/.local/bin/dusky_tray\"",
             "on-click-middle": "dusky-run ~/user_scripts/rofi/shader_menu.sh",
             "on-scroll-up": "brightnessctl set +5%",
             "on-scroll-down": "brightnessctl set 5%-",
@@ -230,7 +230,7 @@
 
         "custom/arch": {
             "format": "󰌽",
-            "on-click": "\"$HOME/.local/bin/dusky-center\"",
+            "on-click": "\"$HOME/.local/bin/dusky_center\"",
             "tooltip": true,
             "tooltip-format": "LMB: Dusky Center"
         },

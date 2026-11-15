@@ -134,7 +134,7 @@
     },
 
     "custom/net-speed": {
-        "exec": "$HOME/.local/bin/dusky-network watch --horizontal",
+        "exec": "$HOME/.local/bin/dusky_network watch --horizontal",
         "return-type": "json",
         "format": "{}",
         "restart-interval": 3,
@@ -227,7 +227,7 @@
         "format": "󰐥",
         "tooltip-format": "Power Menu\nLMB: Power Menu\nRMB: Dusky Center",
         "on-click": "dusky-run ~/user_scripts/wlogout/wlogout_scale.sh",
-        "on-click-right": "\"$HOME/.local/bin/dusky-center\""
+        "on-click-right": "\"$HOME/.local/bin/dusky_center\""
     },
 
     "custom/inhibit-suspend": {

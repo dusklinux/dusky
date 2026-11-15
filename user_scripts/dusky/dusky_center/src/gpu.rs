@@ -209,7 +209,7 @@ mod tests {
 
     #[test]
     fn gpu_discovery_respects_compositor_order_and_rejects_ambiguity() {
-        let root = std::env::temp_dir().join(format!("dusky-center-gpu-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("dusky_center-gpu-{}", std::process::id()));
         for (card, vendor, driver) in [("card2", "0x8086", "i915"), ("card10", "0x10de", "nvidia")]
         {
             let device = root.join(card).join("device");
@@ -272,7 +272,7 @@ mod ambiguity_tests {
     #[test]
     fn ambiguous_multiple_gpus_do_not_filter_from_firmware_hint() {
         let root =
-            std::env::temp_dir().join(format!("dusky-center-gpu-ambiguous-{}", std::process::id()));
+            std::env::temp_dir().join(format!("dusky_center-gpu-ambiguous-{}", std::process::id()));
         for (card, vendor) in [("card0", "0x8086"), ("card1", "0x1002")] {
             let device = root.join(card).join("device");
             std::fs::create_dir_all(&device).unwrap();

@@ -7,7 +7,7 @@ dependency is used.
 
 Sources stay in this directory. The executable lives at
 `~/.local/share/dusky/dusky_tray/dusky_tray`, with a launcher symlink at
-`~/.local/bin/dusky-tray`, matching Dusky Papers. GTK launchers and desktop
+`~/.local/bin/dusky_tray`, matching Dusky Papers. GTK launchers and desktop
 keybinds are not replaced.
 
 ## Run and rebuild
@@ -15,7 +15,7 @@ keybinds are not replaced.
 ```sh
 python3 ~/user_scripts/arch_setup_scripts/scripts/152_dusky_tray_setup.py
 ./scripts/reload_tray.sh
-~/.local/bin/dusky-tray
+~/.local/bin/dusky_tray
 
 ./scripts/build_on_tmpfs.sh --force-rebuild
 ./scripts/build_on_tmpfs.sh --test
@@ -48,14 +48,14 @@ builder's CPU. Compiler output stays on `/tmp` tmpfs; the package contains the
 executable and defaults. Installed systems prefer native compilation even when
 the generic package matches their sources.
 
-Check modes use `/tmp/dusky-tray-target-$UID`, verify tmpfs and reject output
+Check modes use `/tmp/dusky_tray-target-$UID`, verify tmpfs and reject output
 inside the project. Ordinary Cargo commands run from this project default to
-`/tmp/dusky-tray-target`; use the wrapper for mount verification. Neither creates
+`/tmp/dusky_tray-target`; use the wrapper for mount verification. Neither creates
 a source-directory `target/` tree. The Cargo registry cache is separate.
 
 The reload script restarts this user's installed tray, including an old inode
 after an atomic update. A per-user lock prevents concurrent panels.
-`service/dusky_tray.service` optionally launches `~/.local/bin/dusky-tray` through
+`service/dusky_tray.service` optionally launches `~/.local/bin/dusky_tray` through
 systemd; it has no login autostart section and does not restart a closed panel.
 The notification timestamp daemon runs independently.
 
@@ -237,7 +237,7 @@ Configuration is read from `$XDG_CONFIG_HOME/dusky/tray/config.toml`, or
 layout keys are reused. An absent file receives embedded defaults. Empty
 `toggles=[]` is respected. `show_media` remains a reserved, unimplemented key.
 
-Runtime data normally lives in `$XDG_RUNTIME_DIR/dusky-tray`, with
+Runtime data normally lives in `$XDG_RUNTIME_DIR/dusky_tray`, with
 per-user runtime fallbacks. The tray verifies the filesystem is tmpfs before
 creating its runtime directory and remembers that directory for its lifetime.
 Mako's blacklist and timestamp files are read from
@@ -290,7 +290,7 @@ WGPU_BACKEND=gl cargo test --locked --offline -- --ignored --test-threads=1
 For a first-frame submission timestamp without verbose Wayland logging:
 
 ```sh
-DUSKY_TRAY_TRACE=1 ~/.local/bin/dusky-tray
+DUSKY_TRAY_TRACE=1 ~/.local/bin/dusky_tray
 ```
 
 The first submitted frame contains the visible panel. Query completion

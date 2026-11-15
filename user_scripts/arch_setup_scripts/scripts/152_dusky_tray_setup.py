@@ -22,7 +22,7 @@ build_support = import_module("147_rust_compiles_shared_NOT_STANDALONE")
 
 TARGET = "x86_64-unknown-linux-gnu"
 SYSTEM_BINARY = Path("/usr/bin/dusky_tray")
-SYSTEM_SOURCE_DIGEST = Path("/usr/share/dusky-tray/source.sha256")
+SYSTEM_SOURCE_DIGEST = Path("/usr/share/dusky_tray/source.sha256")
 BUILD_RECIPE = "tray-native-v1-frozen-tmpfs"
 
 
@@ -105,7 +105,7 @@ def binary_runs(binary: Path) -> bool:
             timeout=10,
             check=False,
         )
-        return result.returncode == 0 and ("dusky_tray" in result.stdout or "dusky-tray" in result.stdout)
+        return result.returncode == 0 and "dusky_tray" in result.stdout
     except (OSError, subprocess.TimeoutExpired):
         return False
 
@@ -252,7 +252,7 @@ def fetch_dependencies(cargo: str, project: Path, env: dict[str, str]) -> bool:
     return True
 
 
-@build_support.temporary_build("dusky-tray-build-")
+@build_support.temporary_build("dusky_tray-build-")
 def build_native(project: Path, binary: Path, manifest_path: Path, version: str,
                  *, workspace: build_support.Workspace) -> bool:
     cargo = shutil.which("cargo")
@@ -377,7 +377,7 @@ def install_defaults(project: Path, install_dir: Path) -> None:
         destination = install_dir / filename
         source = project / filename
         if not source.is_file():
-            source = Path("/usr/share/dusky-tray") / filename
+            source = Path("/usr/share/dusky_tray") / filename
         if source.is_file() and not destination.exists():
             shutil.copyfile(source, destination)
     config_dir = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "dusky/tray"
@@ -386,7 +386,7 @@ def install_defaults(project: Path, install_dir: Path) -> None:
         destination = config_dir / filename
         source = project / filename
         if not source.is_file():
-            source = Path("/usr/share/dusky-tray") / filename
+            source = Path("/usr/share/dusky_tray") / filename
         if source.is_file() and not destination.exists():
             shutil.copyfile(source, destination)
 
@@ -440,10 +440,7 @@ def setup(project: Path, install_dir: Path, force: bool) -> int:
     launcher.parent.mkdir(parents=True, exist_ok=True)
     if not link_system_binary(binary, launcher):
         return 1
-    legacy_launcher = Path.home() / ".local/bin/dusky-tray"
-    link_system_binary(launcher, legacy_launcher)
-    # Only remove the obsolete source-tree executable after installation succeeds.
-    (project / "bin/dusky-tray").unlink(missing_ok=True)
+    (project / "bin/dusky_tray").unlink(missing_ok=True)
     try:
         (project / "bin").rmdir()
     except (FileNotFoundError, OSError):

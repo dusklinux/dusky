@@ -1,4 +1,4 @@
-//! dusky-tray: Rust-native control center (Iced + Wayland window).
+//! dusky_tray: Rust-native control center (Iced + Wayland window).
 //!
 //! Layout parity with the original compact panel. Build + runtime caches stay
 //! on tmpfs (see `scripts/build_on_tmpfs.sh` and `backend::system::runtime_dir`)

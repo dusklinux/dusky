@@ -1,9 +1,13 @@
 [package]
-name = "dusky-papers"
+name = "dusky_papers"
 version = "1.1.0"
 edition = "2024"
 authors = ["Dusk Linux"]
 description = "Dusky Papers: fast, lightweight wallpapers for Arch Linux / Hyprland"
+
+[[bin]]
+name = "dusky_papers"
+path = "src/main.rs"
 
 [dependencies]
 iced_graphics = "0.14.0"

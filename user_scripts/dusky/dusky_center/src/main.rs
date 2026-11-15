@@ -88,7 +88,7 @@ impl Drop for SocketGuard {
 }
 
 fn instance_socket_path() -> PathBuf {
-    backend::runtime_dir().join("dusky-center.sock")
+    backend::runtime_dir().join("dusky_center.sock")
 }
 
 fn spawn_ipc_watcher(listener: UnixListener) {
@@ -172,7 +172,7 @@ fn main() -> iced::Result {
             Some(SocketGuard(sock_path))
         }
         Err(error) => {
-            eprintln!("Warning: could not bind dusky-center toggle socket: {error}");
+            eprintln!("Warning: could not bind dusky_center toggle socket: {error}");
             None
         }
     };
@@ -196,7 +196,7 @@ fn main() -> iced::Result {
         resizable: true,
         decorations: false,
         platform_specific: iced_core::window::settings::PlatformSpecific {
-            application_id: "dusky-center".into(),
+            application_id: "dusky_center".into(),
             override_redirect: false,
         },
         exit_on_close_request: false,

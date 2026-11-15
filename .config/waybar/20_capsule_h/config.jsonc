@@ -248,8 +248,8 @@
       "",
       ""
     ],
-    "on-click": "\"$HOME/.local/bin/dusky-tray\"",
-    "on-click-right": "\"$HOME/.local/bin/dusky-tray\"",
+    "on-click": "\"$HOME/.local/bin/dusky_tray\"",
+    "on-click-right": "\"$HOME/.local/bin/dusky_tray\"",
     "on-click-middle": "dusky-run \"$HOME/user_scripts/rofi/shader_menu.sh\""
   },
   "tray": {

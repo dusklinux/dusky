@@ -22,8 +22,8 @@ build_support = import_module("147_rust_compiles_shared_NOT_STANDALONE")
 
 TARGET = "x86_64-unknown-linux-gnu"
 SYSTEM_BINARY = Path("/usr/bin/dusky_center")
-SYSTEM_SOURCE_DIGEST = Path("/usr/share/dusky-center/source.sha256")
-SYSTEM_DEFAULTS = Path("/usr/share/dusky-center/dusky_config.toml")
+SYSTEM_SOURCE_DIGEST = Path("/usr/share/dusky_center/source.sha256")
+SYSTEM_DEFAULTS = Path("/usr/share/dusky_center/dusky_config.toml")
 BUILD_RECIPE = "center-native-v1-frozen-tmpfs"
 
 
@@ -251,7 +251,7 @@ def fetch_dependencies(cargo: str, project: Path, env: dict[str, str]) -> bool:
     return True
 
 
-@build_support.temporary_build("dusky-center-build-")
+@build_support.temporary_build("dusky_center-build-")
 def build_native(project: Path, binary: Path, manifest_path: Path, version: str,
                  *, workspace: build_support.Workspace) -> bool:
     cargo = shutil.which("cargo")
@@ -440,8 +440,6 @@ def setup(project: Path, install_dir: Path, force: bool) -> int:
     launcher.parent.mkdir(parents=True, exist_ok=True)
     if not link_system_binary(binary, launcher):
         return 1
-    legacy_launcher = Path.home() / ".local/bin/dusky-center"
-    link_system_binary(launcher, legacy_launcher)
     log("OK", f"Dusky Center ready at {launcher}")
     return 0
 

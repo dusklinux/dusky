@@ -8,16 +8,16 @@ page or closing the window exits the process; there is no background UI daemon.
 
 ```bash
 ./scripts/install.sh
-~/.local/bin/dusky-center
+~/.local/bin/dusky_center
 # Deliberately rebuild for this CPU:
 ./scripts/install.sh --force-rebuild
 ```
 
-The build script verifies tmpfs and defaults to `/tmp/dusky-center-target-$UID`.
+The build script verifies tmpfs and defaults to `/tmp/dusky_center-target-$UID`.
 The installer delegates to `153_dusky_center_setup.py`, also included after the
 tray step in the main, ISO and personal setup profiles. It never launches the
 app or enables a service. It installs into `~/.local/share/dusky/dusky_center`
-and creates the `~/.local/bin/dusky-center` launcher.
+and creates the `~/.local/bin/dusky_center` launcher.
 
 A matching generic ISO package is reused without compiling. With changed source,
 or `./scripts/install.sh --force-rebuild`, it builds a release for the current
@@ -70,7 +70,7 @@ TOML is resolved in this order:
 2. `$XDG_CONFIG_HOME/dusky/dusky_config.toml` (normally `~/.config/dusky/`).
 3. `$HOME/user_scripts/dusky/dusky_center/dusky_config.toml`.
 4. `dusky_config.toml` beside the running executable.
-5. `/usr/share/dusky-center/dusky_config.toml` (packaged defaults).
+5. `/usr/share/dusky_center/dusky_config.toml` (packaged defaults).
 
 Ctrl+R reloads configuration and colors. Ctrl+F opens search. All 18 pages are
 parsed from TOML; supported widgets are rendered by `src/ui.rs`. See
@@ -160,7 +160,7 @@ To trace configuration, generator expansion, compositor setup, first frame
 submission and asynchronous query completion:
 
 ```bash
-DUSKY_CENTER_TRACE=1 ~/.local/bin/dusky-center
+DUSKY_CENTER_TRACE=1 ~/.local/bin/dusky_center
 ```
 
 See [PERFORMANCE_REVIEW.md](PERFORMANCE_REVIEW.md) for measurements, test coverage,

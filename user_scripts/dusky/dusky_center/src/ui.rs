@@ -3955,7 +3955,7 @@ mod tests {
 
     #[test]
     fn stress_coalesced_writes_preserve_metadata_and_failed_persistence_on_close() {
-        let root = std::env::temp_dir().join(format!("dusky-center-write-stress-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("dusky_center-write-stress-{}", std::process::id()));
         std::fs::create_dir(&root).unwrap();
         let mut config: AppConfig = toml::from_str("[[pages]]\nid='old'\ntitle='Old'\n[[pages.layout]]\ntype='section'\n[[pages]]\nid='new'\ntitle='New'").unwrap();
         for index in 0..4 {
@@ -4070,7 +4070,7 @@ mod tests {
             assert_eq!(app.slider_values["Volume"], 40.0);
             return;
         }
-        let root = std::env::temp_dir().join(format!("dusky-center-boot-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("dusky_center-boot-{}", std::process::id()));
         let bin = root.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         let wpctl = bin.join("wpctl");

@@ -6,7 +6,7 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=exec
-ExecStart=%h/.local/bin/dusky-network daemon
+ExecStart=%h/.local/bin/dusky_network daemon
 Restart=on-failure
 RestartSec=3s
 

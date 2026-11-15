@@ -13,8 +13,8 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
-const HELP: &str = "dusky-network — Linux network meter for Waybar
-Usage: dusky-network [stream|daemon|watch|read|osd|once] [MODE] [OPTIONS]
+const HELP: &str = "dusky_network — Linux network meter for Waybar
+Usage: dusky_network [stream|daemon|watch|read|osd|once] [MODE] [OPTIONS]
   stream    Emit JSON every second; sleep 3s disconnected (default; no service)
   daemon    Sample and publish a snapshot every second; sleep 3s disconnected
   watch     Emit the daemon's snapshot as JSON every second, without relaunching
@@ -264,14 +264,14 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
     if args == ["--version"] {
-        println!("dusky-network {}", env!("CARGO_PKG_VERSION"));
+        println!("dusky_network {}", env!("CARGO_PKG_VERSION"));
         return ExitCode::SUCCESS;
     }
     match options(args.into_iter()).and_then(run) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) if e.kind() == io::ErrorKind::BrokenPipe => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("dusky-network: {e}");
+            eprintln!("dusky_network: {e}");
             ExitCode::FAILURE
         }
     }
@@ -286,7 +286,7 @@ mod tests {
     static NEXT: AtomicUsize = AtomicUsize::new(0);
     pub(super) fn fixture() -> PathBuf {
         let path = env::temp_dir().join(format!(
-            "dusky-network-test-{}-{}",
+            "dusky_network-test-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));

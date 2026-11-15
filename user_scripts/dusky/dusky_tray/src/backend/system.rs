@@ -96,7 +96,7 @@ pub fn mako_blacklist_file() -> PathBuf {
 /// Call only after the panel has mapped (its first successful fit).
 pub fn configure_panel_blur(enabled: bool) {
     let rule = format!(
-        "hl.dispatch(hl.dsp.window.set_prop({{window=\"class:^(dusky_tray|dusky-tray)$\",prop=\"no_blur\",value=\"{}\",lock=true}}))",
+        "hl.dispatch(hl.dsp.window.set_prop({{window=\"class:^dusky_tray$\",prop=\"no_blur\",value=\"{}\",lock=true}}))",
         !enabled
     );
     let reply = run_command(
@@ -177,7 +177,7 @@ pub fn panel_monitor() -> Option<PanelMonitor> {
 }
 pub fn fit_panel(monitor: PanelMonitor, size: iced_core::Size) -> bool {
     let actions = format!(
-        "hl.dispatch(hl.dsp.window.resize({{window=\"class:^(dusky_tray|dusky-tray)$\",x={},y={},relative=false}})); hl.dispatch(hl.dsp.window.move({{window=\"class:^(dusky_tray|dusky-tray)$\",x={},y={},relative=false}}))",
+        "hl.dispatch(hl.dsp.window.resize({{window=\"class:^dusky_tray$\",x={},y={},relative=false}})); hl.dispatch(hl.dsp.window.move({{window=\"class:^dusky_tray$\",x={},y={},relative=false}}))",
         size.width,
         size.height,
         monitor.x + monitor.size.width - size.width - 20.0,

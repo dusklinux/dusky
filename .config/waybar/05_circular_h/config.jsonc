@@ -44,8 +44,8 @@
     "custom/arch": {
         "format": "󰌽",
         "tooltip-format": "LMB: Dusky Center\nRMB: Dusky Tray",
-        "on-click": "\"$HOME/.local/bin/dusky-center\"",
-        "on-click-right": "\"$HOME/.local/bin/dusky-tray\""
+        "on-click": "\"$HOME/.local/bin/dusky_center\"",
+        "on-click-right": "\"$HOME/.local/bin/dusky_tray\""
     },
     "custom/lock": {
         "format": "󰌾",
@@ -120,8 +120,8 @@
         "format": "{icon} {percent}%",
         "format-icons": ["󰃞", "󰃟", "󰃠"],
         "tooltip-format": "LMB: Brightness Slider\nRMB: hyprsunset Slider\nMMB: Shaders",
-        "on-click": "\"$HOME/.local/bin/dusky-tray\"",
-        "on-click-right": "\"$HOME/.local/bin/dusky-tray\"",
+        "on-click": "\"$HOME/.local/bin/dusky_tray\"",
+        "on-click-right": "\"$HOME/.local/bin/dusky_tray\"",
         "on-click-middle": "dusky-run ~/user_scripts/rofi/shader_menu.sh",
         "on-scroll-up": "brightnessctl set +5%",
         "on-scroll-down": "brightnessctl set 5%-"
@@ -165,7 +165,7 @@
 
     // === MODULES: RIGHT ===
     "custom/net-speed": {
-        "exec": "$HOME/.local/bin/dusky-network watch --horizontal",
+        "exec": "$HOME/.local/bin/dusky_network watch --horizontal",
         "return-type": "json",
         "format": "{}",
         "restart-interval": 3,

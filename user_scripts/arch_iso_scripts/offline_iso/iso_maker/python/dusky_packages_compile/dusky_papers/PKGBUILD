@@ -1,4 +1,4 @@
-pkgname=dusky-papers
+pkgname=dusky_papers
 pkgver=1.1.0
 pkgrel=2
 pkgdesc='Dusky Papers wallpaper browser for Hyprland'
@@ -8,14 +8,14 @@ depends=('glibc' 'gcc-libs' 'wayland' 'libxkbcommon' 'vulkan-icd-loader' 'mesa' 
 makedepends=('cargo' 'python')
 build() {
   cp -aL -- "$DUSKY_PACKAGE_SOURCE" "$srcdir/project"
-  python "$DUSKY_BUILD_RUST" "$srcdir/project" "$srcdir/binary-output/dusky-papers"
+  python "$DUSKY_BUILD_RUST" "$srcdir/project" "$srcdir/binary-output/dusky_papers"
 }
 
 package() {
-  install -Dm755 "$srcdir/binary-output/dusky-papers" \
-    "$pkgdir/usr/bin/dusky-papers"
-  install -d "$pkgdir/usr/share/dusky-papers"
-  python - "$srcdir/project" > "$pkgdir/usr/share/dusky-papers/source.sha256" <<'PY'
+  install -Dm755 "$srcdir/binary-output/dusky_papers" \
+    "$pkgdir/usr/bin/dusky_papers"
+  install -d "$pkgdir/usr/share/dusky_papers"
+  python - "$srcdir/project" > "$pkgdir/usr/share/dusky_papers/source.sha256" <<'PY'
 import hashlib
 import sys
 from pathlib import Path

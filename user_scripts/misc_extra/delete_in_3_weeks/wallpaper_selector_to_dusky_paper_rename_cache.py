@@ -59,10 +59,10 @@ def merge_directory(source: Path, destination: Path) -> None:
 def new_launcher_works(home: Path) -> bool:
     try:
         result = subprocess.run(
-            [str(home / ".local/bin/dusky-papers"), "--version"],
+            [str(home / ".local/bin/dusky_papers"), "--version"],
             stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
         )
-        return result.returncode == 0 and result.stdout.startswith("dusky-papers ")
+        return result.returncode == 0 and result.stdout.startswith("dusky_papers ")
     except (OSError, subprocess.TimeoutExpired):
         return False
 
@@ -95,7 +95,7 @@ def main() -> int:
     runtime = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}")
     with ExitStack() as stack:
         # Hold the same locks as both Rust apps. Do not unlink lock files.
-        for name in ("dusky_wallpaper_selector.lock", "dusky-papers.lock"):
+        for name in ("dusky_wallpaper_selector.lock", "dusky_papers.lock"):
             lock = stack.enter_context((runtime / name).open("a"))
             try:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

@@ -8,4 +8,4 @@ Icon=network-wireless
 Terminal=false
 Categories=Network;Settings;
 Keywords=dusky;wifi;network;nmcli;manager;hotspot;
-StartupWMClass=dusky-network
+StartupWMClass=dusky_network

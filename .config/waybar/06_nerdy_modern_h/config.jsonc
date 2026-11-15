@@ -137,8 +137,8 @@
         "format": "󰌽",
         "tooltip-format": "LMB: Dusky Center\nMMB: Dusky Tray\nRMB: Application Launcher",
         "on-click-right": "dusky-run rofi -show drun",
-        "on-click-middle": "\"$HOME/.local/bin/dusky-tray\"",
-        "on-click": "\"$HOME/.local/bin/dusky-center\""
+        "on-click-middle": "\"$HOME/.local/bin/dusky_tray\"",
+        "on-click": "\"$HOME/.local/bin/dusky_center\""
     },
 
     "hyprland/workspaces": {
@@ -174,7 +174,7 @@
     // CENTER MODULES
     // ===================================================================
     "custom/net-speed": {
-        "exec": "$HOME/.local/bin/dusky-network watch --horizontal",
+        "exec": "$HOME/.local/bin/dusky_network watch --horizontal",
         "return-type": "json",
         "format": "{}",
         "restart-interval": 3,
@@ -313,8 +313,8 @@
         "format": "{icon} {percent}%",
         "format-icons": ["󰃞", "󰃟", "󰃠"],
         "tooltip-format": "Brightness: {percent}%\n\nLMB: Brightness Slider\nRMB: Hyprsunset Slider\nMMB: Shader Menu\nScroll: Adjust",
-        "on-click": "\"$HOME/.local/bin/dusky-tray\"",
-        "on-click-right": "\"$HOME/.local/bin/dusky-tray\"",
+        "on-click": "\"$HOME/.local/bin/dusky_tray\"",
+        "on-click-right": "\"$HOME/.local/bin/dusky_tray\"",
         "on-click-middle": "dusky-run ~/user_scripts/rofi/shader_menu.sh",
         "on-scroll-up": "brightnessctl set +5%",
         "on-scroll-down": "brightnessctl set 5%-",

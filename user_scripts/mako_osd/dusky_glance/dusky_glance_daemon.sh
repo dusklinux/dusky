@@ -1740,7 +1740,7 @@ case "$MODE" in
     --network-down-session|--network-up-session|--network-session|\
     --network-boot-down|--network-boot-up|--network-boot)
         require_cmd systemctl
-        NETWORK_BIN="$HOME/.local/bin/dusky-network"
+        NETWORK_BIN="$HOME/.local/bin/dusky_network"
         require_cmd "$NETWORK_BIN"
         case "$MODE_BASE" in
             network) network_mode=horizontal ;;

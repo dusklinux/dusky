@@ -1,4 +1,4 @@
-pkgname=dusky-center
+pkgname=dusky_center
 pkgver=1.0.0
 pkgrel=1
 pkgdesc='Dusky Center control center for Hyprland'
@@ -16,8 +16,8 @@ package() {
   install -Dm755 "$srcdir/binary-output/dusky_center" \
     "$pkgdir/usr/bin/dusky_center"
   install -Dm644 "$srcdir/project/dusky_config.toml" \
-    "$pkgdir/usr/share/dusky-center/dusky_config.toml"
-  python - "$srcdir/project" > "$pkgdir/usr/share/dusky-center/source.sha256" <<'PY'
+    "$pkgdir/usr/share/dusky_center/dusky_config.toml"
+  python - "$srcdir/project" > "$pkgdir/usr/share/dusky_center/source.sha256" <<'PY'
 import hashlib
 import sys
 from pathlib import Path

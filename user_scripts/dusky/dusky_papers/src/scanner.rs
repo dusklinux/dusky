@@ -174,7 +174,7 @@ mod tests {
     impl Fixture {
         fn new() -> Self {
             let root = std::env::temp_dir().join(format!(
-                "dusky-papers-scan-{}-{}",
+                "dusky_papers-scan-{}-{}",
                 std::process::id(),
                 fastrand::u64(..)
             ));

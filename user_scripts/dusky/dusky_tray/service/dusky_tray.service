@@ -8,8 +8,8 @@ PartOf=graphical-session.target
 
 [Service]
 Type=exec
-ExecStart=%h/.local/bin/dusky-tray
+ExecStart=%h/.local/bin/dusky_tray
 Slice=app-graphical.slice
 Restart=no
 TimeoutStopSec=2s
-SyslogIdentifier=dusky-tray
+SyslogIdentifier=dusky_tray

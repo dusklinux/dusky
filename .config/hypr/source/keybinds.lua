@@ -12,7 +12,7 @@ local function is_target_app_active()
     local w = hl.get_active_window()
     if not w then return false end
     local class = w.class or ""
-    return class == "dusky_tui" or class == "wallpaper_selector.py" or class == "dusky-papers" or class == "factorio" or class == "terminal_clipboard.sh" or class == "dusky_snapshot_manager.py"
+    return class == "dusky_tui" or class == "wallpaper_selector.py" or class == "dusky_papers" or class == "factorio" or class == "terminal_clipboard.sh" or class == "dusky_snapshot_manager.py"
 end
 
 local function cond_bind(key, default_dsp, flags)
@@ -164,7 +164,7 @@ cond_bind(
 for _, key in ipairs({ "ALT + 4", "CTRL + SPACE" }) do
     cond_bind(
         key,
-        hl.dsp.exec_cmd(HOME .. "/.local/bin/dusky-papers"),
+        hl.dsp.exec_cmd(HOME .. "/.local/bin/dusky_papers"),
         { description = "Dusky Papers" }
     )
 end

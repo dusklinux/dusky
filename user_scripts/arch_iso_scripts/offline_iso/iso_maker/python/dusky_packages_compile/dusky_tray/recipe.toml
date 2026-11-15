@@ -1,4 +1,4 @@
-package = "dusky-tray"
+package = "dusky_tray"
 # Include the tray and its shared click-away C sources in the factory snapshot.
 source = "user_scripts/dusky"
 tools = ["cargo", "python", "cc", "wayland-scanner"]

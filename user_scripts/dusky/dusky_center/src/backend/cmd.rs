@@ -450,7 +450,7 @@ mod tests {
             return;
         }
         let root =
-            std::env::temp_dir().join(format!("dusky-center-shutdown-{}", std::process::id()));
+            std::env::temp_dir().join(format!("dusky_center-shutdown-{}", std::process::id()));
         std::fs::create_dir(&root).unwrap();
         let result = Command::new(std::env::current_exe().unwrap())
             .args([
@@ -580,7 +580,7 @@ mod tests {
 
     #[test]
     fn leader_stays_unreaped_while_descendant_pipes_are_pending() {
-        let root = std::env::temp_dir().join(format!("dusky-center-leader-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("dusky_center-leader-{}", std::process::id()));
         std::fs::create_dir(&root).unwrap();
         let marker = root.join("pid");
         let gate = root.join("release");
@@ -673,7 +673,7 @@ mod tests {
     #[test]
     fn unrepresentable_deadline_does_not_spawn_a_command() {
         let marker =
-            std::env::temp_dir().join(format!("dusky-center-overflow-{}", std::process::id()));
+            std::env::temp_dir().join(format!("dusky_center-overflow-{}", std::process::id()));
         let output = run_command(
             &[
                 "/usr/bin/bash".into(),

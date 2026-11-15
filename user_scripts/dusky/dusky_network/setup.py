@@ -20,11 +20,11 @@ PROJECT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT))
 build_support = import_module("147_rust_compiles_shared_NOT_STANDALONE")
 
-SYSTEM_BINARY = Path("/usr/bin/dusky-network")
-SYSTEM_MANIFEST = Path("/usr/share/dusky-network/binary_manifest.json")
+SYSTEM_BINARY = Path("/usr/bin/dusky_network")
+SYSTEM_MANIFEST = Path("/usr/share/dusky_network/binary_manifest.json")
 TARGET = "x86_64-unknown-linux-gnu"
 # Bump this marker when code-generation flags change, rather than for orchestration edits.
-RECIPE = "dusky-network-tmpfs-v2"
+RECIPE = "dusky_network-tmpfs-v2"
 
 
 def digest(path: Path) -> str:
@@ -97,7 +97,7 @@ def build(args: argparse.Namespace) -> None:
     output_dir = (args.output_dir or Path.home() / ".local/share/dusky/dusky_network").resolve()
     if output_dir.is_relative_to(PROJECT):
         raise ValueError("Build output must be outside the source directory")
-    binary = output_dir / "dusky-network"
+    binary = output_dir / "dusky_network"
     manifest_path = output_dir / "binary_manifest.json"
     if not args.force_rebuild and not (args.test or args.clippy or args.check):
         try:
@@ -105,13 +105,14 @@ def build(args: argparse.Namespace) -> None:
             if (isinstance(manifest, dict)
                     and all(manifest.get(key) == value for key, value in expected.items())
                     and manifest.get("binary_sha256") == digest(binary)):
-                if run([str(binary), "--version"], timeout=10) == f"dusky-network {version}":
+                output_ver = run([str(binary), "--version"], timeout=10)
+                if output_ver == f"dusky_network {version}":
                     print(f"[OK] Verified existing {cpu} build: {binary}")
                     return
         except (OSError, ValueError, RuntimeError):
             pass
 
-    @build_support.temporary_build("dusky-network-build-", artifact_bytes=512 * 1024 ** 2,
+    @build_support.temporary_build("dusky_network-build-", artifact_bytes=512 * 1024 ** 2,
                      compiler_bytes=512 * 1024 ** 2, max_jobs=1)
     def compile_project(*, workspace: build_support.Workspace) -> None:
         scratch = workspace.path
@@ -138,7 +139,7 @@ def build(args: argparse.Namespace) -> None:
         elif args.check:
             command = [cargo, "check", *common]
         else:
-            command = [cargo, "build", "--release", *common]
+            command = [cargo, "build", "--release", *common, "--bin", "dusky_network"]
         print(f"[INFO] {cpu} {command[1]} in {workspace.storage}; {flags}", flush=True)
         try:
             print(run(command, env=env))
@@ -147,8 +148,9 @@ def build(args: argparse.Namespace) -> None:
             raise
         if args.test or args.clippy or args.check:
             return
-        built = scratch / "target" / target / "release/dusky-network"
-        if run([str(built), "--version"], timeout=10) != f"dusky-network {version}":
+        built = scratch / "target" / target / "release/dusky_network"
+        output_ver = run([str(built), "--version"], timeout=10)
+        if output_ver != f"dusky_network {version}":
             raise RuntimeError("Built executable failed its version smoke test")
         if expected["source_sha256"] != source_digest():
             raise RuntimeError("Sources changed during build; rerun setup")
@@ -182,7 +184,8 @@ def verified(binary: Path, manifest_path: Path, *, native: bool) -> dict | None:
                 or manifest.get("cpu_signature") != (cpu_signature() if native else None)
                 or manifest.get("binary_sha256") != digest(binary)):
             return None
-        if run([str(binary), "--version"], timeout=10) != f"dusky-network {manifest.get('version')}":
+        output_ver = run([str(binary), "--version"], timeout=10)
+        if output_ver != f"dusky_network {manifest.get('version')}":
             return None
         return manifest
     except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired):
@@ -210,7 +213,7 @@ def link(target: Path, destination: Path) -> None:
 
 def install(install_dir: Path, launcher: Path, force: bool) -> bool:
     """Return whether the installed executable changed; preserve working fallback."""
-    binary = install_dir / "dusky-network"
+    binary = install_dir / "dusky_network"
     manifest_path = install_dir / "binary_manifest.json"
     with (PROJECT / "Cargo.toml").open("rb") as stream:
         configuration = tomllib.load(stream)
@@ -277,7 +280,7 @@ def main() -> None:
         if args.generic or args.test or args.clippy or args.check:
             build(args)
             return
-        changed = install(install_dir, Path.home() / ".local/bin/dusky-network", args.force_rebuild)
+        changed = install(install_dir, Path.home() / ".local/bin/dusky_network", args.force_rebuild)
         # Step 130 installs/enables the unit. Refresh an already active meter
         # after edits without starting it in an installer session.
         if changed and shutil.which("systemctl"):

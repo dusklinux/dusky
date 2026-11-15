@@ -107,7 +107,7 @@ impl AppConfig {
             candidates.push(parent.join("dusky_config.toml"));
         }
 
-        candidates.push(PathBuf::from("/usr/share/dusky-center/dusky_config.toml"));
+        candidates.push(PathBuf::from("/usr/share/dusky_center/dusky_config.toml"));
 
         for candidate in &candidates {
             if candidate.is_file() {

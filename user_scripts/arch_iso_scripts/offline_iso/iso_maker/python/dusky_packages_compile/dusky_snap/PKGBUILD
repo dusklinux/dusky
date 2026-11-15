@@ -1,4 +1,4 @@
-pkgname=dusky-snap
+pkgname=dusky_snap
 pkgver=0.4.1
 pkgrel=3
 pkgdesc='Dusky Snap Wayland screenshot and annotation tool'
@@ -16,10 +16,10 @@ build() {
 package() {
   install -Dm755 "$srcdir/binary-output/dusky_snap" \
     "$pkgdir/usr/bin/dusky_snap"
-  install -Dm644 "$srcdir/project/config.json" "$pkgdir/usr/share/dusky-snap/config.json"
+  install -Dm644 "$srcdir/project/config.json" "$pkgdir/usr/share/dusky_snap/config.json"
   install -Dm644 "$srcdir/project/dusky_snap.desktop" \
     "$pkgdir/usr/share/applications/dusky_snap.desktop"
-  python - "$srcdir/project" > "$pkgdir/usr/share/dusky-snap/source.sha256" <<'PYHASH'
+  python - "$srcdir/project" > "$pkgdir/usr/share/dusky_snap/source.sha256" <<'PYHASH'
 import hashlib
 import sys
 from pathlib import Path

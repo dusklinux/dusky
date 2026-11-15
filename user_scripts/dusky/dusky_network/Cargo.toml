@@ -1,9 +1,13 @@
 [package]
-name = "dusky-network"
+name = "dusky_network"
 version = "1.0.0"
 edition = "2024"
 rust-version = "1.89"
 description = "Persistent Linux network meter for Waybar"
+
+[[bin]]
+name = "dusky_network"
+path = "src/main.rs"
 
 # No crates: installation and builds work completely offline.
 [profile.release]
