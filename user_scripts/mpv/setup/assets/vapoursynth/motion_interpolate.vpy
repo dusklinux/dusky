@@ -92,22 +92,8 @@ def _pad_to_modulo(clip: vs.VideoNode, modulo: int) -> tuple[vs.VideoNode, int, 
     """
     pad_w = (modulo - (clip.width % modulo)) % modulo
     pad_h = (modulo - (clip.height % modulo)) % modulo
-    if pad_w > 0:
-        if clip.width >= pad_w:
-            right_strip = core.std.FlipHorizontal(
-                core.std.CropRel(clip, left=clip.width - pad_w)
-            )
-            clip = core.std.StackHorizontal([clip, right_strip])
-        else:
-            clip = core.std.AddBorders(clip, right=pad_w)
-    if pad_h > 0:
-        if clip.height >= pad_h:
-            bottom_strip = core.std.FlipVertical(
-                core.std.CropRel(clip, top=clip.height - pad_h)
-            )
-            clip = core.std.StackVertical([clip, bottom_strip])
-        else:
-            clip = core.std.AddBorders(clip, bottom=pad_h)
+    if pad_w > 0 or pad_h > 0:
+        clip = core.std.AddBorders(clip, right=pad_w, bottom=pad_h)
     return clip, pad_w, pad_h
 
 
@@ -205,22 +191,11 @@ def _build_mvtools_pipeline(
         sup, fv_coarse, blksize=16, overlap=8, search=4, searchparam=1, thsad=200, truemotion=True
     )
 
-    use_flow = (quality == "hq") or (
-        quality == "auto" and target_fps_float <= 65.0 and padded_clip.height <= 1080
+    interp = core.mv.FlowFPS(
+        padded_clip, sup, bv_fine, fv_fine,
+        num=dst_fps.numerator, den=dst_fps.denominator,
+        mask=2, ml=100.0, thscd1=240, thscd2=68,
     )
-
-    if use_flow:
-        interp = core.mv.FlowFPS(
-            padded_clip, sup, bv_fine, fv_fine,
-            num=dst_fps.numerator, den=dst_fps.denominator,
-            mask=2, ml=100.0, thscd1=240, thscd2=68,
-        )
-    else:
-        interp = core.mv.BlockFPS(
-            padded_clip, sup, bv_fine, fv_fine,
-            num=dst_fps.numerator, den=dst_fps.denominator,
-            mode=3, ml=100.0, thscd1=240, thscd2=68,
-        )
 
     return _crop_padding(interp, pad_w, pad_h)
 
@@ -248,7 +223,13 @@ def main() -> None:
     elif target_spec.replace(".", "", 1).isdigit():
         target_val = float(target_spec)
     else:
-        target_val = disp_fps if disp_fps > 1.0 else (src_fps * 2.0)
+        is_cpu_mvtools = (cfg.get("engine", "auto") == "mvtools") or (
+            cfg.get("engine", "auto") == "auto" and not hasattr(core, "rife")
+        )
+        if is_cpu_mvtools and clip.height > 720 and disp_fps > 60.0:
+            target_val = min(disp_fps, 60.0)
+        else:
+            target_val = disp_fps if disp_fps > 1.0 else (src_fps * 2.0)
 
     if src_fps >= target_val * 0.92 or (src_fps >= 50.0 and target_val <= 65.0):
         clip.set_output()

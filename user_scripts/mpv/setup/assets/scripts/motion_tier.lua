@@ -15,17 +15,28 @@ local FILTER_LABEL = "@motion_tier2"
 local VPY_PATH = "~~/vapoursynth/motion_interpolate.vpy"
 
 local function is_rife_installed()
-    local paths = {
+    local static_paths = {
         "/usr/lib/vapoursynth/librife.so",
         "/usr/local/lib/vapoursynth/librife.so",
     }
-    for _, p in ipairs(paths) do
+    for _, p in ipairs(static_paths) do
         local f = io.open(p, "r")
         if f then
             f:close()
             return true
         end
     end
+
+    -- Dynamically discover plugin in Python site-packages without hardcoding version numbers
+    local pipe = io.popen("find /usr/lib/python* -maxdepth 4 -name librife.so 2>/dev/null", "r")
+    if pipe then
+        local found = pipe:read("*l")
+        pipe:close()
+        if found and found ~= "" then
+            return true
+        end
+    end
+
     return false
 end
 
@@ -204,9 +215,15 @@ local function apply_tier2(engine, quiet)
     state.mode = "tier2_" .. engine
     publish_state()
     if not quiet then
-        local label = (engine == "auto") and "Auto (RIFE/MVTools)"
-            or (engine == "rife" and "RIFE Vulkan" or "MVTools AVX2")
-        mp.osd_message(string.format("[Motion] Tier 2: %s (%s)", label, state.target), 2.0)
+        local c_fps = mp.get_property_number("container-fps", 0)
+        local d_fps = mp.get_property_number("display-fps", 60)
+        local src_str = c_fps > 0 and string.format("%.1f fps", c_fps) or "source"
+        local dst_str = (state.target == "display") and string.format("%.0f Hz", d_fps)
+            or (state.target == "2x" and (c_fps > 0 and string.format("%.1f fps", c_fps * 2) or "2x")
+            or state.target .. " fps")
+        local label = (engine == "auto") and (RIFE_AVAILABLE and "GPU RIFE (Vulkan AI)" or "CPU AVX2 (MVTools)")
+            or (engine == "rife" and "GPU RIFE (Vulkan AI)" or "CPU AVX2 (MVTools)")
+        mp.osd_message(string.format("[Motion] Tier 2: %s\n%s -> %s", label, src_str, dst_str), 2.5)
     end
     return true
 end
@@ -238,7 +255,9 @@ local function toggle_engine(engine)
 end
 
 local function cycle_tier()
-    local order = {"tier1", "tier2_auto", "tier2_mvtools", "off"}
+    local order = RIFE_AVAILABLE
+        and {"tier1", "tier2_auto", "tier2_mvtools", "off"}
+        or {"tier1", "tier2_auto", "off"}
     local next_idx = 1
     for i, m in ipairs(order) do
         if m == state.mode then
