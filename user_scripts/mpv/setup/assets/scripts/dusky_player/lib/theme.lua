@@ -51,7 +51,6 @@ function Theme:reload()
 	for name, key in pairs({
 		menu_outline_color = 'window_border', focused_color = 'foreground_text',
 		focused_back_color = 'foreground', match_color = 'match',
-		selected_color = 'foreground_text', selected_back_color = 'foreground',
 	}) do
 		script_opts['console-' .. name] = palette[key]
 	end

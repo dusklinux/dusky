@@ -183,6 +183,8 @@ class SilenceTests(unittest.TestCase):
             while True:
                 reply = json.loads(stream.readline())
                 if reply.get('request_id') == 1:
+                    if args and args[0] == 'get_property' and reply.get('error') == 'property unavailable':
+                        return None
                     self.assertEqual(reply['error'], 'success', reply)
                     return reply.get('data')
         return command

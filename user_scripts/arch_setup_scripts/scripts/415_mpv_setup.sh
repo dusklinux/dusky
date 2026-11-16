@@ -4,6 +4,10 @@
 set -euo pipefail
 shopt -s globstar nullglob
 
+log_info() { printf '[INFO] %s\n' "$1"; }
+log_warn() { printf '[WARN] %s\n' "$1" >&2; }
+die() { printf '[ERROR] %s\n' "$1" >&2; exit 1; }
+
 SCRIPT_PATH=$(readlink -f -- "${BASH_SOURCE[0]}")
 SETUP_DIR=$(cd -- "${SCRIPT_PATH%/*}/../../mpv/setup" && pwd)
 readonly SETUP_DIR
@@ -15,10 +19,6 @@ readonly MPV_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/mpv"
 readonly DEPENDENCIES=(mpv yt-dlp mpv-mpris ffmpeg)
 BACKUP_ID=$(date +%Y%m%d_%H%M%S_%N)
 readonly BACKUP_ID
-
-log_info() { printf '[INFO] %s\n' "$1"; }
-log_warn() { printf '[WARN] %s\n' "$1" >&2; }
-die() { printf '[ERROR] %s\n' "$1" >&2; exit 1; }
 
 TEMP_FILE=''
 cleanup() {
@@ -109,26 +109,6 @@ fi
 for source in "$ASSETS_DIR"/**; do
     [[ -f "$source" ]] || continue
     install_file "$source" "${source#"$ASSETS_DIR"/}"
-done
-
-# Preserve thumbnail settings when migrating the previous worker.
-if [[ -f "$MPV_CONFIG_DIR/script-opts/thumbfast.conf" &&
-    ! -e "$MPV_CONFIG_DIR/script-opts/dusky_thumbnails.conf" &&
-    ! -L "$MPV_CONFIG_DIR/script-opts/dusky_thumbnails.conf" ]]; then
-    install_file "$MPV_CONFIG_DIR/script-opts/thumbfast.conf" script-opts/dusky_thumbnails.conf
-fi
-
-# Retire the previous UI and fonts to avoid loading two controllers. Preserve
-# everything in a dated backup, including user modifications to the old scripts.
-for relative in scripts/uosc scripts/uosc.lua scripts/uosc_shared scripts/thumbfast.lua scripts/thumbfast_repo \
-    fonts/uosc_icons.otf fonts/uosc_textures.ttf script-opts/uosc.conf script-opts/thumbfast.conf; do
-    target="$MPV_CONFIG_DIR/$relative"
-    if [[ -e "$target" || -L "$target" ]]; then
-        backup="$MPV_CONFIG_DIR/setup-backups/$BACKUP_ID/$relative"
-        mkdir -p -- "${backup%/*}"
-        mv -T -- "$target" "$backup"
-        log_info "Retired $relative to setup-backups/$BACKUP_ID/$relative"
-    fi
 done
 
 install_file "$SETUP_DIR/config/mpv.conf" mpv.conf

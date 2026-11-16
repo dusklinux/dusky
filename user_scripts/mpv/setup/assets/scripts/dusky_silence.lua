@@ -29,7 +29,11 @@ local function validate_level()
     end
 end
 
-local function apply(preload)
+local function apply()
+    if pending then
+        pending:kill()
+        pending = nil
+    end
     local filters = mp.get_property_native('af', {})
     local desired
     local params = mp.get_property_native('audio-params')
@@ -38,9 +42,7 @@ local function apply(preload)
     local audio = false
     local video = false
     local codec
-    local audio_tracks = {}
     for _, track in ipairs(mp.get_property_native('track-list', {})) do
-        if track.type == 'audio' then audio_tracks[#audio_tracks + 1] = track end
         if track.type == 'audio' and track.selected then
             audio = true
             codec = track.codec
@@ -51,24 +53,18 @@ local function apply(preload)
             video = true
         end
     end
-    -- on_preloaded precedes track selection. A single track is unambiguous;
-    -- multiple tracks wait for actual decoder parameters rather than guessing
-    -- mpv's language/default/explicit-ID selection rules.
-    if preload and not audio and #audio_tracks == 1 and
-        mp.get_property('aid') ~= 'no' then
-        audio = true
-        codec = audio_tracks[1].codec
-        rate = audio_tracks[1]['demux-samplerate']
-    end
+    local is_dsd = (codec and codec:match('^dsd') ~= nil) or
+        (params and params.format == 'dsd')
     local passthrough = false
     for name in mp.get_property('options/audio-spdif', ''):gmatch('[^,]+') do
-        if not codec or name == codec or (codec == 'dts' and name == 'dts-hd') then
+        if not codec or name == codec or (codec == 'dts' and name == 'dts-hd') or
+            (name == 'dsd' and is_dsd) then
             passthrough = true
         end
     end
     local profile = levels[options.level]
     if loaded and not failed and options.enabled and profile and audio and
-        not video and not passthrough and rate and rate > 0 and
+        not video and not is_dsd and not passthrough and rate and rate > 0 and
         not (params and params.format or ''):match('^spdif%-') and
         (not duration or duration > 6) then
         local block = 1152 / rate
@@ -162,9 +158,8 @@ mp.register_event('start-file', function()
     failed = false
     schedule()
 end)
--- Use the hook supported by the installed mpv 0.41 package. Newer source has
--- an on_loaded hook too, but that interface is not part of our baseline.
-mp.add_hook('on_preloaded', 50, function()
+-- mpv 0.42+ on_loaded runs after track selection and before playback starts.
+mp.add_hook('on_loaded', 50, function()
     loaded = true
     -- Snapshot metadata duration once. A pipe/live stream's duration can later
     -- become a growing estimate of buffered data, not its final length. Using
@@ -174,7 +169,7 @@ mp.add_hook('on_preloaded', 50, function()
     if not mp.get_property_native('options/rebase-start-time', true) then
         file_start = mp.get_property_number('demuxer-start-time', 0)
     end
-    apply(true)
+    apply()
 end)
 mp.register_event('file-loaded', function()
     if not file_duration then

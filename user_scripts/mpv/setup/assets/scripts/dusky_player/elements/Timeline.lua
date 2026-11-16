@@ -130,7 +130,7 @@ end
 
 function Timeline:clear_thumbnail()
 	if self.has_thumbnail then
-		mp.commandv('script-message-to', 'dusky_thumbnails', 'clear')
+		mp.set_property_native('user-data/osc/draw-preview', nil)
 		self.has_thumbnail = false
 	end
 end
@@ -510,7 +510,13 @@ function Timeline:render()
 			})
 			local thumb_seconds = (state.rebase_start_time == false and state.start_time) and
 				(hovered_seconds - state.start_time) or hovered_seconds
-			mp.commandv('script-message-to', 'dusky_thumbnails', 'thumb', thumb_seconds, thumb_x, thumb_y)
+			mp.set_property_native('user-data/osc/draw-preview', {
+				x = thumb_x,
+				y = thumb_y,
+				w = thumb_width,
+				h = thumb_height,
+				['hover-sec'] = thumb_seconds,
+			})
 			self.has_thumbnail, rendered_thumbnail = true, true
 			tooltip_anchor.ay = ay
 		end
