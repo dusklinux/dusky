@@ -47,7 +47,7 @@ read_proc_stat() {
 
 # 1. Retrieve focused window PID from Hyprland IPC JSON.
 # hyprctl returns {} on empty workspaces or when a layer-shell surface has focus.
-active_json=$(hyprctl activewindow -j 2>/dev/null) || exit 0
+active_json=$(hyprctl -j activewindow 2>/dev/null) || exit 0
 pid=$(jq -r '.pid // 0' <<< "$active_json" 2>/dev/null) || exit 0
 
 # Validate numeric PID > 1, owned by current UID, and alive (not a zombie).
