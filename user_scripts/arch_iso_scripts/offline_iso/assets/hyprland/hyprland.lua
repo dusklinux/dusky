@@ -7,7 +7,7 @@ dusky_scripts = HOME .. "/user_scripts/"
 
 -- Source: /home/dusk/Pictures/wallpapers/dusk_default.jpg
 
-image = "/home/dusk/Pictures/wallpapers/dusk_default.jpg"
+image = HOME .. "/Pictures/wallpapers/dusk_default.jpg"
 
 
 background = "rgba(0a1612ff)"
