@@ -192,8 +192,18 @@ deploy() {
     log_success "Deployed $target"
 }
 
+ensure_npm() {
+    if ! command -v npm >/dev/null 2>&1; then
+        if command -v pacman >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+            log_info "Installing missing npm dependency via pacman..."
+            sudo -n pacman -S --noconfirm --needed npm >/dev/null 2>&1 || true
+        fi
+    fi
+}
+
 execute_headless_sync() {
     local helper
+    ensure_npm
     helper="$(dirname -- "${BASH_SOURCE[0]}")/reset/02_cli_plugins_download.sh"
     DUSKY_NVIM_LOCK_HELD=1 bash "$helper"
 }

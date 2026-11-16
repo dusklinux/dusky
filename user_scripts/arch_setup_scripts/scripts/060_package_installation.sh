@@ -49,7 +49,7 @@ declare -ar pkgs_terminal=(
 # Group 9: Development
 declare -ar pkgs_dev=(
   "rust"
-  "neovim" "git" "git-delta" "lazygit" "meson" "cmake" "clang" "uv" "rq" "jq" "pv" "bc" "viu" "chafa" "ueberzugpp" "ccache" "mold" "shellcheck" "fd" "ripgrep" "fzf" "shfmt" "stylua" "prettier" "tree-sitter-cli" "nano" "lua51" "luarocks"
+  "neovim" "git" "git-delta" "lazygit" "meson" "cmake" "clang" "uv" "rq" "jq" "pv" "bc" "viu" "chafa" "ueberzugpp" "ccache" "mold" "shellcheck" "fd" "ripgrep" "fzf" "shfmt" "stylua" "prettier" "npm" "tree-sitter-cli" "nano" "lua51" "luarocks"
 )
 
 # Group 10: Multimedia

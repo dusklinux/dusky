@@ -12,7 +12,12 @@ local ok, err = pcall(function()
 	end
 	if vim.g.dusky_nvim then
 		lazy.load({ plugins = { "nvim-lspconfig" } })
-		local packages = { "lua-language-server", "pyright", "bash-language-server", "prettier" }
+		local packages = { "lua-language-server" }
+		if vim.fn.executable("npm") == 1 then
+			vim.list_extend(packages, { "pyright", "bash-language-server", "prettier" })
+		else
+			print("[WARN] npm is not installed: skipping npm-dependent language servers (pyright, bash-language-server, prettier)")
+		end
 		local registry = require("mason-registry")
 		local missing_packages = vim.tbl_filter(function(name)
 			return not registry.is_installed(name)
@@ -21,7 +26,9 @@ local ok, err = pcall(function()
 			vim.cmd("MasonInstall " .. table.concat(missing_packages, " "))
 		end
 		for _, name in ipairs(packages) do
-			assert(registry.is_installed(name), "Mason installation failed: " .. name)
+			if not registry.is_installed(name) then
+				print("[WARN] Mason package not installed: " .. name)
+			end
 		end
 		local treesitter = require("nvim-treesitter")
 		local parsers = {

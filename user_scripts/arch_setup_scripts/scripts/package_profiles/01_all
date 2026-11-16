@@ -274,6 +274,7 @@ fzf
 shfmt
 stylua
 prettier
+npm
 tree-sitter-cli
 nano
 lua51

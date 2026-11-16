@@ -22,6 +22,11 @@ main() {
     [[ -f "$config/init.lua" ]] || { printf 'Missing configuration: %s/init.lua\n' "$config" >&2; return 1; }
     # Explicit app name keeps synchronization aligned with the manager's paths.
     export NVIM_APPNAME=nvim
+    if ! command -v npm >/dev/null 2>&1; then
+        if command -v pacman >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+            sudo -n pacman -S --noconfirm --needed npm >/dev/null 2>&1 || true
+        fi
+    fi
     DUSKY_NVIM_SYNC="$(dirname -- "${BASH_SOURCE[0]}")/sync.lua"
     export DUSKY_NVIM_SYNC
     timeout --kill-after=10s 15m nvim --headless -c 'lua dofile(vim.env.DUSKY_NVIM_SYNC)'
