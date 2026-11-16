@@ -114,10 +114,12 @@ function Waveform:update()
 			end
 		end
 		if #points == 0 then msg.warn('Waveform analysis returned no peaks'); return end
-		local base = points[1].time > job.step and points[1].time or 0
+		local base = (not mp.get_property_native('options/rebase-start-time', true))
+			and mp.get_property_number('demuxer-start-time', 0)
+			or (points[1].time > job.step and points[1].time or 0)
 		if base > 0 then
 			for i = 1, #points do
-				points[i].time = points[i].time - base
+				points[i].time = math.max(0, points[i].time - base)
 			end
 		end
 		job.points = points
@@ -129,23 +131,26 @@ function Waveform:update()
 end
 
 function Waveform:render(ass, ax, ay, bx, by, visibility, line, fax, fbx)
-	if not options.timeline_waveform or not self.data or visibility <= 0 or by - ay < 4 then return end
+	local width = bx - ax - line - 1
+	if not options.timeline_waveform or not self.data or visibility <= 0 or by - ay < 4 or width < 1 then return end
 	local data = self.data
 	-- Cache geometry at each size; playback and cursor updates only reuse the string.
 	-- Two clips reproduce t2x's progress-line gap without rebuilding on every tick.
 	local geometry_key = table.concat({ax, ay, bx, by, line}, ',')
 	if geometry_key ~= self.geometry_key then
 		local pieces = {}
-		local width, middle, height = bx - ax - line - 1, (ay + by) / 2, (by - ay - 2) / 2
+		local middle, height = (ay + by) / 2, (by - ay - 2) / 2
 		-- Merge bins narrower than a screen pixel, retaining their maximum peak.
 		-- This bounds ASS work by the visible resolution as well as the bin count.
 		local columns = math.max(1, math.min(bins, math.floor(width)))
 		local peaks = {}
 		local points = data.points
+		local max_bridge = data.step * 1.5
 		for i = 1, #points do
 			local point = points[i]
 			local next_time = points[i + 1] and points[i + 1].time
-			local stop_time = (next_time and next_time > point.time + data.step) and next_time or (point.time + data.step)
+			local stop_time = (next_time and next_time > point.time + data.step and next_time <= point.time + max_bridge)
+				and next_time or (point.time + data.step)
 			local first = math.max(1, math.floor(point.time / data.duration * columns) + 1)
 			local last = math.min(columns, math.ceil(stop_time / data.duration * columns))
 			for column = first, last do peaks[column] = math.max(peaks[column] or 0, point.peak) end
@@ -167,6 +172,7 @@ function Waveform:render(ass, ax, ay, bx, by, visibility, line, fax, fbx)
 		end
 		self.path, self.geometry_key = table.concat(pieces, ' '), geometry_key
 	end
+	if self.path == '' then return end
 	local function draw(shift, left, right)
 		if right <= left then return end
 		ass:new_event()

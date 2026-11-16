@@ -83,7 +83,10 @@ for relative in \
     scripts/dusky_player/elements/Speed.lua scripts/dusky_player/elements/Timeline.lua \
     scripts/dusky_player/elements/TopBar.lua scripts/dusky_player/elements/Volume.lua \
     scripts/dusky_player/elements/WindowBorder.lua \
-    scripts/dusky_thumbnails.lua scripts/dusky_silence.lua scripts/hwdec_topology.lua; do
+    scripts/dusky_thumbnails.lua scripts/dusky_silence.lua scripts/hwdec_topology.lua \
+    scripts/shader_presets.lua scripts/autoskip.lua \
+    shaders/CAS-scaled.glsl shaders/FSRCNNX_x2_8-0-4-1.glsl \
+    shaders/ravu-zoom-ar-r3.hook shaders/SSimDownscaler.glsl; do
     [[ -s "$ASSETS_DIR/$relative" ]] || die "Missing bundled asset: $relative"
 done
 for relative in mpv.conf input.conf script-opts/dusky_player.conf script-opts/dusky_silence.conf; do

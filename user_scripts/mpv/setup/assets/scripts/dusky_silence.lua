@@ -36,7 +36,8 @@ local function apply()
     end
     local filters = mp.get_property_native('af', {})
     local desired
-    local params = mp.get_property_native('audio-params')
+    local params = mp.get_property_native('audio-dec-params') or
+        mp.get_property_native('audio-params')
     local rate = params and params.samplerate
     local duration = file_duration
     local audio = false
@@ -182,5 +183,6 @@ mp.register_event('end-file', function()
     loaded = false
     schedule()
 end)
+mp.observe_property('audio-dec-params', 'native', schedule)
 mp.observe_property('audio-params', 'native', schedule)
 mp.observe_property('track-list', 'native', schedule)

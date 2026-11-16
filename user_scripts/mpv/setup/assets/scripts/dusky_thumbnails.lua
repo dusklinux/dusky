@@ -55,6 +55,7 @@ local file
 local spawned = false
 local disabled = false
 local spawn_waiting = false
+local worker_id = 0
 local script_written = false
 
 local dirty = false
@@ -310,16 +311,19 @@ local function spawn(time)
 
     spawned = true
     spawn_waiting = true
+    worker_id = worker_id + 1
+    local current_worker = worker_id
 
     subprocess(args, true,
         function(success, result)
-            if spawn_waiting and (success == false or (result.status ~= 0 and result.status ~= -2)) then
+            if current_worker ~= worker_id then return end
+            if spawn_waiting and (success == false or not result or (result.status ~= 0 and result.status ~= -2 and not result.killed_by_us)) then
                 spawned = false
                 spawn_waiting = false
                 options.tone_mapping = "no"
                 mp.msg.error("mpv subprocess create failed")
                 mp.commandv("show-text", "Dusky Player: thumbnail worker could not start", 5000)
-            elseif success == true and (result.status == 0 or result.status == -2) then
+            elseif success == true and result and (result.status == 0 or result.status == -2 or result.killed_by_us) then
                 spawn_waiting = false
             end
         end
@@ -337,8 +341,18 @@ local function run(command)
     end
 end
 
+local last_req
+
+local function update_preview_coords()
+    if not last_req then return end
+    local px = last_req.x + ((last_req.w and real_w) and math.floor((last_req.w - real_w * options.scale_factor) / 2 + 0.5) or 0)
+    local py = last_req.y + ((last_req.h and real_h) and math.floor((last_req.h - real_h * options.scale_factor) / 2 + 0.5) or 0)
+    x, y = math.floor(px + 0.5), math.floor(py + 0.5)
+end
+
 local function draw(w, h)
     if not w or not show_thumbnail then return end
+    update_preview_coords()
     if x ~= nil then
         local scale_w, scale_h = options.scale_factor ~= 1 and (w * options.scale_factor) or nil, options.scale_factor ~= 1 and (h * options.scale_factor) or nil
         mp.command_native_async({"overlay-add", options.overlay_id, x, y, options.thumbnail..".bgra", 0, "bgra", w, h, (4*w), scale_w, scale_h}, function() end)
@@ -470,6 +484,8 @@ local function quit()
         activity_timer:resume()
         return
     end
+    worker_id = worker_id + 1
+    spawn_waiting = false
     run("quit")
     spawned = false
     real_w, real_h = nil, nil
@@ -603,6 +619,8 @@ local function sync_changes(prop, val)
 end
 
 local function file_load()
+    worker_id = worker_id + 1
+    spawn_waiting = false
     clear()
     spawned = false
     real_w, real_h = nil, nil
@@ -631,13 +649,17 @@ end
 
 local osc_preview_active = false
 local function on_draw_preview(_, req)
-    if type(req) == "table" and req["hover-sec"] and req.x and req.y then
+    local sec = type(req) == "table" and tonumber(req["hover-sec"])
+    local rx = type(req) == "table" and tonumber(req.x)
+    local ry = type(req) == "table" and tonumber(req.y)
+    if sec and rx and ry then
         osc_preview_active = true
-        local px = req.x + ((req.w and real_w) and math.floor((req.w - real_w * options.scale_factor) / 2 + 0.5) or 0)
-        local py = req.y + ((req.h and real_h) and math.floor((req.h - real_h * options.scale_factor) / 2 + 0.5) or 0)
-        thumb(req["hover-sec"], px, py)
+        last_req = {x = rx, y = ry, w = tonumber(req.w), h = tonumber(req.h)}
+        update_preview_coords()
+        thumb(sec, x, y)
     elseif osc_preview_active then
         osc_preview_active = false
+        last_req = nil
         clear()
     end
 end
