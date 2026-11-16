@@ -2821,8 +2821,8 @@ def resolve_and_validate_manifest(profile: ProfileConfig) -> bool:
         check_interp = task.interpreter or (shebang_command[0] if shebang_command and not is_elf else "")
         if check_interp:
             interp = check_interp
-            if interp.lower() in ("python", "python3"):
-                if not sys.executable:
+            if interp.lower() in ("python", "python3") or interp.lower().startswith("python3."):
+                if not (shutil.which(interp) or sys.executable):
                     sys.stderr.write(f"[INTERPRETER] No Python interpreter available for {task.script_name}\n")
                     success = False
             else:
@@ -6046,12 +6046,12 @@ class DuskyOrchestratorApp(App):
 
         if task.interpreter:
             interp = task.interpreter
-            if interp.lower() in ("python", "python3"):
-                interp = sys.executable
+            if interp.lower() in ("python", "python3") or interp.lower().startswith("python3."):
+                interp = shutil.which(interp) or sys.executable
             else:
                 interp = shutil.which(interp) or interp
 
-            if Path(interp).name in ("python", "python3", "bash", "sh", "zsh", "dash"):
+            if Path(interp).name in ("python", "python3", "bash", "sh", "zsh", "dash") or Path(interp).name.startswith("python3."):
                 inner = [interp] + task.interpreter_args + ["--", str(task.resolved_path)] + args
             else:
                 inner = [interp] + task.interpreter_args + [str(task.resolved_path)] + args
@@ -6089,12 +6089,12 @@ class DuskyOrchestratorApp(App):
 
         if task.interpreter:
             interp = task.interpreter
-            if interp.lower() in ("python", "python3"):
-                interp = sys.executable
+            if interp.lower() in ("python", "python3") or interp.lower().startswith("python3."):
+                interp = shutil.which(interp) or sys.executable
             else:
                 interp = shutil.which(interp) or interp
 
-            if Path(interp).name in ("python", "python3", "bash", "sh", "zsh", "dash"):
+            if Path(interp).name in ("python", "python3", "bash", "sh", "zsh", "dash") or Path(interp).name.startswith("python3."):
                 parts.extend([interp] + task.interpreter_args + ["--", str(task.resolved_path)])
             else:
                 parts.extend([interp] + task.interpreter_args + [str(task.resolved_path)])

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.15
+#!/usr/bin/env python3
 """
 dusky-pkg-sync: Atomic precompiled package updater for Dusky Arch Linux.
 

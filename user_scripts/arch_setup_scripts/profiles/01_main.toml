@@ -24,6 +24,7 @@ dirs = [
     "~/user_scripts/arch_setup_scripts/scripts",
     "~/user_scripts/arch_setup_scripts",
     "~/user_scripts/dusky",
+    "~/user_scripts/misc_extra/delete_in_3_weeks",
     "~/user_scripts/rofi",
     "~/user_scripts/cursor/color",
     "~/user_scripts/images",
@@ -41,6 +42,7 @@ dirs = [
 
 [sequence]
 scripts = [
+    "S | once,ignore-fail | temp_python_315_installer.py install",
     "U | 002_pre_generated_colors.sh",
     "U | 003_network_connect.sh",
     # "U | deploy_dotfiles.sh --force",
