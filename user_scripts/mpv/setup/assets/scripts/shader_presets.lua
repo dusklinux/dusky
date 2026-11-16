@@ -1,22 +1,17 @@
 -- shader_presets.lua - Opt-in video upscaling shader preset switcher
--- Hardware optimized for Intel Iris Xe (Mesa EGL / vo=gpu-next / 1080p target)
+-- Universal GLSL shader presets for modern GPUs (AMD, NVIDIA, Intel - OpenGL 4.3+ / vo=gpu-next)
 
 local msg = require('mp.msg')
 
 local presets = {
     {
         name = "Off",
-        desc = "Native scaling (disabled)",
+        desc = "Native Spline36 scaling",
         shaders = {},
     },
     {
-        name = "Fast (AMD CAS)",
-        desc = "FidelityFX CAS - Ultra-low power / 120fps",
-        shaders = { "~~/shaders/CAS-scaled.glsl" },
-    },
-    {
         name = "Live-Action (RAVU)",
-        desc = "RAVU-Zoom-AR-R3 - Anti-ringing directional scaler",
+        desc = "RAVU-Zoom-AR-R3 - Anti-ringing directional reconstruction",
         shaders = { "~~/shaders/ravu-zoom-ar-r3.hook" },
     },
     {

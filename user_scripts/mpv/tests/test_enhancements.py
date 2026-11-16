@@ -117,15 +117,7 @@ class ShaderPresetsTests(unittest.TestCase):
 
         self.assertEqual(client.get_prop("glsl-shaders"), [])
 
-        # 1 -> 2: Fast (AMD CAS)
-        client.command("script-binding", "shader_presets/cycle-preset")
-        self.assertTrue(
-            client.wait_for(
-                lambda: client.get_prop("glsl-shaders") == ["~~/shaders/CAS-scaled.glsl"]
-            )
-        )
-
-        # 2 -> 3: Live-Action (RAVU)
+        # 1 -> 2: Live-Action (RAVU)
         client.command("script-binding", "shader_presets/cycle-preset")
         self.assertTrue(
             client.wait_for(
@@ -134,7 +126,7 @@ class ShaderPresetsTests(unittest.TestCase):
             )
         )
 
-        # 3 -> 4: Anime (FSRCNNX + SSimDownscaler)
+        # 2 -> 3: Anime (FSRCNNX + SSimDownscaler)
         client.command("script-binding", "shader_presets/cycle-preset")
         self.assertTrue(
             client.wait_for(
@@ -146,15 +138,16 @@ class ShaderPresetsTests(unittest.TestCase):
             )
         )
 
-        # 4 -> 1: Off (wrap around)
+        # 3 -> 1: Off (wrap around)
         client.command("script-binding", "shader_presets/cycle-preset")
         self.assertTrue(client.wait_for(lambda: client.get_prop("glsl-shaders") == []))
 
-        # Cycle to CAS, then explicitly reset to Off
+        # Cycle to RAVU, then explicitly reset to Off
         client.command("script-binding", "shader_presets/cycle-preset")
         self.assertTrue(
             client.wait_for(
-                lambda: client.get_prop("glsl-shaders") == ["~~/shaders/CAS-scaled.glsl"]
+                lambda: client.get_prop("glsl-shaders")
+                == ["~~/shaders/ravu-zoom-ar-r3.hook"]
             )
         )
         client.command("script-binding", "shader_presets/reset-preset")

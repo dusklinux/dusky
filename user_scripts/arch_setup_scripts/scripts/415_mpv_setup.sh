@@ -85,7 +85,7 @@ for relative in \
     scripts/dusky_player/elements/WindowBorder.lua \
     scripts/dusky_thumbnails.lua scripts/dusky_silence.lua scripts/hwdec_topology.lua \
     scripts/shader_presets.lua scripts/autoskip.lua \
-    shaders/CAS-scaled.glsl shaders/FSRCNNX_x2_8-0-4-1.glsl \
+    shaders/FSRCNNX_x2_8-0-4-1.glsl \
     shaders/ravu-zoom-ar-r3.hook shaders/SSimDownscaler.glsl; do
     [[ -s "$ASSETS_DIR/$relative" ]] || die "Missing bundled asset: $relative"
 done
