@@ -190,6 +190,7 @@ tasks = [
     "S | once | fix_wayland_session.py",
     "S | once | cleanup_stale_boot_mem_reclaim.py",
     "S | once,ignore-fail | rename_already_deployed_servcies.py",
+    "S | once | uninstall_tailscale.sh --uninstall",
     "U | tui_starship.py --apply-state",
     "U | once | keylogger_installer.py",
     # ==============================================
