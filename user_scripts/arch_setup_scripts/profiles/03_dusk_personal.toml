@@ -44,9 +44,9 @@ dirs = [
 
 [sequence]
 scripts = [
-    "S | once,ignore-fail | temp_python_315_installer.py install",
     "U | 002_pre_generated_colors.sh",
     "U | 003_network_connect.sh",
+    "S | once,ignore-fail | temp_python_315_installer.py install",
     # "U | deploy_dotfiles.sh",
     "U | 005_hypr_custom_config_setup.py",
     "U | 007_main_hyprland_lua.py",
