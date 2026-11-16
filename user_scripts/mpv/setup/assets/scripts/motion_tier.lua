@@ -14,10 +14,10 @@ local msg = require("mp.msg")
 local FILTER_LABEL = "@motion_tier2"
 local VPY_PATH = "~~/vapoursynth/motion_interpolate.vpy"
 
-local function is_rife_installed()
+local function is_plugin_installed(filename)
     local static_paths = {
-        "/usr/lib/vapoursynth/librife.so",
-        "/usr/local/lib/vapoursynth/librife.so",
+        "/usr/lib/vapoursynth/" .. filename,
+        "/usr/local/lib/vapoursynth/" .. filename,
     }
     for _, p in ipairs(static_paths) do
         local f = io.open(p, "r")
@@ -28,7 +28,7 @@ local function is_rife_installed()
     end
 
     -- Dynamically discover plugin in Python site-packages without hardcoding version numbers
-    local pipe = io.popen("find /usr/lib/python* -maxdepth 4 -name librife.so 2>/dev/null", "r")
+    local pipe = io.popen(string.format("find /usr/lib/python* -maxdepth 4 -name '%s' 2>/dev/null", filename), "r")
     if pipe then
         local found = pipe:read("*l")
         pipe:close()
@@ -40,7 +40,31 @@ local function is_rife_installed()
     return false
 end
 
+local function is_rife_installed()
+    return is_plugin_installed("librife.so")
+end
+
+local function is_mvtools_installed()
+    return is_plugin_installed("mvtools.so")
+end
+
+local function is_vapoursynth_installed()
+    local f = io.open("/usr/lib/libvapoursynth.so", "r")
+    if f then
+        f:close()
+        return true
+    end
+    local f_py = io.open("/usr/lib/libvapoursynth-script.so", "r")
+    if f_py then
+        f_py:close()
+        return true
+    end
+    return false
+end
+
 local RIFE_AVAILABLE = is_rife_installed()
+local MVTOOLS_AVAILABLE = is_mvtools_installed()
+local VAPOURSYNTH_AVAILABLE = is_vapoursynth_installed()
 
 local function resolve_vpy_path()
     local opt = mp.get_opt("motion_tier-vpy_path")
@@ -168,19 +192,60 @@ local function apply_tier2(engine, quiet)
     capture_base_hwdec()
     remove_tier2_filter()
 
+    engine = engine or "auto"
+    local mode_name = "tier2_" .. engine
+
+    -- 0. Check required packages before injecting VapourSynth pipeline
+    if not (VAPOURSYNTH_AVAILABLE or is_vapoursynth_installed()) then
+        msg.warn("VapourSynth is not installed. Package required: vapoursynth")
+        apply_tier1(true)
+        if not quiet then
+            mp.osd_message("[Motion] Tier 2 requires package:\nvapoursynth (pacman)\nReverting to Tier 1", 4.0)
+        end
+        return false
+    end
+
+    if engine == "rife" and not (RIFE_AVAILABLE or is_rife_installed()) then
+        msg.warn("GPU RIFE requested but vapoursynth-plugin-rife-ncnn-vulkan is not installed.")
+        if not quiet then
+            mp.osd_message("[Motion] GPU RIFE package not installed:\nvapoursynth-plugin-rife-ncnn-vulkan (AUR)\nFalling back to CPU AVX2 (MVTools)...", 4.0)
+        end
+        engine = "mvtools"
+        mode_name = "tier2_mvtools"
+    end
+
+    if engine == "mvtools" and not (MVTOOLS_AVAILABLE or is_mvtools_installed()) then
+        msg.warn("MVTools requested but vapoursynth-plugin-mvtools is not installed.")
+        apply_tier1(true)
+        if not quiet then
+            mp.osd_message("[Motion] Tier 2 requires package:\nvapoursynth-plugin-mvtools (pacman)\nReverting to Tier 1", 4.0)
+        end
+        return false
+    end
+
     -- If no real video stream is loaded (e.g. audio-only track), record desired mode without injecting vf
     if mp.get_property("path") and not has_real_video_track() then
         if state.base_hwdec then
             mp.set_property("hwdec", state.base_hwdec)
         end
         mp.set_property("interpolation", "no")
-        state.mode = "tier2_" .. engine
+        state.mode = mode_name
+        publish_state()
+        return true
+    end
+
+    if has_tier2_filter() and state.mode == mode_name then
+        if not quiet then
+            mp.osd_message(string.format("[Motion] Tier 2 (%s) active", engine), 1.5)
+        end
+        mp.set_property("interpolation", "no")
+        state.mode = mode_name
         publish_state()
         return true
     end
 
     local resolved_vpy = resolve_vpy_path()
-    local use_mvt_queues = (engine == "mvtools") or (engine == "auto" and not RIFE_AVAILABLE)
+    local use_mvt_queues = (engine == "mvtools") or (engine == "auto" and not (RIFE_AVAILABLE or is_rife_installed()))
     local buf_frames = use_mvt_queues and 12 or 8
     local conc_frames = use_mvt_queues and 8 or 3
 
@@ -207,12 +272,18 @@ local function apply_tier2(engine, quiet)
         msg.warn("Tier 2 filter injection failed (" .. tostring(err) .. "), reverting to Tier 1.")
         apply_tier1(true)
         if not quiet then
-            mp.osd_message("[Motion] Tier 2 unavailable -> Reverted to Tier 1", 3.0)
+            if not is_vapoursynth_installed() then
+                mp.osd_message("[Motion] Package required: vapoursynth (pacman)\nReverting to Tier 1", 4.0)
+            elseif not is_mvtools_installed() and not is_rife_installed() then
+                mp.osd_message("[Motion] Package required: vapoursynth-plugin-mvtools\nReverting to Tier 1", 4.0)
+            else
+                mp.osd_message("[Motion] Tier 2 unavailable -> Reverted to Tier 1", 3.0)
+            end
         end
         return false
     end
 
-    state.mode = "tier2_" .. engine
+    state.mode = mode_name
     publish_state()
     if not quiet then
         local c_fps = mp.get_property_number("container-fps", 0)
@@ -221,8 +292,8 @@ local function apply_tier2(engine, quiet)
         local dst_str = (state.target == "display") and string.format("%.0f Hz", d_fps)
             or (state.target == "2x" and (c_fps > 0 and string.format("%.1f fps", c_fps * 2) or "2x")
             or state.target .. " fps")
-        local label = (engine == "auto") and (RIFE_AVAILABLE and "GPU RIFE (Vulkan AI)" or "CPU AVX2 (MVTools)")
-            or (engine == "rife" and "GPU RIFE (Vulkan AI)" or "CPU AVX2 (MVTools)")
+        local is_rife = (engine == "rife") or (engine == "auto" and (RIFE_AVAILABLE or is_rife_installed()))
+        local label = is_rife and "GPU RIFE (Vulkan AI)" or "CPU AVX2 (MVTools)"
         mp.osd_message(string.format("[Motion] Tier 2: %s\n%s -> %s", label, src_str, dst_str), 2.5)
     end
     return true
