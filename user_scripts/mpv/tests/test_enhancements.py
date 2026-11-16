@@ -6,9 +6,15 @@ import os
 import pathlib
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
+
+import glob
+for _site in sorted(glob.glob("/usr/lib/python3.*/site-packages"), reverse=True):
+    if _site not in sys.path:
+        sys.path.insert(0, _site)
 
 TESTS_DIR = pathlib.Path(__file__).resolve().parent
 ASSETS_DIR = TESTS_DIR.parent / "setup" / "assets"
@@ -16,6 +22,8 @@ SCRIPTS_DIR = ASSETS_DIR / "scripts"
 WAVEFORM_PATH = SCRIPTS_DIR / "dusky_player" / "lib" / "waveform.lua"
 SHADER_PRESETS_PATH = SCRIPTS_DIR / "shader_presets.lua"
 AUTOSKIP_PATH = SCRIPTS_DIR / "autoskip.lua"
+MOTION_TIER_PATH = SCRIPTS_DIR / "motion_tier.lua"
+MOTION_VPY_PATH = ASSETS_DIR / "vapoursynth" / "motion_interpolate.vpy"
 
 
 class MpvIpcClient:
@@ -433,6 +441,385 @@ wf = Waveform.new(owner)
         self.assertGreater(res_silent["bins"], 0)
         self.assertEqual(res_silent["path_len"], 0)
         self.assertEqual(res_silent["ass_events"], 0)
+
+
+class TestMotionTierInterpolation(unittest.TestCase):
+    """Comprehensive IPC & VapourSynth test suite for Two-Tier Motion Interpolation."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.media_dir = tempfile.TemporaryDirectory(prefix="mpv_motion_test_")
+        cls.media_path = pathlib.Path(cls.media_dir.name)
+
+        cls.test_video = cls.media_path / "test_24fps.mp4"
+        cls.clip_60fps = cls.media_path / "clip_60fps.mp4"
+        cls.clip_odd = cls.media_path / "clip_641x359.mkv"
+        cls.audio_only = cls.media_path / "audio_only.flac"
+
+        cls._gen_video(cls.test_video, "320x240", 24, 4, "yuv420p")
+        cls._gen_video(cls.clip_60fps, "320x240", 60, 4, "yuv420p")
+        cls._gen_video(cls.clip_odd, "641x359", 24, 3, "yuv444p")
+
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=4",
+                str(cls.audio_only),
+            ],
+            check=True,
+        )
+
+        cls.config_dir = cls.media_path / "mpv_config"
+        (cls.config_dir / "scripts").mkdir(parents=True)
+        (cls.config_dir / "vapoursynth").mkdir(parents=True)
+        import shutil
+
+        shutil.copy2(MOTION_TIER_PATH, cls.config_dir / "scripts" / "motion_tier.lua")
+        shutil.copy2(MOTION_VPY_PATH, cls.config_dir / "vapoursynth" / "motion_interpolate.vpy")
+
+    @staticmethod
+    def _gen_video(out_path: pathlib.Path, size: str, rate: int, duration: int, pix_fmt: str) -> None:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                f"testsrc2=size={size}:rate={rate}:duration={duration}",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                pix_fmt,
+                "-preset",
+                "ultrafast",
+                str(out_path),
+            ],
+            check=True,
+        )
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.media_dir.cleanup()
+
+    def _start_client(self, media_path=None, display_fps=60, extra_args=None):
+        target_media = media_path or self.test_video
+        args = [
+            f"--config-dir={self.config_dir}",
+            "--video-sync=display-resample",
+            f"--display-fps-override={display_fps}",
+            "--interpolation=yes",
+            "--tscale=oversample",
+            "--hwdec=no",
+            "--loop-file=inf",
+        ]
+        if extra_args:
+            args.extend(extra_args)
+        client = MpvIpcClient([str(self.config_dir / "scripts" / "motion_tier.lua")], extra_args=args)
+        self.addCleanup(client.close)
+        client.command("loadfile", str(target_media), "replace")
+        client.wait_for(lambda: client.get_prop("duration") is not None)
+        return client
+
+    def test_tier1_default_and_toggle_states(self):
+        client = self._start_client()
+        mode = client.wait_for(lambda: client.get_prop("user-data/motion-tier/mode") == "tier1" and "tier1")
+        self.assertEqual(mode, "tier1")
+        self.assertTrue(client.get_prop("interpolation"))
+        self.assertEqual(client.get_prop("video-sync"), "display-resample")
+        self.assertEqual(client.get_prop("tscale"), "oversample")
+
+        # Toggle off
+        client.command("script-message-to", "motion_tier", "set-mode", "off")
+        mode_off = client.wait_for(lambda: client.get_prop("user-data/motion-tier/mode") == "off" and "off")
+        self.assertEqual(mode_off, "off")
+        self.assertFalse(client.get_prop("interpolation"))
+
+        # Revert back to Tier 1
+        client.command("script-message-to", "motion_tier", "set-mode", "tier1")
+        mode_t1 = client.wait_for(lambda: client.get_prop("user-data/motion-tier/mode") == "tier1" and "tier1")
+        self.assertEqual(mode_t1, "tier1")
+        self.assertTrue(client.get_prop("interpolation"))
+
+    def test_tier2_mvtools_activation_and_hwdec_guard(self):
+        client = self._start_client()
+        client.wait_for(lambda: client.get_prop("user-data/motion-tier/mode") == "tier1")
+
+        # Activate Tier 2 MVTools
+        client.command("script-message-to", "motion_tier", "set-mode", "tier2_mvtools")
+        mode_mvt = client.wait_for(
+            lambda: client.get_prop("user-data/motion-tier/mode") == "tier2_mvtools" and "tier2_mvtools"
+        )
+        self.assertEqual(mode_mvt, "tier2_mvtools")
+
+        hw = client.get_prop("hwdec")
+        is_auto_copy = ("auto-copy" in hw) if isinstance(hw, list) else (hw == "auto-copy")
+        self.assertTrue(is_auto_copy, f"Expected hwdec to be auto-copy, got {hw}")
+        self.assertFalse(client.get_prop("interpolation"), "Tier 1 tscale must be disabled when Tier 2 is active")
+
+        vf_list = client.get_prop("vf") or []
+        labels = [f.get("label") for f in vf_list if isinstance(f, dict)]
+        self.assertIn("motion_tier2", labels)
+
+        # Revert back to Tier 1
+        client.command("script-message-to", "motion_tier", "set-mode", "tier1")
+        client.wait_for(lambda: client.get_prop("user-data/motion-tier/mode") == "tier1")
+        vf_restored = client.get_prop("vf") or []
+        self.assertEqual(len(vf_restored), 0)
+
+    def test_tier2_frame_rate_multiplication(self):
+        client = self._start_client()
+        client.wait_for(lambda: client.get_prop("user-data/motion-tier/mode") == "tier1")
+
+        # Set target 2x and activate tier2_auto (which uses MVTools fallback when RIFE is not loaded)
+        client.command("script-message-to", "motion_tier", "set-target", "2x")
+        client.command("script-message-to", "motion_tier", "set-mode", "tier2_auto")
+        mode = client.wait_for(
+            lambda: client.get_prop("user-data/motion-tier/mode") == "tier2_auto" and "tier2_auto"
+        )
+        self.assertEqual(mode, "tier2_auto")
+
+        # Wait for frame multiplier pipeline to reach 48 FPS
+        vf_fps = client.wait_for(
+            lambda: (
+                (val := client.get_prop("estimated-vf-fps"))
+                and float(val) >= 44.0
+                and float(val)
+            ),
+            timeout=10.0,
+            interval=0.1,
+        )
+        self.assertTrue(vf_fps and vf_fps is not False, "Expected estimated-vf-fps to reach >= 44.0")
+        self.assertAlmostEqual(vf_fps, 48.0, delta=4.0)
+
+    def test_rapid_mode_switching_stress(self):
+        """Rapidly cycle modes over IPC to verify zero filter leaking, deadlocks, or hwdec desync."""
+        client = self._start_client()
+        client.wait_for(lambda: client.get_prop("user-data/motion-tier/mode") == "tier1")
+
+        # 16 rapid transitions between tier2 engines and tier1
+        for _ in range(8):
+            client.command("script-message-to", "motion_tier", "set-mode", "tier2_mvtools")
+            client.command("script-message-to", "motion_tier", "set-mode", "tier2_auto")
+
+        # End with unique 'off' to flush pipeline (never sent in above loop)
+        client.command("script-message-to", "motion_tier", "set-mode", "off")
+        self.assertTrue(
+            client.wait_for(
+                lambda: client.get_prop("user-data/motion-tier/mode") == "off"
+                and len(client.get_prop("vf") or []) == 0
+                and client.get_prop("interpolation") is False,
+                timeout=8.0,
+            ),
+            "Failed to settle on 'off' mode after rapid switching",
+        )
+        self.assertFalse(client.get_prop("interpolation"))
+
+        # Transition back to tier1 and verify clean state
+        client.command("script-message-to", "motion_tier", "set-mode", "tier1")
+        self.assertTrue(
+            client.wait_for(
+                lambda: client.get_prop("user-data/motion-tier/mode") == "tier1"
+                and len(client.get_prop("vf") or []) == 0
+                and client.get_prop("interpolation") is True,
+                timeout=8.0,
+            ),
+            "Failed to cleanly return to tier1 after rapid switching",
+        )
+
+        # Switch back to tier2_mvtools and verify exactly 1 filter exists
+        client.command("script-message-to", "motion_tier", "set-mode", "tier2_mvtools")
+        self.assertTrue(
+            client.wait_for(
+                lambda: client.get_prop("user-data/motion-tier/mode") == "tier2_mvtools"
+                and len(client.get_prop("vf") or []) == 1,
+                timeout=8.0,
+            ),
+            "Failed to cleanly activate tier2_mvtools after rapid switching",
+        )
+        vf_tier2 = client.get_prop("vf") or []
+        self.assertEqual(len(vf_tier2), 1)
+        self.assertEqual(vf_tier2[0].get("label"), "motion_tier2")
+
+    def test_resolution_edge_cases_odd_and_4k_downscale(self):
+        """Verify odd dimensions (641x359, 1920x803) and 4K (3840x2160) downscaling in VapourSynth."""
+        import vapoursynth as vs
+        core = vs.core
+
+        vpy_file = self.config_dir / "vapoursynth" / "motion_interpolate.vpy"
+        code = vpy_file.read_text(encoding="utf-8")
+
+        def run_vpy(w: int, h: int, src_fps: float, disp_fps: float, user_data: str):
+            blank = core.std.BlankClip(
+                width=w,
+                height=h,
+                format=vs.YUV420P8 if (w % 2 == 0 and h % 2 == 0) else vs.YUV444P8,
+                length=24,
+            )
+            out_node = []
+
+            def mock_set_output(node):
+                out_node.append(node)
+
+            orig_set_output = vs.VideoNode.set_output
+            vs.VideoNode.set_output = mock_set_output
+            try:
+                env = {
+                    "__builtins__": __builtins__,
+                    "vs": vs,
+                    "core": core,
+                    "video_in": blank,
+                    "container_fps": src_fps,
+                    "display_fps": disp_fps,
+                    "user_data": user_data,
+                }
+                exec(code, env)
+            finally:
+                vs.VideoNode.set_output = orig_set_output
+
+            return out_node[0] if out_node else None
+
+        # Case A: 641x359 odd dimensions -> normalized to even 640x358 and interpolated to 60fps
+        out_odd1 = run_vpy(641, 359, 24.0, 60.0, "engine=mvtools,target=60")
+        self.assertIsNotNone(out_odd1)
+        self.assertEqual((out_odd1.width, out_odd1.height), (640, 358))
+        self.assertAlmostEqual(float(out_odd1.fps), 60.0, delta=0.1)
+
+        # Case B: 1920x803 cropped ultrawide -> normalized to 1920x802 without mod-32 border distortion
+        out_odd2 = run_vpy(1920, 803, 24.0, 60.0, "engine=mvtools,target=60")
+        self.assertIsNotNone(out_odd2)
+        self.assertEqual((out_odd2.width, out_odd2.height), (1920, 802))
+
+        # Case C: 4K 3840x2160 -> pre-downscaled to 1920x1080 (max_h=1080)
+        out_4k = run_vpy(3840, 2160, 24.0, 60.0, "engine=mvtools,target=60,max_h=1080")
+        self.assertIsNotNone(out_4k)
+        self.assertEqual((out_4k.width, out_4k.height), (1920, 1080))
+        self.assertAlmostEqual(float(out_4k.fps), 60.0, delta=0.1)
+
+    def test_media_transition_video_to_audio_only(self):
+        """Verify switching from video to audio-only while Tier 2 is active strips vf and avoids crashes."""
+        client = self._start_client()
+        client.wait_for(lambda: client.get_prop("user-data/motion-tier/mode") == "tier1")
+
+        # Activate Tier 2 MVTools
+        client.command("script-message-to", "motion_tier", "set-mode", "tier2_mvtools")
+        client.wait_for(lambda: client.get_prop("user-data/motion-tier/mode") == "tier2_mvtools")
+
+        # Load audio-only file over IPC
+        client.command("loadfile", str(self.audio_only), "replace")
+        client.wait_for(lambda: client.get_prop("filename") == self.audio_only.name)
+
+        vf_audio = client.wait_for(lambda: len(client.get_prop("vf") or []) == 0 and "clean")
+        self.assertEqual(vf_audio, "clean", "VapourSynth filter must be removed on audio-only files")
+        self.assertFalse(client.get_prop("interpolation"))
+
+    def test_target_cycling_and_property_publishing(self):
+        """Verify cycle-target steps through display -> 2x -> 60 -> 120 -> display and updates user-data."""
+        client = self._start_client()
+        client.wait_for(lambda: client.get_prop("user-data/motion-tier/target") == "display")
+
+        for expected_target in ["2x", "60", "120", "display"]:
+            client.command("script-message-to", "motion_tier", "cycle-target")
+            actual = client.wait_for(
+                lambda: client.get_prop("user-data/motion-tier/target") == expected_target and expected_target
+            )
+            self.assertEqual(actual, expected_target)
+
+    def test_native_high_fps_bypass(self):
+        """Verify native 60fps media is bypassed (not doubled to 120fps) when target is 60Hz/display."""
+        client = self._start_client(media_path=self.clip_60fps, display_fps=60)
+        client.wait_for(lambda: client.get_prop("user-data/motion-tier/mode") == "tier1")
+
+        client.command("script-message-to", "motion_tier", "set-target", "display")
+        client.command("script-message-to", "motion_tier", "set-mode", "tier2_mvtools")
+        client.wait_for(lambda: client.get_prop("user-data/motion-tier/mode") == "tier2_mvtools")
+
+        time.sleep(0.5)
+        # When bypassed, estimated-vf-fps is either None (unmodified passthrough) or ~60.0
+        vf_fps = client.get_prop("estimated-vf-fps")
+        if vf_fps is not None:
+            self.assertAlmostEqual(
+                float(vf_fps),
+                60.0,
+                delta=4.0,
+                msg=f"Native 60fps clip must not be multiplied above ~60fps on 60Hz target, got {vf_fps}",
+            )
+        container_fps = client.get_prop("container-fps")
+        self.assertAlmostEqual(float(container_fps), 60.0, delta=1.0)
+
+    def test_10bit_and_rgb_and_single_frame_resilience(self):
+        """Verify 10-bit YUV420P10 preservation, 8-bit RGB24 conversion, and 1-frame clip bypass."""
+        import vapoursynth as vs
+        core = vs.core
+        vpy_file = self.config_dir / "vapoursynth" / "motion_interpolate.vpy"
+        code = vpy_file.read_text(encoding="utf-8")
+
+        def run_clip(clip, src_fps=24.0, disp_fps=60.0, user_data="engine=mvtools,target=60"):
+            out_node = []
+            orig_set_output = vs.VideoNode.set_output
+            vs.VideoNode.set_output = lambda node: out_node.append(node)
+            try:
+                exec(
+                    code,
+                    {
+                        "__builtins__": __builtins__,
+                        "vs": vs,
+                        "core": core,
+                        "video_in": clip,
+                        "container_fps": src_fps,
+                        "display_fps": disp_fps,
+                        "user_data": user_data,
+                    },
+                )
+            finally:
+                vs.VideoNode.set_output = orig_set_output
+            return out_node[0] if out_node else None
+
+        # 1. 10-bit YUV420P10 must preserve 10-bit depth
+        clip_10b = core.std.BlankClip(width=640, height=360, format=vs.YUV420P10, length=24)
+        out_10b = run_clip(clip_10b)
+        self.assertIsNotNone(out_10b)
+        self.assertEqual(out_10b.format.id, vs.YUV420P10)
+
+        # 2. 8-bit RGB24 must convert cleanly to YUV420P8 without zimg matrix error
+        clip_rgb = core.std.BlankClip(width=640, height=360, format=vs.RGB24, length=24)
+        out_rgb = run_clip(clip_rgb)
+        self.assertIsNotNone(out_rgb)
+        self.assertEqual(out_rgb.format.id, vs.YUV420P8)
+
+        # 3. Single-frame clip (length=1) must bypass without crashing MVTools
+        clip_1f = core.std.BlankClip(width=640, height=360, format=vs.YUV420P8, length=1)
+        out_1f = run_clip(clip_1f)
+        self.assertIsNotNone(out_1f)
+        self.assertEqual(out_1f.num_frames, 1)
+
+    def test_hwdec_no_preservation(self):
+        """Verify that starting mpv with --hwdec=no preserves hwdec=no in Tier 1 and Off modes."""
+        client = self._start_client(extra_args=["--hwdec=no"])
+        client.wait_for(lambda: client.get_prop("user-data/motion-tier/mode") == "tier1")
+        hw1 = client.get_prop("hwdec")
+        self.assertTrue("no" in hw1 if isinstance(hw1, list) else hw1 == "no")
+
+        client.command("script-message-to", "motion_tier", "set-mode", "tier2_mvtools")
+        client.wait_for(lambda: client.get_prop("user-data/motion-tier/mode") == "tier2_mvtools")
+        hw_t2 = client.get_prop("hwdec")
+        is_auto_copy = ("auto-copy" in hw_t2) if isinstance(hw_t2, list) else (hw_t2 == "auto-copy")
+        self.assertTrue(is_auto_copy)
+
+        client.command("script-message-to", "motion_tier", "set-mode", "tier1")
+        client.wait_for(lambda: client.get_prop("user-data/motion-tier/mode") == "tier1")
+        hw3 = client.get_prop("hwdec")
+        self.assertTrue("no" in hw3 if isinstance(hw3, list) else hw3 == "no")
 
 
 if __name__ == "__main__":

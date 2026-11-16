@@ -16,7 +16,7 @@ if (( EUID == 0 )) && [[ -n "${SUDO_USER:-}" && -z "${XDG_CONFIG_HOME:-}" ]]; th
 fi
 readonly ASSETS_DIR="$SETUP_DIR/assets"
 readonly MPV_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/mpv"
-readonly DEPENDENCIES=(mpv yt-dlp mpv-mpris ffmpeg)
+readonly DEPENDENCIES=(mpv yt-dlp mpv-mpris ffmpeg vapoursynth vapoursynth-plugin-mvtools)
 BACKUP_ID=$(date +%Y%m%d_%H%M%S_%N)
 readonly BACKUP_ID
 
@@ -84,7 +84,8 @@ for relative in \
     scripts/dusky_player/elements/TopBar.lua scripts/dusky_player/elements/Volume.lua \
     scripts/dusky_player/elements/WindowBorder.lua \
     scripts/dusky_thumbnails.lua scripts/dusky_silence.lua scripts/hwdec_topology.lua \
-    scripts/shader_presets.lua scripts/autoskip.lua \
+    scripts/shader_presets.lua scripts/autoskip.lua scripts/motion_tier.lua \
+    vapoursynth/motion_interpolate.vpy \
     shaders/FSRCNNX_x2_8-0-4-1.glsl \
     shaders/ravu-zoom-ar-r3.hook shaders/SSimDownscaler.glsl; do
     [[ -s "$ASSETS_DIR/$relative" ]] || die "Missing bundled asset: $relative"
