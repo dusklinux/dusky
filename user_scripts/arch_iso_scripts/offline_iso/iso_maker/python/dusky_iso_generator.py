@@ -68,6 +68,9 @@ RELENG = Path("/usr/share/archiso/configs/releng")
 REEXEC_ENV = "DUSKY_FACTORY_REEXEC"
 DEFAULT_OFFICIAL = Path("/srv/offline-repo/official")
 DEFAULT_AUR = Path("/srv/offline-repo/aur")
+DEFAULT_ZSTD_LEVEL = 3
+ZSTD_LEVEL_MIN = 1
+ZSTD_LEVEL_MAX = 22
 ARCH_REPOS = frozenset({
     "core", "extra", "multilib", "core-testing", "extra-testing", "multilib-testing",
     "gnome-unstable", "kde-unstable",
@@ -228,6 +231,44 @@ def wait_for_host_pacman_lock(say: Callable[[str], object], timeout: float = 600
         time.sleep(1.0)
 
 
+def parse_zstd_level(raw: str) -> int | None:
+    try:
+        level = int(raw.strip())
+    except ValueError:
+        return None
+    return level if ZSTD_LEVEL_MIN <= level <= ZSTD_LEVEL_MAX else None
+
+
+def _zstd_level_type(val: str) -> int:
+    if (level := parse_zstd_level(val)) is not None:
+        return level
+    raise argparse.ArgumentTypeError(
+        f"zstd compression level must be between {ZSTD_LEVEL_MIN} and {ZSTD_LEVEL_MAX}, got {val!r}"
+    )
+
+
+def validate_iso_name(raw: str) -> str:
+    if "\x00" in raw or any(ord(c) < 32 for c in raw):
+        raise ValueError(f"invalid --iso-name {raw!r}: contains control or NUL characters")
+    name = raw.strip()
+    if (
+        not name
+        or name in {".", "..", ".iso"}
+        or "/" in name
+        or "\\" in name
+        or Path(name).name != name
+    ):
+        raise ValueError(f"invalid --iso-name {raw!r}: must be a plain filename without path separators")
+    return name
+
+
+def _iso_name_type(val: str) -> str:
+    try:
+        return validate_iso_name(val)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from None
+
+
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     actions = "\n".join(f"  {name:<13} {ACTION_HELP[name]}" for name in ACTIONS)
     parser = argparse.ArgumentParser(
@@ -237,7 +278,8 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         epilog=f"actions:\n{actions}\n\n"
         "environment:\n"
         "  DUSKY_DOTFILES_PIN   build branch/tag/commit of github.com/dusklinux/dusky (default: main; --ref takes precedence)\n"
-        "  DUSKY_DOTFILES_SHA   expected build HEAD (full sha or prefix); mismatch aborts\n\n"
+        "  DUSKY_DOTFILES_SHA   expected build HEAD (full sha or prefix); mismatch aborts\n"
+        f"  DUSKY_ZSTD_LEVEL     SquashFS Zstd compression level ({ZSTD_LEVEL_MIN}-{ZSTD_LEVEL_MAX}, default: {DEFAULT_ZSTD_LEVEL}; --zstd-level takes precedence)\n\n"
         f"version {VERSION}",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         suggest_on_error=True,
@@ -256,6 +298,11 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
                              "dotfiles and recipes still come from --ref)")
     parser.add_argument("--rebuild-local", action="store_true",
                         help="rebuild all local ISO recipes even when cached inputs match")
+    parser.add_argument("--zstd-level", "-z", type=_zstd_level_type, default=None, metavar="1-22",
+                        help=f"SquashFS Zstd compression level ({ZSTD_LEVEL_MIN}-{ZSTD_LEVEL_MAX}, "
+                             f"default: {DEFAULT_ZSTD_LEVEL} or DUSKY_ZSTD_LEVEL)")
+    parser.add_argument("--iso-name", type=_iso_name_type, metavar="NAME",
+                        help="custom ISO output filename (default: dusky_MM_YY.iso)")
     parser.add_argument("--auto", action="store_true", help="non-interactive; default action official_iso")
     parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
     return parser.parse_args(argv)
@@ -2082,6 +2129,8 @@ class IsoConfig:
     final_dest: Path
     manifests: PackageManifests
     rebuild_local: bool = False
+    zstd_level: int = DEFAULT_ZSTD_LEVEL
+    iso_name: str | None = None
 
     @property
     def profile_dir(self) -> Path:
@@ -2107,16 +2156,18 @@ def setup_clean_room(cfg: IsoConfig) -> None:
     remove_tree(cfg.workspace, strict=True)
     cfg.workspace.mkdir(parents=True, mode=0o700)
     shutil.copytree(RELENG, cfg.profile_dir, symlinks=True)
-    configure_profiledef(cfg.profile_dir / "profiledef.sh")
+    configure_profiledef(cfg.profile_dir / "profiledef.sh", cfg.zstd_level)
     ok("clean room ready")
 
 
-def configure_profiledef(profiledef: Path) -> None:
+def configure_profiledef(profiledef: Path, zstd_level: int = DEFAULT_ZSTD_LEVEL) -> None:
+    if not ZSTD_LEVEL_MIN <= zstd_level <= ZSTD_LEVEL_MAX:
+        die(f"zstd compression level must be between {ZSTD_LEVEL_MIN} and {ZSTD_LEVEL_MAX}, got {zstd_level!r}")
     if not profiledef.is_file():
         die("profiledef.sh missing after clean room setup")
     txt = profiledef.read_text(encoding="utf-8")
     settings = {
-        "airootfs_image_tool_options": "('-comp' 'zstd' '-b' '1M' '-Xcompression-level' '5')",
+        "airootfs_image_tool_options": f"('-comp' 'zstd' '-b' '1M' '-Xcompression-level' '{zstd_level}')",
         "bootmodes": "('bios.syslinux' 'uefi.grub')",
     }
     for name, value in settings.items():
@@ -2927,7 +2978,7 @@ def build_iso_image(cfg: IsoConfig, user: RealUser) -> tuple[Path, str]:
             die(f"mkarchiso: expected exactly one {marker!r}, found {count}; archiso layout changed")
         mk_text = mk_text.replace(marker, f"{marker}\n{body}", 1)
     # Compress GRUB's embedded files without omitting any boot-loader modules or fonts.
-    # The live filesystem keeps its independent Zstd level 5 setting.
+    # The live filesystem keeps its configurable Zstd compression setting (default level 3).
     grub_call = "grub-mkstandalone -O"
     if mk_text.count(grub_call) != 2:
         die("mkarchiso: expected x64 and IA32 GRUB build commands; archiso layout changed")
@@ -2944,7 +2995,8 @@ def build_iso_image(cfg: IsoConfig, user: RealUser) -> tuple[Path, str]:
         die("mkarchiso produced no ISO")
 
     cfg.final_dest.mkdir(parents=True, exist_ok=True)
-    final = cfg.final_dest / f"dusky_{datetime.now():%m_%y}.iso"
+    raw_name = validate_iso_name(cfg.iso_name) if cfg.iso_name is not None else f"dusky_{datetime.now():%m_%y}.iso"
+    final = cfg.final_dest / (raw_name if raw_name.endswith(".iso") else f"{raw_name}.iso")
     sha_path = final.with_name(f"{final.stem}_iso.sha256")
     with atomic_path(final) as tmp_iso:  # previous ISO survives until the new one is complete
         shutil.move(isos[0], tmp_iso)  # rename(2) when the workspace shares the filesystem
@@ -2956,16 +3008,22 @@ def build_iso_image(cfg: IsoConfig, user: RealUser) -> tuple[Path, str]:
     fsync_dir(cfg.final_dest)
     for path in (final, sha_path):
         os.chown(path, user.uid, user.gid)
-    for old in cfg.final_dest.glob("dusky_*"):  # only now that the replacement is durable
-        if old not in (final, sha_path) and old.is_file() and old.name.endswith((".iso", "_iso.sha256")):
-            step(f"removing previous build artifact: {old.name}")
-            old.unlink(missing_ok=True)
+    if cfg.iso_name is None:
+        for old in cfg.final_dest.glob("dusky_*"):  # only now that the replacement is durable
+            if old not in (final, sha_path) and old.is_file() and old.name.endswith((".iso", "_iso.sha256")):
+                step(f"removing previous build artifact: {old.name}")
+                old.unlink(missing_ok=True)
     ok(f"ISO built: {final} ({human_bytes(final.stat().st_size)})")
     return final, digest
 
 
 def iso_phase(cfg: IsoConfig, user: RealUser) -> tuple[Path, str]:
     info("=== ISO BUILD ===")
+    if cfg.iso_name is not None:
+        try:
+            validate_iso_name(cfg.iso_name)
+        except ValueError as exc:
+            die(str(exc))
     for tool in ("mkarchiso", "git", "grub-mkstandalone"):
         require_tool(tool)
     workspace = cfg.workspace.resolve()
@@ -3017,6 +3075,33 @@ def prompt_path(msg: str, default: Path) -> Path:
     return Path(Prompt.ask("Path", default=str(default))).expanduser().resolve()
 
 
+def prompt_zstd_level(default: int = DEFAULT_ZSTD_LEVEL) -> int:
+    console.print(
+        f"[cyan]SquashFS Zstd compression level ({ZSTD_LEVEL_MIN}-{ZSTD_LEVEL_MAX})[/] "
+        f"(default: [bold]{default}[/] — balanced speed/ratio)"
+    )
+    while True:
+        raw = Prompt.ask("Level", default=str(default)).strip()
+        if not raw:
+            return default
+        if (level := parse_zstd_level(raw)) is not None:
+            return level
+        err(f"Invalid Zstd level {raw!r}: enter an integer between {ZSTD_LEVEL_MIN} and {ZSTD_LEVEL_MAX}.")
+
+
+def resolve_zstd_level(cli_level: int | None, *, interactive: bool) -> int:
+    if cli_level is not None:
+        return cli_level
+    raw_env = os.environ.get("DUSKY_ZSTD_LEVEL", "").strip()
+    if raw_env:
+        if (default := parse_zstd_level(raw_env)) is None:
+            die(f"invalid DUSKY_ZSTD_LEVEL={raw_env!r}: must be an integer between "
+                f"{ZSTD_LEVEL_MIN} and {ZSTD_LEVEL_MAX}")
+    else:
+        default = DEFAULT_ZSTD_LEVEL
+    return prompt_zstd_level(default) if interactive else default
+
+
 # ═══════════════════════════════════ main ═══════════════════════════════════
 def main(args: argparse.Namespace) -> None:
     for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
@@ -3048,10 +3133,14 @@ def main(args: argparse.Namespace) -> None:
 
     zram = ZRAM_CANDIDATE.is_mount()
     workspace_base: Path | None = args.workspace
-    if do_iso and workspace_base is None:
-        use_zram = zram and (not interactive or Confirm.ask(
-            f"Detected {ZRAM_CANDIDATE} mounted — use it for the workspace?", default=True))
-        workspace_base = ZRAM_CANDIDATE if use_zram else Path("/tmp")
+    zstd_level = DEFAULT_ZSTD_LEVEL
+    if do_iso:
+        if workspace_base is None:
+            use_zram = zram and (not interactive or Confirm.ask(
+                f"Detected {ZRAM_CANDIDATE} mounted — use it for the workspace?", default=True))
+            workspace_base = ZRAM_CANDIDATE if use_zram else Path("/tmp")
+        zstd_level = resolve_zstd_level(args.zstd_level, interactive=interactive)
+        step(f"squashfs zstd compression level: {zstd_level}")
 
     start = time.monotonic()
     checkout = checkout_build_source(args.ref)
@@ -3088,6 +3177,8 @@ def main(args: argparse.Namespace) -> None:
             aur_repo=aur_repo,
             manifests=manifests,
             rebuild_local=args.rebuild_local,
+            zstd_level=zstd_level,
+            iso_name=args.iso_name,
             final_dest=(args.output_dir or (ZRAM_CANDIDATE if zram else user.home / "dusky_isos"))
                        .expanduser().resolve(),
         )
