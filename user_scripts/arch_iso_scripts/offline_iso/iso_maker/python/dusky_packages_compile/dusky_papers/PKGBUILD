@@ -15,31 +15,13 @@ package() {
   install -Dm755 "$srcdir/binary-output/dusky_papers" \
     "$pkgdir/usr/bin/dusky_papers"
   install -d "$pkgdir/usr/share/dusky_papers"
-  python - "$srcdir/project" > "$pkgdir/usr/share/dusky_papers/source.sha256" <<'PY'
-import hashlib
+  python - "$srcdir/project" "$DUSKY_BUILD_RUST" > "$pkgdir/usr/share/dusky_papers/source.sha256" <<'PY'
 import sys
 from pathlib import Path
 
 project = Path(sys.argv[1])
-files = [project / "Cargo.toml", project / "Cargo.lock"]
-for relative in (
-    "build.rs", "rust-toolchain", "rust-toolchain.toml",
-    ".cargo/config", ".cargo/config.toml",
-):
-    path = project / relative
-    if path.is_file():
-        files.append(path)
-src = project / "src"
-if src.is_dir():
-    files.extend(sorted(path for path in src.rglob("*") if path.is_file()))
-
-# Keep these inputs in sync with source_digest() in 151_dusky_papers_setup.py.
-digest = hashlib.sha256()
-digest.update(b"native-v3-frozen-sparse\0")
-for path in files:
-    digest.update(str(path.relative_to(project)).encode())
-    digest.update(b"\0")
-    digest.update(hashlib.sha256(path.read_bytes()).digest())
-print(digest.hexdigest())
+sys.path.insert(0, str(Path(sys.argv[2]).resolve().parent))
+from build_rust import shared
+print(shared.source_digest(project, recipe="native-v3-frozen-sparse"))
 PY
 }

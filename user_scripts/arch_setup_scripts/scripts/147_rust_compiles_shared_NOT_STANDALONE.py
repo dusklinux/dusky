@@ -2,11 +2,13 @@
 
 import errno
 import fcntl
+import hashlib
 import os
 import re
 import shutil
 import signal
 import tempfile
+from collections.abc import Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import wraps
@@ -17,13 +19,74 @@ RESERVE = GIB
 _BUILD_LOCK: ContextVar[int | None] = ContextVar("dusky_build_lock", default=None)
 
 
+def rust_shared_root() -> Path:
+    return Path(__file__).resolve().parents[2] / "rust_shared"
+
+
 def font_source_files() -> list[Path]:
     """Include the shared selective-font loader in binary fingerprints."""
-    root = Path(__file__).resolve().parents[2] / "rust_shared"
+    root = rust_shared_root()
     directory = root / "fontdb"
     files = [root / "ui_fonts.rs", directory / "Cargo.toml"]
     files.extend(sorted(path for path in (directory / "src").rglob("*") if path.is_file()))
     return files
+
+
+def source_digest(
+    project: Path,
+    *,
+    recipe: str,
+    include_fonts: bool = True,
+    extra_files: Sequence[Path] = (),
+) -> str:
+    """Compute a deterministic, path-independent SHA-256 digest across sandbox and home checkouts."""
+    project_root = project.resolve()
+    entries: list[tuple[str, Path]] = []
+
+    for name in ("Cargo.toml", "Cargo.lock"):
+        candidate = project_root / name
+        if candidate.is_file():
+            entries.append((f"project/{name}", candidate))
+
+    for relative in (
+        "build.rs",
+        "rust-toolchain",
+        "rust-toolchain.toml",
+        ".cargo/config",
+        ".cargo/config.toml",
+    ):
+        candidate = project_root / relative
+        if candidate.is_file():
+            entries.append((f"project/{relative}", candidate))
+
+    src = project_root / "src"
+    if src.is_dir():
+        for path in sorted(p for p in src.rglob("*") if p.is_file()):
+            entries.append((f"project/{path.relative_to(project_root).as_posix()}", path))
+
+    if include_fonts:
+        shared_root = rust_shared_root().resolve()
+        for path in font_source_files():
+            resolved = path.resolve()
+            entries.append((f"shared/{resolved.relative_to(shared_root).as_posix()}", resolved))
+
+    parent_root = project.parent.resolve()
+    for path in extra_files:
+        logical_target = (parent_root / path.relative_to(project.parent)).resolve()
+        entries.append((f"sibling/{logical_target.relative_to(parent_root).as_posix()}", path.resolve()))
+
+    entries.sort(key=lambda item: item[0].encode("utf-8"))
+
+    digest = hashlib.sha256()
+    digest.update(recipe.encode("utf-8"))
+    digest.update(b"\0")
+    for logical_key, path in entries:
+        with path.open("rb") as stream:
+            file_hash = hashlib.file_digest(stream, "sha256").digest()
+        digest.update(logical_key.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(file_hash)
+    return digest.hexdigest()
 
 
 def build_lock_fds() -> tuple[int, ...]:

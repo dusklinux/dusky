@@ -23,8 +23,6 @@ package() {
   install -Dm644 "$srcdir/project/config.toml" \
     "$pkgdir/usr/share/dusky_tray/config.toml"
   python - "$srcdir/project" "$DUSKY_BUILD_RUST" > "$pkgdir/usr/share/dusky_tray/source.sha256" <<'PY'
-import hashlib
-import os
 import sys
 from pathlib import Path
 
@@ -32,29 +30,10 @@ project = Path(sys.argv[1])
 sys.path.insert(0, str(Path(sys.argv[2]).resolve().parent))
 from build_rust import shared
 
-files = [project / "Cargo.toml", project / "Cargo.lock"]
-for relative in (
-    "build.rs", "rust-toolchain", "rust-toolchain.toml",
-    ".cargo/config", ".cargo/config.toml",
-):
-    path = project / relative
-    if path.is_file():
-        files.append(path)
-if (project / "src").is_dir():
-    files.extend(sorted(path for path in (project / "src").rglob("*") if path.is_file()))
-files.extend(shared.font_source_files())
-
-files.extend(project.parent / "click_away_to_dismiss" / name for name in (
-    "dusky.c",
-    "hyprland_focus_grab_v1.xml",
-))
-
-# Same inputs and recipe marker as 152_dusky_tray_setup.py.
-digest = hashlib.sha256(b"tray-native-v1-frozen-tmpfs\0")
-for path in files:
-    digest.update(os.path.relpath(path, project).encode())
-    digest.update(b"\0")
-    digest.update(hashlib.sha256(path.read_bytes()).digest())
-print(digest.hexdigest())
+extra = (
+    project.parent / "click_away_to_dismiss/dusky.c",
+    project.parent / "click_away_to_dismiss/hyprland_focus_grab_v1.xml",
+)
+print(shared.source_digest(project, recipe="tray-native-v1-frozen-tmpfs", extra_files=extra))
 PY
 }

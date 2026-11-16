@@ -19,35 +19,12 @@ package() {
   install -d "$pkgdir/usr/share/dusky_overview"
 
   python - "$srcdir/project" "$DUSKY_BUILD_RUST" > "$pkgdir/usr/share/dusky_overview/source.sha256" <<'PY'
-import hashlib
 import sys
 from pathlib import Path
 
 project = Path(sys.argv[1])
 sys.path.insert(0, str(Path(sys.argv[2]).resolve().parent))
 from build_rust import shared
-
-files = [project / "Cargo.toml"]
-if (project / "Cargo.lock").is_file():
-    files.append(project / "Cargo.lock")
-for relative in (
-    "build.rs", "rust-toolchain", "rust-toolchain.toml",
-    ".cargo/config", ".cargo/config.toml",
-):
-    path = project / relative
-    if path.is_file():
-        files.append(path)
-if (project / "src").is_dir():
-    files.extend(sorted(path for path in (project / "src").rglob("*") if path.is_file()))
-files.extend(shared.font_source_files())
-
-digest = hashlib.sha256(b"overview-native-v2-fat-lto-tmpfs\0")
-for path in files:
-    with path.open("rb") as stream:
-        file_hash = hashlib.file_digest(stream, "sha256").digest()
-    digest.update(str(path.relative_to(project, walk_up=True)).encode())
-    digest.update(b"\0")
-    digest.update(file_hash)
-print(digest.hexdigest())
+print(shared.source_digest(project, recipe="overview-native-v2-thin-lto-tmpfs"))
 PY
 }

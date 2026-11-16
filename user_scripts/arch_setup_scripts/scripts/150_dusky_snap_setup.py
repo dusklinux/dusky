@@ -54,34 +54,7 @@ def sha256(path: Path) -> str:
 
 
 def source_digest(project: Path) -> str:
-    files: list[Path] = [
-        project / "Cargo.toml",
-        project / "Cargo.lock",
-    ]
-    for relative in (
-        "build.rs",
-        "rust-toolchain",
-        "rust-toolchain.toml",
-        ".cargo/config",
-        ".cargo/config.toml",
-    ):
-        path = project / relative
-        if path.is_file():
-            files.append(path)
-
-    src = project / "src"
-    if src.is_dir():
-        files.extend(sorted(path for path in src.rglob("*") if path.is_file()))
-    files.extend(build_support.font_source_files())
-
-    digest = hashlib.sha256()
-    digest.update(BUILD_RECIPE.encode())
-    digest.update(b"\0")
-    for path in files:
-        digest.update(os.path.relpath(path, project).encode())
-        digest.update(b"\0")
-        digest.update(bytes.fromhex(sha256(path)))
-    return digest.hexdigest()
+    return build_support.source_digest(project, recipe=BUILD_RECIPE)
 
 
 def binary_runs(binary: Path) -> bool:
@@ -394,7 +367,7 @@ def install_defaults(project: Path, install_dir: Path) -> None:
 def packaged_source_matches(project: Path) -> bool:
     try:
         return SYSTEM_SOURCE_DIGEST.read_text(encoding="utf-8").strip() == source_digest(project)
-    except OSError:
+    except (OSError, ValueError):
         return False
 
 

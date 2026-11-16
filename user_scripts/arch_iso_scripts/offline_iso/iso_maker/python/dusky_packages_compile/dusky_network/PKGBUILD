@@ -22,4 +22,12 @@ package() {
   # Keep the exact build hash: makepkg must not strip the already stripped binary.
   install -Dm644 "$srcdir/binary-output/binary_manifest.json" \
     "$pkgdir/usr/share/dusky_network/binary_manifest.json"
+  python - "$srcdir/binary-output/binary_manifest.json" > "$pkgdir/usr/share/dusky_network/source.sha256" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+print(manifest["source_sha256"])
+PY
 }
