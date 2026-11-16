@@ -23,6 +23,7 @@ remote = "origin"
 dirs = [
     "~/user_scripts/arch_setup_scripts/scripts",
     "~/user_scripts/arch_setup_scripts",
+    "~/user_scripts/dusky",
     "~/user_scripts/rofi",
     "~/user_scripts/images",
     "~/user_scripts/cursor/color",
@@ -69,6 +70,7 @@ scripts = [
     "U | 066_session_lifecycle.py",
     # "S | 120_create_mount_directories.sh",
     "S | 127_pam_keyring_greetd.py --mode auto",
+    "S | ignore-fail | dusky_pkg_sync.py --warn-only",
     "U | 154_dusky_network_meter_setup.py",
     "U | 130_systemd_dbus_service_manager.py --default",
     "U | 135_battery_notify_service.sh --auto",

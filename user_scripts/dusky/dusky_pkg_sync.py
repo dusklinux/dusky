@@ -53,7 +53,7 @@ class DuskySyncError(Exception):
     """Base exception for dusky-pkg-sync failures."""
 
 
-class TerminatedError(DuskySyncError):
+class TerminatedError(BaseException):
     """Raised when the process receives SIGTERM so cleanup handlers execute."""
 
 
@@ -208,6 +208,14 @@ class ConsoleUI:
             self._rich_console.print(f"[dim][debug] {msg}[/dim]", highlight=False)
         else:
             print(f"\033[2m[debug] {msg}\033[0m", file=sys.stderr)
+
+    def warn(self, msg: str) -> None:
+        if self.json_mode:
+            return
+        if self._rich_console is not None:
+            self._rich_console.print(f"[bold yellow][warn][/bold yellow] {msg}", highlight=False)
+        else:
+            print(f"\033[33m[warn]\033[0m {msg}", file=sys.stderr)
 
     def error(self, msg: str) -> None:
         if self.json_mode:
@@ -802,6 +810,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Emit machine-readable JSON summary to stdout for parent updater scripts.",
     )
     parser.add_argument(
+        "--warn-only",
+        "--lenient",
+        action="store_true",
+        help="Log warnings on network or sync errors and exit with code 0 instead of failing.",
+    )
+    parser.add_argument(
+        "--installed-only",
+        action="store_true",
+        help="Only upgrade/sync packages that are already installed locally.",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=15.0,
+        metavar="SECONDS",
+        help="HTTP timeout in seconds for manifest and package requests (default: 15.0).",
+    )
+    parser.add_argument(
         "--repo-url",
         default=os.environ.get("DUSKY_REPO_URL", DEFAULT_REPO_URL),
         help=f"Base raw repository URL (default: {DEFAULT_REPO_URL}).",
@@ -834,6 +860,7 @@ def main(argv: list[str] | None = None) -> int:
             args.repo_url,
             bypass_cache=not args.allow_cache,
             ui=ui,
+            timeout=args.timeout,
         )
         plans = resolve_plans(
             catalog,
@@ -842,6 +869,8 @@ def main(argv: list[str] | None = None) -> int:
             force=args.force,
             ui=ui,
         )
+        if args.installed_only:
+            plans = [p for p in plans if p.local_ver is not None]
         queued = [p for p in plans if p.needs_download]
 
         if not args.json:
@@ -942,7 +971,33 @@ def main(argv: list[str] | None = None) -> int:
         else:
             ui.error("Aborted by user.")
         return 130
+    except TerminatedError as exc:
+        if args.json:
+            emit_json(
+                json_out,
+                {
+                    "status": "error",
+                    "error_type": "TerminatedError",
+                    "message": str(exc),
+                },
+            )
+        else:
+            ui.error(str(exc))
+        return 143
     except DuskySyncError as exc:
+        if args.warn_only:
+            if args.json:
+                emit_json(
+                    json_out,
+                    {
+                        "status": "warning",
+                        "error_type": type(exc).__name__,
+                        "message": str(exc),
+                    },
+                )
+            else:
+                ui.warn(f"Warning: {exc} (skipping package sync; setup scripts will fall back to local builds)")
+            return 0
         if args.json:
             emit_json(
                 json_out,
@@ -955,6 +1010,21 @@ def main(argv: list[str] | None = None) -> int:
         else:
             ui.error(str(exc))
         return 1
+    except Exception as exc:
+        if args.warn_only:
+            if args.json:
+                emit_json(
+                    json_out,
+                    {
+                        "status": "warning",
+                        "error_type": type(exc).__name__,
+                        "message": str(exc),
+                    },
+                )
+            else:
+                ui.warn(f"Warning: unexpected sync error: {exc} (skipping package sync)")
+            return 0
+        raise
 
 
 if __name__ == "__main__":
