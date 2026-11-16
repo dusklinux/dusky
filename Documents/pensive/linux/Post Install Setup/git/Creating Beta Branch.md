@@ -209,7 +209,26 @@ git_dusky diff --stat main..future
 ```
 
 After the announcement and waiting period, fetch again so the remote branch
-references are current, then release with:
+references are current, then release.
+
+### Recommended Zero-Disruption Fast-Forward
+
+In a bare dotfiles repository where `$HOME` is the live work tree, switching to
+`main` before merging would briefly rewind active configuration files to the
+older `main` baseline. To eliminate that risk, advance local `main` directly
+while remaining on `future`:
+
+```zsh
+git_dusky fetch origin
+# 1. Advance local main to future without checking it out (touches zero files in $HOME):
+git_dusky fetch /home/dusk/dusky future:main
+# 2. Switch to main (instant zero-diff switch; files in $HOME are not altered):
+git_dusky switch main
+# 3. Publish the fast-forward to GitHub:
+git_dusky push origin main
+```
+
+### Traditional Switch-and-Merge Alternative
 
 ```zsh
 git_dusky fetch origin
@@ -225,10 +244,10 @@ when its history is a direct continuation of `main`, as intended when `main`
 has no intervening work. `--ff-only` refuses an unexpected history divergence;
 it does not create a merge commit or rewrite existing commits.
 
-**Switching to `main` changes your live dotfiles to its contents.** Switching
-and then merging are separate steps, so the older files are briefly active
-between them. Do this at a suitable time; avoid restarting the session during
-that interval.
+When using the traditional method, **switching to `main` changes your live dotfiles
+to its contents.** Switching and then merging are separate steps, so the older files
+are briefly active between them. The zero-disruption method above is preferred because
+it avoids this window entirely.
 
 The history changes like this:
 
@@ -263,18 +282,30 @@ git_dusky ls-remote origin refs/heads/main refs/heads/future
 ```
 
 Immediately after the intended fast-forward, `main` and `future` should resolve
-to the same commit, and GitHub should show that commit for both branches. Keep
-`future` for the next development cycle; deleting it is unnecessary. When
-starting that cycle, switch back to `future` before committing new work.
+to the same commit, and GitHub should show that commit for both branches.
 
+### Managing `future` after release
+
+You have two choices for managing the branch after the merge:
+
+**Option 1 — Keep `future` for the next cycle:**
 ```zsh
 git_dusky switch future
 git_dusky branch -vv
 ```
+The usual `dusky` commands and command chain then continue publishing to `origin/future` for the next cycle.
 
-The usual `dusky` commands and command chain then continue publishing to
-`origin/future` for the next cycle. Keep the two branches; there is no need to
-delete or recreate `future` after a release.
+**Option 2 — Delete `future` and recreate it cleanly when ready:**
+If you prefer a clean repository branch list, delete `future` locally and remotely:
+```zsh
+git_dusky branch -d future
+git_dusky push origin --delete future
+```
+When you are ready to start the next development cycle from `main`:
+```zsh
+git_dusky switch --no-track -c future
+git_dusky push -u origin future
+```
 
 ## Updater and installation branch selection
 
@@ -303,6 +334,14 @@ upstream. Do not use it for this branch workflow.
 - The bundle alone does not include the previously uncommitted changes; retain
   the patch alongside it. The saved index is recovery evidence, not a file to
   copy blindly over a newer repository index.
+
+## Recorded release & merge: 2026-11-16
+
+- Pre-merge `main` baseline: `40c1ed12777b543f4ee47269e5a464116bb93a5a`.
+- Local safety rollback tag: `backup-main-before-future-merge` pointing to `40c1ed127`.
+- Merged tip: `fe7b0bf928b3fdf04fc2911a4ec1fc5ef42388f2` (634 commits across the 0.57 cycle preserved linearly).
+- Execution: Fast-forwarded via zero-disruption fetch (`git_dusky fetch /home/dusk/dusky future:main`) followed by `git_dusky switch main` and `git_dusky push origin main`. Zero live dotfiles in `$HOME` were altered or temporarily rolled back.
+- Branch cleanup: `future` safely deleted locally (`git branch -d future`) and remotely on GitHub (`git push origin --delete future`).
 
 ## Git references
 
