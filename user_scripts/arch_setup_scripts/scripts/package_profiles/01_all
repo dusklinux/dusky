@@ -282,6 +282,9 @@ luarocks
 ffmpeg
 mpv
 mpv-mpris
+vapoursynth
+vapoursynth-plugin-mvtools
+ncnn
 swayimg
 resvg
 imagemagick
