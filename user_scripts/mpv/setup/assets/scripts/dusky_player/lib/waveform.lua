@@ -14,7 +14,7 @@ function Waveform.new(owner)
 		self.loaded = true
 		self:update()
 	end)
-	for _, prop in ipairs({'track-list', 'audio-params', 'duration', 'demuxer-via-network'}) do
+	for _, prop in ipairs({'track-list', 'audio-dec-params', 'audio-params', 'duration', 'demuxer-via-network'}) do
 		owner:observe_mp_property(prop, 'native', function() self:update() end)
 	end
 	return self
@@ -43,25 +43,30 @@ function Waveform:update()
 	end
 	local duration = mp.get_property_number('duration')
 	local source = mp.get_property('path')
-	local track
+	local track, audio_index
 	local audio_count = 0
 	local valid = not mp.get_property_native('demuxer-via-network', false)
 	for _, item in ipairs(mp.get_property_native('track-list', {})) do
 		if item.type == 'video' and not item.albumart and not item.image then valid = false end
-		if item.type == 'audio' and item.selected then track = item end
-		if item.type == 'audio' and not item.external then audio_count = audio_count + 1 end
+		if item.type == 'audio' then
+			if not item.external then
+				if item.selected then audio_index = audio_count end
+				audio_count = audio_count + 1
+			end
+			if item.selected then track = item end
+		end
 	end
-	-- ff-index is guaranteed only for lavf. A sole internal audio track is
-	-- unambiguous with other demuxers too; exclude external audio and virtual inputs.
+	-- Prefer lavf ff-index when present; otherwise map by internal audio ordinal (0:a:N).
 	local demuxer = mp.get_property('current-demuxer')
 	local lavf = demuxer == 'lavf'
-	valid = valid and track and not track.external and (lavf or (demuxer == 'mkv' and audio_count == 1))
+	valid = valid and track and not track.external and (lavf or demuxer == 'mkv')
 	if source then source = normalize_path(source) end
 	local info = valid and source and utils.file_info(source)
-	local params = mp.get_property_native('audio-params', {})
+	local params = mp.get_property_native('audio-dec-params') or mp.get_property_native('audio-params') or {}
 	local rate = params.samplerate
 	local index = lavf and track and track['ff-index'] or nil
-	local mapping = index and index >= 0 and ('0:' .. index) or (not lavf and '0:a:0')
+	local mapping = (index and index >= 0 and ('0:' .. index))
+		or (audio_index and ('0:a:' .. audio_index))
 	if not (info and info.is_file and duration and duration > 0 and duration < math.huge
 		and rate and rate > 0 and mapping) then
 		self:reset(self.loaded)
@@ -69,7 +74,7 @@ function Waveform:update()
 	end
 	local samples = math.ceil(duration * rate / bins)
 	if samples > 2147483647 then self:reset(self.loaded); return end
-	local key = table.concat({source, info.size, info.mtime, mapping, rate, duration}, '\n')
+	local key = table.concat({source, info.size, info.mtime, mapping, rate}, '\n')
 	if key == self.key then return end
 	self:cancel()
 	self.key, self.data, self.path, self.geometry_key = key, nil, nil, nil
@@ -81,7 +86,7 @@ function Waveform:update()
 	self.worker = mp.command_native_async({
 		name = 'subprocess', playback_only = true,
 		capture_stdout = true, capture_stderr = true, capture_size = capture_limit,
-		args = {'ffmpeg', '-hide_banner', '-nostdin', '-v', 'error', '-threads', '1',
+		args = {'ffmpeg', '-hide_banner', '-nostdin', '-nostats', '-v', 'error', '-threads', '1',
 			'-i', source, '-map', mapping, '-vn', '-sn', '-dn',
 			'-filter_threads', '1', '-af', graph, '-t', string.format('%.9f', duration),
 			'-frames:a', tostring(bins + 2), '-f', 'null', '-'},
@@ -109,6 +114,12 @@ function Waveform:update()
 			end
 		end
 		if #points == 0 then msg.warn('Waveform analysis returned no peaks'); return end
+		local base = points[1].time > job.step and points[1].time or 0
+		if base > 0 then
+			for i = 1, #points do
+				points[i].time = points[i].time - base
+			end
+		end
 		job.points = points
 		self.data = job
 		msg.info(string.format('Waveform ready: %d bins, %.1fs audio', #points, duration))
@@ -122,8 +133,7 @@ function Waveform:render(ass, ax, ay, bx, by, visibility, line, fax, fbx)
 	local data = self.data
 	-- Cache geometry at each size; playback and cursor updates only reuse the string.
 	-- Two clips reproduce t2x's progress-line gap without rebuilding on every tick.
-	local offset = state.rebase_start_time == false and (state.start_time or 0) or 0
-	local geometry_key = table.concat({ax, ay, bx, by, state.duration, line, offset}, ',')
+	local geometry_key = table.concat({ax, ay, bx, by, line}, ',')
 	if geometry_key ~= self.geometry_key then
 		local pieces = {}
 		local width, middle, height = bx - ax - line - 1, (ay + by) / 2, (by - ay - 2) / 2
@@ -131,19 +141,29 @@ function Waveform:render(ass, ax, ay, bx, by, visibility, line, fax, fbx)
 		-- This bounds ASS work by the visible resolution as well as the bin count.
 		local columns = math.max(1, math.min(bins, math.floor(width)))
 		local peaks = {}
-		for _, point in ipairs(data.points) do
-			local first = math.max(1, math.floor((point.time + offset) / state.duration * columns) + 1)
-			local last = math.min(columns, math.ceil((point.time + data.step + offset) / state.duration * columns))
+		local points = data.points
+		for i = 1, #points do
+			local point = points[i]
+			local next_time = points[i + 1] and points[i + 1].time
+			local stop_time = (next_time and next_time > point.time + data.step) and next_time or (point.time + data.step)
+			local first = math.max(1, math.floor(point.time / data.duration * columns) + 1)
+			local last = math.min(columns, math.ceil(stop_time / data.duration * columns))
 			for column = first, last do peaks[column] = math.max(peaks[column] or 0, point.peak) end
 		end
-		for column = 1, columns do
-			local left = ax + 0.5 + width * (column - 1) / columns
-			local right = ax + 0.5 + width * column / columns
-			local peak = (peaks[column] or 0) * height
+		local col = 1
+		while col <= columns do
+			local peak = math.floor((peaks[col] or 0) * height * 4 + 0.5) / 4
+			local next_col = col + 1
 			if peak > 0 then
+				while next_col <= columns and math.floor((peaks[next_col] or 0) * height * 4 + 0.5) / 4 == peak do
+					next_col = next_col + 1
+				end
+				local left = ax + 0.5 + width * (col - 1) / columns
+				local right = ax + 0.5 + width * (next_col - 1) / columns
 				pieces[#pieces + 1] = string.format('m %.2f %.2f l %.2f %.2f %.2f %.2f %.2f %.2f',
 					left, middle - peak, right, middle - peak, right, middle + peak, left, middle + peak)
 			end
+			col = next_col
 		end
 		self.path, self.geometry_key = table.concat(pieces, ' '), geometry_key
 	end
