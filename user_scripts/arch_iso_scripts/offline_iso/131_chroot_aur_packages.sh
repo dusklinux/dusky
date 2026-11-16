@@ -9,7 +9,6 @@
 
 # Group 1: aur_packages
 declare -ar pkgs_aur=(
-  "waybar-git"
   "wlogout"
   "adwaita-qt6"
   "adwaita-qt5"
