@@ -19,6 +19,7 @@ readonly -a REPO_TARGETS=(
     network-manager-applet
     firewalld
     hyprpolkitagent
+    waybar-git
 )
 readonly -a AUR_TARGETS=()
 
