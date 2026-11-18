@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-dusky-pkg-sync: Atomic precompiled package updater for Dusky Arch Linux.
+dusky_pkg_sync: Atomic precompiled package updater for Dusky Arch Linux.
 
 Detects both version/release bumps (via Arch `vercmp`) and same-version
 source rebuilds (via `source.sha256` and local pacman `%BUILDDATE%`), verifies
