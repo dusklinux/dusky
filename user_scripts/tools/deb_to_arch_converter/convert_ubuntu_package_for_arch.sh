@@ -983,6 +983,9 @@ def merge_tree(src: Path, dst: Path, symlink_Moves: dict[str, str]) -> None:
     """Recursively merges `src` into `dst`, recording old->new root-relative paths."""
     if not src.exists():
         return
+    with contextlib.suppress(OSError):
+        if src.resolve() == dst.resolve():
+            return
     dst.mkdir(parents=True, exist_ok=True)
     for item in list(src.iterdir()):
         target = dst / item.name
@@ -1020,6 +1023,13 @@ def normalize_filesystem(ctx: PackageBuildContext) -> None:
     ops = ctx.pkgbuild_ops
     is_i386 = ctx.control.arch_deb == "i386"
     pseudo = ctx.options.pseudo
+
+    # 0. Prune legacy root symlinks (e.g. /bin -> usr/bin, /lib -> usr/lib)
+    for sym in ("bin", "sbin", "lib", "lib64", "lib32"):
+        p = root / sym
+        if p.is_symlink():
+            p.unlink()
+            ops.append(f"rm -f {sym}")
 
     # 1. Relocate systemd units & udev rules under /lib -> /usr/lib
     for sub in ("systemd", "udev", "sysusers.d", "tmpfiles.d", "modprobe.d", "modules-load.d"):
