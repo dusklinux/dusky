@@ -954,6 +954,230 @@ impl TrayApp {
         }
     }
 
+    fn parse_leading_f64(s: &str) -> Option<f64> {
+        let trimmed = s.trim();
+        let mut end = 0usize;
+        let mut saw_digit = false;
+        let mut saw_dot = false;
+        for (i, ch) in trimmed.char_indices() {
+            if i == 0 && ch == '-' {
+                end = ch.len_utf8();
+            } else if ch.is_ascii_digit() {
+                saw_digit = true;
+                end = i + ch.len_utf8();
+            } else if ch == '.' && !saw_dot {
+                saw_dot = true;
+                end = i + ch.len_utf8();
+            } else {
+                break;
+            }
+        }
+        if !saw_digit {
+            return None;
+        }
+        trimmed[..end].parse::<f64>().ok()
+    }
+
+    fn parse_leading_u64(s: &str) -> Option<u64> {
+        let trimmed = s.trim();
+        let digits: String = trimmed.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if digits.is_empty() {
+            return None;
+        }
+        digits.parse::<u64>().ok()
+    }
+
+    fn tooltip_value_style(key: &str, value: &str, theme: AppTheme) -> (Color, Weight) {
+        if matches!(
+            value,
+            "N/A" | "Disabled" | "unknown" | "unavailable" | "off"
+        ) {
+            return (theme.muted, Weight::Normal);
+        }
+
+        match key {
+            "Cloudflare WARP" => {
+                if value.starts_with("Connected") {
+                    (saturate(theme.profiles[0], 0.9), Weight::Semibold)
+                } else {
+                    (theme.muted, Weight::Normal)
+                }
+            }
+            "Temp" => match Self::parse_leading_f64(value) {
+                Some(t) if t >= 85.0 => (theme.danger, Weight::Bold),
+                Some(t) if t >= 70.0 => (saturate(theme.profiles[2], 0.85), Weight::Semibold),
+                Some(_) => (theme.fg, Weight::Normal),
+                None => (theme.muted, Weight::Normal),
+            },
+            "Power" => match Self::parse_leading_f64(value) {
+                Some(w) if w >= 45.0 => (saturate(theme.profiles[2], 0.85), Weight::Semibold),
+                Some(_) => (theme.fg, Weight::Normal),
+                None => (theme.muted, Weight::Normal),
+            },
+            "Battery" => {
+                if value == "Discharging" {
+                    (saturate(theme.profiles[2], 0.8), Weight::Semibold)
+                } else if matches!(value, "Charging" | "Full" | "Not charging") {
+                    (saturate(theme.profiles[0], 0.85), Weight::Semibold)
+                } else if value.ends_with('%') {
+                    match Self::parse_leading_u64(value) {
+                        Some(pct) if pct <= 20 => (theme.danger, Weight::Bold),
+                        _ => (theme.fg, Weight::Normal),
+                    }
+                } else {
+                    (theme.fg, Weight::Normal)
+                }
+            }
+            "Remaining" => {
+                if matches!(value, "Full" | "Held") {
+                    (saturate(theme.profiles[0], 0.85), Weight::Semibold)
+                } else {
+                    (theme.fg, Weight::Normal)
+                }
+            }
+            "Wi-Fi" | "Bluetooth" => {
+                if value == "on" {
+                    (saturate(theme.accent, 1.2), Weight::Semibold)
+                } else if value.starts_with("applying") {
+                    (theme.secondary, Weight::Normal)
+                } else {
+                    (theme.muted, Weight::Normal)
+                }
+            }
+            "Pacman" | "AUR" | "Dusky commits (main)" => match Self::parse_leading_u64(value) {
+                Some(n) if n > 0 => (theme.accent, Weight::Semibold),
+                _ => (theme.muted, Weight::Normal),
+            },
+            _ => (theme.fg, Weight::Normal),
+        }
+    }
+
+    fn render_rich_tooltip(label: &str, theme: AppTheme) -> Element<'static, Message> {
+        let lines: Vec<&str> = label.lines().collect();
+        let total_lines = lines.len();
+        let key_color = Self::mix(theme.accent, theme.fg, 0.10);
+        let action_fg = saturate(theme.accent, 1.2);
+        let action_bg = Color {
+            a: 0.15,
+            ..theme.accent
+        };
+        let action_desc_color = Self::mix(theme.fg, theme.muted, 0.12);
+
+        let mut col = column![].spacing(3);
+        let mut prev_was_action = false;
+        let mut prev_was_blank = false;
+
+        for (idx, raw_line) in lines.into_iter().enumerate() {
+            let trimmed = raw_line.trim();
+            if trimmed.is_empty() {
+                col = col.push(Space::new().height(4.0));
+                prev_was_blank = true;
+                prev_was_action = false;
+                continue;
+            }
+
+            let action_split = ["LMB:", "RMB:", "MMB:"].into_iter().find_map(|prefix| {
+                trimmed
+                    .strip_prefix(prefix)
+                    .map(|rest| (prefix, rest.trim()))
+            });
+
+            if let Some((trigger, desc)) = action_split {
+                if idx > 0 && !prev_was_action && !prev_was_blank {
+                    col = col.push(Space::new().height(3.0));
+                }
+                let badge = container(
+                    text(trigger.to_owned())
+                        .size(11)
+                        .font(Font {
+                            weight: Weight::Bold,
+                            ..Font::DEFAULT
+                        })
+                        .color(action_fg),
+                )
+                .padding([1, 5])
+                .style(move |_| container::Style {
+                    background: Some(action_bg.into()),
+                    border: Border {
+                        radius: 4.0.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                });
+
+                let mut action_row = row![badge].spacing(6).align_y(Vertical::Center);
+                if !desc.is_empty() {
+                    action_row = action_row.push(
+                        text(desc.to_owned())
+                            .size(12)
+                            .color(action_desc_color),
+                    );
+                }
+                col = col.push(action_row);
+                prev_was_action = true;
+                prev_was_blank = false;
+                continue;
+            }
+
+            prev_was_action = false;
+            prev_was_blank = false;
+
+            if !trimmed.contains("://")
+                && let Some((raw_key, raw_val)) = trimmed.split_once(':')
+            {
+                let key = raw_key.trim();
+                let val = raw_val.trim();
+                if !key.is_empty() && !val.is_empty() {
+                    let (val_color, val_weight) = Self::tooltip_value_style(key, val, theme);
+                    let kv_row = row![
+                        text(format!("{key}:"))
+                            .size(12)
+                            .font(Font {
+                                weight: Weight::Semibold,
+                                ..Font::DEFAULT
+                            })
+                            .color(key_color),
+                        text(val.to_owned())
+                            .size(12)
+                            .font(Font {
+                                weight: val_weight,
+                                ..Font::DEFAULT
+                            })
+                            .color(val_color),
+                    ]
+                    .spacing(6)
+                    .align_y(Vertical::Center);
+                    col = col.push(kv_row);
+                    continue;
+                }
+            }
+
+            let is_offline = matches!(
+                trimmed,
+                "Disconnected" | "Network reading unavailable" | "No battery present"
+            );
+            let (title_color, title_weight) = if is_offline {
+                (theme.muted, Weight::Normal)
+            } else if idx == 0 && total_lines > 1 {
+                (theme.accent, Weight::Bold)
+            } else {
+                (Self::mix(theme.accent, theme.fg, 0.25), Weight::Semibold)
+            };
+
+            col = col.push(
+                text(trimmed.to_owned())
+                    .size(12)
+                    .font(Font {
+                        weight: title_weight,
+                        ..Font::DEFAULT
+                    })
+                    .color(title_color),
+            );
+        }
+
+        col.into()
+    }
+
     fn hint<'a>(
         content: impl Into<Element<'a, Message>>,
         label: String,
@@ -961,7 +1185,7 @@ impl TrayApp {
     ) -> Element<'a, Message> {
         tooltip(
             content,
-            text(label).size(12).color(theme.fg),
+            Self::render_rich_tooltip(&label, theme),
             tooltip::Position::Top,
         )
         .gap(8.0)
@@ -2707,7 +2931,8 @@ mod tests {
         let cpu = sys::CpuState {
             text: "10%".into(),
             power_watts: Some(14.2),
-            tooltip: "CPU: 10% · Power: 14.2 W\nLMB: Open btop".into(),
+            temp_c: Some(48.0),
+            tooltip: "Power: 14.2 W\nTemp: 48°C\nLMB: Open btop".into(),
         };
         let ram = sys::RamState {
             text: "4.0 GB".into(),
@@ -2715,9 +2940,11 @@ mod tests {
         };
         let net = sys::NetState {
             text: "12 KB 34".into(),
-            tooltip: "Upload: 12.0 KB/s\nDownload: 34.0 KB/s\nCloudflare WARP: Connected (ON)".into(),
+            tooltip: "Upload: 12.0 MiB (session)\nDownload: 34.0 MiB (session)\nCloudflare WARP: Connected (ON)".into(),
             disconnected: false,
             warp: sys::WarpStatus::Connected,
+            total_rx_bytes: 34 * 1_048_576,
+            total_tx_bytes: 12 * 1_048_576,
         };
 
         // Desktop / no battery present: always shows network meter + WARP ring + RMB hint, even if clicked
@@ -2740,7 +2967,7 @@ mod tests {
         assert_eq!(ring, Some(saturate(app.theme.accent, 1.2)));
         assert_eq!(
             hint,
-            "Upload: 12.0 KB/s\nDownload: 34.0 KB/s\nCloudflare WARP: Connected (ON)\nRMB: Toggle WARP"
+            "Upload: 12.0 MiB (session)\nDownload: 34.0 MiB (session)\nCloudflare WARP: Connected (ON)\nRMB: Toggle WARP"
         );
 
         let _ = app.update(Message::MetricPressed("net".into()));
@@ -2750,7 +2977,7 @@ mod tests {
         assert_eq!(ring, Some(saturate(app.theme.accent, 1.2)));
         assert_eq!(
             hint,
-            "Upload: 12.0 KB/s\nDownload: 34.0 KB/s\nCloudflare WARP: Connected (ON)\nRMB: Toggle WARP"
+            "Upload: 12.0 MiB (session)\nDownload: 34.0 MiB (session)\nCloudflare WARP: Connected (ON)\nRMB: Toggle WARP"
         );
         assert_eq!(app.show_battery_metric, None);
 
@@ -2785,13 +3012,13 @@ mod tests {
         assert_eq!(ring, Some(saturate(app.theme.accent, 1.2)));
         assert_eq!(
             hint,
-            "Upload: 12.0 KB/s\nDownload: 34.0 KB/s\nCloudflare WARP: Connected (ON)\nLMB: Battery power\nRMB: Toggle WARP"
+            "Upload: 12.0 MiB (session)\nDownload: 34.0 MiB (session)\nCloudflare WARP: Connected (ON)\nLMB: Battery power\nRMB: Toggle WARP"
         );
 
         // Plugging in / charging with WARP installed but disconnected -> no ring, keeps WARP status and RMB hint
         let net_warp_off = sys::NetState {
             warp: sys::WarpStatus::Disconnected,
-            tooltip: "Upload: 12.0 KB/s\nDownload: 34.0 KB/s\nCloudflare WARP: Disconnected (OFF)".into(),
+            tooltip: "Upload: 12.0 MiB (session)\nDownload: 34.0 MiB (session)\nCloudflare WARP: Disconnected (OFF)".into(),
             ..net.clone()
         };
         let charging = sys::BatteryState {
@@ -2813,7 +3040,7 @@ mod tests {
         assert_eq!(ring, None);
         assert_eq!(
             hint,
-            "Upload: 12.0 KB/s\nDownload: 34.0 KB/s\nCloudflare WARP: Disconnected (OFF)\nLMB: Battery power\nRMB: Toggle WARP"
+            "Upload: 12.0 MiB (session)\nDownload: 34.0 MiB (session)\nCloudflare WARP: Disconnected (OFF)\nLMB: Battery power\nRMB: Toggle WARP"
         );
 
         let _ = app.update(Message::MetricPressed("net".into()));
@@ -2829,9 +3056,11 @@ mod tests {
         // WARP not installed -> no ring, no WARP tooltip line, no RMB hint
         let net_no_warp = sys::NetState {
             text: "12 KB 34".into(),
-            tooltip: "Upload: 12.0 KB/s\nDownload: 34.0 KB/s".into(),
+            tooltip: "Upload: 12.0 MiB (session)\nDownload: 34.0 MiB (session)".into(),
             disconnected: false,
             warp: sys::WarpStatus::NotInstalled,
+            total_rx_bytes: 34 * 1_048_576,
+            total_tx_bytes: 12 * 1_048_576,
         };
         let _ = app.update(Message::MetricsLoaded((
             cpu.clone(),
@@ -2843,7 +3072,10 @@ mod tests {
         assert_eq!(val, "12 KB 34");
         assert_eq!(color, app.theme.fg);
         assert_eq!(ring, None);
-        assert_eq!(hint, "Upload: 12.0 KB/s\nDownload: 34.0 KB/s");
+        assert_eq!(
+            hint,
+            "Upload: 12.0 MiB (session)\nDownload: 34.0 MiB (session)"
+        );
 
         let _ = app.update(Message::MetricsLoaded((
             cpu,
@@ -2867,7 +3099,61 @@ mod tests {
         assert_eq!(ring, None);
         assert_eq!(
             hint,
-            "Upload: 12.0 KB/s\nDownload: 34.0 KB/s\nLMB: Battery power"
+            "Upload: 12.0 MiB (session)\nDownload: 34.0 MiB (session)\nLMB: Battery power"
         );
+    }
+
+    #[test]
+    fn rich_tooltip_parses_semantic_colors_and_builds_widget_tree() {
+        let theme = AppTheme::load();
+
+        // Temperature thresholds
+        assert_eq!(
+            TrayApp::tooltip_value_style("Temp", "45°C", theme),
+            (theme.fg, Weight::Normal)
+        );
+        assert_eq!(
+            TrayApp::tooltip_value_style("Temp", "75°C", theme),
+            (saturate(theme.profiles[2], 0.85), Weight::Semibold)
+        );
+        assert_eq!(
+            TrayApp::tooltip_value_style("Temp", "90°C", theme),
+            (theme.danger, Weight::Bold)
+        );
+        assert_eq!(
+            TrayApp::tooltip_value_style("Temp", "N/A", theme),
+            (theme.muted, Weight::Normal)
+        );
+
+        // WARP & update counts
+        assert_eq!(
+            TrayApp::tooltip_value_style("Cloudflare WARP", "Connected (ON)", theme),
+            (saturate(theme.profiles[0], 0.9), Weight::Semibold)
+        );
+        assert_eq!(
+            TrayApp::tooltip_value_style("Cloudflare WARP", "Disconnected (OFF)", theme),
+            (theme.muted, Weight::Normal)
+        );
+        assert_eq!(
+            TrayApp::tooltip_value_style("Pacman", "12", theme),
+            (theme.accent, Weight::Semibold)
+        );
+        assert_eq!(
+            TrayApp::tooltip_value_style("AUR", "0", theme),
+            (theme.muted, Weight::Normal)
+        );
+
+        // Ensure multi-line, single-line, colon-ratio, blank-line, and empty inputs build cleanly
+        for sample in [
+            "",
+            "Power menu",
+            "Disconnected",
+            "Power: 14.2 W\nTemp: 52°C\nLMB: Open btop",
+            "Memory: 8.0 GiB / 16.0 GiB (50%)\nDirty cache: 16.0 MiB\nSwap: 2.0 GiB / 8.0 GiB\nZRAM: 160 MiB physical · 4.0:1 ratio\nLMB: Open zramctl",
+            "Cached update counts\nPacman: 4\nAUR: 0\n\nLMB: System Update\nRMB: Dusky Update",
+        ] {
+            let elem = TrayApp::render_rich_tooltip(sample, theme);
+            drop(elem);
+        }
     }
 }

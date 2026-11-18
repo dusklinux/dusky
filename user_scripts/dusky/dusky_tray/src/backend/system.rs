@@ -1034,6 +1034,7 @@ pub fn set_bt(on: bool) -> Option<bool> {
 pub struct CpuState {
     pub text: String,
     pub power_watts: Option<f64>,
+    pub temp_c: Option<f64>,
     pub tooltip: String,
 }
 
@@ -1042,7 +1043,8 @@ impl Default for CpuState {
         Self {
             text: "--".into(),
             power_watts: None,
-            tooltip: "CPU: -- · Power: N/A\nLMB: Open btop".into(),
+            temp_c: None,
+            tooltip: "Power: N/A\nTemp: N/A\nLMB: Open btop".into(),
         }
     }
 }
@@ -1210,6 +1212,170 @@ fn sample_cpu_power_watts() -> Option<f64> {
     let mut guard = TRACKER.lock().unwrap_or_else(|e| e.into_inner());
     let tracker = guard.get_or_insert_with(RaplTracker::default);
     rapl_power_reading(Path::new("/sys/class/powercap"), now, tracker)
+}
+
+#[derive(Debug, Default)]
+struct CpuTempTracker {
+    sensor_path: Option<PathBuf>,
+    last_discovery: Option<Duration>,
+}
+
+fn sorted_prefixed_entries(dir: &Path, prefix: &str) -> Vec<(u32, PathBuf)> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut items: Vec<(u32, PathBuf)> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name();
+            let name_str = name.to_str()?;
+            let suffix = name_str.strip_prefix(prefix)?;
+            if suffix.is_empty() || !suffix.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            let idx = suffix.parse::<u32>().ok()?;
+            Some((idx, entry.path()))
+        })
+        .collect();
+    items.sort_unstable_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    items
+}
+
+fn read_temp_c(path: &Path) -> Option<f64> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    let token = raw.lines().next()?.trim();
+    let millideg = token.parse::<i64>().ok()?;
+    let celsius = millideg as f64 / 1000.0;
+    (-40.0..=150.0).contains(&celsius).then_some(celsius)
+}
+
+fn find_labeled_hwmon_input(hwmon_dir: &Path, wanted_label: &str) -> Option<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(hwmon_dir) else {
+        return None;
+    };
+    let mut labels: Vec<(u32, PathBuf)> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name();
+            let name_str = name.to_str()?;
+            let mid = name_str.strip_prefix("temp")?.strip_suffix("_label")?;
+            if mid.is_empty() || !mid.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            let idx = mid.parse::<u32>().ok()?;
+            Some((idx, entry.path()))
+        })
+        .collect();
+    labels.sort_unstable_by_key(|(idx, _)| *idx);
+
+    for (idx, label_path) in labels {
+        let Ok(label_txt) = std::fs::read_to_string(&label_path) else {
+            continue;
+        };
+        if label_txt.trim() == wanted_label {
+            let input_path = hwmon_dir.join(format!("temp{idx}_input"));
+            if read_temp_c(&input_path).is_some() {
+                return Some(input_path);
+            }
+        }
+    }
+    None
+}
+
+fn discover_cpu_temp_sensor_in(hwmon_root: &Path, thermal_root: &Path) -> Option<PathBuf> {
+    let hwmons = sorted_prefixed_entries(hwmon_root, "hwmon");
+    for wanted in ["coretemp", "k10temp", "zenpower", "cpu_thermal"] {
+        for (_, dir) in &hwmons {
+            let Ok(name) = std::fs::read_to_string(dir.join("name")) else {
+                continue;
+            };
+            if name.trim() != wanted {
+                continue;
+            }
+            if wanted == "coretemp"
+                && let Some(pkg_input) = find_labeled_hwmon_input(dir, "Package id 0")
+            {
+                return Some(pkg_input);
+            }
+            if wanted == "k10temp"
+                && let Some(tdie_input) = find_labeled_hwmon_input(dir, "Tdie")
+            {
+                return Some(tdie_input);
+            }
+            let temp1 = dir.join("temp1_input");
+            if read_temp_c(&temp1).is_some() {
+                return Some(temp1);
+            }
+        }
+    }
+
+    let zones = sorted_prefixed_entries(thermal_root, "thermal_zone");
+    for (_, dir) in &zones {
+        let Ok(zone_type) = std::fs::read_to_string(dir.join("type")) else {
+            continue;
+        };
+        if zone_type.trim().contains("x86_pkg_temp") {
+            let temp_path = dir.join("temp");
+            if read_temp_c(&temp_path).is_some() {
+                return Some(temp_path);
+            }
+        }
+    }
+    for (_, dir) in &zones {
+        let Ok(zone_type) = std::fs::read_to_string(dir.join("type")) else {
+            continue;
+        };
+        if zone_type.trim().to_ascii_lowercase().contains("cpu") {
+            let temp_path = dir.join("temp");
+            if read_temp_c(&temp_path).is_some() {
+                return Some(temp_path);
+            }
+        }
+    }
+
+    None
+}
+
+fn cpu_temp_reading(
+    hwmon_root: &Path,
+    thermal_root: &Path,
+    now: Option<Duration>,
+    tracker: &mut CpuTempTracker,
+) -> Option<f64> {
+    if let Some(path) = tracker.sensor_path.as_ref() {
+        if let Some(temp) = read_temp_c(path) {
+            return Some(temp);
+        }
+        tracker.sensor_path = None;
+    }
+
+    let can_discover = match (now, tracker.last_discovery) {
+        (Some(now), Some(last)) => now.saturating_sub(last) >= Duration::from_secs(5),
+        (Some(_), None) => true,
+        (None, _) => tracker.last_discovery.is_none(),
+    };
+    if !can_discover {
+        return None;
+    }
+
+    tracker.last_discovery = now;
+    let found = discover_cpu_temp_sensor_in(hwmon_root, thermal_root)?;
+    let temp = read_temp_c(&found)?;
+    tracker.sensor_path = Some(found);
+    Some(temp)
+}
+
+fn sample_cpu_temp_c() -> Option<f64> {
+    static TRACKER: std::sync::Mutex<Option<CpuTempTracker>> = std::sync::Mutex::new(None);
+    let now = network_time();
+    let mut guard = TRACKER.lock().unwrap_or_else(|e| e.into_inner());
+    let tracker = guard.get_or_insert_with(CpuTempTracker::default);
+    cpu_temp_reading(
+        Path::new("/sys/class/hwmon"),
+        Path::new("/sys/class/thermal"),
+        now,
+        tracker,
+    )
 }
 
 fn format_iec_bytes(bytes: u64) -> String {
@@ -1398,10 +1564,16 @@ pub fn cpu_ram_state() -> (CpuState, RamState) {
         Some(w) => format!("{w:.1} W"),
         None => "N/A".to_owned(),
     };
+    let temp_c = sample_cpu_temp_c();
+    let temp_str = match temp_c {
+        Some(t) => format!("{t:.0}°C"),
+        None => "N/A".to_owned(),
+    };
     let cpu = CpuState {
-        tooltip: format!("CPU: {cpu_text} · Power: {power_str}\nLMB: Open btop"),
+        tooltip: format!("Power: {power_str}\nTemp: {temp_str}\nLMB: Open btop"),
         text: cpu_text,
         power_watts,
+        temp_c,
     };
 
     let ram = match std::fs::read_to_string("/proc/meminfo") {
@@ -1442,6 +1614,26 @@ pub struct NetState {
     pub tooltip: String,
     pub disconnected: bool,
     pub warp: WarpStatus,
+    pub total_rx_bytes: u64,
+    pub total_tx_bytes: u64,
+}
+
+fn format_net_bytes(bytes: u64) -> String {
+    const KIB: u64 = 1_024;
+    const MIB: u64 = 1_048_576;
+    const GIB: u64 = 1_073_741_824;
+    const TIB: u64 = 1_099_511_627_776;
+    if bytes < KIB {
+        format!("{bytes} B")
+    } else if bytes < MIB {
+        format!("{:.1} KiB", bytes as f64 / KIB as f64)
+    } else if bytes < GIB {
+        format!("{:.1} MiB", bytes as f64 / MIB as f64)
+    } else if bytes < TIB {
+        format!("{:.2} GiB", bytes as f64 / GIB as f64)
+    } else {
+        format!("{:.2} TiB", bytes as f64 / TIB as f64)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1600,6 +1792,8 @@ fn network_reading(
             tooltip,
             disconnected: false,
             warp,
+            total_rx_bytes: 0,
+            total_tx_bytes: 0,
         };
     };
     if counters.is_empty() {
@@ -1611,8 +1805,15 @@ fn network_reading(
             tooltip,
             disconnected: true,
             warp,
+            total_rx_bytes: 0,
+            total_tx_bytes: 0,
         };
     }
+    let (total_rx_u128, total_tx_u128) = counters.iter().fold((0u128, 0u128), |(rx, tx), c| {
+        (rx + u128::from(c.rx), tx + u128::from(c.tx))
+    });
+    let total_rx_bytes = total_rx_u128.min(u128::from(u64::MAX)) as u64;
+    let total_tx_bytes = total_tx_u128.min(u128::from(u64::MAX)) as u64;
     let (rx, tx) = previous
         .as_ref()
         .and_then(|sample| {
@@ -1653,9 +1854,9 @@ fn network_reading(
         (1024.0, "KB")
     };
     let mut tooltip = format!(
-        "Upload: {:.1} {unit}/s\nDownload: {:.1} {unit}/s",
-        tx / scale,
-        rx / scale
+        "Upload: {} (session)\nDownload: {} (session)",
+        format_net_bytes(total_tx_bytes),
+        format_net_bytes(total_rx_bytes),
     );
     append_warp_status(&mut tooltip, warp);
     NetState {
@@ -1663,6 +1864,8 @@ fn network_reading(
         tooltip,
         disconnected: false,
         warp,
+        total_rx_bytes,
+        total_tx_bytes,
     }
 }
 
@@ -2389,9 +2592,11 @@ mod tests {
         );
         assert_eq!(reading.text, "3 KB 3");
         assert_eq!(reading.warp, WarpStatus::Connected);
+        assert_eq!(reading.total_rx_bytes, 10_144);
+        assert_eq!(reading.total_tx_bytes, 12_144);
         assert_eq!(
             reading.tooltip,
-            "Upload: 3.0 KB/s\nDownload: 3.0 KB/s\nCloudflare WARP: Connected (ON)"
+            "Upload: 11.9 KiB (session)\nDownload: 9.9 KiB (session)\nCloudflare WARP: Connected (ON)"
         );
         let mb = vec![net_counter("eth0", 2 << 20, 2 << 20)];
         previous = None;
@@ -2409,9 +2614,11 @@ mod tests {
         );
         assert_eq!(reading_off.text, "1 MB 1");
         assert_eq!(reading_off.warp, WarpStatus::Disconnected);
+        assert_eq!(reading_off.total_rx_bytes, 2 << 20);
+        assert_eq!(reading_off.total_tx_bytes, 2 << 20);
         assert_eq!(
             reading_off.tooltip,
-            "Upload: 1.0 MB/s\nDownload: 1.0 MB/s\nCloudflare WARP: Disconnected (OFF)"
+            "Upload: 2.0 MiB (session)\nDownload: 2.0 MiB (session)\nCloudflare WARP: Disconnected (OFF)"
         );
 
         // When WARP is not installed, omit WARP status from the tooltip entirely
@@ -2431,7 +2638,7 @@ mod tests {
         assert_eq!(reading_not_installed.warp, WarpStatus::NotInstalled);
         assert_eq!(
             reading_not_installed.tooltip,
-            "Upload: 1.0 MB/s\nDownload: 1.0 MB/s"
+            "Upload: 2.0 MiB (session)\nDownload: 2.0 MiB (session)"
         );
     }
 
@@ -2827,6 +3034,75 @@ mod tests {
     fn cpu_ram_no_panic() {
         let (c, r) = cpu_ram();
         assert!(!c.is_empty() && !r.is_empty());
+    }
+
+    #[test]
+    fn format_net_bytes_scales_iec_units_cleanly() {
+        assert_eq!(format_net_bytes(0), "0 B");
+        assert_eq!(format_net_bytes(999), "999 B");
+        assert_eq!(format_net_bytes(1_024), "1.0 KiB");
+        assert_eq!(format_net_bytes(1_536), "1.5 KiB");
+        assert_eq!(format_net_bytes(126_248_550), "120.4 MiB");
+        assert_eq!(format_net_bytes(1_556_925_645), "1.45 GiB");
+        assert_eq!(format_net_bytes(2_199_023_255_552), "2.00 TiB");
+    }
+
+    #[test]
+    fn cpu_temp_discovery_prioritizes_drivers_tdie_and_caches_with_cooldown() {
+        let root = runtime_dir().join(format!("cputemp-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let hwmon = root.join("hwmon");
+        let thermal = root.join("thermal");
+        std::fs::create_dir_all(&hwmon).unwrap();
+        std::fs::create_dir_all(&thermal).unwrap();
+
+        // Populate a lower-priority thermal_zone first
+        let tz0 = thermal.join("thermal_zone0");
+        std::fs::create_dir_all(&tz0).unwrap();
+        std::fs::write(tz0.join("type"), "x86_pkg_temp\n").unwrap();
+        std::fs::write(tz0.join("temp"), "39000\n").unwrap();
+
+        let mut tracker = CpuTempTracker::default();
+        let t_tz = cpu_temp_reading(&hwmon, &thermal, Some(Duration::from_secs(10)), &mut tracker)
+            .unwrap();
+        assert!((t_tz - 39.0).abs() < 1e-6);
+
+        // Add k10temp with Tctl (temp1) and Tdie (temp2)
+        let h2 = hwmon.join("hwmon2");
+        std::fs::create_dir_all(&h2).unwrap();
+        std::fs::write(h2.join("name"), "k10temp\n").unwrap();
+        std::fs::write(h2.join("temp1_label"), "Tctl\n").unwrap();
+        std::fs::write(h2.join("temp1_input"), "68000\n").unwrap();
+        std::fs::write(h2.join("temp2_label"), "Tdie\n").unwrap();
+        std::fs::write(h2.join("temp2_input"), "54500\n").unwrap();
+
+        // While cached path (tz0) remains valid, hot path uses it directly
+        let still_cached =
+            cpu_temp_reading(&hwmon, &thermal, Some(Duration::from_secs(11)), &mut tracker)
+                .unwrap();
+        assert!((still_cached - 39.0).abs() < 1e-6);
+
+        // Removing cached sensor invalidates cache; cooldown (<5s) prevents immediate rescan
+        std::fs::remove_file(tz0.join("temp")).unwrap();
+        assert!(
+            cpu_temp_reading(&hwmon, &thermal, Some(Duration::from_secs(12)), &mut tracker)
+                .is_none()
+        );
+
+        // After 5s cooldown, rediscovery finds k10temp Tdie (54.5°C)
+        let t_tdie =
+            cpu_temp_reading(&hwmon, &thermal, Some(Duration::from_secs(16)), &mut tracker)
+                .unwrap();
+        assert!((t_tdie - 54.5).abs() < 1e-6);
+
+        // Out-of-bounds sentinel reading invalidates cache cleanly
+        std::fs::write(h2.join("temp2_input"), "-273000\n").unwrap();
+        assert!(
+            cpu_temp_reading(&hwmon, &thermal, Some(Duration::from_secs(18)), &mut tracker)
+                .is_none()
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
