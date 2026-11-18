@@ -777,6 +777,7 @@ def compute_extended_base_packages() -> set[str]:
     try:
         res = subprocess.run(
             ["pacman", "-Qi", "base"],
+            env={**os.environ, "LC_ALL": "C"},
             capture_output=True,
             text=True,
             check=False,
