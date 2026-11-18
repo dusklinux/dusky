@@ -241,6 +241,8 @@ class PresetMatchMatrix:
         items: list[Any] = []
         presets: list[Any] = []
         for _t, _i, item in configurable_items:
+            if is_trigger_item(item):
+                continue
             match item.type_:
                 case "preset":
                     presets.append(item)
@@ -283,7 +285,7 @@ class PresetMatchMatrix:
         touched = False
         seen: set[str] = set()
         for it in items:
-            if it.type_ in ("preset", "action", "menu"):
+            if it.type_ in ("preset", "action", "menu") or is_trigger_item(it):
                 continue
             uid = it.uid
             if uid in seen:
@@ -301,9 +303,8 @@ class PresetMatchMatrix:
                 self._recompute_preset(puid)
 
     def on_item_changed(self, item: Any) -> None:
-        match item.type_:
-            case "preset" | "action" | "menu":
-                return
+        if item.type_ in ("preset", "action", "menu") or is_trigger_item(item):
+            return
 
         uid = item.uid
         new_ser = item.serialize(item.value)
@@ -440,9 +441,9 @@ def _append_value_preview(
     color_field: bool = False, swatch_style: str | None = None,
 ) -> None:
     """Render a swatch or the unchanged text, without changing stored values."""
-    color = _color_preview_hex(value, color_field)
+    color = _color_preview_hex(value.strip(), color_field)
     if color is None:
-        text.append(prefix + value, style=style)
+        text.append(prefix + value.rstrip(), style=style)
     else:
         if prefix:
             text.append(prefix, style=style)
@@ -1989,8 +1990,8 @@ ConfigOptionList {
 ConfigOptionList > .option-list--option {
     padding: 0 1; background: transparent;
 }
-ConfigOptionList > .option-list--option-hover { background: $primary 10%; }
-ConfigOptionList > .option-list--option-highlighted { background: $primary 20%; }
+ConfigOptionList > .option-list--option-hover { background: transparent; }
+ConfigOptionList > .option-list--option-highlighted { background: transparent; }
 ConfigOptionList > .option-list--option-disabled { background: transparent; color: $primary; }
 
 .indicator-column { width: 2; height: 1fr; background: transparent; align: right top; }
@@ -2347,6 +2348,8 @@ Tooltip {
 
         # Debounce timer for preset UI refreshes.
         self._preset_refresh_timer: Timer | None = None
+        self._flashed_actions: set[str] = set()
+        self._flashed_action_timers: dict[str, Timer] = {}
 
         # Theme colors.
         palette = self.get_css_variables()
@@ -2689,13 +2692,35 @@ Tooltip {
             return None
         return None
 
+    def _flash_action_ui(self, item: ConfigItem, duration: float = 0.8) -> None:
+        uid = self._get_item_uid(item)
+        self._flashed_actions.add(uid)
+        if hasattr(self, "_option_cache"):
+            self._option_cache.invalidate_uid(uid, include_presets=False)
+        for t_idx, i_idx, itm in self._items_by_uid.get(uid, []):
+            self._refresh_single_ui(t_idx, i_idx, itm)
+
+        if timer := self._flashed_action_timers.get(uid):
+            timer.stop()
+
+        def unflash():
+            self._flashed_actions.discard(uid)
+            self._flashed_action_timers.pop(uid, None)
+            if hasattr(self, "_option_cache"):
+                self._option_cache.invalidate_uid(uid, include_presets=False)
+            for t_idx, i_idx, itm in self._items_by_uid.get(uid, []):
+                self._refresh_single_ui(t_idx, i_idx, itm)
+
+        self._flashed_action_timers[uid] = self.set_timer(duration, unflash)
+
     def _on_item_value_changed(self, item: ConfigItem) -> None:
+        is_stateless = item.type_ in ("preset", "action", "menu") or is_trigger_item(item)
         if hasattr(self, "_option_cache"):
             self._option_cache.invalidate_uid(
                 item.uid,
-                include_presets=item.type_ not in ("preset", "action", "menu"),
+                include_presets=not is_stateless,
             )
-        if item.type_ not in ("preset", "action", "menu"):
+        if not is_stateless:
             # Preset matching is global-only: per-file overrides (e.g. per-game GPU) should NOT
             # pollute the global preset ratio. Only default-engine items participate.
             try:
@@ -2948,9 +2973,16 @@ Tooltip {
         val_ser = item.serialize(item.value)
         def_ser = item.serialize(item.default)
         ratio_bucket = int(self._get_preset_match_ratio(item) * 10) if item.type_ == "preset" else -1
+        is_flashed = (
+            getattr(self, "_flashed_actions", None) is not None
+            and self._get_item_uid(item) in self._flashed_actions
+        )
 
         if item.is_parent or item.type_ == "menu":
             is_modified, is_pending = self._get_parent_children_status(item, tab_idx)
+        elif is_trigger_item(item):
+            is_pending = False
+            is_modified = False
         else:
             is_pending = self._item_is_pending(item)
             is_modified = (val_ser != def_ser)
@@ -2984,6 +3016,7 @@ Tooltip {
                 ratio_bucket,
                 self.auto_save,
                 getattr(self, "_theme_version", 0),
+                is_flashed,
             ),
         )
 
@@ -3095,8 +3128,14 @@ Tooltip {
 
             elif item.type_ == "action":
                 txt.append(
-                    "󰐊 Run",
-                    style=f"bold {self.theme_colors['accent']}" if exists else f"{self.theme_colors['muted']} italic"
+                    "󰄬 Run" if is_flashed else "󰐊 Run",
+                    style=(
+                        f"bold {self.theme_colors['success']}"
+                        if (exists and is_flashed)
+                        else f"bold {self.theme_colors['accent']}"
+                        if exists
+                        else f"{self.theme_colors['muted']} italic"
+                    ),
                 )
 
         else:
@@ -3122,20 +3161,24 @@ Tooltip {
                         else:
                             btn_label = "󰐊 Apply"
 
+                        is_triggered = bool(item.value) or is_flashed
+                        btn_prefix = "󰄬 " if is_triggered else btn_label[:2]
+                        btn_style = (
+                            f"bold {self.theme_colors['success']}"
+                            if is_triggered
+                            else f"bold {self.theme_colors['accent']}"
+                        )
+
                         if not exists:
                             _append_value_preview(
                                 txt, btn_label[2:], f"{self.theme_colors['muted']} italic",
-                                prefix=btn_label[:2], swatch_style=self.theme_colors['muted'],
+                                prefix=btn_prefix, swatch_style=self.theme_colors['muted'],
                             )
                         else:
                             _append_value_preview(
                                 txt, btn_label[2:],
-                                (
-                                    f"bold {self.theme_colors['bg']} on {self.theme_colors['accent']}"
-                                    if item.value
-                                    else f"bold {self.theme_colors['accent']}"
-                                ),
-                                prefix=btn_label[:2],
+                                btn_style,
+                                prefix=btn_prefix,
                             )
 
                     elif not exists:
@@ -5773,7 +5816,7 @@ Tooltip {
                     if self._write_generation.get(uek) == reset_generation:
                         self._reset_trigger_ui(item)
 
-                self.set_timer(0.15, reset_trigger)
+                self.set_timer(0.75, reset_trigger)
 
             message = msg if self._get_item_engine_info(item)[0] == "network" and msg else f"Updated {item.label}"
             self.notify_status(message, level="success")
@@ -6624,6 +6667,9 @@ Tooltip {
 
         match item.type_:
             case "bool":
+                if is_trigger_item(item):
+                    self._safe_apply_value(tab_idx, item_idx, item, True, record_undo=False)
+                    return
                 new_val = not item.value
 
             case "int" | "float":
@@ -7064,8 +7110,12 @@ Tooltip {
 
         trigger_bool = is_trigger_item(item)
 
-        if (item.type_ in ("preset", "action") or trigger_bool) and click_x >= 40:
-            instant_action = True
+        if item.type_ in ("preset", "action") or trigger_bool:
+            rendered_btn_row = self._build_option(
+                item, True, indent_prefix=indent_prefix, tab_idx=tab_idx
+            )
+            if 40 <= click_x <= rendered_btn_row.cell_len + 2:
+                instant_action = True
 
         if item.key in ("__save_new_preset", "__import_new_preset") and (1 <= click_x <= 17):
             instant_action = True
@@ -7096,6 +7146,8 @@ Tooltip {
 
         if item.is_parent or item.type_ == "menu":
             is_modified, _ = self._get_parent_children_status(item, tab_idx)
+        elif is_trigger_item(item):
+            is_modified = False
         else:
             is_modified = str(item.value) != str(item.default)
 
@@ -7618,6 +7670,7 @@ Tooltip {
             if getattr(self, "_action_shutdown_started", False):
                 self.notify_status("Shutting down; action not started.", level="warning")
                 return
+            self._flash_action_ui(item)
             self.notify_status(f"Executing: {item.label}...", level="info")
 
             forced = getattr(item, "force_interactive", None)
