@@ -5,7 +5,7 @@ Creates the DUSKY Btrfs subvolumes and swapfile, and preserves existing EFI data
 """
 
 from __future__ import annotations
-import os, sys, re, json, shlex, shutil, signal, subprocess, tempfile, argparse
+import os, sys, re, json, shlex, shutil, signal, subprocess, tempfile, argparse, getpass
 from pathlib import Path
 
 def _ensure_rich():
@@ -64,6 +64,15 @@ def run(*cmd, check=True, capture=True, input_text=None, timeout=300):
         if detail and detail.strip():
             console.print(Text(f"Details: {detail.strip()}", style="red"))
         raise
+    except subprocess.TimeoutExpired as error:
+        if check:
+            raise
+        detail = f"{argv[0]}: timed out after {timeout}s"
+        return subprocess.CompletedProcess(
+            argv, 124,
+            stdout=(error.stdout or b"") if binary else (error.stdout or ""),
+            stderr=detail.encode() if binary else detail,
+        )
     except OSError:
         if check:
             raise
@@ -216,21 +225,28 @@ def is_empty_dir(p: Path):
     except:
         return False
 
-def ensure_subvolume(path: Path, nocow=False):
+def ensure_subvolume(path: Path, nocow=False, rescue=False) -> bool:
     if path.exists():
         r = run("btrfs","subvolume","show",str(path), check=False, capture=True)
         if r.returncode!=0:
+            if rescue and path.name != "@":
+                console.print(f"[yellow]Rescue mode: {path.name} is not a subvolume, skipping separate mount.[/yellow]")
+                return False
             console.print(f"[red]{path} exists not subvol[/red]")
             sys.exit(1)
         existed=True
     else:
-        run("btrfs","subvolume","create",str(path), capture=True)
+        if rescue and path.name != "@":
+            console.print(f"[yellow]Rescue mode: subvolume {path.name} not present on disk, skipping creation.[/yellow]")
+            return False
+        run("btrfs","subvolume","create","-p",str(path), capture=True)
         existed=False
     if nocow and (not existed or is_empty_dir(path)):
         # compression=none sets NOCOMPRESS (m), which conflicts with NOCOW.
-        run("chattr", "-c", str(path), capture=True)
-        run("chattr", "-m", str(path), capture=True)
+        run("chattr", "-c", str(path), check=False, capture=True)
+        run("chattr", "-m", str(path), check=False, capture=True)
         run("chattr", "+C", str(path), capture=True)
+    return True
 
 def load_state():
     state={}
@@ -241,7 +257,11 @@ def load_state():
             pass
     if STATE_ENV.exists():
         try:
-            script=f'set +u; source {shlex.quote(str(STATE_ENV))} 2>/dev/null; printf "PROVISIONED_ROOT_PART=%s\\nPROVISIONED_EFI_PART=%s\\nENCRYPT_ROOT=%s\\n" "$PROVISIONED_ROOT_PART" "$PROVISIONED_EFI_PART" "$ENCRYPT_ROOT"'
+            script=(
+                f'set +u; source {shlex.quote(str(STATE_ENV))} 2>/dev/null; '
+                'printf "PROVISIONED_ROOT_PART=%s\\nPROVISIONED_EFI_PART=%s\\nENCRYPT_ROOT=%s\\nPROVISIONED_DISK=%s\\nPROVISIONED_BOOT_MODE=%s\\nPROVISIONED_STRATEGY=%s\\n" '
+                '"$PROVISIONED_ROOT_PART" "$PROVISIONED_EFI_PART" "$ENCRYPT_ROOT" "$PROVISIONED_DISK" "$PROVISIONED_BOOT_MODE" "$PROVISIONED_STRATEGY"'
+            )
             r=subprocess.run(["bash","-c",script],text=True,capture_output=True,check=False,timeout=5)
             for line in r.stdout.splitlines():
                 if "=" not in line:
@@ -255,6 +275,12 @@ def load_state():
                     state.setdefault("efi_part",v)
                 elif k=="ENCRYPT_ROOT":
                     state.setdefault("encrypt",v=="1")
+                elif k=="PROVISIONED_DISK":
+                    state.setdefault("disk",v)
+                elif k=="PROVISIONED_BOOT_MODE":
+                    state.setdefault("boot_mode",v)
+                elif k=="PROVISIONED_STRATEGY" and v.isdigit():
+                    state.setdefault("strategy",int(v))
         except:
             pass
     return state
@@ -263,11 +289,9 @@ def get_partition_path(disk,num):
     disk=disk.rstrip("/")
     num_str=str(num)
     name=Path(disk).name
-    if re.search(rf"\d+p{num_str}$",name):
+    if (Path("/sys/class/block") / name / "partition").exists():
         return disk
-    if re.search(rf"[a-zA-Z]{num_str}$",name) and not re.search(r"(?:nvme\d+n\d+|mmcblk\d+|loop\d+|nbd\d+|pmem\d+)$",name):
-        return disk
-    if re.search(r"(?:nvme\d+n\d+|mmcblk\d+|loop\d+|nbd\d+|pmem\d+)$",name) or (disk and disk[-1].isdigit()):
+    if name and name[-1].isdigit():
         return f"{disk}p{num_str}"
     return f"{disk}{num_str}"
 
@@ -283,16 +307,24 @@ def load_root_password():
     except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return None
 
+def _is_valid_block_partition(rp: Path) -> bool:
+    if not rp.exists() or not rp.is_block_device():
+        return False
+    return (Path("/sys/class/block") / rp.name / "partition").exists()
+
 def determine_root_partition(auto_mode):
     state=load_state()
     provisioned = state.get("root_part")
     mapped = Path("/dev/mapper/cryptroot")
-    if provisioned:
+    use_provisioned = bool(provisioned) and (
+        auto_mode or not sys.stdin.isatty() or Confirm.ask(f"Use provisioned ROOT partition {provisioned}?", console=console, default=True)
+    )
+    if use_provisioned:
         root_part = Path(provisioned).resolve()
         if not root_part.exists():
             console.print(f"[red]Provisioned root {root_part} is missing.[/red]")
             sys.exit(1)
-    elif state.get("encrypt") is True and mapped.exists():
+    elif auto_mode and state.get("encrypt") is True and mapped.exists():
         root_part = mapper_backing()
     elif auto_mode:
         r=run("lsblk","-pnro","NAME,FSTYPE,LABEL",check=False,capture=True)
@@ -302,13 +334,13 @@ def determine_root_partition(auto_mode):
             cols=line.split()
             if len(cols)<2:
                 continue
-            name=cols[0]
-            fstype=cols[1]
+            name, fstype = cols[0], cols[1]
             label=cols[2] if len(cols)>2 else ""
-            if fstype=="btrfs":
+            if fstype in ("btrfs", "crypto_LUKS"):
                 if label==DUSKY_ROOT_LABEL:
                     duskies.append(name)
-                btrfs_parts.append(name)
+                if fstype=="btrfs":
+                    btrfs_parts.append(name)
         if len(duskies)==1:
             root_part=Path(duskies[0]).resolve()
             mapped_root=root_part
@@ -316,22 +348,22 @@ def determine_root_partition(auto_mode):
             root_part=Path(btrfs_parts[0]).resolve()
             mapped_root=root_part
         else:
-            console.print("[red]Cannot auto-detect btrfs root[/red]")
+            console.print("[red]Cannot auto-detect btrfs/LUKS root[/red]")
             sys.exit(1)
     else:
         r=run("lsblk","-l","-o","NAME,SIZE,TYPE,FSTYPE,LABEL,PARTLABEL",check=False,capture=True)
         console.print(r.stdout, markup=False)
         while True:
-            raw=Prompt.ask("Enter DUSKY BTRFS root (e.g. vda2)",console=console)
+            raw=Prompt.ask("Enter DUSKY BTRFS/LUKS root partition (e.g. vda2)",console=console)
             if not VALID_PART_RE.match(raw):
-                console.print("[red]Invalid[/red]")
+                console.print("[red]Invalid characters in path[/red]")
                 continue
             name=raw.removeprefix("/dev/")
             p=Path("/dev")/name
             try:
                 rp=p.resolve()
-                if not rp.exists():
-                    console.print(f"[red]{rp} no exist[/red]")
+                if not _is_valid_block_partition(rp):
+                    console.print(f"[red]{rp} is not an existing block partition[/red]")
                     continue
                 root_part=rp
                 mapped_root=rp
@@ -346,16 +378,10 @@ def determine_root_partition(auto_mode):
         sys.exit(1)
     mapped_root = root_part
     if encrypted:
-        if mapped.exists():
-            if mapper_backing() != root_part:
-                console.print(f"[red]cryptroot belongs to another device, not {root_part}.[/red]")
-                sys.exit(1)
-        else:
-            password = load_root_password()
-            if not password:
-                console.print("[red]Cannot unlock root: ROOT_PASS is missing from .arch_credentials.[/red]")
-                sys.exit(1)
-            args = ["cryptsetup", "open", "--type", "luks2", "--allow-discards"]
+        if mapped.exists() and mapper_backing() != root_part:
+            run("cryptsetup", "close", "cryptroot", check=False, capture=True)
+        if not mapped.exists():
+            args = ["cryptsetup", "open", "--allow-discards"]
             block = Path("/sys/class/block") / root_part.name
             if (block / "partition").exists():
                 block = block.resolve().parent
@@ -364,18 +390,44 @@ def determine_root_partition(auto_mode):
                     args += ["--perf-no_read_workqueue", "--perf-no_write_workqueue"]
             except OSError:
                 pass
-            try:
-                # Like Archinstall, stop at unlock failure; never use the raw LUKS device.
-                run(*args, "--key-file", "-", str(root_part), "cryptroot", input_text=password)
-            finally:
-                password[:] = b"\0" * len(password)
-            if not mapped.exists() or mapper_backing() != root_part:
-                console.print("[red]Unlock did not produce the expected cryptroot mapper.[/red]")
+            unlocked = False
+            password = load_root_password()
+            if password:
+                try:
+                    r_open = run(*args, "--key-file", "-", str(root_part), "cryptroot", input_text=password, check=False)
+                    unlocked = r_open.returncode == 0 and mapped.exists()
+                finally:
+                    password[:] = b"\0" * len(password)
+            if not unlocked and sys.stdin.isatty():
+                for attempt in range(1, 4):
+                    try:
+                        pw_str = getpass.getpass(f"Enter LUKS passphrase for {root_part} (attempt {attempt}/3): ")
+                    except EOFError:
+                        break
+                    if not pw_str:
+                        break
+                    pw_ba = bytearray(pw_str.encode("utf-8"))
+                    try:
+                        r_open = run(*args, "--key-file", "-", str(root_part), "cryptroot", input_text=pw_ba, check=False)
+                        if r_open.returncode == 0 and mapped.exists():
+                            unlocked = True
+                            break
+                        console.print("[red]Incorrect passphrase.[/red]")
+                    finally:
+                        pw_ba[:] = b"\0" * len(pw_ba)
+            if not unlocked or not mapped.exists() or mapper_backing() != root_part:
+                console.print("[red]Cannot unlock root: passphrase missing or invalid.[/red]")
                 sys.exit(1)
         mapped_root = mapped
-    r = run("lsblk", "-ndlo", "PKNAME", str(root_part))
-    parents = r.stdout.splitlines()
-    root_disk = Path("/dev") / parents[0].strip() if parents and parents[0].strip() else root_part
+    run("udevadm", "settle", "--timeout=5", check=False, capture=True)
+    r = run("lsblk", "-ndlo", "PKNAME", str(root_part), check=False)
+    parents = [line.strip() for line in r.stdout.splitlines() if line.strip()]
+    if parents:
+        root_disk = Path("/dev") / parents[0]
+    elif state.get("disk") and Path(state["disk"]).exists():
+        root_disk = Path(state["disk"])
+    else:
+        root_disk = root_part
     return mapped_root, root_part, root_disk.resolve()
 
 
@@ -480,9 +532,9 @@ def prompt_for_efi_partition(root_disk):
         p=Path("/dev")/name
         try:
             rp=p.resolve()
-            if rp.exists():
+            if _is_valid_block_partition(rp):
                 return rp
-            console.print(f"[red]{rp} no exist[/red]")
+            console.print(f"[red]{rp} is not an existing block partition[/red]")
         except Exception as e:
             console.print(Text(str(e), style="red"))
 
@@ -490,8 +542,11 @@ def determine_efi_partition(auto_mode,root_disk,root_part):
     if BOOT_MODE!="UEFI":
         return None
     state=load_state()
+    if state.get("strategy") == 4 and "efi_part" in state and not state.get("efi_part"):
+        console.print("[cyan]Rescue mode: EFI partition skipped by user selection.[/cyan]")
+        return None
     prov=state.get("efi_part")
-    if prov:
+    if prov and (auto_mode or not sys.stdin.isatty() or Confirm.ask(f"Use provisioned EFI partition {prov}?", console=console, default=True)):
         if not Path(prov).exists():
             console.print(f"[red]Provisioned EFI {prov} is missing.[/red]")
             sys.exit(1)
@@ -506,16 +561,26 @@ def determine_efi_partition(auto_mode,root_disk,root_part):
         sys.exit(1)
     return prompt_for_efi_partition(root_disk)
 
-def construct_subvolume_matrix(mapped_root):
+def construct_subvolume_matrix(mapped_root) -> set[str]:
+    state = load_state()
+    rescue = state.get("strategy") == 4
+    active_subvols: set[str] = set()
     console.print("[yellow]>> Constructing DUSKY Subvolume Matrix...[/yellow]")
     tmpdir=Path(tempfile.mkdtemp(prefix="dusky-btrfs-",dir="/tmp"))
     try:
         run("mount","-t","btrfs","-o","subvolid=5",str(mapped_root),str(tmpdir),capture=True)
+        if rescue and not (tmpdir / "@").exists():
+            # Flat Btrfs root layout without '@' subvolume
+            console.print("[cyan]Rescue mode: root filesystem does not use '@' subvolume; mounting top-level subvolid=5.[/cyan]")
+            return active_subvols
         for sub in STD_SUBVOLS:
-            ensure_subvolume(tmpdir/sub,nocow=False)
+            if ensure_subvolume(tmpdir/sub,nocow=False,rescue=rescue):
+                active_subvols.add(sub)
         for sub in NOCOW_SUBVOLS:
-            ensure_subvolume(tmpdir/sub,nocow=True)
+            if ensure_subvolume(tmpdir/sub,nocow=True,rescue=rescue):
+                active_subvols.add(sub)
         console.print("[green]>> Matrix OK[/green]")
+        return active_subvols
     finally:
         run("umount",str(tmpdir),check=False,capture=True)
         try:
@@ -523,45 +588,57 @@ def construct_subvolume_matrix(mapped_root):
         except:
             pass
 
-def assemble_fhs(mapped_root,efi_part):
+def assemble_fhs(mapped_root, efi_part, active_subvols: set[str] | None = None):
+    state = load_state()
+    strategy = state.get("strategy", 1)
+    if active_subvols is None:
+        active_subvols = set(STD_SUBVOLS) | set(NOCOW_SUBVOLS)
     console.print("[yellow]>> Assembling FHS to /mnt...[/yellow]")
     Path("/mnt").mkdir(parents=True,exist_ok=True)
-    run("mount","-o",f"{BTRFS_OPTS},subvol=@",str(mapped_root),"/mnt",capture=True)
+    if "@" in active_subvols:
+        run("mount","-o",f"{BTRFS_OPTS},subvol=@",str(mapped_root),"/mnt",capture=True)
+    else:
+        run("mount","-o",f"{BTRFS_OPTS},subvolid=5",str(mapped_root),"/mnt",capture=True)
     
     # Removed "home/.snapshots" from this loop to prevent creating a masked directory inside the @ subvolume root
     for mp in ["home",".snapshots","var/log","var/cache","var/tmp","var/lib/machines","var/lib/portables","var/lib/libvirt","var/lib/mysql","var/lib/postgres","swap","boot","proc","sys","dev","run","etc","tmp","root","mnt","opt","srv"]:
         Path(f"/mnt/{mp}").mkdir(parents=True,exist_ok=True)
         
     mounts=[
-        (f"{BTRFS_OPTS},subvol=@home","/mnt/home"),
-        (f"{BTRFS_OPTS},subvol=@snapshots","/mnt/.snapshots"),
-        (f"{BTRFS_OPTS},subvol=@var_log","/mnt/var/log"),
-        (f"{BTRFS_OPTS},subvol=@var_cache","/mnt/var/cache"),
-        (f"{BTRFS_OPTS},subvol=@var_tmp","/mnt/var/tmp"),
-        (f"{BTRFS_OPTS},subvol=@var_lib_machines","/mnt/var/lib/machines"),
-        (f"{BTRFS_OPTS},subvol=@var_lib_portables","/mnt/var/lib/portables"),
-        (f"{BTRFS_OPTS},subvol=@var_lib_libvirt","/mnt/var/lib/libvirt"),
-        (f"{BTRFS_OPTS},subvol=@var_lib_mysql","/mnt/var/lib/mysql"),
-        (f"{BTRFS_OPTS},subvol=@var_lib_postgres","/mnt/var/lib/postgres"),
-        (f"{BTRFS_OPTS},subvol=@swap","/mnt/swap"),
+        ("@home", f"{BTRFS_OPTS},subvol=@home","/mnt/home"),
+        ("@snapshots", f"{BTRFS_OPTS},subvol=@snapshots","/mnt/.snapshots"),
+        ("@var_log", f"{BTRFS_OPTS},subvol=@var_log","/mnt/var/log"),
+        ("@var_cache", f"{BTRFS_OPTS},subvol=@var_cache","/mnt/var/cache"),
+        ("@var_tmp", f"{BTRFS_OPTS},subvol=@var_tmp","/mnt/var/tmp"),
+        ("@var_lib_machines", f"{BTRFS_OPTS},subvol=@var_lib_machines","/mnt/var/lib/machines"),
+        ("@var_lib_portables", f"{BTRFS_OPTS},subvol=@var_lib_portables","/mnt/var/lib/portables"),
+        ("@var_lib_libvirt", f"{BTRFS_OPTS},subvol=@var_lib_libvirt","/mnt/var/lib/libvirt"),
+        ("@var_lib_mysql", f"{BTRFS_OPTS},subvol=@var_lib_mysql","/mnt/var/lib/mysql"),
+        ("@var_lib_postgres", f"{BTRFS_OPTS},subvol=@var_lib_postgres","/mnt/var/lib/postgres"),
+        ("@swap", f"{BTRFS_OPTS},subvol=@swap","/mnt/swap"),
     ]
-    for opts,tgt in mounts:
-        run("mount","-o",opts,str(mapped_root),tgt,capture=True)
+    for sub_name, opts, tgt in mounts:
+        if sub_name in active_subvols:
+            run("mount","-o",opts,str(mapped_root),tgt,capture=True)
         
-    # Safely created over the active @home subvolume mount
-    Path("/mnt/home/.snapshots").mkdir(parents=True,exist_ok=True)
-    run("mount","-o",f"{BTRFS_OPTS},subvol=@home_snapshots",str(mapped_root),"/mnt/home/.snapshots",capture=True)
+    if "@home_snapshots" in active_subvols:
+        # Safely created over the active @home subvolume mount
+        Path("/mnt/home/.snapshots").mkdir(parents=True,exist_ok=True)
+        run("mount","-o",f"{BTRFS_OPTS},subvol=@home_snapshots",str(mapped_root),"/mnt/home/.snapshots",capture=True)
     
     if BOOT_MODE=="UEFI" and efi_part:
         console.print(f"[yellow]>> Mounting EFI {efi_part} to /mnt/boot (hardened)...[/yellow]")
         run("mount","-t","vfat","-o","fmask=0077,dmask=0077,noexec,nosuid,nodev",str(efi_part),"/mnt/boot",capture=True)
-        sync_secondary_efi_bootloaders("/mnt/boot", str(efi_part))
+        if strategy != 4:
+            sync_secondary_efi_bootloaders("/mnt/boot", str(efi_part))
 
-    if STATE_JSON.exists():
+    if STATE_JSON.exists() and strategy != 4:
         try:
             chroot_etc = Path("/mnt/etc")
             chroot_etc.mkdir(parents=True, exist_ok=True)
-            (chroot_etc / "dusky_state.json").write_text(STATE_JSON.read_text(errors="ignore"))
+            dst_state = chroot_etc / "dusky_state.json"
+            dst_state.write_text(STATE_JSON.read_text(errors="ignore"), encoding="utf-8")
+            dst_state.chmod(0o600)
         except Exception:
             pass
 
@@ -629,6 +706,10 @@ def sync_secondary_efi_bootloaders(primary_esp_mnt: str = "/mnt/boot", primary_e
                 if any(isinstance(m, str) and (m.startswith("/run/archiso") or m.startswith("/mnt") or m in ("/", "/boot", "/efi")) for m in mps if m):
                     continue
 
+                lbl = (child.get("label") or "").strip().upper()
+                if lbl.startswith("ARCH_") or lbl.startswith("ARCHISO"):
+                    continue
+
                 ptype = (child.get("parttype") or "").lower()
                 fstype = (child.get("fstype") or "").lower()
                 is_esp = ptype == esp_guid
@@ -684,10 +765,14 @@ def get_free_bytes(path: Path | str) -> int:
 
 
 def initialize_swapfile():
+    state = load_state()
+    rescue = state.get("strategy") == 4
     console.print("[yellow]>> Ensuring swapfile...[/yellow]")
+    if not SWAPFILE_PATH.parent.is_dir():
+        return
     # Never remove an active file when swapoff fails, and leave unrelated swap alone.
-    result = run("swapon", "--show=NAME", "--raw", "--noheadings")
-    for line in result.stdout.splitlines():
+    result = run("swapon", "--show=NAME", "--raw", "--noheadings", check=False)
+    for line in (result.stdout or "").splitlines():
         name = re.sub(r"\\x([0-9a-fA-F]{2})", lambda match: chr(int(match[1], 16)), line.strip())
         try:
             same_file = os.path.samefile(name, SWAPFILE_PATH)
@@ -698,6 +783,12 @@ def initialize_swapfile():
 
     if SWAPFILE_PATH.exists() and not SWAPFILE_PATH.is_file():
         raise RuntimeError(f"{SWAPFILE_PATH} is not a regular file")
+    if rescue:
+        if SWAPFILE_PATH.is_file() and run("swapon", str(SWAPFILE_PATH), check=False).returncode == 0:
+            console.print("[green]>> Rescue mode: existing swapfile activated[/green]")
+        else:
+            console.print("[cyan]>> Rescue mode: skipping swapfile creation[/cyan]")
+        return
     try:
         existing_size = SWAPFILE_PATH.stat().st_size if SWAPFILE_PATH.is_file() else 0
         available = get_free_bytes(SWAPFILE_PATH.parent) + existing_size
@@ -716,6 +807,7 @@ def initialize_swapfile():
             return
 
     SWAPFILE_PATH.unlink(missing_ok=True)
+    run("chattr", "+C", str(SWAPFILE_PATH.parent), check=False, capture=True)
     result = run("btrfs", "filesystem", "mkswapfile", "--size", size_str,
                  "--uuid", "clear", str(SWAPFILE_PATH), check=False)
     if result.returncode == 0 and SWAPFILE_PATH.is_file():
@@ -765,8 +857,8 @@ def run_common(auto_mode):
                         Path(temporary).rmdir()
                     except OSError:
                         pass
-    construct_subvolume_matrix(mapped_root)
-    assemble_fhs(mapped_root,efi_part)
+    active_subvols = construct_subvolume_matrix(mapped_root)
+    assemble_fhs(mapped_root, efi_part, active_subvols)
     initialize_swapfile()
     console.print(Align.center(Panel.fit("[bold green]>> DUSKY Setup Complete[/bold green]", box=box.ROUNDED, border_style="green")))
     try:
