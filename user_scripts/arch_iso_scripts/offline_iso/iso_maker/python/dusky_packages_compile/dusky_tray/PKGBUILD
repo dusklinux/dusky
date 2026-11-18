@@ -1,6 +1,6 @@
 pkgname=dusky_tray
 pkgver=1.0.0
-pkgrel=7
+pkgrel=8
 pkgdesc='Dusky Tray control center for Hyprland'
 arch=('x86_64')
 license=('custom')
