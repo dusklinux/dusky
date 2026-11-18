@@ -612,7 +612,7 @@ def stream_ingest_contents(
     records_set: set[tuple[str, str, str]] = set()
     req = urllib.request.Request(url, headers={"User-Agent": f"debtap-ng/{VERSION}"})
     relevant_re = re.compile(
-        r"(?:^|/)(?:s?bin|opt|lib|lib64|girepository-[0-9.]+)/|\.so(?:\.|$)\vert{}\.typelib$"
+        r"(?:^|/)(?:s?bin|opt|lib|lib64|girepository-[0-9.]+)/|\.so(?:\.|$)|\.typelib$"
     )
 
     try:
@@ -1262,7 +1262,7 @@ def rewrite_legacy_paths_in_configs(
         triplet_alt = "|".join(re.escape(t) for t in triplets)
         ops.append(
             "find usr/share usr/lib etc -type f "
-            "\\(-name '*.desktop' -o -name '*.service' -o -name '*.socket' -o -name '*.timer' -o -name '*.rules' -o -name '*.pc'\\) "
+            "\\( -name '*.desktop' -o -name '*.service' -o -name '*.socket' -o -name '*.timer' -o -name '*.rules' -o -name '*.pc' \\) "
             f"-exec sed -i -E -e 's#(^|[[:space:]=\"\\x27])/(usr/games|usr/local/games|usr/local/s?bin|usr/sbin|s?bin)/#\\1/usr/bin/#g' "
             f"-e 's#(^|[[:space:]=\"\\x27])/(usr/)?lib/({triplet_alt})/#\\1{target_lib}#g' {{}} + 2>/dev/null || true"
         )
@@ -1522,7 +1522,7 @@ ROLLING_RUNTIME_PKGS: frozenset[str] = frozenset({
     "gstreamer",
     "gst-plugins-base",
     "gst-plugins-base-libs",
-    " gst-plugins-good",
+    "gst-plugins-good",
     "libsoup3",
     "pango",
     "cairo",
@@ -1648,7 +1648,7 @@ class ArchDependencyResolver:
             return []
         groups: list[list[DebDependencyToken]] = []
         token_re = re.compile(
-            r"^\s*([A-Za-z0-9.+_-]+)(?::[A-Za-z0-9_-]+)?\s*(?:\(\s*(<<\vert{}<=\vert{}=\vert{}>=\vert{}>>\vert{}<\vert{}>)\s*([^)]+)\s*\))?\s*$"
+            r"^\s*([A-Za-z0-9.+_-]+)(?::[A-Za-z0-9_-]+)?\s*(?:\(\s*(<<|<=|=|>=|>>|<|>)\s*([^)]+)\s*\))?\s*$"
         )
         op_map = {"<<": "<", ">>": ">", "<=": "<=", ">=": ">=", "=": "=", "<": "<", ">": ">"}
 
@@ -2155,7 +2155,7 @@ def translate_maintainer_scripts(control_dir: Path, pseudo: bool, is_i386: bool)
 
             line = raw_ln
             line = re.sub(
-                r'\[\s*"\$1"\s*=\s*"(?:configure\vert{}install\vert{}upgrade\vert{}remove)"\s*\]',
+                r'\[\s*"\$1"\s*=\s*"(?:configure|install|upgrade|remove)"\s*\]',
                 "true",
                 line,
             )
