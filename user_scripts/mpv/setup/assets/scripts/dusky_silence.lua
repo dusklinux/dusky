@@ -11,15 +11,14 @@ local pending
 local failed = false
 
 -- Pocket Casts uses 1152-sample blocks, RMS thresholds below, and retains
--- 28/24/1 blocks in long gaps. silenceremove keeps stop_duration plus roughly
--- one RMS window. Max conservatively keeps four blocks to preserve short
+-- 24/4/1 blocks in long gaps. silenceremove keeps stop_duration plus roughly
+-- one RMS window. Medium conservatively keeps four blocks to preserve short
 -- pauses: unlike the original, this filter cannot retrospectively cut a gap.
--- Optional Max Plus retains roughly one window, shortening brief pauses too.
+-- Max retains roughly one window, shortening brief pauses too.
 local levels = {
-    mild = {rms = 0.0055, blocks = 28},
-    medium = {rms = 0.00511, blocks = 24},
-    max = {rms = 0.005, blocks = 4},
-    ['max-plus'] = {rms = 0.005, blocks = 1},
+    low = {rms = 0.00511, blocks = 24},
+    medium = {rms = 0.005, blocks = 4},
+    max = {rms = 0.005, blocks = 1},
 }
 
 local function validate_level()
@@ -138,13 +137,11 @@ end)
 mp.add_key_binding(nil, 'cycle', function()
     if not options.enabled then
         options.enabled = true
-        options.level = 'mild'
-    elseif options.level == 'mild' then
+        options.level = 'low'
+    elseif options.level == 'low' then
         options.level = 'medium'
     elseif options.level == 'medium' then
         options.level = 'max'
-    elseif options.level == 'max' then
-        options.level = 'max-plus'
     else
         options.enabled = false
     end

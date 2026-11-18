@@ -63,7 +63,7 @@ class SilenceTests(unittest.TestCase):
     def test_rates_channels_levels_and_end_preservation(self):
         for rate in (16000, 44100, 48000, 96000):
             for channels in (1, 2):
-                for level, blocks in [('mild', 28), ('medium', 24), ('max', 4), ('max-plus', 1)]:
+                for level, blocks in [('low', 24), ('medium', 4), ('max', 1)]:
                     with self.subTest(rate=rate, channels=channels, level=level):
                         path = self.fixture(rate, channels, tail=3)
                         seconds, pcm = self.render(path, level)
@@ -75,9 +75,9 @@ class SilenceTests(unittest.TestCase):
                                          bytes(rate * channels * 2 * 3))
 
     def test_short_pauses_and_quiet_speech_are_retained(self):
-        for quiet, gap in [(0, 0.04), (0.012, 2), (0.12, 2)]:
-            with self.subTest(quiet=quiet, gap=gap):
-                seconds, _ = self.render(self.fixture(quiet=quiet, gap=gap))
+        for level, quiet, gap in [('medium', 0, 0.04), ('max', 0.012, 2), ('max', 0.12, 2)]:
+            with self.subTest(level=level, quiet=quiet, gap=gap):
+                seconds, _ = self.render(self.fixture(quiet=quiet, gap=gap), level)
                 self.assertAlmostEqual(seconds, 10 + gap, delta=0.015)
 
     def test_off_short_files_and_video_are_untouched(self):
@@ -105,7 +105,7 @@ class SilenceTests(unittest.TestCase):
                 subprocess.run(['ffmpeg', '-v', 'error', '-i', str(path),
                                 '-c:a', codec, str(encoded)], check=True)
                 seconds, _ = self.render(encoded)
-                self.assertAlmostEqual(seconds, 10.096, delta=0.075)
+                self.assertAlmostEqual(seconds, 10.024, delta=0.075)
         cover = self.folder / 'cover.png'
         subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i',
                         'color=red:s=32x32', '-frames:v', '1', str(cover)], check=True)
@@ -114,7 +114,7 @@ class SilenceTests(unittest.TestCase):
                         '-i', str(cover), '-map', '0:a', '-map', '1:v', '-c', 'copy',
                         '-disposition:v', 'attached_pic', str(artwork)], check=True)
         seconds, _ = self.render(artwork)
-        self.assertAlmostEqual(seconds, 10.096, delta=0.075)
+        self.assertAlmostEqual(seconds, 10.024, delta=0.075)
 
         class QuietHandler(http.server.SimpleHTTPRequestHandler):
             def log_message(self, *args):
@@ -126,7 +126,7 @@ class SilenceTests(unittest.TestCase):
         worker.start()
         try:
             seconds, _ = self.render(f'http://127.0.0.1:{server.server_port}/encoded.mp3')
-            self.assertAlmostEqual(seconds, 10.096, delta=0.075)
+            self.assertAlmostEqual(seconds, 10.024, delta=0.075)
         finally:
             server.shutdown()
             server.server_close()
@@ -134,7 +134,7 @@ class SilenceTests(unittest.TestCase):
 
     def test_long_gaps_and_unknown_duration_pipe(self):
         seconds, _ = self.render(self.fixture(gap=90))
-        self.assertAlmostEqual(seconds, 10.096, delta=0.045)
+        self.assertAlmostEqual(seconds, 10.024, delta=0.045)
         output = self.folder / 'pipe.wav'
         path = self.fixture()
         with wave.open(str(path), 'rb') as source:
@@ -148,7 +148,7 @@ class SilenceTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         with wave.open(str(output), 'rb') as audio:
             self.assertAlmostEqual(audio.getnframes() / audio.getframerate(),
-                                   10.096, delta=0.045)
+                                   10.024, delta=0.045)
 
     def start_ipc(self, path, extra=()):
         ipc = self.folder / 'ipc.sock'
@@ -229,23 +229,23 @@ class SilenceTests(unittest.TestCase):
             return len(filters) == 1 and 'window=0.026122449' in filters[0]['params']['graph']
         self.wait_for(new_rate)
 
-    def test_max_plus_shortens_pauses_without_raising_threshold(self):
+    def test_max_shortens_pauses_without_raising_threshold(self):
         path = self.fixture()
-        standard, standard_pcm = self.render(path)
-        plus, plus_pcm = self.render(path, 'max-plus')
-        self.assertAlmostEqual(standard - plus, 0.072, delta=0.001)
+        medium, medium_pcm = self.render(path, 'medium')
+        maximum, maximum_pcm = self.render(path, 'max')
+        self.assertAlmostEqual(medium - maximum, 0.072, delta=0.001)
         # Both modes retain the same above-threshold content, including the
         # beginning and ending. Only silence is additionally removed here.
-        self.assertEqual(standard_pcm[:48000 * 2], plus_pcm[:48000 * 2])
-        self.assertEqual(standard_pcm[-48000 * 2:], plus_pcm[-48000 * 2:])
+        self.assertEqual(medium_pcm[:48000 * 2], maximum_pcm[:48000 * 2])
+        self.assertEqual(medium_pcm[-48000 * 2:], maximum_pcm[-48000 * 2:])
         quiet = self.fixture(quiet=0.012)
-        seconds, _ = self.render(quiet, 'max-plus')
+        seconds, _ = self.render(quiet, 'max')
         self.assertAlmostEqual(seconds, 12, delta=0.015)
         short = self.fixture(gap=0.06)
-        standard, _ = self.render(short)
-        plus, _ = self.render(short, 'max-plus')
-        self.assertAlmostEqual(standard, 10.06, delta=0.001)
-        self.assertLess(plus, standard - 0.02)
+        medium, _ = self.render(short, 'medium')
+        maximum, _ = self.render(short, 'max')
+        self.assertAlmostEqual(medium, 10.06, delta=0.001)
+        self.assertLess(maximum, medium - 0.02)
 
     def test_runtime_options_validation_and_cycle_order(self):
         command = self.start_ipc(self.fixture())
@@ -270,7 +270,7 @@ class SilenceTests(unittest.TestCase):
         self.wait_for(lambda: any(f.get('label') == 'dusky_silence' and
                                  f['params'].get('fix-pts') == 'no'
                                  for f in command('get_property', 'af')))
-        for expected in [0, None, 0.648, 0.552, 0.072]:
+        for expected in [None, 0.552, 0.072, 0, None]:
             command('script-binding', 'dusky_silence/cycle')
             target = None if expected is None else f'stop_duration={expected:.9f}'
             def matches():
@@ -285,7 +285,7 @@ class SilenceTests(unittest.TestCase):
                         '-output_ts_offset', '100', str(shifted)], check=True)
         for rebase in ['yes', 'no']:
             seconds, pcm = self.render(shifted, extra=[f'--rebase-start-time={rebase}'])
-            self.assertAlmostEqual(seconds, 13.096, delta=0.075)
+            self.assertAlmostEqual(seconds, 13.024, delta=0.075)
             tail_bytes = round(48000 * 2 * 2.8)
             self.assertEqual(pcm[-tail_bytes:], bytes(tail_bytes))
         # One active channel must prevent stereo trimming; compare byte for
@@ -293,7 +293,7 @@ class SilenceTests(unittest.TestCase):
         asymmetric = self.folder / 'one-channel.wav'
         subprocess.run(['ffmpeg', '-v', 'error', '-i', str(self.fixture(quiet=0.012)),
                         '-af', 'pan=stereo|c0=c0|c1=0*c0', str(asymmetric)], check=True)
-        for level in ['max', 'max-plus']:
+        for level in ['medium', 'max']:
             seconds, pcm = self.render(asymmetric, level)
             _, reference = self.render(asymmetric, extra=[
                 '--script-opts-append=dusky_silence-enabled=no'])
@@ -302,7 +302,7 @@ class SilenceTests(unittest.TestCase):
         silent = self.folder / 'silent.wav'
         subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i',
                         'anullsrc=r=48000:cl=mono', '-t', '12', str(silent)], check=True)
-        for level in ['max', 'max-plus']:
+        for level in ['medium', 'max']:
             seconds, pcm = self.render(silent, level)
             # stop_periods alone preserves all-silent input; do not add start
             # trimming that would alter the accepted modes or remove onsets.
