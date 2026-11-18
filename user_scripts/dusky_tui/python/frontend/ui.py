@@ -58,6 +58,42 @@ from python.frontend.core_types import (
 # GLOBAL CACHE & REGEX COMPILE
 # =============================================================================
 _AUDIO_PLAYER_CACHE: str | None = None
+_CAPS_LED_DIR = Path("/sys/class/leds")
+_CAPS_LED_CACHE: tuple[int, tuple[Path, ...]] | None = None
+
+
+def _read_caps_lock_sysfs() -> bool:
+    """Return True if any kernel input Caps Lock LED reports active brightness."""
+    global _CAPS_LED_CACHE
+    try:
+        dir_mtime = _CAPS_LED_DIR.stat().st_mtime_ns
+    except OSError:
+        _CAPS_LED_CACHE = None
+        return False
+
+    if _CAPS_LED_CACHE is None or _CAPS_LED_CACHE[0] != dir_mtime:
+        paths: list[Path] = []
+        try:
+            with os.scandir(_CAPS_LED_DIR) as entries:
+                for entry in entries:
+                    if entry.name.lower().endswith("capslock"):
+                        paths.append(Path(entry.path) / "brightness")
+        except OSError:
+            _CAPS_LED_CACHE = None
+            return False
+        _CAPS_LED_CACHE = (dir_mtime, tuple(paths))
+
+    for brightness_path in _CAPS_LED_CACHE[1]:
+        try:
+            with brightness_path.open("rb") as f:
+                raw = f.read(32).strip()
+            if int(raw or b"0") > 0:
+                return True
+        except FileNotFoundError:
+            _CAPS_LED_CACHE = None
+        except (OSError, ValueError):
+            continue
+    return False
 
 # Nerd Font glyphs (render cleanly in terminals with a Nerd Font installed).
 _ICON_WARNING = "\uf071"   # nf-fa-warning  (exclamation triangle)
@@ -746,7 +782,39 @@ class HybridInputScreen(ModalScreen[str | None]):
             for idx, opt in enumerate(self.options):
                 if str(opt) == self.default_text:
                     ol.highlighted = idx
+                    ol.scroll_to_highlight()
                     break
+
+    def _sync_input_from_highlight(self, ol: OptionList, inp: Input) -> None:
+        idx = ol.highlighted
+        if idx is not None and 0 <= idx < len(self.options):
+            val = str(self.options[idx])
+            if inp.value != val:
+                inp.value = val
+                inp.cursor_position = len(val)
+
+    def _move_option(self, delta: int) -> None:
+        if not self.options:
+            return
+        ol = self.query_one(OptionList)
+        inp = self.query_one(Input)
+        count = ol.option_count
+        if count <= 0:
+            return
+
+        current = ol.highlighted
+        if current is None or not (0 <= current < count):
+            start = -1 if delta > 0 else 0
+        else:
+            start = current
+
+        for step in range(1, count + 1):
+            candidate = (start + step * delta) % count
+            if not getattr(ol.get_option_at_index(candidate), "disabled", False):
+                ol.highlighted = candidate
+                ol.scroll_to_highlight()
+                self._sync_input_from_highlight(ol, inp)
+                return
 
     def on_key(self, event: events.Key) -> None:
         if not self.options:
@@ -759,29 +827,29 @@ class HybridInputScreen(ModalScreen[str | None]):
             if event.key == "down":
                 event.stop()
                 ol.focus()
-                if ol.highlighted is None:
-                    ol.highlighted = 0
-                elif ol.highlighted < len(self.options) - 1:
-                    ol.action_cursor_down()
-                if ol.highlighted is not None:
-                    inp.value = str(self.options[ol.highlighted])
+                self._move_option(1)
+            elif event.key == "up":
+                event.stop()
+                ol.focus()
+                self._move_option(-1)
         elif ol.has_focus:
             if event.key in ("down", "j"):
                 event.stop()
-                if ol.highlighted is None:
-                    ol.highlighted = 0
-                else:
-                    ol.action_cursor_down()
-                if ol.highlighted is not None:
-                    inp.value = str(self.options[ol.highlighted])
+                self._move_option(1)
             elif event.key in ("up", "k"):
                 event.stop()
-                if ol.highlighted is None or ol.highlighted <= 0:
-                    inp.focus()
-                else:
-                    ol.action_cursor_up()
-                    if ol.highlighted is not None:
-                        inp.value = str(self.options[ol.highlighted])
+                self._move_option(-1)
+            elif event.key in ("page_up", "ctrl+u"):
+                event.stop()
+                ol.action_page_up()
+                self._sync_input_from_highlight(ol, inp)
+            elif event.key in ("page_down", "ctrl+d"):
+                event.stop()
+                ol.action_page_down()
+                self._sync_input_from_highlight(ol, inp)
+            elif event.key == "backspace":
+                event.stop()
+                inp.focus()
             elif event.key == "enter":
                 event.stop()
                 if ol.highlighted is not None and 0 <= ol.highlighted < len(self.options):
@@ -791,11 +859,13 @@ class HybridInputScreen(ModalScreen[str | None]):
 
     @on(OptionList.OptionHighlighted)
     def handle_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
-        if event.option_list.has_focus and self.options and event.option_index is not None and 0 <= event.option_index < len(self.options):
-            val = str(self.options[event.option_index])
-            inp = self.query_one(Input)
-            if inp.value != val:
-                inp.value = val
+        if (
+            event.option_list.has_focus
+            and self.options
+            and event.option_index is not None
+            and 0 <= event.option_index < len(self.options)
+        ):
+            self._sync_input_from_highlight(event.option_list, self.query_one(Input))
 
     @on(Input.Submitted)
     def handle_submit(self, event: Input.Submitted) -> None:
@@ -879,22 +949,50 @@ class PickerScreen(ModalScreen[str | None]):
         ol.add_options(options_to_add)
         ol.focus()
 
-        # Start on current value when possible.
+        # Start on current value when possible, otherwise highlight first option.
+        matched_idx: int | None = None
         if self.current is not None:
             for idx, opt in enumerate(self.options):
                 if str(opt) == str(self.current):
-                    ol.highlighted = idx
+                    matched_idx = idx
                     break
+
+        if matched_idx is not None:
+            ol.highlighted = matched_idx
+            ol.scroll_to_highlight()
+        elif options_to_add:
+            ol.highlighted = 0
 
     @on(OptionList.OptionSelected)
     def on_selected(self, event: OptionList.OptionSelected) -> None:
-        self.dismiss(self.options[event.option_index])
+        idx = event.option_index
+        if idx is not None and 0 <= idx < len(self.options):
+            self.dismiss(self.options[idx])
+
+    def _move_highlight(self, delta: int) -> None:
+        ol = self.query_one(OptionList)
+        count = ol.option_count
+        if count <= 0:
+            return
+
+        current = ol.highlighted
+        if current is None or not (0 <= current < count):
+            start = -1 if delta > 0 else 0
+        else:
+            start = current
+
+        for step in range(1, count + 1):
+            candidate = (start + step * delta) % count
+            if not getattr(ol.get_option_at_index(candidate), "disabled", False):
+                ol.highlighted = candidate
+                ol.scroll_to_highlight()
+                return
 
     def action_cursor_up(self) -> None:
-        self.query_one(OptionList).action_cursor_up()
+        self._move_highlight(-1)
 
     def action_cursor_down(self) -> None:
-        self.query_one(OptionList).action_cursor_down()
+        self._move_highlight(1)
 
     def action_page_up(self) -> None:
         self.query_one(OptionList).action_page_up()
@@ -1571,6 +1669,7 @@ class AppFooter(Vertical):
                 yield FileLink(id="file-link")
                 yield Label("│", classes="footer-sep")
             yield ModeButton(id="footer-legend", classes="mode-btn")
+            yield Label("", id="caps-indicator")
             yield Label("", id="pos-counter", classes="pos-counter-btn")
             yield Label("", id="status-bar")
 
@@ -1960,6 +2059,8 @@ ScrollIndicator:hover { color: $foreground; }
 .footer-shortcut:hover { text-style: bold; color: $foreground; background: $primary 25%; }
 .footer-shortcut.-active { text-style: bold; color: $background; background: $primary; }
 
+#caps-indicator { padding: 0 1 0 0; display: none; }
+
 #status-bar { padding: 0 1; }
 
 .mode-btn { padding: 0 1; background: transparent; }
@@ -2103,6 +2204,48 @@ Tooltip {
     ]
 
     auto_save = reactive(True)
+    caps_lock = reactive(False)
+
+    def watch_caps_lock(self, old: bool, new: bool) -> None:
+        self._update_caps_indicator()
+
+    def _update_caps_indicator(self) -> None:
+        if not getattr(self, "is_mounted", False):
+            return
+        try:
+            badge = self.query_one("#caps-indicator", Label)
+            if self.caps_lock:
+                txt = Text()
+                txt.append("│ ", style=self.theme_colors.get("fg") or "")
+                bg = self.theme_colors.get("bg") or "#000000"
+                warn = self.theme_colors.get("warning") or "yellow"
+                txt.append(" 󰪛 CAPS ", style=f"bold {bg} on {warn}")
+                badge.update(txt)
+                badge.display = True
+            else:
+                badge.display = False
+        except Exception:
+            pass
+
+    def _poll_caps_lock(self) -> None:
+        active = _read_caps_lock_sysfs()
+        if self.caps_lock != active:
+            self.caps_lock = active
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key in ("caps_lock", "capslock"):
+            self._poll_caps_lock()
+            return
+
+        char = event.character
+        if (
+            char
+            and len(char) == 1
+            and char.isascii()
+            and not event.key.startswith(("ctrl+", "alt+"))
+            and (char.isupper() or (self.caps_lock and char.islower()))
+        ):
+            self._poll_caps_lock()
 
     def __init__(
         self,
@@ -2233,6 +2376,7 @@ Tooltip {
                 pass
 
         self._status_timer: Timer | None = None
+        self._caps_poll_timer: Timer | None = None
 
         # Keep model objects, not row numbers: live schemas can reorder rows.
         self._search_results: list[tuple[int, ConfigItem]] = []
@@ -3283,6 +3427,10 @@ Tooltip {
 
         if self.theme_path:
             self.set_interval(1.0, self.watch_theme_file)
+
+        self._poll_caps_lock()
+        self._update_caps_indicator()
+        self._caps_poll_timer = self.set_interval(0.35, self._poll_caps_lock)
 
         # External file & preset dir polling (previously dead code – now scheduled).
         self.set_interval(1.0, self.watch_target_file)
@@ -4616,6 +4764,7 @@ Tooltip {
                         file_link.refresh()
 
                     self._update_footer_legend()
+                    self._update_caps_indicator()
 
         except FileNotFoundError:
             # The generated theme is optional; retain the current palette
@@ -5158,7 +5307,8 @@ Tooltip {
         self,
         transaction: list[tuple[int, int, Any, Any]],
         action_type: str = "new",
-        success_msg: str = ""
+        success_msg: str = "",
+        immediate_commit: bool = False,
     ) -> None:
         if not self.require_boot_complete():
             return
@@ -5172,6 +5322,7 @@ Tooltip {
                 if self._get_item_engine_info(duplicate) == engine_key:
                     expanded.setdefault((dt, di), (dt, di, clone_value(duplicate.value), clone_value(new)))
         transaction = list(expanded.values())
+        tx_keys = {(t, i) for t, i, _, _ in transaction}
         self._schema_dirty_counter += 1
         self._cancel_autosave_for_transaction(transaction)
 
@@ -5199,7 +5350,7 @@ Tooltip {
             uek: self._write_generation.get(uek, 0) for uek in uid_engines
         }
 
-        if self.auto_save:
+        if self.auto_save or immediate_commit:
             def finalize_transaction(batch_success: bool):
                 successful_parts = []
                 failed_parts = []
@@ -5222,7 +5373,7 @@ Tooltip {
                             item.value = n if action_type == "undo" else o
                             self._on_item_value_changed(item)
                             self._refresh_single_ui(t, i, item)
-                            self.pending_commits.discard((t, i))
+                            self._sync_pending(t, i, item)
                     else:
                         successful_parts.append((t, i, o, n))
 
@@ -5248,9 +5399,11 @@ Tooltip {
                     self._preset_refresh_timer.stop()
                     self._preset_refresh_timer = None
 
+                self._update_footer_legend()
                 self._refresh_presets_ui()
 
-            self.action_save_batch(on_complete=finalize_transaction)
+            scoped_keys = None if self.auto_save else tx_keys
+            self.action_save_batch(on_complete=finalize_transaction, target_keys=scoped_keys)
 
         else:
             self._update_footer_legend()
@@ -5754,7 +5907,11 @@ Tooltip {
     # =========================================================================
     # ASYNC BATCH SAVE
     # =========================================================================
-    def action_save_batch(self, on_complete=None) -> bool:
+    def action_save_batch(
+        self,
+        on_complete=None,
+        target_keys: set[tuple[int, int]] | None = None,
+    ) -> bool:
         if self._modal_active():
             if on_complete:
                 on_complete(False)
@@ -5768,7 +5925,13 @@ Tooltip {
         if not self._save_tasks and self._save_auth_pending == 0:
             self._save_failure_pending = False
 
-        if not self.pending_commits:
+        commits_to_save = (
+            (self.pending_commits & target_keys)
+            if target_keys is not None
+            else set(self.pending_commits)
+        )
+
+        if not commits_to_save:
             self.notify_status("No pending changes.", level="info")
             if on_complete:
                 on_complete(True)
@@ -5778,15 +5941,24 @@ Tooltip {
         if self._save_lock is None:
             self._save_lock = asyncio.Lock()
 
-        self._start_save_task(self._save_batch_async(on_complete))
+        self._start_save_task(self._save_batch_async(on_complete, target_keys=target_keys))
         return True
 
-    async def _save_batch_async(self, on_complete=None) -> None:
+    async def _save_batch_async(
+        self,
+        on_complete=None,
+        target_keys: set[tuple[int, int]] | None = None,
+    ) -> None:
         if self._save_lock is None:
             self._save_lock = asyncio.Lock()
 
         async with self._save_lock:
-            if not self.pending_commits:
+            commits_snapshot = (
+                tuple(k for k in self.pending_commits if k in target_keys)
+                if target_keys is not None
+                else tuple(self.pending_commits)
+            )
+            if not commits_snapshot:
                 self.notify_status("No pending changes.", level="info")
                 if on_complete:
                     on_complete(True)
@@ -5796,7 +5968,7 @@ Tooltip {
             type FrozenItem = tuple[tuple[str, str, str, str], tuple[int, int], str, Any, ConfigItem]
             batches: dict[tuple[tuple[str, str], str | None], list[FrozenItem]] = {}
 
-            for tab_idx, item_idx in tuple(self.pending_commits):
+            for tab_idx, item_idx in commits_snapshot:
                 item = self.schema[tab_idx][item_idx]
                 key = (tab_idx, item_idx)
                 frozen_val = clone_value(item.value)
@@ -5976,8 +6148,13 @@ Tooltip {
 
         if self._save_queued_during_run:
             self._save_queued_during_run = False
-            if self.pending_commits:
-                self._start_save_task(self._save_batch_async(on_complete))
+            remaining = (
+                (self.pending_commits & target_keys)
+                if target_keys is not None
+                else self.pending_commits
+            )
+            if remaining:
+                self._start_save_task(self._save_batch_async(on_complete, target_keys=target_keys))
                 return
 
         if auth_required:
@@ -5991,7 +6168,7 @@ Tooltip {
                 return
 
             def on_pwd_batch(pwd: str | None) -> None:
-                self._start_save_task(self._on_batch_password(pwd, on_complete))
+                self._start_save_task(self._on_batch_password(pwd, on_complete, target_keys=target_keys))
 
             self._save_auth_pending += 1
             self.push_screen(PasswordScreen(), on_pwd_batch)
@@ -6017,7 +6194,12 @@ Tooltip {
         if on_complete:
             on_complete(final_success)
 
-    async def _on_batch_password(self, pwd: str | None, on_complete=None) -> None:
+    async def _on_batch_password(
+        self,
+        pwd: str | None,
+        on_complete=None,
+        target_keys: set[tuple[int, int]] | None = None,
+    ) -> None:
         self._save_auth_pending = max(0, self._save_auth_pending - 1)
         if pwd:
             try:
@@ -6055,7 +6237,7 @@ Tooltip {
                 self._save_auth_pending += 1
                 def retry_after_dialog() -> None:
                     self._save_auth_pending -= 1
-                    self.action_save_batch(on_complete=on_complete)
+                    self.action_save_batch(on_complete=on_complete, target_keys=target_keys)
                 self.call_later(retry_after_dialog)
             else:
                 self.notify_status("Incorrect sudo password. Batch aborted.", level="error")
@@ -6577,18 +6759,21 @@ Tooltip {
 
             def on_confirm(confirmed: bool) -> None:
                 if confirmed:
-                    transaction = []
-                    for item_idx, item in configurable_items:
-                        if str(item.value) != str(item.default):
-                            transaction.append((tab_idx, item_idx, item.value, item.default))
+                    def apply_reset() -> None:
+                        transaction = []
+                        for item_idx, item in configurable_items:
+                            if str(item.value) != str(item.default):
+                                transaction.append((tab_idx, item_idx, item.value, item.default))
 
-                    if transaction:
-                        verb = "Reset" if self.auto_save else "Queued reset of"
-                        msg = f"{verb} {len(transaction)} items in {tab_name}"
-                        self._apply_transaction(transaction, action_type="new", success_msg=msg)
-                        self._populate_option_list(tab_idx)
-                    else:
-                        self.notify_status(f"No items to reset in {tab_name}", level="info")
+                        if transaction:
+                            verb = "Reset" if self.auto_save else "Queued reset of"
+                            msg = f"{verb} {len(transaction)} items in {tab_name}"
+                            self._apply_transaction(transaction, action_type="new", success_msg=msg)
+                            self._populate_option_list(tab_idx)
+                        else:
+                            self.notify_status(f"No items to reset in {tab_name}", level="info")
+
+                    self.call_later(apply_reset)
 
             safe_tab = _md_escape(str(tab_name))
             self.push_screen(
@@ -6863,6 +7048,10 @@ Tooltip {
             return
 
         tab_idx, item_idx, item = parsed
+
+        if item.read_only:
+            self.notify_status(f"{item.label} is read-only.", level="warning")
+            return
 
         is_keyboard = (click_x == 0)
         instant_action = False
@@ -7382,6 +7571,9 @@ Tooltip {
                 self._action_shutdown_done = True
 
     async def on_unmount(self) -> None:
+        if self._caps_poll_timer is not None:
+            self._caps_poll_timer.stop()
+            self._caps_poll_timer = None
         if self._sudo_keepalive:
             self._sudo_keepalive.stop()
             self._sudo_keepalive = None
@@ -7667,13 +7859,17 @@ Tooltip {
 
                 return
 
-            verb = "applied" if self.auto_save else "queued"
-            msg = f"Preset '{preset_item.label}' {verb}."
+            msg = f"Preset '{preset_item.label}' applied."
 
             if skipped > 0:
                 msg += f" ({skipped} skipped)"
 
-            self._apply_transaction(transaction, action_type="new", success_msg=msg)
+            self._apply_transaction(
+                transaction,
+                action_type="new",
+                success_msg=msg,
+                immediate_commit=True,
+            )
 
         if preset_item.confirm_message:
             self.push_screen(
@@ -7682,7 +7878,7 @@ Tooltip {
                     title=f"Apply Preset: {preset_item.label}",
                     level="warning"
                 ),
-                lambda confirm: do_apply() if confirm else None
+                lambda confirm: self.call_later(do_apply) if confirm else None
             )
         else:
             do_apply()
