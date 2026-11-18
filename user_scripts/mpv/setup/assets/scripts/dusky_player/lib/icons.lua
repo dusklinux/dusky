@@ -44,15 +44,49 @@ icons.volume_down = {speaker, line({15,7,18,10,18,14,15,17})}
 icons.volume_mute = {speaker}
 icons.volume_off = {speaker, line({16,8,23,16}), line({23,8,16,16})}
 icons.check = {line({3,12,9,18,21,5})}
+local function round2(v)
+    return math.floor(v * 100 + 0.5) / 100
+end
+
+local rollback_arc = {}
+local arc_steps = 48
+local arc_start = math.rad(140)
+local arc_end = math.rad(-138)
+for i = 0, arc_steps do
+    local angle = arc_start + (arc_end - arc_start) * (i / arc_steps)
+    rollback_arc[#rollback_arc + 1] = round2(12 + 10 * math.cos(angle))
+    rollback_arc[#rollback_arc + 1] = round2(12 + 10 * math.sin(angle))
+end
+for i = arc_steps, 0, -1 do
+    local angle = arc_start + (arc_end - arc_start) * (i / arc_steps)
+    rollback_arc[#rollback_arc + 1] = round2(12 + 8 * math.cos(angle))
+    rollback_arc[#rollback_arc + 1] = round2(12 + 8 * math.sin(angle))
+end
+
+local arrow_base = math.rad(-135)
+local arrow_tip = math.rad(-163)
+local bx, by = 12 + 9 * math.cos(arrow_base), 12 + 9 * math.sin(arrow_base)
+local tx, ty = 12 + 9 * math.cos(arrow_tip), 12 + 9 * math.sin(arrow_tip)
+local ux, uy = tx - bx, ty - by
+local ulen = math.sqrt(ux * ux + uy * uy)
+ux, uy = ux / ulen, uy / ulen
+local nx, ny = -uy, ux
+local wing = 2.4
+
+local rollback_head = polygon({
+    round2(bx + wing * nx), round2(by + wing * ny),
+    round2(tx), round2(ty),
+    round2(bx - wing * nx), round2(by - wing * ny),
+})
+
 icons.history = {
-    line({5,7,8,4,13,3,18,5,21,10,20,16,16,20,10,21,5,18}),
-    polygon({2,1,2,7,9,7}),
-    line({12,7,12,13}),
-    line({12,12,16,15}),
+    polygon(rollback_arc),
+    rollback_head,
+    polygon({11, 6.8, 13, 6.8, 13, 11.49, 16.08, 13.69, 14.92, 15.31, 11, 12.51}),
 }
 icons.replay = {
-    line({5,7,8,4,13,3,18,5,21,10,20,16,16,20,10,21,5,18}),
-    polygon({2,1,2,7,9,7}),
+    polygon(rollback_arc),
+    rollback_head,
 }
 icons.folder = {
     line({2,6,2,20,22,20,22,8,12,8,9,6,2,6}),
