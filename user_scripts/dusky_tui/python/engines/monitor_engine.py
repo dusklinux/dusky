@@ -499,8 +499,8 @@ class MonitorLuaEngine(HyprlandLuaEngine):
             "debug/overlay": False,
             "misc/vrr": "0",
             "render/cm_sdr_eotf": "auto",
-            "render/cm_fs_passthrough": False,
-            "render/cm_auto_hdr": False
+            "render/direct_scanout": "0",
+            "render/cm_auto_hdr": "0"
         }
         # -------------------------------------------------------------
         # PRIMARY MONITOR FOR BANKED WORKSPACES (~/.config/hypr/primary_monitor)

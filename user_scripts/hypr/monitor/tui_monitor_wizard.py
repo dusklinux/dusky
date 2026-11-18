@@ -480,14 +480,14 @@ def generate_schema() -> tuple[list[str], dict[int, list[ConfigItem]]]:
             extended_help="Default transfer function assumed for SDR displays."
         ),
         ConfigItem(
-            label="Fullscreen HDR Passthrough", key="cm_fs_passthrough", scope="render", type_="bool", default=False,
-            group="Color Pipeline",
-            extended_help="Fullscreen HDR apps bypass Hyprland color pipeline for raw, zero-overhead gaming."
+            label="Direct Scanout", key="direct_scanout", scope="render", type_="cycle", default="0",
+            options=["0", "1", "2"], hints=["Off", "Always On", "Auto (Games)"], group="Power & Performance",
+            extended_help="Bypasses compositor rendering for fullscreen apps (0 = Off, 1 = Always On, 2 = Auto for games)."
         ),
         ConfigItem(
-            label="Auto HDR Promotion", key="cm_auto_hdr", scope="render", type_="bool", default=False,
-            group="Color Pipeline",
-            extended_help="Automatically promotes SDR content to HDR in supported media players."
+            label="Auto HDR Promotion", key="cm_auto_hdr", scope="render", type_="cycle", default="0",
+            options=["0", "1", "2"], hints=["Off", "Auto (HDR)", "Auto (HDR EDID)"], group="Color Pipeline",
+            extended_help="Automatically switches to HDR mode for fullscreen HDR apps (0 = Off, 1 = HDR, 2 = HDR EDID)."
         )
     ]
 
@@ -503,10 +503,10 @@ def generate_schema() -> tuple[list[str], dict[int, list[ConfigItem]]]:
             preset_payload={
                 "misc.vrr": 2,
                 "debug.vfr": True,
-                "render.cm_fs_passthrough": True,
-                "render.cm_auto_hdr": False
+                "render.direct_scanout": 2,
+                "render.cm_auto_hdr": 1
             },
-            extended_help="High-refresh gaming: Fullscreen VRR, VFR enabled, Fullscreen HDR passthrough active."
+            extended_help="High-refresh gaming: Fullscreen VRR, VFR enabled, Auto Game Direct Scanout and Auto HDR active."
         ),
         ConfigItem(
             label="Color Accurate SDR", key="preset_color_sdr", scope="DEFAULT", type_="preset",
@@ -514,10 +514,10 @@ def generate_schema() -> tuple[list[str], dict[int, list[ConfigItem]]]:
             preset_payload={
                 "misc.vrr": 0,
                 "render.cm_sdr_eotf": "srgb",
-                "render.cm_fs_passthrough": False,
-                "render.cm_auto_hdr": False
+                "render.direct_scanout": 0,
+                "render.cm_auto_hdr": 0
             },
-            extended_help="Calibrated sRGB pipeline: Piecewise sRGB curve, VRR disabled to prevent panel flicker."
+            extended_help="Calibrated sRGB pipeline: Piecewise sRGB curve, direct scanout and VRR disabled to prevent flicker."
         ),
         ConfigItem(
             label="Battery Saver", key="preset_battery", scope="DEFAULT", type_="preset",
@@ -525,10 +525,10 @@ def generate_schema() -> tuple[list[str], dict[int, list[ConfigItem]]]:
             preset_payload={
                 "misc.vrr": 0,
                 "debug.vfr": True,
-                "render.cm_fs_passthrough": False,
-                "render.cm_auto_hdr": False
+                "render.direct_scanout": 0,
+                "render.cm_auto_hdr": 0
             },
-            extended_help="Maximum power efficiency: VFR active, VRR disabled, standard color management."
+            extended_help="Maximum power efficiency: VFR active, VRR and Auto HDR disabled."
         )
     ]
 

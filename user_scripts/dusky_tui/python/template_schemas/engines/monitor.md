@@ -54,8 +54,8 @@ Maps to `hl.workspace_rule({ workspace = "<id>", monitor = "<mon>", default = <b
 - `debug/vfr` (bool: variable frame rate)
 - `debug/overlay` (bool: FPS and damage region overlay)
 - `render/cm_sdr_eotf` (string: `auto`, `srgb`, `gamma22`)
-- `render/cm_fs_passthrough` (bool: fullscreen HDR bypass)
-- `render/cm_auto_hdr` (bool: automatic HDR promotion)
+- `render/direct_scanout` (int: 0 = off, 1 = always on, 2 = auto for games)
+- `render/cm_auto_hdr` (int: 0 = off, 1 = auto HDR, 2 = auto HDR EDID)
 
 ## Quirks
 
