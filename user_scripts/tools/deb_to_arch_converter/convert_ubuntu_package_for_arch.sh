@@ -21,12 +21,15 @@ import lzma
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
+import signal
 import sqlite3
 import ssl
 import stat
 import subprocess
 import sys
+import sysconfig
 import tarfile
 import tempfile
 import urllib.request
@@ -116,6 +119,19 @@ STATIC_PKG_MAP: dict[str, str] = {
     "python3-pyqt5": "python-pyqt5",
     "python3-pyqt6": "python-pyqt6",
     "python3-setproctitle": "python-setproctitle",
+    "python3-packaging": "python-packaging",
+    "python3-certifi": "python-certifi",
+    "python3-idna": "python-idna",
+    "python3-charset-normalizer": "python-charset-normalizer",
+    "python3-chardet": "python-chardet",
+    "python3-six": "python-six",
+    "python3-dateutil": "python-dateutil",
+    "python3-pygments": "python-pygments",
+    "python3-markdown": "python-markdown",
+    "python3-click": "python-click",
+    "python3-rich": "python-rich",
+    "python3-toml": "python-toml",
+    "python3-tomli": "python-tomli",
     # GObject Introspection (gir1.2-*)
     "gir1.2-glib-2.0": "glib2",
     "gir1.2-freedesktop": "gobject-introspection-runtime",
@@ -183,6 +199,36 @@ STATIC_PKG_MAP: dict[str, str] = {
     "libsecret-1-0": "libsecret",
     "dconf-gsettings-backend": "dconf",
     "gsettings-desktop-schemas": "gsettings-desktop-schemas",
+    "libtinysparql-3.0-0": "tinysparql",
+    "libtracker-sparql-3.0-0": "tinysparql",
+    "libcloudproviders0": "libcloudproviders",
+    "libepoxy0": "libepoxy",
+    "libfribidi0": "fribidi",
+    "libharfbuzz0b": "harfbuzz",
+    "libharfbuzz-icu0": "harfbuzz-icu",
+    "libfontconfig1": "fontconfig",
+    "libfreetype6": "freetype2",
+    "libpixman-1-0": "pixman",
+    "libdecor-0-0": "libdecor",
+    "libpng16-16": "libpng",
+    "libpng16-16t64": "libpng",
+    "libjpeg-turbo8": "libjpeg-turbo",
+    "libjpeg8": "libjpeg-turbo",
+    "libjpeg62-turbo": "libjpeg-turbo",
+    "libwebp7": "libwebp",
+    "libwebpdemux2": "libwebp",
+    "libwebpmux3": "libwebp",
+    "libavif16": "libavif",
+    "libtiff6": "libtiff",
+    "libtiff5": "libtiff",
+    "liblcms2-2": "lcms2",
+    "libenchant-2-2": "enchant",
+    "libhyphen0": "hyphen",
+    "libwoff1": "woff2",
+    "libmanette-0.2-0": "libmanette",
+    "libopenjp2-7": "openjpeg2",
+    "bubblewrap": "bubblewrap",
+    "xdg-dbus-proxy": "xdg-dbus-proxy",
     # GStreamer stack
     "libgstreamer1.0-0": "gstreamer",
     "gstreamer1.0-plugins-base": "gst-plugins-base",
@@ -227,7 +273,6 @@ STATIC_PKG_MAP: dict[str, str] = {
     "libdbus-1-3": "dbus",
     "libsystemd0": "systemd-libs",
     "libudev1": "systemd-libs",
-    "lib seccomp2": "libseccomp",
     "libseccomp2": "libseccomp",
     "libcap2": "libcap",
     "libgcrypt20": "libgcrypt",
@@ -321,10 +366,13 @@ STATIC_PKG_MAP: dict[str, str] = {
     "libqt6core6": "qt6-base",
     "libqt6gui6": "qt6-base",
     "libqt6widgets6": "qt6-base",
-    # AppIndicator / NSS
+    # AppIndicator / Dbusmenu / NSS
     "libnss3": "nss",
     "libnspr4": "nspr",
     "libayatana-appindicator3-1": "libayatana-appindicator",
+    "libayatana-ido3-0.4-0": "libayatana-ido",
+    "libdbusmenu-glib4": "libdbusmenu-glib",
+    "libdbusmenu-gtk3-4": "libdbusmenu-gtk3",
     "libappindicator3-1": "libappindicator-gtk3",
 }
 
@@ -417,6 +465,25 @@ def print_help() -> None:
     print(help_text)
 
 
+def _has_multilib_enabled() -> bool:
+    if os.uname().machine != "x86_64":
+        return False
+    if shutil.which("pacman-conf"):
+        res = subprocess.run(
+            ["pacman-conf", "--repo-list"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if res.returncode == 0:
+            repos = {ln.strip() for ln in res.stdout.splitlines() if ln.strip()}
+            if "multilib" in repos or "multilib-testing" in repos:
+                return True
+    multilib_db = Path("/var/lib/pacman/sync/multilib.db")
+    multilib_testing_db = Path("/var/lib/pacman/sync/multilib-testing.db")
+    return multilib_db.exists() or multilib_testing_db.exists()
+
+
 def parse_cli_args(argv: list[str]) -> CLIOptions:
     parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     parser.add_argument("-h", "--help", action="store_true")
@@ -459,25 +526,34 @@ def parse_cli_args(argv: list[str]) -> CLIOptions:
         Pkgbuild=ns.Pkgbuild,
     )
 
+    if opts.update:
+        if any((
+            opts.quiet,
+            opts.Quiet,
+            opts.pseudo,
+            opts.wipeout,
+            opts.pkgbuild,
+            opts.Pkgbuild,
+            ns.output is not None,
+            ns.deb_file is not None,
+        )):
+            log_err("-u / --update cannot be combined with package conversion options")
+            sys.exit(1)
+        return opts
+
     if ns.output is not None:
         out_path = Path(ns.output).expanduser().resolve()
-        if not out_path.is_dir():
-            log_err(f"No output directory or invalid output directory: {ns.output}")
+        if not out_path.is_dir() or not os.access(out_path, os.W_OK | os.X_OK):
+            log_err(f"No output directory or non-writable output directory: {ns.output}")
             sys.exit(1)
         opts.output_dir = out_path
 
-    if opts.pseudo:
-        multilib_db = Path("/var/lib/pacman/sync/multilib.db")
-        multilib_testing_db = Path("/var/lib/pacman/sync/multilib-testing.db")
-        if not multilib_db.exists() and not multilib_testing_db.exists():
-            log_err(
-                "You are either running non-x86_64 Arch Linux, or you haven't enabled multilib repository. "
-                "If you are running x86_64 Arch Linux, you must enable a multilib repository and then synchronize pacman database"
-            )
-            sys.exit(1)
-
-    if opts.update:
-        return opts
+    if opts.pseudo and not _has_multilib_enabled():
+        log_err(
+            "You are either running non-x86_64 Arch Linux, or you haven't enabled multilib repository. "
+            "If you are running x86_64 Arch Linux, you must enable a multilib repository and then synchronize pacman database"
+        )
+        sys.exit(1)
 
     if not ns.deb_file:
         log_err("You haven't specified a deb package")
@@ -487,6 +563,11 @@ def parse_cli_args(argv: list[str]) -> CLIOptions:
     deb_candidate = Path(ns.deb_file).expanduser().resolve()
     if not deb_candidate.is_file():
         log_err(f"No such file or directory: {ns.deb_file}")
+        sys.exit(1)
+
+    target_dir = opts.output_dir if opts.output_dir is not None else deb_candidate.parent
+    if not os.access(target_dir, os.W_OK | os.X_OK):
+        log_err(f"Output directory is not writable: {target_dir}")
         sys.exit(1)
 
     opts.deb_path = deb_candidate
@@ -527,11 +608,11 @@ def discover_ubuntu_codename(ssl_ctx: ssl.SSLContext) -> str:
 def stream_ingest_contents(
     url: str, source_tag: str, ssl_ctx: ssl.SSLContext
 ) -> list[tuple[str, str, str]]:
-    """Downloads a gzipped Contents index and extracts relevant binary/library/gir basenames."""
-    records: list[tuple[str, str, str]] = []
+    """Downloads a gzipped Contents index and extracts deduplicated binary/library/gir basenames."""
+    records_set: set[tuple[str, str, str]] = set()
     req = urllib.request.Request(url, headers={"User-Agent": f"debtap-ng/{VERSION}"})
     relevant_re = re.compile(
-        r"(?:^|/)(?:s?bin|opt|lib|lib64|girepository-[0-9.]+)/|\.so(?:\.|$)|\.typelib$"
+        r"(?:^|/)(?:s?bin|opt|lib|lib64|girepository-[0-9.]+)/|\.so(?:\.|$)\vert{}\.typelib$"
     )
 
     try:
@@ -549,12 +630,12 @@ def stream_ingest_contents(
                         continue
                     basename = filepath.rsplit("/", 1)[-1]
                     for pkg_entry in pkg_spec.split(","):
-                        pkg_name = pkg_entry.rsplit("/", 1)[-1].strip()
+                        pkg_name = pkg_entry.rsplit("/", 1)[-1].strip().lower()
                         if pkg_name:
-                            records.append((basename, pkg_name, source_tag))
+                            records_set.add((basename, pkg_name, source_tag))
     except Exception as exc:
         log_warn(f"Skipped or failed indexing {url}: {exc}")
-    return records
+    return list(records_set)
 
 
 def sync_database() -> None:
@@ -575,52 +656,67 @@ def sync_database() -> None:
     ssl_ctx = ssl.create_default_context()
     deb_arch = detect_debian_arch()
     ubuntu_codename = discover_ubuntu_codename(ssl_ctx)
+    ubuntu_host = (
+        "https://archive.ubuntu.com/ubuntu"
+        if deb_arch == "amd64"
+        else "https://ports.ubuntu.com/ubuntu-ports"
+    )
 
     urls: list[tuple[str, str]] = [
         (f"https://deb.debian.org/debian/dists/sid/main/Contents-{deb_arch}.gz", "debian"),
         (f"https://deb.debian.org/debian/dists/sid/contrib/Contents-{deb_arch}.gz", "debian"),
         (f"https://deb.debian.org/debian/dists/sid/non-free/Contents-{deb_arch}.gz", "debian"),
         (f"https://deb.debian.org/debian/dists/sid/non-free-firmware/Contents-{deb_arch}.gz", "debian"),
+        (f"{ubuntu_host}/dists/{ubuntu_codename}/Contents-{deb_arch}.gz", "ubuntu"),
     ]
-    if deb_arch == "amd64":
-        urls.append(
-            (f"https://archive.ubuntu.com/ubuntu/dists/{ubuntu_codename}/Contents-{deb_arch}.gz", "ubuntu")
-        )
-    else:
-        urls.append(
-            (f"https://ports.ubuntu.com/ubuntu-ports/dists/{ubuntu_codename}/Contents-{deb_arch}.gz", "ubuntu")
-        )
 
     tmp_db = CACHE_DIR / "cache.db.tmp"
-    if tmp_db.exists():
-        tmp_db.unlink()
+    tmp_db.unlink(missing_ok=True)
+    conn: sqlite3.Connection | None = None
 
-    conn = sqlite3.connect(tmp_db)
-    cur = conn.cursor()
-    cur.executescript(
-        """
-        PRAGMA journal_mode = OFF;
-        PRAGMA synchronous = OFF;
-        CREATE TABLE pkg_contents (
-            pkg_name TEXT NOT NULL,
-            basename TEXT NOT NULL,
-            distro TEXT NOT NULL
-        );
-        CREATE TABLE base_packages (
-            pkg_name TEXT PRIMARY KEY
-        );
-        CREATE TABLE aur_packages (
-            pkg_name TEXT PRIMARY KEY
-        );
-        """
-    )
+    try:
+        conn = sqlite3.connect(tmp_db)
+        cur = conn.cursor()
+        cur.executescript(
+            """
+            PRAGMA journal_mode = OFF;
+            PRAGMA synchronous = OFF;
+            CREATE TABLE pkg_contents (
+                pkg_name TEXT NOT NULL,
+                basename TEXT NOT NULL,
+                distro TEXT NOT NULL
+            );
+            CREATE TABLE base_packages (
+                pkg_name TEXT PRIMARY KEY
+            );
+            CREATE TABLE aur_packages (
+                pkg_name TEXT PRIMARY KEY
+            );
+            """
+        )
 
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        futures = {
-            pool.submit(stream_ingest_contents, url, tag, ssl_ctx): url for url, tag in urls
-        }
-        for fut in as_completed(futures):
-            rows = fut.result()
+        ubuntu_rows_inserted = 0
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            futures = {
+                pool.submit(stream_ingest_contents, url, tag, ssl_ctx): (url, tag)
+                for url, tag in urls
+            }
+            for fut in as_completed(futures):
+                _, tag = futures[fut]
+                rows = fut.result()
+                if rows:
+                    cur.executemany(
+                        "INSERT INTO pkg_contents (basename, pkg_name, distro) VALUES (?, ?, ?)",
+                        rows,
+                    )
+                    conn.commit()
+                    if tag == "ubuntu":
+                        ubuntu_rows_inserted += len(rows)
+
+        if ubuntu_rows_inserted == 0 and ubuntu_codename != "noble":
+            fallback_url = f"{ubuntu_host}/dists/noble/Contents-{deb_arch}.gz"
+            log_info(f"Retrying Ubuntu Contents sync with fallback codename 'noble' ({fallback_url})...")
+            rows = stream_ingest_contents(fallback_url, "ubuntu", ssl_ctx)
             if rows:
                 cur.executemany(
                     "INSERT INTO pkg_contents (basename, pkg_name, distro) VALUES (?, ?, ?)",
@@ -628,47 +724,52 @@ def sync_database() -> None:
                 )
                 conn.commit()
 
-    log_info("Downloading latest AUR packages list...")
-    try:
-        req = urllib.request.Request(
-            "https://aur.archlinux.org/packages.gz",
-            headers={"User-Agent": f"debtap-ng/{VERSION}"},
+        log_info("Downloading latest AUR packages list...")
+        try:
+            req = urllib.request.Request(
+                "https://aur.archlinux.org/packages.gz",
+                headers={"User-Agent": f"debtap-ng/{VERSION}"},
+            )
+            with urllib.request.urlopen(req, context=ssl_ctx, timeout=30) as resp:
+                with gzip.GzipFile(fileobj=resp) as gz:
+                    aur_rows = [
+                        (line.decode("utf-8", errors="replace").strip(),)
+                        for line in gz
+                        if line.strip() and not line.startswith(b"#")
+                    ]
+            cur.executemany("INSERT OR IGNORE INTO aur_packages (pkg_name) VALUES (?)", aur_rows)
+            conn.commit()
+        except Exception as exc:
+            log_warn(f"Could not download AUR package list: {exc}")
+
+        log_info("Generating extended base group packages list...")
+        base_pkgs = compute_extended_base_packages()
+        cur.executemany(
+            "INSERT OR IGNORE INTO base_packages (pkg_name) VALUES (?)",
+            [(p,) for p in sorted(base_pkgs)],
         )
-        with urllib.request.urlopen(req, context=ssl_ctx, timeout=30) as resp:
-            with gzip.GzipFile(fileobj=resp) as gz:
-                aur_rows = [
-                    (line.decode("utf-8", errors="replace").strip(),)
-                    for line in gz
-                    if line.strip() and not line.startswith(b"#")
-                ]
-        cur.executemany("INSERT OR IGNORE INTO aur_packages (pkg_name) VALUES (?)", aur_rows)
+        cur.executescript(
+            """
+            CREATE INDEX idx_pkg_contents_pkg ON pkg_contents(pkg_name, distro);
+            CREATE INDEX idx_pkg_contents_base ON pkg_contents(basename);
+            """
+        )
         conn.commit()
-    except Exception as exc:
-        log_warn(f"Could not download AUR package list: {exc}")
+        conn.close()
+        conn = None
 
-    log_info("Generating extended base group packages list...")
-    base_pkgs = compute_extended_base_packages()
-    cur.executemany(
-        "INSERT OR IGNORE INTO base_packages (pkg_name) VALUES (?)",
-        [(p,) for p in sorted(base_pkgs)],
-    )
-    cur.executescript(
-        """
-        CREATE INDEX idx_pkg_contents_pkg ON pkg_contents(pkg_name, distro);
-        CREATE INDEX idx_pkg_contents_base ON pkg_contents(basename);
-        """
-    )
-    conn.commit()
-    conn.close()
+        tmp_db.replace(CACHE_DB)
+        os.chmod(CACHE_DB, 0o644)
 
-    tmp_db.replace(CACHE_DB)
-    os.chmod(CACHE_DB, 0o644)
-
-    # Also write legacy marker files so legacy scripts or checks recognize the sync
-    (CACHE_DIR / "extended-base-packages-list").write_text(
-        "\n".join(sorted(base_pkgs)) + "\n", encoding="utf-8"
-    )
-    log_info("All steps successfully completed!")
+        (CACHE_DIR / "extended-base-packages-list").write_text(
+            "\n".join(sorted(base_pkgs)) + "\n", encoding="utf-8"
+        )
+        log_info("All steps successfully completed!")
+    finally:
+        if conn is not None:
+            with contextlib.suppress(Exception):
+                conn.close()
+        tmp_db.unlink(missing_ok=True)
 
 
 def compute_extended_base_packages() -> set[str]:
@@ -724,28 +825,50 @@ def parse_ar_archive(deb_path: Path) -> Iterator[tuple[str, bytes]]:
                 raise ValueError("Corrupted ar member header in .deb archive")
 
             raw_name = header[0:16].decode("ascii", errors="replace").strip()
-            size = int(header[48:58].decode("ascii").strip())
+            try:
+                size = int(header[48:58].decode("ascii").strip())
+            except ValueError as exc:
+                raise ValueError("Invalid member size in .deb ar header") from exc
+            if size < 0:
+                raise ValueError("Negative member size in .deb ar header")
 
             if raw_name == "//":
                 gnu_strtab = f.read(size)
+                if len(gnu_strtab) < size:
+                    raise ValueError("Truncated GNU string table in .deb archive")
                 if size % 2 == 1:
                     f.read(1)
                 continue
 
             if raw_name.startswith("#1/"):
                 ext_len = int(raw_name[3:])
-                name = f.read(ext_len).decode("utf-8", errors="replace").rstrip("\x00")
-                payload = f.read(size - ext_len)
+                if ext_len < 0 or ext_len > size:
+                    raise ValueError("Invalid BSD extended filename length in .deb archive")
+                raw_ext_name = f.read(ext_len)
+                if len(raw_ext_name) < ext_len:
+                    raise ValueError("Truncated BSD extended filename in .deb archive")
+                name = raw_ext_name.decode("utf-8", errors="replace").rstrip("\x00")
+                expected_payload_len = size - ext_len
+                payload = f.read(expected_payload_len)
             elif raw_name.startswith("/") and raw_name[1:].isdigit() and gnu_strtab:
                 offset = int(raw_name[1:])
+                if offset < 0 or offset >= len(gnu_strtab):
+                    raise ValueError("Out-of-bounds GNU string table offset in .deb archive")
                 end_idx = gnu_strtab.find(b"/\n", offset)
                 if end_idx == -1:
                     end_idx = gnu_strtab.find(b"\n", offset)
-                name = gnu_strtab[offset:end_idx].decode("utf-8", errors="replace")
-                payload = f.read(size)
+                if end_idx == -1:
+                    end_idx = len(gnu_strtab)
+                name = gnu_strtab[offset:end_idx].decode("utf-8", errors="replace").rstrip("/ \t\r\n")
+                expected_payload_len = size
+                payload = f.read(expected_payload_len)
             else:
                 name = raw_name.rstrip("/")
-                payload = f.read(size)
+                expected_payload_len = size
+                payload = f.read(expected_payload_len)
+
+            if len(payload) < expected_payload_len:
+                raise ValueError(f"Truncated ar member payload for '{name}' in .deb archive")
 
             if size % 2 == 1:
                 f.read(1)
@@ -781,12 +904,14 @@ def decompress_tar_bytes(member_name: str, raw_bytes: bytes) -> bytes:
 
 
 def safe_deb_tar_filter(member: tarfile.TarInfo, dest_path: str) -> tarfile.TarInfo | None:
-    """PEP 706-hardened filter tailored for OS package root trees."""
-    clean_name = member.name.lstrip("./").lstrip("/")
-    if not clean_name:
+    """PEP 706-hardened filter tailored for OS package root trees (preserves dotfiles)."""
+    clean_name = re.sub(r"^(?:\./+|/+)+", "", member.name)
+    if not clean_name or clean_name == ".":
         return None
 
     norm_rel = os.path.normpath(clean_name)
+    if norm_rel in ("", "."):
+        return None
     if norm_rel.startswith("..") or "/../" in f"/{norm_rel}/":
         raise ValueError(f"Unsafe path traversal detected in archive member: {member.name}")
 
@@ -799,6 +924,9 @@ def safe_deb_tar_filter(member: tarfile.TarInfo, dest_path: str) -> tarfile.TarI
     member.uname = "root"
     member.gname = "root"
 
+    if member.isdir():
+        member.mode = (member.mode or 0o755) | 0o700
+
     if member.issym():
         link_target = member.linkname
         if not link_target.startswith("/"):
@@ -806,9 +934,9 @@ def safe_deb_tar_filter(member: tarfile.TarInfo, dest_path: str) -> tarfile.TarI
             if resolved.startswith(".."):
                 raise ValueError(f"Symlink escapes package root: {member.name} -> {link_target}")
     elif member.islnk():
-        link_target = member.linkname.lstrip("./").lstrip("/")
+        link_target = re.sub(r"^(?:\./+|/+)+", "", member.linkname)
         norm_target = os.path.normpath(link_target)
-        if norm_target.startswith(".."):
+        if norm_target.startswith("..") or "/../" in f"/{norm_target}/":
             raise ValueError(f"Hardlink escapes package root: {member.name} -> {member.linkname}")
         member.linkname = norm_target
 
@@ -866,6 +994,15 @@ def merge_tree(src: Path, dst: Path, symlink_Moves: dict[str, str]) -> None:
                 if target.exists() or target.is_symlink():
                     target.unlink()
                 shutil.move(str(item), str(target))
+        elif item.is_symlink():
+            if target.exists() or target.is_symlink():
+                if target.is_dir() and not target.is_symlink():
+                    shutil.rmtree(target)
+                else:
+                    target.unlink()
+            link_target = os.readlink(item)
+            os.symlink(link_target, target)
+            item.unlink()
         else:
             if target.exists() or target.is_symlink():
                 if target.is_dir() and not target.is_symlink():
@@ -906,6 +1043,22 @@ def normalize_filesystem(ctx: PackageBuildContext) -> None:
         for triplet in triplets:
             t_dir = root / base_prefix / triplet
             if t_dir.exists() and t_dir.is_dir():
+                # Adjust relative symlinks inside the triplet directory that walk upward (../)
+                for s_path in t_dir.rglob("*"):
+                    if s_path.is_symlink():
+                        raw_t = os.readlink(s_path)
+                        if not raw_t.startswith("/") and raw_t.startswith("../"):
+                            rel_depth = len(s_path.relative_to(t_dir).parts)
+                            up_count = 0
+                            parts = raw_t.split("/")
+                            for p in parts:
+                                if p == "..":
+                                    up_count += 1
+                                else:
+                                    break
+                            if up_count >= rel_depth and raw_t.startswith("../"):
+                                s_path.unlink()
+                                s_path.symlink_to(raw_t.removeprefix("../"))
                 merge_tree(t_dir, root / target_lib_rel, {})
                 ops.append(
                     f"mkdir -p {target_lib_rel}; cp -a {base_prefix}/{triplet}/. {target_lib_rel}/; "
@@ -937,7 +1090,9 @@ def normalize_filesystem(ctx: PackageBuildContext) -> None:
                 ops.append(f"mkdir -p usr/lib; cp -a {ldir}/. usr/lib/; rm -rf {ldir}")
         if (root / "usr/local/lib64").exists():
             merge_tree(root / "usr/local/lib64", root / "usr/local/lib", {})
-            ops.append("mkdir -p usr/local/lib; cp -a usr/local/lib64/. usr/local/lib/; rm -rf usr/local/lib64")
+            ops.append(
+                "mkdir -p usr/local/lib; cp -a usr/local/lib64/. usr/local/lib/; rm -rf usr/local/lib64"
+            )
         if (root / "lib32").exists():
             dest_32 = "usr/lib" if is_i386 else "usr/lib32"
             merge_tree(root / "lib32", root / dest_32, {})
@@ -953,26 +1108,95 @@ def normalize_filesystem(ctx: PackageBuildContext) -> None:
                 ops.append(f"mkdir -p usr/lib32; cp -a {ldir}/. usr/lib32/; rm -rf {ldir}")
         if (root / "usr/local/lib").exists():
             merge_tree(root / "usr/local/lib", root / "usr/local/lib32", {})
-            ops.append("mkdir -p usr/local/lib32; cp -a usr/local/lib/. usr/local/lib32/; rm -rf usr/local/lib")
+            ops.append(
+                "mkdir -p usr/local/lib32; cp -a usr/local/lib/. usr/local/lib32/; rm -rf usr/local/lib"
+            )
+
+    # 4b. Relocate Debian/Ubuntu Python dist-packages to Arch Linux active site-packages
+    relocate_python_packages(root, ops)
 
     # 5. Rewrite .desktop launchers, D-Bus service files, and systemd units
-    rewrite_legacy_paths_in_configs(root, ops)
+    rewrite_legacy_paths_in_configs(root, triplets, pseudo, ops)
 
     # 6. Repair broken symlinks pointing to relocated legacy paths
-    repair_symlinks(root, triplets, pseudo)
+    repair_symlinks(root, triplets, pseudo, ops)
 
     # 7. Relocate license / copyright files into /usr/share/licenses/<pkgname>/
     relocate_licenses(ctx)
 
     # 8. Prune empty /usr/local or /lib directories if emptied
-    for empty_candidate in ("usr/local/lib", "usr/local", "lib", "lib64"):
+    for empty_candidate in ("usr/lib/python3", "usr/local/lib", "usr/local", "lib", "lib64"):
         cand_path = root / empty_candidate
         if cand_path.exists() and cand_path.is_dir() and not any(cand_path.iterdir()):
             cand_path.rmdir()
             ops.append(f"rmdir --ignore-fail-on-non-empty {empty_candidate} 2>/dev/null || true")
 
 
-def rewrite_legacy_paths_in_configs(root: Path, ops: list[str]) -> None:
+def relocate_python_packages(root: Path, ops: list[str]) -> None:
+    """Relocates Debian dist-packages / mismatched python3.x site-packages into host site-packages."""
+    purelib = sysconfig.get_path("purelib") or ""
+    if purelib.startswith("/"):
+        rel_site = purelib.lstrip("/")
+    else:
+        rel_site = f"usr/lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages"
+
+    usr_lib = root / "usr" / "lib"
+    if not usr_lib.exists():
+        return
+
+    relocated_any = False
+    target_site = root / rel_site
+
+    for py_dir in sorted(usr_lib.glob("python3*")):
+        if not py_dir.is_dir() or py_dir.is_symlink():
+            continue
+        for sub_name in ("dist-packages", "site-packages"):
+            src_pkg_dir = py_dir / sub_name
+            if not src_pkg_dir.exists() or not src_pkg_dir.is_dir():
+                continue
+            if src_pkg_dir.resolve() == target_site.resolve():
+                continue
+            merge_tree(src_pkg_dir, target_site, {})
+            rel_src = src_pkg_dir.relative_to(root)
+            ops.append(
+                f'_py_site="$(python3 -c \'import sysconfig; print(sysconfig.get_path("purelib").lstrip("/"))\')"; '
+                f'mkdir -p "${{_py_site}}"; cp -a {rel_src}/. "${{_py_site}}"/; rm -rf {rel_src}'
+            )
+            relocated_any = True
+        if py_dir.exists() and not any(py_dir.iterdir()):
+            py_dir.rmdir()
+
+    # Normalize hardcoded versioned python3.x shebangs in usr/bin/*
+    usr_bin = root / "usr" / "bin"
+    if usr_bin.is_dir():
+        for script_file in usr_bin.iterdir():
+            if not script_file.is_file() or script_file.is_symlink():
+                continue
+            try:
+                raw = script_file.read_bytes()
+            except OSError:
+                continue
+            if raw.startswith(b"#!") and b"python3." in raw.splitlines()[0]:
+                lines = raw.splitlines(keepends=True)
+                lines[0] = re.sub(
+                    rb"^#!\s*/usr/bin/(?:env\s+)?python3\.[0-9]+",
+                    b"#!/usr/bin/python3",
+                    lines[0],
+                )
+                script_file.write_bytes(b"".join(lines))
+                relocated_any = True
+
+    if relocated_any:
+        ops.append(
+            "find usr/bin -maxdepth 1 -type f -exec sed -i -E "
+            "'1s|^#![[:space:]]*/usr/bin/(env[[:space:]]+)?python3\\.[0-9]+|#!/usr/bin/python3|' {} + 2>/dev/null || true"
+        )
+
+
+def rewrite_legacy_paths_in_configs(
+    root: Path, triplets: tuple[str, ...], pseudo: bool, ops: list[str]
+) -> None:
+    target_lib = "/usr/lib32/" if pseudo else "/usr/lib/"
     path_replacements = [
         ("/usr/local/sbin/", "/usr/bin/"),
         ("/usr/local/bin/", "/usr/bin/"),
@@ -984,12 +1208,24 @@ def rewrite_legacy_paths_in_configs(root: Path, ops: list[str]) -> None:
         ("/lib/systemd/", "/usr/lib/systemd/"),
         ("/lib/udev/", "/usr/lib/udev/"),
     ]
+    for triplet in triplets:
+        path_replacements.append((f"/usr/lib/{triplet}/", target_lib))
+        path_replacements.append((f"/lib/{triplet}/", target_lib))
+
     target_globs = [
         "usr/share/applications/*.desktop",
+        "etc/xdg/autostart/*.desktop",
         "usr/share/dbus-1/services/*.service",
         "usr/share/dbus-1/system-services/*.service",
         "usr/lib/systemd/system/*.service",
+        "usr/lib/systemd/system/*.socket",
+        "usr/lib/systemd/system/*.timer",
         "usr/lib/systemd/user/*.service",
+        "usr/lib/systemd/user/*.socket",
+        "usr/lib/systemd/user/*.timer",
+        "usr/lib/udev/rules.d/*.rules",
+        "usr/lib/pkgconfig/*.pc",
+        "usr/share/pkgconfig/*.pc",
     ]
     modified_any = False
     for pattern in target_globs:
@@ -1013,52 +1249,100 @@ def rewrite_legacy_paths_in_configs(root: Path, ops: list[str]) -> None:
                 modified_any = True
 
     if modified_any:
+        triplet_alt = "|".join(re.escape(t) for t in triplets)
         ops.append(
-            "find usr/share/applications usr/lib/systemd -type f \\(-name '*.desktop' -o -name '*.service'\\) "
-            "-exec sed -i -E 's#(^|[[:space:]=\"\\x27])/(usr/games|usr/local/games|usr/local/s?bin|usr/sbin|s?bin)/#\\1/usr/bin/#g' {} + 2>/dev/null || true"
+            "find usr/share usr/lib etc -type f "
+            "\\(-name '*.desktop' -o -name '*.service' -o -name '*.socket' -o -name '*.timer' -o -name '*.rules' -o -name '*.pc'\\) "
+            f"-exec sed -i -E -e 's#(^|[[:space:]=\"\\x27])/(usr/games|usr/local/games|usr/local/s?bin|usr/sbin|s?bin)/#\\1/usr/bin/#g' "
+            f"-e 's#(^|[[:space:]=\"\\x27])/(usr/)?lib/({triplet_alt})/#\\1{target_lib}#g' {{}} + 2>/dev/null || true"
         )
 
 
-def repair_symlinks(root: Path, triplets: tuple[str, ...], pseudo: bool) -> None:
+def repair_symlinks(
+    root: Path, triplets: tuple[str, ...], pseudo: bool, ops: list[str]
+) -> None:
     target_lib = "/usr/lib32/" if pseudo else "/usr/lib/"
+    repaired_any = False
     for path in root.rglob("*"):
         if not path.is_symlink():
             continue
         raw_target = os.readlink(path)
         new_target = raw_target
-        if new_target.startswith(("/bin/", "/sbin/", "/usr/sbin/", "/usr/games/")):
-            new_target = "/usr/bin/" + new_target.split("/", 3)[-1]
-        elif new_target.startswith(("/lib/", "/lib64/", "/usr/lib64/")):
-            suffix = new_target.split("/", 2)[-1] if new_target.startswith("/lib") else new_target.split("/", 3)[-1]
-            new_target = target_lib + suffix
+
         for triplet in triplets:
             if f"/{triplet}/" in new_target:
                 new_target = new_target.replace(f"/{triplet}/", "/")
-                if new_target.startswith("/lib/"):
-                    new_target = target_lib + new_target.removeprefix("/lib/")
+            elif new_target.startswith(f"{triplet}/"):
+                new_target = new_target.removeprefix(f"{triplet}/")
+
+        if re.match(r"^/(?:usr/local/s?bin|usr/local/games|usr/sbin|usr/games|s?bin)/", new_target):
+            new_target = re.sub(
+                r"^/(?:usr/local/s?bin|usr/local/games|usr/sbin|usr/games|s?bin)/",
+                "/usr/bin/",
+                new_target,
+            )
+        elif re.match(r"^/(?:usr/lib64|lib64|lib)/", new_target):
+            new_target = re.sub(r"^/(?:usr/lib64|lib64|lib)/", target_lib, new_target)
+        elif pseudo and new_target.startswith("/usr/lib/"):
+            new_target = "/usr/lib32/" + new_target.removeprefix("/usr/lib/")
+
         if new_target != raw_target:
             path.unlink()
             path.symlink_to(new_target)
+            repaired_any = True
+
+    if repaired_any:
+        triplet_alt = "|".join(re.escape(t) for t in triplets)
+        ops.append(
+            f"python3 -c 'import os, pathlib, re; root=pathlib.Path(\".\"); "
+            f"[ (p.unlink(), p.symlink_to(re.sub(r\"^/(?:usr/lib64|lib64|lib)/\", \"{target_lib}\", "
+            f"re.sub(r\"^/(?:usr/local/s?bin|usr/local/games|usr/sbin|usr/games|s?bin)/\", \"/usr/bin/\", "
+            f"re.sub(r\"(?:^|/)({triplet_alt})/\", lambda m: \"/\" if m.group(0).startswith(\"/\") else \"\", os.readlink(p)))))) "
+            f"for p in root.rglob(\"*\") if p.is_symlink() and os.readlink(p) != "
+            f"re.sub(r\"^/(?:usr/lib64|lib64|lib)/\", \"{target_lib}\", "
+            f"re.sub(r\"^/(?:usr/local/s?bin|usr/local/games|usr/sbin|usr/games|s?bin)/\", \"/usr/bin/\", "
+            f"re.sub(r\"(?:^|/)({triplet_alt})/\", lambda m: \"/\" if m.group(0).startswith(\"/\") else \"\", os.readlink(p)))) ]'"
+        )
 
 
 def relocate_licenses(ctx: PackageBuildContext) -> None:
     root = ctx.pkgroot_dir
     pkgname = ctx.control.pkgname
-    lic_Files: list[tuple[Path, str]] = []
+    excluded_exts = {
+        ".py", ".pyc", ".pyo", ".so", ".a", ".o", ".svg", ".png", ".jpg",
+        ".jpeg", ".gif", ".ico", ".icns", ".webp", ".js", ".mjs", ".ts",
+        ".css", ".ui", ".html", ".htm", ".xml", ".json", ".yaml", ".yml",
+        ".toml", ".ini", ".cfg", ".desktop", ".service", ".sh", ".mo", ".po",
+    }
+
+    doc_candidates: list[tuple[Path, str]] = []
+    other_candidates: list[tuple[Path, str]] = []
 
     for p in sorted(root.rglob("*")):
         if not p.is_file() or p.is_symlink():
             continue
+        if p.suffix.lower() in excluded_exts:
+            continue
         lower_name = p.name.lower()
-        if "license" in lower_name:
-            lic_Files.append((p, "LICENSE"))
-        elif "copyright" in lower_name:
-            lic_Files.append((p, "COPYRIGHT"))
+        kind = ""
+        if "copyright" in lower_name:
+            kind = "COPYRIGHT"
+        elif "license" in lower_name or "copying" in lower_name:
+            kind = "LICENSE"
         elif "eula" in lower_name:
-            lic_Files.append((p, "EULA"))
+            kind = "EULA"
+        if not kind:
+            continue
 
+        rel_parts = p.relative_to(root).parts
+        if len(rel_parts) >= 3 and rel_parts[:3] == ("usr", "share", "doc"):
+            doc_candidates.append((p, kind))
+        else:
+            other_candidates.append((p, kind))
+
+    lic_files = doc_candidates + other_candidates
     seen_types: set[str] = set()
-    for src_path, kind in lic_Files:
+    for src_path, kind in lic_files:
         if kind in seen_types:
             continue
         seen_types.add(kind)
@@ -1068,16 +1352,21 @@ def relocate_licenses(ctx: PackageBuildContext) -> None:
         dest_file = dest_dir / dest_name
         if src_path.resolve() != dest_file.resolve():
             dest_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src_path, dest_file)
-            os.chmod(dest_file, 0o644)
-            ctx.pkgbuild_ops.append(
-                f'install -D -m644 "{rel_src}" "${{pkgdir}}/usr/share/licenses/${{pkgname}}/{dest_name}"'
-            )
-
-
-# ---------------------------------------------------------------------------
-# Subsystem 5: RFC-822 Control Parser & Semantic Version Translation
-# ---------------------------------------------------------------------------
+            if src_path.suffix.lower() == ".gz":
+                with gzip.open(src_path, "rb") as gz_in:
+                    dest_file.write_bytes(gz_in.read())
+                os.chmod(dest_file, 0o644)
+                ctx.pkgbuild_ops.append(
+                    f'mkdir -p "${{pkgdir}}/usr/share/licenses/${{pkgname}}"; '
+                    f'gzip -dc "{rel_src}" > "${{pkgdir}}/usr/share/licenses/${{pkgname}}/{dest_name}"; '
+                    f'chmod 644 "${{pkgdir}}/usr/share/licenses/${{pkgname}}/{dest_name}"'
+                )
+            else:
+                shutil.copy2(src_path, dest_file)
+                os.chmod(dest_file, 0o644)
+                ctx.pkgbuild_ops.append(
+                    f'install -D -m644 "{rel_src}" "${{pkgdir}}/usr/share/licenses/${{pkgname}}/{dest_name}"'
+                )
 
 
 def sanitize_deb_version(raw_ver: str, keep_pkgrel: bool = True) -> tuple[int, str, str]:
@@ -1092,35 +1381,41 @@ def sanitize_deb_version(raw_ver: str, keep_pkgrel: bool = True) -> tuple[int, s
         if ep_str.isdigit():
             epoch = int(ep_str)
 
-    # Strip Ubuntu/Debian packaging tags (+ubuntu26.04, ~dfsg, -0ubuntu1, etc.)
+    # Separate Debian revision first before stripping distro tags
+    pkgrel = "1"
+    if "-" in ver:
+        base_v, rev_v = ver.rsplit("-", 1)
+        rev_clean = re.sub(
+            r"[-+~.]?(?:ubuntu|debian|build|dfsg|nobinonly|ppa|nmu|deb)[0-9A-Za-z.+~]*",
+            "",
+            rev_v,
+            flags=re.IGNORECASE,
+        ).strip(".-+~")
+        if re.match(r"^[0-9]+(?:\.[0-9]+)?$", rev_clean):
+            ver = base_v
+            if keep_pkgrel and rev_clean != "0":
+                pkgrel = rev_clean.split(".", 1)[0]
+        elif not rev_clean:
+            ver = base_v
+
+    # Strip Ubuntu/Debian packaging tags (+ubuntu26.04, ~dfsg, ~build2, etc.) from upstream version
     ver = re.sub(
-        r"[-+~.]?(?:ubuntu|debian|build|dfsg|nobinonly|ppa|nmu|deb)[0-9A-Za-z.+~-]*",
+        r"[-+~.]?(?:ubuntu|debian|build|dfsg|nobinonly|ppa|nmu|deb)[0-9A-Za-z.+~]*",
         "",
         ver,
         flags=re.IGNORECASE,
     )
-    ver = re.sub(r"[-._](alpha|beta|pre|rc)", r"\1", ver, flags=re.IGNORECASE)
-    if "dev" in ver:
-        ver = ver.split("dev", 1)[0]
 
-    # Separate Debian revision if present
-    pkgrel = "1"
-    if "-" in ver:
-        base_v, rev_v = ver.rsplit("-", 1)
-        if re.match(r"^[0-9]+(\.[0-9]+)?$", rev_v):
-            ver = base_v
-        else:
-            ver = ver.replace("-", ".")
+    # Normalize pre-release markers (~rc1, -beta2, _alpha1, ~dev3 -> rc1, beta2, alpha1, dev3)
+    ver = re.sub(r"[-._~]+(alpha|beta|pre|rc|dev)", r"\1", ver, flags=re.IGNORECASE)
 
-    # Handle VCS version markers
-    for vcs in ("git", "bzr", "darcs", "hg"):
-        if vcs in ver:
-            after = ver.split(vcs, 1)[1].lstrip(".-+_")
-            ver = after.split("-", 1)[0] or "1"
-            break
+    # Preserve upstream base version while normalizing VCS revision markers
+    for vcs in ("git", "bzr", "darcs", "hg", "svn"):
+        ver = re.sub(rf"[-+~._]+({vcs})[-+~._]*", r".\1.", ver, flags=re.IGNORECASE)
 
     ver = ver.replace("+~", ".").replace("+", ".").replace("~", ".").replace("-", ".")
-    ver = re.sub(r"\.+", ".", ver).strip(".")
+    ver = re.sub(r"[^0-9A-Za-z._]", ".", ver)
+    ver = re.sub(r"\.+", ".", ver).strip("._")
     if not ver or not ver[0].isalnum():
         ver = "1.0.0"
 
@@ -1202,19 +1497,49 @@ def parse_control_file(control_path: Path, pseudo: bool) -> ControlMetadata:
 # ---------------------------------------------------------------------------
 
 
+ROLLING_RUNTIME_PKGS: frozenset[str] = frozenset({
+    "python",
+    "glibc",
+    "gcc-libs",
+    "glib2",
+    "gtk3",
+    "gtk4",
+    "webkit2gtk",
+    "webkit2gtk-4.1",
+    "webkitgtk-6.0",
+    "icu",
+    "openssl",
+    "gstreamer",
+    "gst-plugins-base",
+    "gst-plugins-base-libs",
+    " gst-plugins-good",
+    "libsoup3",
+    "pango",
+    "cairo",
+    "harfbuzz",
+    "sqlite",
+    "curl",
+    "libxml2",
+    "wayland",
+    "vulkan-icd-loader",
+})
+
+
 class ArchDependencyResolver:
     def __init__(self, pseudo: bool, wipeout: bool, self_pkgname: str) -> None:
         self.pseudo = pseudo
         self.wipeout = wipeout
         self.self_pkgname = self._strip_vcs(self_pkgname)
-        self.base_pkgs = self._load_base_packages()
-        self.local_arch_pkgs, self.local_provides = self._load_pacman_sync_db()
-        self.arch_pkg_versions = self._load_arch_pkg_versions()
         self.db_conn: sqlite3.Connection | None = (
             sqlite3.connect(f"file:{CACHE_DB}?mode=ro", uri=True)
             if CACHE_DB.exists()
             else None
         )
+        self.base_pkgs = self._load_base_packages()
+        self.aur_pkgs = self._load_aur_packages()
+        self.installed_pkgs = self._load_installed_packages()
+        self.local_arch_pkgs, self.local_provides = self._load_pacman_sync_db()
+        self.arch_pkg_versions = self._load_arch_pkg_versions()
         self.pkgfile_cache: dict[str, str] = {}
 
     @staticmethod
@@ -1228,7 +1553,40 @@ class ArchDependencyResolver:
             for ln in legacy_file.read_text(encoding="utf-8", errors="replace").splitlines():
                 if ln.strip():
                     base.add(ln.strip())
+        if self.db_conn is not None:
+            with contextlib.suppress(sqlite3.Error):
+                cur = self.db_conn.execute("SELECT pkg_name FROM base_packages")
+                for (pkg_name,) in cur.fetchall():
+                    if pkg_name:
+                        base.add(pkg_name)
         return base
+
+    def _load_aur_packages(self) -> set[str]:
+        aur: set[str] = set()
+        if self.db_conn is not None:
+            with contextlib.suppress(sqlite3.Error):
+                cur = self.db_conn.execute("SELECT pkg_name FROM aur_packages")
+                for (pkg_name,) in cur.fetchall():
+                    if pkg_name:
+                        aur.add(pkg_name)
+        return aur
+
+    def _load_installed_packages(self) -> set[str]:
+        installed: set[str] = set()
+        try:
+            res = subprocess.run(
+                ["pacman", "-Qq"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            for line in res.stdout.splitlines():
+                p = line.strip()
+                if p:
+                    installed.add(p)
+        except Exception:
+            pass
+        return installed
 
     def _load_pacman_sync_db(self) -> tuple[set[str], set[str]]:
         pkgs: set[str] = set()
@@ -1280,7 +1638,7 @@ class ArchDependencyResolver:
             return []
         groups: list[list[DebDependencyToken]] = []
         token_re = re.compile(
-            r"^\s*([A-Za-z0-9.+_-]+)(?::[A-Za-z0-9_-]+)?\s*(?:\(\s*(<<|<=|=|>=|>>|<|>)\s*([^)]+)\s*\))?\s*$"
+            r"^\s*([A-Za-z0-9.+_-]+)(?::[A-Za-z0-9_-]+)?\s*(?:\(\s*(<<\vert{}<=\vert{}=\vert{}>=\vert{}>>\vert{}<\vert{}>)\s*([^)]+)\s*\))?\s*$"
         )
         op_map = {"<<": "<", ">>": ">", "<=": "<=", ">=": ">=", "=": "=", "<": "<", ">": ">"}
 
@@ -1300,7 +1658,7 @@ class ArchDependencyResolver:
                 alpm_op = op_map.get(raw_op, "")
                 alpm_ver = ""
                 if raw_ver:
-                    _, alpm_ver, _ = sanitize_deb_version(raw_ver)
+                    _, alpm_ver, _ = sanitize_deb_version(raw_ver, keep_pkgrel=False)
                 alternatives.append(
                     DebDependencyToken(name=deb_name, operator=alpm_op, version=alpm_ver)
                 )
@@ -1338,23 +1696,24 @@ class ArchDependencyResolver:
         # Python module pattern: python3-foo -> python-foo
         if deb_name.startswith("python3-"):
             py_cand = "python-" + deb_name.removeprefix("python3-")
-            if py_cand in self.local_arch_pkgs:
+            if py_cand in self.local_arch_pkgs or py_cand in self.installed_pkgs or py_cand in self.aur_pkgs:
                 return py_cand
 
         # Tier 1 & 2: SQLite Contents lookup (if database was synced via -u)
         if self.db_conn is not None:
             for distro in ("debian", "ubuntu"):
-                cur = self.db_conn.execute(
-                    "SELECT DISTINCT basename FROM pkg_contents WHERE pkg_name = ? AND distro = ?",
-                    (deb_name, distro),
-                )
-                basenames = [r[0] for r in cur.fetchall()]
-                if basenames:
-                    voted = self._vote_pkgfile(basenames)
-                    if voted:
-                        return self._apply_multilib_prefix(voted)
+                for lookup_name in (deb_name, stripped_t64):
+                    cur = self.db_conn.execute(
+                        "SELECT DISTINCT basename FROM pkg_contents WHERE pkg_name = ? AND distro = ?",
+                        (lookup_name, distro),
+                    )
+                    basenames = [r[0] for r in cur.fetchall()]
+                    if basenames:
+                        voted = self._vote_pkgfile(basenames)
+                        if voted:
+                            return self._apply_multilib_prefix(voted)
 
-        # Tier 3: Heuristic name matching against local pacman sync DB
+        # Tier 3: Heuristic name matching against local pacman sync DB & AUR
         cand_no_vcs = self._strip_vcs(stripped_t64)
         cand_no_lib = cand_no_vcs.removeprefix("lib")
         cand_no_trailing_num = re.sub(r"[-.]?[0-9]+(?:\.[0-9]+)*$", "", cand_no_vcs)
@@ -1367,7 +1726,11 @@ class ArchDependencyResolver:
             cand_no_lib_num,
             "lib" + cand_no_lib_num,
         ):
-            if candidate and candidate in self.local_arch_pkgs:
+            if candidate and (
+                candidate in self.local_arch_pkgs
+                or candidate in self.installed_pkgs
+                or candidate in self.aur_pkgs
+            ):
                 return self._apply_multilib_prefix(candidate)
 
         return None
@@ -1378,9 +1741,18 @@ class ArchDependencyResolver:
         if arch_pkg.startswith("lib32-"):
             return arch_pkg
         lib32_cand = f"lib32-{arch_pkg}"
-        if lib32_cand in self.local_arch_pkgs:
+        if lib32_cand in self.local_arch_pkgs or lib32_cand in self.installed_pkgs:
             return lib32_cand
         return arch_pkg
+
+    def _rank_alternative(self, arch_pkg: str) -> int:
+        if arch_pkg in self.installed_pkgs:
+            return 0
+        if arch_pkg in self.local_arch_pkgs:
+            return 1
+        if arch_pkg in self.aur_pkgs:
+            return 2
+        return 3
 
     def _vote_pkgfile(self, basenames: list[str]) -> str | None:
         counts: dict[str, int] = {}
@@ -1399,7 +1771,6 @@ class ArchDependencyResolver:
         if basename in self.pkgfile_cache:
             return self.pkgfile_cache[basename]
 
-        # Try pkgfile first if available and synced
         if shutil.which("pkgfile"):
             res = subprocess.run(
                 ["pkgfile", "--", basename],
@@ -1420,7 +1791,6 @@ class ArchDependencyResolver:
                     self.pkgfile_cache[basename] = pkg
                     return pkg
 
-        # Fallback to pacman -F if files DB exists
         res_f = subprocess.run(
             ["pacman", "-Fq", "--", basename],
             capture_output=True,
@@ -1438,8 +1808,8 @@ class ArchDependencyResolver:
     def inspect_elf_dependencies(self, pkgroot: Path) -> set[str]:
         """
         Mode B: Scans all ELF binaries and shared libraries inside `pkgroot`,
-        collects internal DT_SONAME / provided `.so` files, and resolves
-        external DT_NEEDED sonames to Arch Linux packages.
+        collects internal DT_SONAME / provided `.so` files (including symlinks),
+        and resolves external DT_NEEDED sonames to Arch Linux packages.
         """
         if not shutil.which("readelf"):
             return set()
@@ -1449,10 +1819,11 @@ class ArchDependencyResolver:
         elf_files: list[Path] = []
 
         for path in pkgroot.rglob("*"):
+            if path.name.endswith(".so") or ".so." in path.name:
+                if path.is_file() or path.is_symlink():
+                    internal_sonames.add(path.name)
             if not path.is_file() or path.is_symlink():
                 continue
-            if path.name.endswith(".so") or ".so." in path.name:
-                internal_sonames.add(path.name)
             try:
                 with path.open("rb") as f:
                     if f.read(4) == b"\x7fELF":
@@ -1463,14 +1834,16 @@ class ArchDependencyResolver:
         needed_re = re.compile(r"\(NEEDED\)\s+Shared library:\s+\[([^\]]+)\]")
         soname_re = re.compile(r"\(SONAME\)\s+Library soname:\s+\[([^\]]+)\]")
 
-        for elf_path in elf_files:
+        batch_size = 64
+        for idx in range(0, len(elf_files), batch_size):
+            batch = [str(p) for p in elf_files[idx : idx + batch_size]]
             res = subprocess.run(
-                ["readelf", "-d", str(elf_path)],
+                ["readelf", "-d", *batch],
                 capture_output=True,
                 text=True,
                 check=False,
             )
-            if res.returncode != 0:
+            if not res.stdout:
                 continue
             for m in soname_re.finditer(res.stdout):
                 internal_sonames.add(m.group(1))
@@ -1480,7 +1853,6 @@ class ArchDependencyResolver:
         external_sonames = needed_sonames - internal_sonames
         resolved_pkgs: set[str] = set()
 
-        # Fast-path static soname mappings for common system libraries
         soname_static_map: dict[str, str] = {
             "libc.so.6": "glibc",
             "libm.so.6": "glibc",
@@ -1494,16 +1866,52 @@ class ArchDependencyResolver:
             "libglib-2.0.so.0": "glib2",
             "libgobject-2.0.so.0": "glib2",
             "libgio-2.0.so.0": "glib2",
+            "libgmodule-2.0.so.0": "glib2",
             "libgtk-3.so.0": "gtk3",
             "libgdk-3.so.0": "gtk3",
             "libgtk-4.so.1": "gtk4",
+            "libgdk_pixbuf-2.0.so.0": "gdk-pixbuf2",
+            "libpango-1.0.so.0": "pango",
+            "libpangocairo-1.0.so.0": "pango",
+            "libcairo.so.2": "cairo",
+            "libcairo-gobject.so.2": "cairo",
+            "libatk-1.0.so.0": "at-spi2-core",
+            "libatk-bridge-2.0.so.0": "at-spi2-core",
+            "libatspi.so.0": "at-spi2-core",
             "libwebkit2gtk-4.1.so.0": "webkit2gtk-4.1",
             "libjavascriptcoregtk-4.1.so.0": "webkit2gtk-4.1",
+            "libwebkitgtk-6.0.so.4": "webkitgtk-6.0",
+            "libjavascriptcoregtk-6.0.so.1": "webkitgtk-6.0",
             "libsoup-3.0.so.0": "libsoup3",
+            "libadwaita-1.so.0": "libadwaita",
+            "libnotify.so.4": "libnotify",
+            "libsecret-1.so.0": "libsecret",
+            "libayatana-appindicator3.so.1": "libayatana-appindicator",
             "libgstreamer-1.0.so.0": "gstreamer",
+            "libgstbase-1.0.so.0": "gstreamer",
+            "libgstvideo-1.0.so.0": "gst-plugins-base-libs",
+            "libgstaudio-1.0.so.0": "gst-plugins-base-libs",
+            "libgstpbutils-1.0.so.0": "gst-plugins-base-libs",
             "libvulkan.so.1": "vulkan-icd-loader",
             "libX11.so.6": "libx11",
+            "libxcb.so.1": "libxcb",
+            "libxkbcommon.so.0": "libxkbcommon",
             "libwayland-client.so.0": "wayland",
+            "libwayland-cursor.so.0": "wayland",
+            "libwayland-egl.so.1": "wayland",
+            "libasound.so.2": "alsa-lib",
+            "libpulse.so.0": "libpulse",
+            "libsqlite3.so.0": "sqlite",
+            "libxml2.so.2": "libxml2",
+            "libcurl.so.4": "curl",
+            "libssl.so.3": "openssl",
+            "libcrypto.so.3": "openssl",
+            "libz.so.1": "zlib",
+            "libzstd.so.1": "zstd",
+            "liblzma.so.5": "xz",
+            "libdbus-1.so.3": "dbus",
+            "libsystemd.so.0": "systemd-libs",
+            "libudev.so.1": "systemd-libs",
         }
 
         for soname in external_sonames:
@@ -1512,7 +1920,6 @@ class ArchDependencyResolver:
                 resolved_pkgs.add(pkg)
                 continue
 
-            # Check local filesystem /usr/lib/<soname> via pacman -Qo
             lib_dir = "/usr/lib32" if self.pseudo else "/usr/lib"
             host_lib = Path(lib_dir) / soname
             if host_lib.exists():
@@ -1538,30 +1945,33 @@ class ArchDependencyResolver:
         extra_pkgs: Iterable[str] = (),
         prune_base: bool = False,
         strip_versions_force: bool = False,
+        relation_mode: str = "depends",
     ) -> tuple[list[str], list[str]]:
         """
         Translates dependency clauses, reconciles lower/upper version bounds
-        against Arch Linux's rolling release versions, and returns
-        `(sorted_translated_specs, sorted_untranslated_names)`.
+        according to `relation_mode` ('depends', 'conflicts', 'replaces', 'provides'),
+        and returns `(sorted_translated_specs, sorted_untranslated_names)`.
         """
         or_groups = self.parse_dependency_clauses(raw_field)
         pkg_constraints: dict[str, list[tuple[str, str]]] = {}
         untranslated: set[str] = set()
 
         for group in or_groups:
-            translated_token: tuple[str, str, str] | None = None
-            for token in group:
+            candidates: list[tuple[int, int, str, str, str]] = []
+            for idx, token in enumerate(group):
                 arch_name = self.translate_package_name(token.name)
                 if arch_name:
-                    translated_token = (arch_name, token.operator, token.version)
-                    break
-            if translated_token is None:
+                    rank = self._rank_alternative(arch_name)
+                    candidates.append((rank, idx, arch_name, token.operator, token.version))
+            if not candidates:
                 first_name = group[0].name
                 if first_name not in IGNORED_DEBIAN_PKGS:
                     untranslated.add(first_name)
                 continue
 
-            arch_name, op, ver = translated_token
+            candidates.sort(key=lambda item: (item[0], item[1]))
+            _, _, arch_name, op, ver = candidates[0]
+
             if self._strip_vcs(arch_name.removeprefix("lib32-")) == self.self_pkgname:
                 continue
             if prune_base and self._strip_vcs(arch_name) in self.base_pkgs:
@@ -1587,30 +1997,43 @@ class ArchDependencyResolver:
                 final_specs.append(pkg)
                 continue
 
-            # Separate lower/exact bounds and upper bounds
             lower_bounds = [(op, v) for op, v in bounds if op in (">=", ">", "=")]
             upper_bounds = [(op, v) for op, v in bounds if op in ("<", "<=")]
-
-            # Rolling-release upper-bound reconciliation:
-            # Drop restrictive Debian/Ubuntu distribution locks (e.g. python < 3.15)
-            # when Arch Linux's repository version is >= the upper lock or when
-            # the package name was remapped from a Debian-specific ABI package.
             arch_ver = self.arch_pkg_versions.get(pkg)
-            valid_upper: list[tuple[str, str]] = []
-            for op, uver in upper_bounds:
-                if arch_ver and self._vercmp(arch_ver, uver) >= 0:
-                    continue
-                if lower_bounds and self._is_minor_lock(lower_bounds[0][1], uver):
-                    continue
-                valid_upper.append((op, uver))
 
-            chosen_bounds: list[tuple[str, str]] = []
+            if relation_mode in ("conflicts", "replaces"):
+                # Do not strip upper bounds into unconditional conflicts; omit obsolete upper-only bounds
+                valid_conflict_upper: list[tuple[str, str]] = []
+                for op, uver in upper_bounds:
+                    if arch_ver and self._vercmp(arch_ver, uver) >= 0:
+                        continue
+                    valid_conflict_upper.append((op, uver))
+                if not lower_bounds and not valid_conflict_upper:
+                    continue
+                for op, ver in lower_bounds + valid_conflict_upper:
+                    final_specs.append(f"{pkg}{op}{ver}")
+                continue
+
+            best_lower: tuple[str, str] | None = None
             if lower_bounds:
-                # Pick highest lower bound via vercmp
                 best_lower = lower_bounds[0]
                 for cand in lower_bounds[1:]:
                     if self._vercmp(cand[1], best_lower[1]) > 0:
                         best_lower = cand
+
+            valid_upper: list[tuple[str, str]] = []
+            base_pkg_name = pkg.removeprefix("lib32-")
+            for op, uver in upper_bounds:
+                if base_pkg_name in ROLLING_RUNTIME_PKGS:
+                    continue
+                if arch_ver and self._vercmp(arch_ver, uver) >= 0:
+                    continue
+                if best_lower and self._is_minor_lock(best_lower[1], uver):
+                    continue
+                valid_upper.append((op, uver))
+
+            chosen_bounds: list[tuple[str, str]] = []
+            if best_lower:
                 chosen_bounds.append(best_lower)
             if valid_upper:
                 best_upper = valid_upper[0]
@@ -1633,7 +2056,7 @@ class ArchDependencyResolver:
         l_parts = [p for p in lower_ver.split(".") if p.isdigit()]
         u_parts = [p for p in upper_ver.split(".") if p.isdigit()]
         if len(l_parts) >= 2 and len(u_parts) >= 2:
-            if l_parts[0] == u_parts[0] and int(u_parts[1]) == int(l_parts[1]) + 1:
+            if l_parts[0] == u_parts[0] and int(u_parts[1]) > int(l_parts[1]):
                 return True
         return False
 
@@ -1651,48 +2074,81 @@ class ArchDependencyResolver:
         return (v1 > v2) - (v1 < v2)
 
 
-# ---------------------------------------------------------------------------
-# Subsystem 7: Install Script (.INSTALL), .PKGINFO, .MTREE & PKGBUILD Builder
-# ---------------------------------------------------------------------------
-
-
 def translate_maintainer_scripts(control_dir: Path, pseudo: bool, is_i386: bool) -> str:
     """
     Translates Debian maintainer scripts (preinst, postinst, prerm, postrm) into
-    an ALPM .INSTALL file, stripping debhelper boilerplate and commands already
-    handled by modern Arch Linux ALPM hooks.
+    an ALPM .INSTALL file, skipping abort/purge branches and replacing redundant
+    ALPM-hooked commands safely.
     """
     script_map = [
-        ("preinst", "pre_install", "pre_upgrade"),
-        ("postinst", "post_install", "post_upgrade"),
-        ("prerm", "pre_remove", None),
-        ("postrm", "post_remove", None),
+        ("preinst", "pre_install", "pre_upgrade", {"install", "upgrade"}),
+        ("postinst", "post_install", "post_upgrade", {"configure"}),
+        ("prerm", "pre_remove", None, {"remove", "upgrade", "deconfigure"}),
+        ("postrm", "post_remove", None, {"remove"}),
     ]
 
-    skip_line_re = re.compile(
-        r"^(?:#!|set\s+-[eu]|exit\s+0?\s*$|;;\s*$|esac\s*$|"
-        r"case\s+.*\$1.*in|install\)|upgrade\)|configure\)|remove\)|purge\)|abort-\w+\)|"
-        r"\*\)\s*echo\s+.*unknown\s+argument|"
-        r".*(?:dh_installdeb|DEBHELPER|debconf|update-menus|update-desktop-database|"
+    noop_cmd_re = re.compile(
+        r"^.*(?:dh_installdeb|DEBHELPER|debconf|update-menus|update-desktop-database|"
         r"gtk-update-icon-cache|xdg-icon-resource|glib-compile-schemas|update-mime-database|"
-        r"ldconfig|systemctl\s+daemon-reload|apt-get|aptitude|dpkg-maintscript-helper|lintian).*)",
+        r"ldconfig|systemctl\s+daemon-reload|apt-get|aptitude|dpkg-maintscript-helper|lintian).*$",
         flags=re.IGNORECASE,
     )
 
     sections: list[str] = []
-    for deb_script_name, hook_name, upgrade_hook in script_map:
+    for deb_script_name, hook_name, upgrade_hook, active_cases in script_map:
         script_path = control_dir / deb_script_name
         if not script_path.is_file():
             continue
         raw_text = script_path.read_text(encoding="utf-8", errors="replace")
         body_lines: list[str] = []
+        in_outer_case = False
+        skip_current_branch = False
+
         for raw_ln in raw_text.splitlines():
             stripped = raw_ln.strip()
             if not stripped or stripped.startswith("#"):
                 continue
-            if skip_line_re.match(stripped):
+            if re.match(r"^(?:set\s+-[euo]|exit\s+0?\s*$)", stripped):
                 continue
+
+            if not in_outer_case and re.match(r"^case\s+.*\$1.*in\b", stripped):
+                in_outer_case = True
+                continue
+
+            if in_outer_case:
+                if stripped == "esac":
+                    in_outer_case = False
+                    skip_current_branch = False
+                    continue
+                if stripped == ";;":
+                    skip_current_branch = False
+                    continue
+                m_branch = re.match(r"^([A-Za-z0-9_*|-]+)\)\s*(.*)$", stripped)
+                if m_branch and not stripped.startswith("case "):
+                    labels = {lbl.strip() for lbl in m_branch.group(1).split("|")}
+                    remainder = m_branch.group(2).strip()
+                    if labels & active_cases:
+                        skip_current_branch = False
+                        if not remainder or remainder == ";;":
+                            continue
+                        stripped = remainder
+                        raw_ln = remainder
+                    else:
+                        skip_current_branch = True
+                        continue
+
+            if skip_current_branch:
+                continue
+
+            if noop_cmd_re.match(stripped):
+                continue
+
             line = raw_ln
+            line = re.sub(
+                r'\[\s*"\$1"\s*=\s*"(?:configure\vert{}install\vert{}upgrade\vert{}remove)"\s*\]',
+                "true",
+                line,
+            )
             line = re.sub(r"/(?:usr/local/s?bin|usr/sbin|usr/games|s?bin)/", "/usr/bin/", line)
             if pseudo:
                 line = re.sub(r"/(?:usr/)?lib/", "/usr/lib32/", line)
@@ -1703,6 +2159,16 @@ def translate_maintainer_scripts(control_dir: Path, pseudo: bool, is_i386: bool)
 
         if body_lines:
             func_block = f"{hook_name}() {{\n" + "\n".join(body_lines) + "\n}"
+            if shutil.which("bash"):
+                chk = subprocess.run(
+                    ["bash", "-n"],
+                    input=func_block,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if chk.returncode != 0:
+                    continue
             sections.append(func_block)
             if upgrade_hook:
                 sections.append(f"{upgrade_hook}() {{\n\t{hook_name}\n}}")
@@ -1823,10 +2289,9 @@ def prompt_interactive_edit(pkginfo_path: Path, install_path: Path | None, quiet
 
     print(prompt_msg, end="", flush=True)
     try:
-        choice = sys.stdin.read(1).strip()
+        choice = input().strip()[:1]
     except EOFError:
         choice = ""
-    print()
 
     editor_cmd: str | None = None
     if choice == "1":
@@ -1834,18 +2299,81 @@ def prompt_interactive_edit(pkginfo_path: Path, install_path: Path | None, quiet
     elif choice == "2":
         editor_cmd = "nano"
     elif choice == "3":
-        editor_cmd = os.environ.get("EDITOR")
+        editor_cmd = os.environ.get("VISUAL") or os.environ.get("EDITOR") or "nano"
     elif choice == "4":
-        print(f"{C_BLUE}::{C_RESET} {C_BOLD}Enter command for running custom editor: {C_RESET}", end="", flush=True)
-        editor_cmd = input().strip()
+        print(
+            f"{C_BLUE}::{C_RESET} {C_BOLD}Enter command for running custom editor: {C_RESET}",
+            end="",
+            flush=True,
+        )
+        try:
+            editor_cmd = input().strip()
+        except EOFError:
+            editor_cmd = ""
 
     if editor_cmd:
-        for fpath in files_to_edit:
-            subprocess.run([editor_cmd, str(fpath)], check=False)
+        editor_argv = shlex.split(editor_cmd)
+        if editor_argv and shutil.which(editor_argv[0]):
+            for fpath in files_to_edit:
+                subprocess.run([*editor_argv, str(fpath)], check=False)
+        else:
+            log_warn(f"Editor '{editor_cmd}' not found; skipping interactive edit.")
+
+
+def sync_pkginfo_edits(ctx: PackageBuildContext, pkginfo_path: Path) -> None:
+    """Synchronizes any user edits made in .PKGINFO back into PackageBuildContext."""
+    if not pkginfo_path.is_file():
+        return
+    licenses: list[str] = []
+    replaces: list[str] = []
+    conflicts: list[str] = []
+    provides: list[str] = []
+    backups: list[str] = []
+    depends: list[str] = []
+    optdepends: list[str] = []
+
+    for raw_line in pkginfo_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = (part.strip() for part in line.split("=", 1))
+        if k == "pkgname" and v:
+            ctx.control.pkgname = v
+        elif k == "pkgdesc":
+            ctx.control.pkgdesc = v
+        elif k == "url":
+            ctx.control.url = v
+        elif k == "packager":
+            ctx.packager = v
+        elif k == "arch" and v:
+            ctx.control.arch_alpm = v
+        elif k == "license" and v:
+            licenses.append(v)
+        elif k == "replaces" and v:
+            replaces.append(v)
+        elif k == "conflict" and v:
+            conflicts.append(v)
+        elif k == "provides" and v:
+            provides.append(v)
+        elif k == "backup" and v:
+            backups.append(v)
+        elif k == "depend" and v:
+            depends.append(v)
+        elif k == "optdepend" and v:
+            optdepends.append(v)
+
+    if licenses:
+        ctx.licenses = licenses
+    ctx.replaces = replaces
+    ctx.conflicts = conflicts
+    ctx.provides = provides
+    ctx.backups = backups
+    ctx.depends = depends
+    ctx.optdepends = optdepends
 
 
 def build_binary_package(ctx: PackageBuildContext, dest_dir: Path) -> Path:
-    """Generates .MTREE and packs the final .pkg.tar.zst inside fakeroot."""
+    """Generates .MTREE with 0:0 root ownership and packs the final .pkg.tar.zst atomically."""
     pkgroot = ctx.pkgroot_dir
     c = ctx.control
     full_ver = f"{c.epoch}:{c.pkgver}-{c.pkgrel}" if c.epoch > 0 else f"{c.pkgver}-{c.pkgrel}"
@@ -1868,6 +2396,10 @@ def build_binary_package(ctx: PackageBuildContext, dest_dir: Path) -> Path:
         ".MTREE",
         "--format=mtree",
         "--options=!all,use-set,type,uid,gid,mode,time,size,md5,sha256,link",
+        "--uid",
+        "0",
+        "--gid",
+        "0",
         *all_mtree_inputs,
     ]
     res_mtree = subprocess.run(mtree_cmd, cwd=pkgroot, capture_output=True, text=True, check=False)
@@ -1882,7 +2414,17 @@ def build_binary_package(ctx: PackageBuildContext, dest_dir: Path) -> Path:
     archive_inputs.extend(payload_items)
 
     tmp_tar = ctx.work_dir / "package.pkg.tar"
-    tar_cmd = ["tar", "--force-local", "-pcf", str(tmp_tar), *archive_inputs]
+    staging_pkg = ctx.work_dir / pkg_filename
+    tar_cmd = [
+        "tar",
+        "--force-local",
+        "--owner=0",
+        "--group=0",
+        "--numeric-owner",
+        "-pcf",
+        str(tmp_tar),
+        *archive_inputs,
+    ]
     if shutil.which("fakeroot"):
         tar_cmd = ["fakeroot", "--", *tar_cmd]
 
@@ -1890,18 +2432,23 @@ def build_binary_package(ctx: PackageBuildContext, dest_dir: Path) -> Path:
     if res_tar.returncode != 0:
         raise RuntimeError(f"tar package creation failed: {res_tar.stderr}")
 
-    zstd_cmd = ["zstd", "-q", "-f", "-T0", "--ultra", "-15", str(tmp_tar), "-o", str(out_pkg_path)]
+    zstd_cmd = ["zstd", "-q", "-f", "-T0", "--ultra", "-15", str(tmp_tar), "-o", str(staging_pkg)]
     res_zst = subprocess.run(zstd_cmd, capture_output=True, text=True, check=False)
     if res_zst.returncode != 0:
         raise RuntimeError(f"zstd compression failed: {res_zst.stderr}")
 
-    os.chmod(out_pkg_path, 0o644)
+    os.chmod(staging_pkg, 0o644)
+    shutil.move(str(staging_pkg), str(out_pkg_path))
     log_info("Package successfully created!")
     return out_pkg_path
 
 
+def _escape_dq(val: str) -> str:
+    return val.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
+
+
 def generate_pkgbuild_bundle(ctx: PackageBuildContext, dest_dir: Path) -> Path:
-    """Generates a modern, makepkg-compliant PKGBUILD directory."""
+    """Generates a modern, self-contained, makepkg-compliant PKGBUILD directory."""
     log_info("Generating PKGBUILD file...")
     c = ctx.control
     deb_path = ctx.options.deb_path
@@ -1932,10 +2479,9 @@ def generate_pkgbuild_bundle(ctx: PackageBuildContext, dest_dir: Path) -> Path:
     ]
     if c.epoch > 0:
         lines.append(f"epoch={c.epoch}")
-    escaped_desc = c.pkgdesc.replace('"', '\\"')
-    lines.append(f'pkgdesc="{escaped_desc}"')
+    lines.append(f'pkgdesc="{_escape_dq(c.pkgdesc)}"')
     lines.append(f"arch=('{c.arch_alpm}')")
-    lines.append(f'url="{c.url}"')
+    lines.append(f'url="{_escape_dq(c.url)}"')
     lines.append(fmt_array("license", ctx.licenses or ["custom"]))
 
     for arr_name, items in (
@@ -1955,7 +2501,7 @@ def generate_pkgbuild_bundle(ctx: PackageBuildContext, dest_dir: Path) -> Path:
     if install_file.exists():
         lines.append("install=${pkgname}.install")
 
-    lines.append(f'source=("{deb_path.name}")')
+    lines.append(f'source=("{_escape_dq(deb_path.name)}")')
     lines.append(f"sha512sums=('{sha512}')")
     lines.append("")
     lines.append("package() {")
@@ -1971,6 +2517,12 @@ def generate_pkgbuild_bundle(ctx: PackageBuildContext, dest_dir: Path) -> Path:
         shutil.rmtree(bundle_dir)
     bundle_dir.mkdir(parents=True, exist_ok=True)
 
+    staged_deb = bundle_dir / deb_path.name
+    try:
+        os.link(deb_path, staged_deb)
+    except OSError:
+        shutil.copy2(deb_path, staged_deb)
+
     (bundle_dir / "PKGBUILD").write_text("\n".join(lines) + "\n", encoding="utf-8")
     if install_file.exists():
         shutil.copy2(install_file, bundle_dir / f"{pkgbuild_pkgname}.install")
@@ -1981,11 +2533,6 @@ def generate_pkgbuild_bundle(ctx: PackageBuildContext, dest_dir: Path) -> Path:
         log_info(f'PKGBUILD is now located in "{bundle_dir}" and ready to be edited')
 
     return bundle_dir
-
-
-# ---------------------------------------------------------------------------
-# Main Conversion Orchestrator
-# ---------------------------------------------------------------------------
 
 
 def convert_package(opts: CLIOptions) -> None:
@@ -2029,7 +2576,6 @@ def convert_package(opts: CLIOptions) -> None:
         log_info("Fixing possible directories structure differencies...")
         normalize_filesystem(ctx)
 
-        # Refine lib32- package name in pseudo mode when package contains only libraries
         if (
             opts.pseudo
             and (pkgroot_dir / "usr" / "lib32").exists()
@@ -2047,14 +2593,15 @@ def convert_package(opts: CLIOptions) -> None:
             f"Resolving dependencies and ELF sonames...{C_RESET}"
         )
 
-        # Parse conffiles into ALPM backup entries
         conffiles_path = control_dir / "conffiles"
         if conffiles_path.is_file():
             bkp_set: set[str] = set()
             for ln in conffiles_path.read_text(encoding="utf-8", errors="replace").splitlines():
                 rel_bkp = ln.strip().lstrip("/")
                 if rel_bkp:
-                    rel_bkp = re.sub(r"^(?:usr/local/s?bin|usr/sbin|usr/games|s?bin)/", "usr/bin/", rel_bkp)
+                    rel_bkp = re.sub(
+                        r"^(?:usr/local/s?bin|usr/sbin|usr/games|s?bin)/", "usr/bin/", rel_bkp
+                    )
                     bkp_set.add(rel_bkp)
             ctx.backups = sorted(bkp_set)
 
@@ -2064,20 +2611,28 @@ def convert_package(opts: CLIOptions) -> None:
             self_pkgname=ctx.control.pkgname,
         )
         try:
-            ctx.replaces, _ = resolver.reconcile_constraints(ctx.control.replaces_raw)
+            ctx.replaces, _ = resolver.reconcile_constraints(
+                ctx.control.replaces_raw,
+                relation_mode="replaces",
+            )
             combined_conflicts = ", ".join(
                 p for p in (ctx.control.conflicts_raw, ctx.control.breaks_raw) if p
             )
-            ctx.conflicts, _ = resolver.reconcile_constraints(combined_conflicts)
+            ctx.conflicts, _ = resolver.reconcile_constraints(
+                combined_conflicts,
+                relation_mode="conflicts",
+            )
             ctx.provides, _ = resolver.reconcile_constraints(
                 ctx.control.provides_raw,
                 strip_versions_force=(opts.pkgbuild or opts.Pkgbuild),
+                relation_mode="provides",
             )
 
             elf_deps = resolver.inspect_elf_dependencies(pkgroot_dir)
             extra_mandatory = set(elf_deps)
-            if ctx.control.python_version_raw:
-                extra_mandatory.add("python")
+            if ctx.control.python_version_raw or (pkgroot_dir / "usr" / "lib").glob("python3*"):
+                if any((pkgroot_dir / "usr" / "lib").glob("python3*")) or ctx.control.python_version_raw:
+                    extra_mandatory.add("python")
 
             combined_depends = ", ".join(
                 p for p in (ctx.control.depends_raw, ctx.control.pre_depends_raw) if p
@@ -2086,6 +2641,7 @@ def convert_package(opts: CLIOptions) -> None:
                 combined_depends,
                 extra_pkgs=extra_mandatory,
                 prune_base=True,
+                relation_mode="depends",
             )
 
             if any("gtk" in d for d in ctx.depends):
@@ -2096,7 +2652,10 @@ def convert_package(opts: CLIOptions) -> None:
             combined_optdeps = ", ".join(
                 p for p in (ctx.control.recommends_raw, ctx.control.suggests_raw) if p
             )
-            raw_optdeps, ctx.untranslated_optdeps = resolver.reconcile_constraints(combined_optdeps)
+            raw_optdeps, ctx.untranslated_optdeps = resolver.reconcile_constraints(
+                combined_optdeps,
+                relation_mode="depends",
+            )
             mandatory_names = {re.split(r"[<>=]", d)[0] for d in ctx.depends}
             ctx.optdepends = [
                 od for od in raw_optdeps if re.split(r"[<>=]", od)[0] not in mandatory_names
@@ -2127,6 +2686,7 @@ def convert_package(opts: CLIOptions) -> None:
             install_path.write_text(install_content, encoding="utf-8")
 
         prompt_interactive_edit(pkginfo_path, install_path, opts.Quiet)
+        sync_pkginfo_edits(ctx, pkginfo_path)
 
         if not opts.Pkgbuild:
             try:
@@ -2145,12 +2705,24 @@ def convert_package(opts: CLIOptions) -> None:
         log_info("Removing leftover files...")
 
 
+def _signal_terminate_handler(signum: int, _frame: object) -> None:
+    raise SystemExit(128 + signum)
+
+
 def main() -> None:
-    opts = parse_cli_args(sys.argv[1:])
-    if opts.update:
-        sync_database()
-        return
-    convert_package(opts)
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, _signal_terminate_handler)
+
+    try:
+        opts = parse_cli_args(sys.argv[1:])
+        if opts.update:
+            sync_database()
+            return
+        convert_package(opts)
+    except KeyboardInterrupt:
+        print(file=sys.stderr)
+        log_err("Interrupted by user")
+        sys.exit(130)
 
 
 if __name__ == "__main__":
