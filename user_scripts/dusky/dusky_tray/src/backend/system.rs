@@ -1030,11 +1030,333 @@ pub fn set_bt(on: bool) -> Option<bool> {
 // metrics: cpu / ram / net / weather / updates / idle / blur / audio / dnd
 // ---------------------------------------------------------------------------
 
-pub fn cpu_ram() -> (String, String) {
-    // CPU from /proc/stat delta is stateful; here we return instantaneous
-    // companion: the UI keeps the previous sample for the delta.
-    let mut cpu = "--".to_owned();
-    let mut ram = "--".to_owned();
+#[derive(Debug, Clone, PartialEq)]
+pub struct CpuState {
+    pub text: String,
+    pub power_watts: Option<f64>,
+    pub tooltip: String,
+}
+
+impl Default for CpuState {
+    fn default() -> Self {
+        Self {
+            text: "--".into(),
+            power_watts: None,
+            tooltip: "CPU: -- · Power: N/A\nLMB: Open btop".into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RamState {
+    pub text: String,
+    pub tooltip: String,
+}
+
+impl Default for RamState {
+    fn default() -> Self {
+        Self {
+            text: "--".into(),
+            tooltip: "Memory · Open zramctl".into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RaplDomain {
+    energy_path: PathBuf,
+    max_range_path: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+struct RaplEnergyReading {
+    energy_uj: u64,
+    at: Duration,
+}
+
+#[derive(Debug, Default)]
+struct RaplTracker {
+    domains: Option<Vec<RaplDomain>>,
+    last_discovery: Option<Duration>,
+    previous: Vec<Option<RaplEnergyReading>>,
+}
+
+fn scan_rapl_prefix(powercap_dir: &Path, prefix: &str) -> Vec<RaplDomain> {
+    let Ok(entries) = std::fs::read_dir(powercap_dir) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .flatten()
+        .filter_map(|e| e.file_name().into_string().ok())
+        .collect();
+    names.sort_unstable();
+
+    let mut domains = Vec::new();
+    for name in names {
+        let Some(suffix) = name.strip_prefix(prefix) else {
+            continue;
+        };
+        // Match only top-level package domains (e.g. intel-rapl:0), skipping subzones (intel-rapl:0:0).
+        if suffix.is_empty() || !suffix.bytes().all(|b| b.is_ascii_digit()) {
+            continue;
+        }
+        let dir = powercap_dir.join(&name);
+        let Ok(domain_name) = std::fs::read_to_string(dir.join("name")) else {
+            continue;
+        };
+        if !domain_name.trim().starts_with("package-") {
+            continue;
+        }
+        let energy_path = dir.join("energy_uj");
+        if read_sysfs_u64(&energy_path, false).is_some() {
+            domains.push(RaplDomain {
+                energy_path,
+                max_range_path: dir.join("max_energy_range_uj"),
+            });
+        }
+    }
+    domains
+}
+
+fn discover_rapl_domains_in(powercap_dir: &Path) -> Vec<RaplDomain> {
+    let msr = scan_rapl_prefix(powercap_dir, "intel-rapl:");
+    if !msr.is_empty() {
+        return msr;
+    }
+    scan_rapl_prefix(powercap_dir, "intel-rapl-mmio:")
+}
+
+fn rapl_power_reading(
+    powercap_dir: &Path,
+    now: Option<Duration>,
+    tracker: &mut RaplTracker,
+) -> Option<f64> {
+    let Some(now) = now else {
+        tracker.previous.clear();
+        return None;
+    };
+
+    let needs_discovery = tracker.domains.is_none()
+        || (tracker.domains.as_ref().is_some_and(Vec::is_empty)
+            && tracker
+                .last_discovery
+                .is_none_or(|t| now.saturating_sub(t) >= Duration::from_secs(30)));
+
+    if needs_discovery {
+        let found = discover_rapl_domains_in(powercap_dir);
+        tracker.previous = vec![None; found.len()];
+        tracker.domains = Some(found);
+        tracker.last_discovery = Some(now);
+    }
+
+    let domains = tracker.domains.as_ref()?;
+    if domains.is_empty() {
+        return None;
+    }
+    if tracker.previous.len() != domains.len() {
+        tracker.previous.resize(domains.len(), None);
+    }
+
+    let mut total_watts = 0.0_f64;
+    let mut valid_domains = 0usize;
+
+    for (domain, prev_slot) in domains.iter().zip(tracker.previous.iter_mut()) {
+        let Some(cur_uj) = read_sysfs_u64(&domain.energy_path, false) else {
+            // Invalidate cache if permissions change or driver reloads; re-probe on next cycle.
+            tracker.domains = None;
+            tracker.previous.clear();
+            return None;
+        };
+
+        if let Some(prev) = prev_slot.as_ref()
+            && let Some(elapsed) = now.checked_sub(prev.at)
+            && (Duration::from_millis(500)..=Duration::from_secs(5)).contains(&elapsed)
+        {
+            let dt_us = elapsed.as_micros();
+            if dt_us > 0 {
+                let delta_uj = if cur_uj >= prev.energy_uj {
+                    Some(u128::from(cur_uj - prev.energy_uj))
+                } else {
+                    read_sysfs_u64(&domain.max_range_path, false).and_then(|max_range| {
+                        if max_range > 0 && cur_uj < max_range && prev.energy_uj < max_range {
+                            Some(u128::from(max_range - prev.energy_uj) + u128::from(cur_uj))
+                        } else {
+                            None
+                        }
+                    })
+                };
+
+                if let Some(duj) = delta_uj
+                    && duj <= dt_us.saturating_mul(5_000)
+                {
+                    total_watts += duj as f64 / dt_us as f64;
+                    valid_domains += 1;
+                }
+            }
+        }
+
+        *prev_slot = Some(RaplEnergyReading {
+            energy_uj: cur_uj,
+            at: now,
+        });
+    }
+
+    (valid_domains > 0).then_some(total_watts)
+}
+
+fn sample_cpu_power_watts() -> Option<f64> {
+    static TRACKER: std::sync::Mutex<Option<RaplTracker>> = std::sync::Mutex::new(None);
+    let now = network_time();
+    let mut guard = TRACKER.lock().unwrap_or_else(|e| e.into_inner());
+    let tracker = guard.get_or_insert_with(RaplTracker::default);
+    rapl_power_reading(Path::new("/sys/class/powercap"), now, tracker)
+}
+
+fn format_iec_bytes(bytes: u64) -> String {
+    const GIB: u64 = 1_073_741_824;
+    const MIB: u64 = 1_048_576;
+    if bytes >= GIB {
+        format!("{:.1} GiB", bytes as f64 / GIB as f64)
+    } else if bytes > 0 && bytes < MIB {
+        format!("{:.1} MiB", bytes as f64 / MIB as f64)
+    } else {
+        format!("{:.0} MiB", bytes as f64 / MIB as f64)
+    }
+}
+
+fn parse_zram_mm_stat(raw: &str) -> Option<(u64, u64, u64)> {
+    let mut nums = raw.split_whitespace().filter_map(|t| t.parse::<u64>().ok());
+    let orig = nums.next()?;
+    let compr = nums.next()?;
+    let mem_used = nums.next()?;
+    Some((orig, compr, mem_used))
+}
+
+fn read_zram_mm_stats_in(block_dir: &Path) -> Option<(u64, u64, u64)> {
+    let entries = std::fs::read_dir(block_dir).ok()?;
+    let mut total_orig = 0u64;
+    let mut total_compr = 0u64;
+    let mut total_mem_used = 0u64;
+    let mut found = false;
+
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name_str) = name.to_str() else {
+            continue;
+        };
+        let Some(suffix) = name_str.strip_prefix("zram") else {
+            continue;
+        };
+        if suffix.is_empty() || !suffix.bytes().all(|b| b.is_ascii_digit()) {
+            continue;
+        }
+        let Ok(raw) = std::fs::read_to_string(entry.path().join("mm_stat")) else {
+            continue;
+        };
+        if let Some((orig, compr, mem_used)) = parse_zram_mm_stat(&raw) {
+            total_orig = total_orig.saturating_add(orig);
+            total_compr = total_compr.saturating_add(compr);
+            total_mem_used = total_mem_used.saturating_add(mem_used);
+            found = true;
+        }
+    }
+
+    found.then_some((total_orig, total_compr, total_mem_used))
+}
+
+fn format_swap_line(
+    swap_total_kb: u64,
+    swap_free_kb: u64,
+    zram_stat: Option<(u64, u64, u64)>,
+) -> String {
+    if swap_total_kb == 0 {
+        return match zram_stat {
+            Some((orig, compr, mem_used)) if mem_used > 0 => {
+                let phys_str = format_iec_bytes(mem_used);
+                if compr > 0 {
+                    let ratio = orig as f64 / compr as f64;
+                    format!("Swap: Disabled\nZRAM: {phys_str} physical · {ratio:.1}:1 ratio")
+                } else {
+                    format!("Swap: Disabled\nZRAM: {phys_str} physical")
+                }
+            }
+            _ => "Swap: Disabled".to_owned(),
+        };
+    }
+
+    let swap_used_kb = swap_total_kb.saturating_sub(swap_free_kb);
+    let used_str = format_iec_bytes(swap_used_kb.saturating_mul(1024));
+    let total_str = format_iec_bytes(swap_total_kb.saturating_mul(1024));
+
+    match zram_stat {
+        Some((orig, compr, mem_used)) => {
+            let phys_str = format_iec_bytes(mem_used);
+            if compr > 0 {
+                let ratio = orig as f64 / compr as f64;
+                format!(
+                    "Swap: {used_str} / {total_str}\nZRAM: {phys_str} physical · {ratio:.1}:1 ratio"
+                )
+            } else {
+                format!("Swap: {used_str} / {total_str}\nZRAM: {phys_str} physical")
+            }
+        }
+        None => format!("Swap: {used_str} / {total_str}"),
+    }
+}
+
+fn parse_ram_state(meminfo: &str, zram_stat: Option<(u64, u64, u64)>) -> RamState {
+    let (mut mem_total, mut mem_avail) = (0u64, 0u64);
+    let (mut dirty, mut writeback) = (0u64, 0u64);
+    let (mut swap_total, mut swap_free) = (0u64, 0u64);
+
+    for line in meminfo.lines() {
+        let Some((key, rest)) = line.split_once(':') else {
+            continue;
+        };
+        let val = rest
+            .split_whitespace()
+            .next()
+            .and_then(|x| x.parse::<u64>().ok())
+            .unwrap_or(0);
+        match key {
+            "MemTotal" => mem_total = val,
+            "MemAvailable" => mem_avail = val,
+            "Dirty" => dirty = val,
+            "Writeback" => writeback = val,
+            "SwapTotal" => swap_total = val,
+            "SwapFree" => swap_free = val,
+            _ => {}
+        }
+    }
+
+    if mem_total == 0 {
+        return RamState::default();
+    }
+
+    let used_kb = mem_total.saturating_sub(mem_avail);
+    let used_gib = used_kb as f64 / 1_048_576.0;
+    let total_gib = mem_total as f64 / 1_048_576.0;
+    let used_pct = (used_kb as f64 / mem_total as f64) * 100.0;
+
+    let dirty_kb = dirty.saturating_add(writeback);
+    let dirty_str = if dirty_kb >= 1_048_576 {
+        format!("{:.2} GiB", dirty_kb as f64 / 1_048_576.0)
+    } else {
+        format!("{:.1} MiB", dirty_kb as f64 / 1024.0)
+    };
+
+    let swap_line = format_swap_line(swap_total, swap_free, zram_stat);
+
+    RamState {
+        text: format!("{used_gib:.1} GB"),
+        tooltip: format!(
+            "Memory: {used_gib:.1} GiB / {total_gib:.1} GiB ({used_pct:.0}%)\nDirty cache: {dirty_str}\n{swap_line}\nLMB: Open zramctl"
+        ),
+    }
+}
+
+pub fn cpu_ram_state() -> (CpuState, RamState) {
+    let mut cpu_text = "--".to_owned();
     if let Ok(first) = std::fs::read_to_string("/proc/stat") {
         // Store sample in tmpfs so deltas survive without SSD writes.
         let sample_file = runtime_dir().join("cpu_sample.txt");
@@ -1063,45 +1385,63 @@ pub fn cpu_ram() -> (String, String) {
                     let dt = total.saturating_sub(pt);
                     if dt > 0 {
                         let usage = 100.0 * (1.0 - di as f64 / dt as f64);
-                        cpu = format!("{:.0}%", usage.clamp(0.0, 100.0));
+                        cpu_text = format!("{:.0}%", usage.clamp(0.0, 100.0));
                     }
                 }
             }
             let _ = atomic_write_text(&sample_file, &format!("{idle} {total}\n"));
         }
     }
-    if let Ok(mem) = std::fs::read_to_string("/proc/meminfo") {
-        let (mut tot, mut av) = (0u64, 0u64);
-        for line in mem.lines() {
-            if line.starts_with("MemTotal:") {
-                tot = line
-                    .split_whitespace()
-                    .nth(1)
-                    .and_then(|x| x.parse().ok())
-                    .unwrap_or(0);
-            } else if line.starts_with("MemAvailable:") {
-                av = line
-                    .split_whitespace()
-                    .nth(1)
-                    .and_then(|x| x.parse().ok())
-                    .unwrap_or(0);
-            }
-            if tot > 0 && av > 0 {
-                break;
-            }
-        }
-        if tot > 0 {
-            ram = format!("{:.1} GB", (tot.saturating_sub(av)) as f64 / 1_048_576.0);
-        }
-    }
+
+    let power_watts = sample_cpu_power_watts();
+    let power_str = match power_watts {
+        Some(w) => format!("{w:.1} W"),
+        None => "N/A".to_owned(),
+    };
+    let cpu = CpuState {
+        tooltip: format!("CPU: {cpu_text} · Power: {power_str}\nLMB: Open btop"),
+        text: cpu_text,
+        power_watts,
+    };
+
+    let ram = match std::fs::read_to_string("/proc/meminfo") {
+        Ok(mem) => parse_ram_state(&mem, read_zram_mm_stats_in(Path::new("/sys/block"))),
+        Err(_) => RamState::default(),
+    };
+
     (cpu, ram)
 }
 
-#[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
+pub fn cpu_ram() -> (String, String) {
+    let (cpu, ram) = cpu_ram_state();
+    (cpu.text, ram.text)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WarpStatus {
+    #[default]
+    NotInstalled,
+    Disconnected,
+    Connected,
+}
+
+impl WarpStatus {
+    pub fn is_installed(self) -> bool {
+        !matches!(self, Self::NotInstalled)
+    }
+
+    pub fn is_connected(self) -> bool {
+        matches!(self, Self::Connected)
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct NetState {
     pub text: String,
     pub tooltip: String,
     pub disconnected: bool,
+    pub warp: WarpStatus,
 }
 
 #[derive(Clone, Debug)]
@@ -1180,25 +1520,97 @@ fn network_time() -> Option<Duration> {
     ))
 }
 
+fn is_warp_cli_installed(net_dir: &Path, now: Option<Duration>) -> bool {
+    if access_ok(Path::new("/usr/bin/warp-cli"), libc::X_OK)
+        || access_ok(Path::new("/usr/local/bin/warp-cli"), libc::X_OK)
+    {
+        return true;
+    }
+
+    static CACHE: std::sync::Mutex<Option<(bool, Duration)>> = std::sync::Mutex::new(None);
+    let warp_iface_present = net_dir.join("CloudflareWARP").exists();
+    let mut guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+
+    if !warp_iface_present
+        && let Some((cached, checked_at)) = *guard
+        && let Some(now) = now
+        && now.saturating_sub(checked_at) < Duration::from_secs(30)
+    {
+        return cached;
+    }
+
+    let found = which("warp-cli").is_some();
+    *guard = now.map(|t| (found, t));
+    found
+}
+
+fn detect_warp_connected(net_dir: &Path) -> bool {
+    let warp_dir = net_dir.join("CloudflareWARP");
+    let Ok(operstate) = std::fs::read_to_string(warp_dir.join("operstate")) else {
+        return false;
+    };
+    if !matches!(operstate.trim(), "up" | "unknown") {
+        return false;
+    }
+    let Ok(flags_txt) = std::fs::read_to_string(warp_dir.join("flags")) else {
+        return false;
+    };
+    let trimmed = flags_txt.trim();
+    let hex = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+        .unwrap_or(trimmed);
+    let Ok(flags) = u32::from_str_radix(hex, 16) else {
+        return false;
+    };
+    // IFF_UP (0x1) confirms the TUN interface is administratively active.
+    (flags & 0x1) != 0
+}
+
+fn detect_warp_status_in(net_dir: &Path, warp_installed: bool) -> WarpStatus {
+    if !warp_installed {
+        WarpStatus::NotInstalled
+    } else if detect_warp_connected(net_dir) {
+        WarpStatus::Connected
+    } else {
+        WarpStatus::Disconnected
+    }
+}
+
+pub fn append_warp_status(tooltip: &mut String, warp: WarpStatus) {
+    match warp {
+        WarpStatus::NotInstalled => {}
+        WarpStatus::Connected => tooltip.push_str("\nCloudflare WARP: Connected (ON)"),
+        WarpStatus::Disconnected => tooltip.push_str("\nCloudflare WARP: Disconnected (OFF)"),
+    }
+}
+
 fn network_reading(
     counters: Option<Vec<NetworkCounters>>,
     now: Option<Duration>,
+    warp: WarpStatus,
     previous: &mut Option<NetworkSample>,
 ) -> NetState {
     let Some((counters, now)) = counters.zip(now) else {
         *previous = None;
+        let mut tooltip = "Network reading unavailable".to_owned();
+        append_warp_status(&mut tooltip, warp);
         return NetState {
             text: "--".into(),
-            tooltip: "Network reading unavailable".into(),
+            tooltip,
             disconnected: false,
+            warp,
         };
     };
     if counters.is_empty() {
         *previous = None;
+        let mut tooltip = "Disconnected".to_owned();
+        append_warp_status(&mut tooltip, warp);
         return NetState {
             text: "--".into(),
-            tooltip: "Disconnected".into(),
+            tooltip,
             disconnected: true,
+            warp,
         };
     }
     let (rx, tx) = previous
@@ -1240,23 +1652,28 @@ fn network_reading(
     } else {
         (1024.0, "KB")
     };
+    let mut tooltip = format!(
+        "Upload: {:.1} {unit}/s\nDownload: {:.1} {unit}/s",
+        tx / scale,
+        rx / scale
+    );
+    append_warp_status(&mut tooltip, warp);
     NetState {
         text: format!("{:.0} {unit} {:.0}", tx / scale, rx / scale),
-        tooltip: format!(
-            "Upload: {:.1} {unit}/s\nDownload: {:.1} {unit}/s",
-            tx / scale,
-            rx / scale
-        ),
+        tooltip,
         disconnected: false,
+        warp,
     }
 }
 
 pub fn net_state() -> NetState {
     static SAMPLE: std::sync::Mutex<Option<NetworkSample>> = std::sync::Mutex::new(None);
-    let counters = read_network_counters(Path::new("/proc/net/dev"), Path::new("/sys/class/net"));
+    let net_dir = Path::new("/sys/class/net");
+    let counters = read_network_counters(Path::new("/proc/net/dev"), net_dir);
     let now = network_time();
-    let mut sample = SAMPLE.lock().unwrap();
-    network_reading(counters, now, &mut sample)
+    let warp = detect_warp_status_in(net_dir, is_warp_cli_installed(net_dir, now));
+    let mut sample = SAMPLE.lock().unwrap_or_else(|e| e.into_inner());
+    network_reading(counters, now, warp, &mut sample)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -1951,26 +2368,70 @@ mod tests {
             net_counter("wlan0", 3000, 4000),
         ];
         assert_eq!(
-            network_reading(Some(first.clone()), Some(Duration::ZERO), &mut previous).text,
+            network_reading(
+                Some(first.clone()),
+                Some(Duration::ZERO),
+                WarpStatus::NotInstalled,
+                &mut previous
+            )
+            .text,
             "0 KB 0"
         );
         let next = vec![
             net_counter("eth0", 5096, 4048),
             net_counter("wlan0", 5048, 8096),
         ];
-        let reading = network_reading(Some(next), Some(Duration::from_secs(2)), &mut previous);
+        let reading = network_reading(
+            Some(next),
+            Some(Duration::from_secs(2)),
+            WarpStatus::Connected,
+            &mut previous,
+        );
         assert_eq!(reading.text, "3 KB 3");
-        assert_eq!(reading.tooltip, "Upload: 3.0 KB/s\nDownload: 3.0 KB/s");
+        assert_eq!(reading.warp, WarpStatus::Connected);
+        assert_eq!(
+            reading.tooltip,
+            "Upload: 3.0 KB/s\nDownload: 3.0 KB/s\nCloudflare WARP: Connected (ON)"
+        );
         let mb = vec![net_counter("eth0", 2 << 20, 2 << 20)];
         previous = None;
         network_reading(
             Some(vec![net_counter("eth0", 0, 0)]),
             Some(Duration::ZERO),
+            WarpStatus::Disconnected,
             &mut previous,
         );
+        let reading_off = network_reading(
+            Some(mb.clone()),
+            Some(Duration::from_secs(2)),
+            WarpStatus::Disconnected,
+            &mut previous,
+        );
+        assert_eq!(reading_off.text, "1 MB 1");
+        assert_eq!(reading_off.warp, WarpStatus::Disconnected);
         assert_eq!(
-            network_reading(Some(mb), Some(Duration::from_secs(2)), &mut previous).text,
-            "1 MB 1"
+            reading_off.tooltip,
+            "Upload: 1.0 MB/s\nDownload: 1.0 MB/s\nCloudflare WARP: Disconnected (OFF)"
+        );
+
+        // When WARP is not installed, omit WARP status from the tooltip entirely
+        previous = None;
+        network_reading(
+            Some(vec![net_counter("eth0", 0, 0)]),
+            Some(Duration::ZERO),
+            WarpStatus::NotInstalled,
+            &mut previous,
+        );
+        let reading_not_installed = network_reading(
+            Some(mb),
+            Some(Duration::from_secs(2)),
+            WarpStatus::NotInstalled,
+            &mut previous,
+        );
+        assert_eq!(reading_not_installed.warp, WarpStatus::NotInstalled);
+        assert_eq!(
+            reading_not_installed.tooltip,
+            "Upload: 1.0 MB/s\nDownload: 1.0 MB/s"
         );
     }
 
@@ -1978,19 +2439,43 @@ mod tests {
     fn network_read_failure_recovery_cannot_create_false_spike() {
         let mut previous = None;
         let counters = vec![net_counter("eth0", 1 << 30, 1 << 29)];
-        network_reading(Some(counters.clone()), Some(Duration::ZERO), &mut previous);
-        let failed = network_reading(None, Some(Duration::from_secs(2)), &mut previous);
+        network_reading(
+            Some(counters.clone()),
+            Some(Duration::ZERO),
+            WarpStatus::NotInstalled,
+            &mut previous,
+        );
+        let failed = network_reading(
+            None,
+            Some(Duration::from_secs(2)),
+            WarpStatus::NotInstalled,
+            &mut previous,
+        );
         assert_eq!(failed.text, "--");
         assert_eq!(failed.tooltip, "Network reading unavailable");
         assert!(!failed.disconnected);
         assert!(previous.is_none());
         assert_eq!(
-            network_reading(Some(counters), Some(Duration::from_secs(4)), &mut previous).text,
+            network_reading(
+                Some(counters),
+                Some(Duration::from_secs(4)),
+                WarpStatus::Disconnected,
+                &mut previous
+            )
+            .text,
             "0 KB 0"
         );
-        let offline = network_reading(Some(vec![]), Some(Duration::from_secs(6)), &mut previous);
+        let offline = network_reading(
+            Some(vec![]),
+            Some(Duration::from_secs(6)),
+            WarpStatus::Disconnected,
+            &mut previous,
+        );
         assert!(offline.disconnected);
-        assert_eq!(offline.tooltip, "Disconnected");
+        assert_eq!(
+            offline.tooltip,
+            "Disconnected\nCloudflare WARP: Disconnected (OFF)"
+        );
         assert!(previous.is_none());
     }
 
@@ -2022,9 +2507,20 @@ mod tests {
         variants.push(changed);
         for counters in variants {
             let mut previous = None;
-            network_reading(Some(initial.clone()), Some(Duration::ZERO), &mut previous);
+            network_reading(
+                Some(initial.clone()),
+                Some(Duration::ZERO),
+                WarpStatus::NotInstalled,
+                &mut previous,
+            );
             assert_eq!(
-                network_reading(Some(counters), Some(Duration::from_secs(2)), &mut previous).text,
+                network_reading(
+                    Some(counters),
+                    Some(Duration::from_secs(2)),
+                    WarpStatus::NotInstalled,
+                    &mut previous
+                )
+                .text,
                 "0 KB 0"
             );
         }
@@ -2043,12 +2539,14 @@ mod tests {
             network_reading(
                 Some(vec![net_counter("eth0", 0, 0)]),
                 Some(Duration::from_secs(10)),
+                WarpStatus::NotInstalled,
                 &mut previous,
             );
             assert_eq!(
                 network_reading(
                     Some(vec![net_counter("eth0", 1 << 30, 1 << 30)]),
                     Some(now),
+                    WarpStatus::NotInstalled,
                     &mut previous
                 )
                 .text,
@@ -2059,12 +2557,14 @@ mod tests {
         network_reading(
             Some(vec![net_counter("eth0", 0, 0)]),
             Some(Duration::ZERO),
+            WarpStatus::NotInstalled,
             &mut previous,
         );
         assert_eq!(
             network_reading(
                 Some(vec![net_counter("eth0", 1 << 30, 1 << 30)]),
                 None,
+                WarpStatus::NotInstalled,
                 &mut previous
             )
             .text,
@@ -2081,6 +2581,7 @@ mod tests {
         network_reading(
             Some(vec![net_counter("eth0", 0, 0), net_counter("wlan0", 0, 0)]),
             Some(Duration::ZERO),
+            WarpStatus::NotInstalled,
             &mut previous,
         );
         let reading = network_reading(
@@ -2089,11 +2590,197 @@ mod tests {
                 net_counter("wlan0", u64::MAX, u64::MAX),
             ]),
             Some(Duration::from_secs(2)),
+            WarpStatus::NotInstalled,
             &mut previous,
         );
         assert_eq!(reading.text, "17592186044416 MB 17592186044416");
         assert!(!reading.tooltip.contains("inf"));
         assert!(!reading.tooltip.contains("NaN"));
+    }
+
+    #[test]
+    fn warp_detection_checks_interface_operstate_and_up_flag() {
+        let root = runtime_dir().join(format!("warp-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        // Missing CloudflareWARP interface -> Disconnected (when installed) or NotInstalled
+        assert_eq!(
+            detect_warp_status_in(&root, false),
+            WarpStatus::NotInstalled
+        );
+        assert_eq!(
+            detect_warp_status_in(&root, true),
+            WarpStatus::Disconnected
+        );
+
+        let warp = root.join("CloudflareWARP");
+        std::fs::create_dir_all(&warp).unwrap();
+
+        // Active TUN interface (operstate unknown, IFF_UP 0x1 set in 0x10d1) -> Connected
+        std::fs::write(warp.join("operstate"), "unknown\n").unwrap();
+        std::fs::write(warp.join("flags"), "0x10d1\n").unwrap();
+        assert_eq!(detect_warp_status_in(&root, true), WarpStatus::Connected);
+        // Even if sysfs interface exists, uninstalled flag yields NotInstalled
+        assert_eq!(
+            detect_warp_status_in(&root, false),
+            WarpStatus::NotInstalled
+        );
+
+        // Explicit operstate "up" with IFF_UP -> Connected
+        std::fs::write(warp.join("operstate"), "up\n").unwrap();
+        assert_eq!(detect_warp_status_in(&root, true), WarpStatus::Connected);
+
+        // Operstate "down" -> Disconnected
+        std::fs::write(warp.join("operstate"), "down\n").unwrap();
+        assert_eq!(
+            detect_warp_status_in(&root, true),
+            WarpStatus::Disconnected
+        );
+
+        // Operstate "unknown" but IFF_UP cleared (0x1090) -> Disconnected
+        std::fs::write(warp.join("operstate"), "unknown\n").unwrap();
+        std::fs::write(warp.join("flags"), "0x1090\n").unwrap();
+        assert_eq!(
+            detect_warp_status_in(&root, true),
+            WarpStatus::Disconnected
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rapl_power_handles_normal_delta_wraparound_and_rebase() {
+        let root = runtime_dir().join(format!("rapl-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+
+        // MSR domain + subzone (subzone intel-rapl:0:0 must be ignored)
+        let pkg0 = root.join("intel-rapl:0");
+        let sub0 = root.join("intel-rapl:0:0");
+        std::fs::create_dir_all(&pkg0).unwrap();
+        std::fs::create_dir_all(&sub0).unwrap();
+        std::fs::write(pkg0.join("name"), "package-0\n").unwrap();
+        std::fs::write(pkg0.join("max_energy_range_uj"), "1000000000\n").unwrap();
+        std::fs::write(pkg0.join("energy_uj"), "100000000\n").unwrap();
+        std::fs::write(sub0.join("name"), "core\n").unwrap();
+        std::fs::write(sub0.join("energy_uj"), "50000000\n").unwrap();
+
+        let mut tracker = RaplTracker::default();
+        // First sample establishes baseline -> None
+        assert!(rapl_power_reading(&root, Some(Duration::from_secs(10)), &mut tracker).is_none());
+
+        // Normal 2s delta: +50_000_000 uJ over 2_000_000 us = 25.0 W
+        std::fs::write(pkg0.join("energy_uj"), "150000000\n").unwrap();
+        let w = rapl_power_reading(&root, Some(Duration::from_secs(12)), &mut tracker).unwrap();
+        assert!((w - 25.0).abs() < 1e-6, "expected 25.0W, got {w}");
+
+        // Counter wraparound: prev = 980_000_000, max = 1_000_000_000, cur = 20_000_000 -> 40_000_000 uJ / 2s = 20.0 W
+        std::fs::write(pkg0.join("energy_uj"), "980000000\n").unwrap();
+        let _ = rapl_power_reading(&root, Some(Duration::from_secs(14)), &mut tracker);
+        std::fs::write(pkg0.join("energy_uj"), "20000000\n").unwrap();
+        let w_wrap =
+            rapl_power_reading(&root, Some(Duration::from_secs(16)), &mut tracker).unwrap();
+        assert!(
+            (w_wrap - 20.0).abs() < 1e-6,
+            "expected 20.0W after wraparound, got {w_wrap}"
+        );
+
+        // Elapsed > 5s (suspend) rebases cleanly without returning a skewed value
+        std::fs::write(pkg0.join("energy_uj"), "220000000\n").unwrap();
+        assert!(rapl_power_reading(&root, Some(Duration::from_secs(30)), &mut tracker).is_none());
+
+        // Subsequent 2s sample resumes accurately: +30_000_000 uJ / 2s = 15.0 W
+        std::fs::write(pkg0.join("energy_uj"), "250000000\n").unwrap();
+        let w_after =
+            rapl_power_reading(&root, Some(Duration::from_secs(32)), &mut tracker).unwrap();
+        assert!(
+            (w_after - 15.0).abs() < 1e-6,
+            "expected 15.0W after rebase, got {w_after}"
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn memory_dirty_cache_and_zram_swap_format_cleanly() {
+        let meminfo = concat!(
+            "MemTotal:       16777216 kB\n",
+            "MemFree:         4194304 kB\n",
+            "MemAvailable:    8388608 kB\n",
+            "Dirty:             12288 kB\n",
+            "Writeback:          4096 kB\n",
+            "SwapTotal:       8388608 kB\n",
+            "SwapFree:        6291456 kB\n",
+        );
+
+        // 1. ZRAM active with compression ratio (512 MiB orig / 128 MiB compr = 4.0:1, 160 MiB phys)
+        let mm_stat = "536870912 134217728 167772160 0 167772160 100 0 0 0\n";
+        let state = parse_ram_state(meminfo, parse_zram_mm_stat(mm_stat));
+        assert_eq!(state.text, "8.0 GB");
+        assert_eq!(
+            state.tooltip,
+            "Memory: 8.0 GiB / 16.0 GiB (50%)\nDirty cache: 16.0 MiB\nSwap: 2.0 GiB / 8.0 GiB\nZRAM: 160 MiB physical · 4.0:1 ratio\nLMB: Open zramctl"
+        );
+
+        // 2. ZRAM active with 0 compressed bytes (no division by zero)
+        let empty_zram = "0 0 4194304 0 4194304 0 0 0 0\n";
+        let state_empty = parse_ram_state(meminfo, parse_zram_mm_stat(empty_zram));
+        assert_eq!(
+            state_empty.tooltip,
+            "Memory: 8.0 GiB / 16.0 GiB (50%)\nDirty cache: 16.0 MiB\nSwap: 2.0 GiB / 8.0 GiB\nZRAM: 4 MiB physical\nLMB: Open zramctl"
+        );
+
+        // 3. Disk swap without ZRAM
+        let state_disk = parse_ram_state(meminfo, None);
+        assert_eq!(
+            state_disk.tooltip,
+            "Memory: 8.0 GiB / 16.0 GiB (50%)\nDirty cache: 16.0 MiB\nSwap: 2.0 GiB / 8.0 GiB\nLMB: Open zramctl"
+        );
+
+        // 4. No swap configured
+        let no_swap_meminfo = concat!(
+            "MemTotal:       16777216 kB\n",
+            "MemAvailable:   12582912 kB\n",
+            "Dirty:              2048 kB\n",
+            "Writeback:             0 kB\n",
+            "SwapTotal:             0 kB\n",
+            "SwapFree:              0 kB\n",
+        );
+        let state_no_swap = parse_ram_state(no_swap_meminfo, None);
+        assert_eq!(state_no_swap.text, "4.0 GB");
+        assert_eq!(
+            state_no_swap.tooltip,
+            "Memory: 4.0 GiB / 16.0 GiB (25%)\nDirty cache: 2.0 MiB\nSwap: Disabled\nLMB: Open zramctl"
+        );
+
+        // 5. Multi-device ZRAM aggregation (zram0 + zram1, ignoring non-zram block devices)
+        let root = runtime_dir().join(format!("zram-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let z0 = root.join("zram0");
+        let z1 = root.join("zram1");
+        let nvme = root.join("nvme0n1");
+        std::fs::create_dir_all(&z0).unwrap();
+        std::fs::create_dir_all(&z1).unwrap();
+        std::fs::create_dir_all(&nvme).unwrap();
+        std::fs::write(
+            z0.join("mm_stat"),
+            "536870912 134217728 167772160 0 167772160 100 0 0 0\n",
+        )
+        .unwrap();
+        std::fs::write(
+            z1.join("mm_stat"),
+            "536870912 134217728 167772160 0 167772160 100 0 0 0\n",
+        )
+        .unwrap();
+
+        let aggregated = read_zram_mm_stats_in(&root);
+        assert_eq!(aggregated, Some((1_073_741_824, 268_435_456, 335_544_320)));
+        let state_multi = parse_ram_state(meminfo, aggregated);
+        assert_eq!(
+            state_multi.tooltip,
+            "Memory: 8.0 GiB / 16.0 GiB (50%)\nDirty cache: 16.0 MiB\nSwap: 2.0 GiB / 8.0 GiB\nZRAM: 320 MiB physical · 4.0:1 ratio\nLMB: Open zramctl"
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

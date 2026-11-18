@@ -42,7 +42,7 @@ pub enum Message {
     BlurConfigured,
     GlobalBlurLoaded(Option<bool>),
     WeatherLoaded(Option<String>),
-    MetricsLoaded((String, String, sys::NetState, sys::BatteryState)),
+    MetricsLoaded((sys::CpuState, sys::RamState, sys::NetState, sys::BatteryState)),
     TogglesLoaded(u64, ToggleSnapshot),
     RadioLoaded(u64, u64, (Option<bool>, Option<bool>)),
     PowerLoaded(u64, Option<String>),
@@ -71,6 +71,7 @@ pub enum Message {
     VolumeControl,
     OutputSelector,
     MetricPressed(String),
+    MetricRightPressed(String),
     DndToggled,
     DndSettled(Option<bool>),
     ClearNotifs,
@@ -158,8 +159,8 @@ pub struct TrayApp {
     time_text: String,
     date_text: String,
     weather: Option<String>,
-    cpu_text: String,
-    ram_text: String,
+    cpu: sys::CpuState,
+    ram: sys::RamState,
     net: sys::NetState,
     battery: sys::BatteryState,
     show_battery_metric: Option<bool>,
@@ -228,8 +229,8 @@ impl TrayApp {
             time_text,
             date_text,
             weather: None,
-            cpu_text: "--".into(),
-            ram_text: "--".into(),
+            cpu: Default::default(),
+            ram: Default::default(),
             net: Default::default(),
             battery: Default::default(),
             show_battery_metric: None,
@@ -306,7 +307,7 @@ impl TrayApp {
             }
             RefreshKind::Weather => worker::start(sys::weather_text).map(Message::WeatherLoaded),
             RefreshKind::Metrics => worker::start(|| {
-                let (cpu, ram) = sys::cpu_ram();
+                let (cpu, ram) = sys::cpu_ram_state();
                 let net = sys::net_state();
                 let battery = sys::battery_state();
                 (cpu, ram, net, battery)
@@ -453,8 +454,8 @@ impl TrayApp {
                 {
                     self.show_battery_metric = None;
                 }
-                self.cpu_text = cpu;
-                self.ram_text = ram;
+                self.cpu = cpu;
+                self.ram = ram;
                 self.net = net;
                 self.battery = battery;
             }
@@ -714,6 +715,12 @@ impl TrayApp {
                     _ => return Task::none(),
                 }
                 return iced_runtime::exit();
+            }
+            Message::MetricRightPressed(which) => {
+                if which == "net" && self.net.warp.is_installed() {
+                    execute_detached("python3 ~/user_scripts/networking/warp_toggle.py");
+                }
+                return Task::none();
             }
             Message::DndToggled => {
                 if self.dnd_pending || self.dnd.is_none() {
@@ -981,7 +988,8 @@ impl TrayApp {
                 .unwrap_or_else(|| self.battery.is_discharging())
     }
 
-    fn first_metric_display(&self) -> (String, Color, String) {
+    fn first_metric_display(&self) -> (String, Color, Option<Color>, String) {
+        let warp_installed = self.net.warp.is_installed();
         if self.showing_battery() {
             let value = if self.battery.text.is_empty() {
                 "--".into()
@@ -995,25 +1003,36 @@ impl TrayApp {
                 | sys::BatteryStatus::NotCharging => saturate(self.theme.profiles[0], 0.8),
                 sys::BatteryStatus::Unknown => self.theme.fg,
             };
-            let base = if self.battery.tooltip.is_empty() {
+            let mut hint = if self.battery.tooltip.is_empty() {
                 "Battery power".into()
             } else {
                 self.battery.tooltip.clone()
             };
-            let hint = format!("{base}\nLMB: Network traffic");
-            (value, color, hint)
+            sys::append_warp_status(&mut hint, self.net.warp);
+            hint.push_str("\nLMB: Network traffic");
+            if warp_installed {
+                hint.push_str("\nRMB: Toggle WARP");
+            }
+            (value, color, None, hint)
         } else {
             let value = if self.net.text.is_empty() || self.net.disconnected {
                 "--".into()
             } else {
                 self.net.text.clone()
             };
-            let hint = if self.battery.present {
-                format!("{}\nLMB: Battery power", self.net.tooltip)
-            } else {
-                self.net.tooltip.clone()
-            };
-            (value, self.theme.fg, hint)
+            let ring = self
+                .net
+                .warp
+                .is_connected()
+                .then(|| saturate(self.theme.accent, 1.2));
+            let mut hint = self.net.tooltip.clone();
+            if self.battery.present {
+                hint.push_str("\nLMB: Battery power");
+            }
+            if warp_installed {
+                hint.push_str("\nRMB: Toggle WARP");
+            }
+            (value, self.theme.fg, ring, hint)
         }
     }
 
@@ -1022,6 +1041,7 @@ impl TrayApp {
         glyph: &'static str,
         value: String,
         color: Color,
+        ring_color: Option<Color>,
         kind: &'static str,
         hint: String,
     ) -> Element<'static, Message> {
@@ -1054,10 +1074,21 @@ impl TrayApp {
                     }
                     .into(),
                 );
+                let border_color = match ring_color {
+                    Some(ring) => Color {
+                        a: if status == button::Status::Hovered {
+                            0.72
+                        } else {
+                            0.50
+                        },
+                        ..ring
+                    },
+                    None => Color::TRANSPARENT,
+                };
                 style.border = Border {
                     radius: 12.0.into(),
-                    color: Color::TRANSPARENT,
-                    width: 0.0,
+                    color: border_color,
+                    width: 1.25,
                 };
                 style.shadow = iced_core::Shadow {
                     color: Color::from_rgba(0.0, 0.0, 0.0, 0.28),
@@ -1066,10 +1097,17 @@ impl TrayApp {
                 };
                 style
             });
-        if kind != "net" || self.battery.present {
+        if kind != "net" || self.battery.present || self.net.warp.is_installed() {
             btn = btn.on_press(Message::MetricPressed(kind.into()));
         }
-        Self::hint(btn, hint, theme)
+        let target: Element<'static, Message> = if kind == "net" && self.net.warp.is_installed() {
+            mouse_area(btn)
+                .on_right_press(Message::MetricRightPressed(kind.into()))
+                .into()
+        } else {
+            btn.into()
+        };
+        Self::hint(target, hint, theme)
     }
 
     fn toggle_button(&self, t: &crate::config::Toggle) -> Element<'static, Message> {
@@ -1657,23 +1695,32 @@ impl TrayApp {
         let header = stack![clock, side_controls];
         let mut controls = column![header].spacing(12);
         if self.config.layout.show_metrics {
-            let (first_value, first_color, first_hint) = self.first_metric_display();
+            let (first_value, first_color, first_ring, first_hint) = self.first_metric_display();
             controls = controls.push(
                 row![
-                    self.metric("⇅", first_value, first_color, "net", first_hint),
+                    self.metric(
+                        "⇅",
+                        first_value,
+                        first_color,
+                        first_ring,
+                        "net",
+                        first_hint
+                    ),
                     self.metric(
                         "▤",
-                        self.ram_text.clone(),
+                        self.ram.text.clone(),
                         theme.fg,
+                        None,
                         "ram",
-                        "Memory · Open zramctl".into()
+                        self.ram.tooltip.clone()
                     ),
                     self.metric(
                         "▣",
-                        self.cpu_text.clone(),
+                        self.cpu.text.clone(),
                         theme.fg,
+                        None,
                         "cpu",
-                        "CPU · Open btop".into()
+                        self.cpu.tooltip.clone()
                     )
                 ]
                 .spacing(10),
@@ -2657,13 +2704,23 @@ mod tests {
     #[test]
     fn first_metric_defaults_by_power_state_and_toggles_on_click() {
         let mut app = app();
+        let cpu = sys::CpuState {
+            text: "10%".into(),
+            power_watts: Some(14.2),
+            tooltip: "CPU: 10% · Power: 14.2 W\nLMB: Open btop".into(),
+        };
+        let ram = sys::RamState {
+            text: "4.0 GB".into(),
+            tooltip: "Memory: 4.0 GiB / 16.0 GiB (25%)\nDirty cache: 8.0 MiB\nSwap: Disabled\nLMB: Open zramctl".into(),
+        };
         let net = sys::NetState {
             text: "12 KB 34".into(),
-            tooltip: "Upload: 12.0 KB/s\nDownload: 34.0 KB/s".into(),
+            tooltip: "Upload: 12.0 KB/s\nDownload: 34.0 KB/s\nCloudflare WARP: Connected (ON)".into(),
             disconnected: false,
+            warp: sys::WarpStatus::Connected,
         };
 
-        // Desktop / no battery present: always shows network meter, even if clicked
+        // Desktop / no battery present: always shows network meter + WARP ring + RMB hint, even if clicked
         let no_battery = sys::BatteryState {
             present: false,
             status: sys::BatteryStatus::Unknown,
@@ -2672,24 +2729,32 @@ mod tests {
             tooltip: "No battery present".into(),
         };
         let _ = app.update(Message::MetricsLoaded((
-            "10%".into(),
-            "4.0 GB".into(),
+            cpu.clone(),
+            ram.clone(),
             net.clone(),
-            no_battery,
+            no_battery.clone(),
         )));
-        let (val, color, hint) = app.first_metric_display();
+        let (val, color, ring, hint) = app.first_metric_display();
         assert_eq!(val, "12 KB 34");
         assert_eq!(color, app.theme.fg);
-        assert_eq!(hint, "Upload: 12.0 KB/s\nDownload: 34.0 KB/s");
+        assert_eq!(ring, Some(saturate(app.theme.accent, 1.2)));
+        assert_eq!(
+            hint,
+            "Upload: 12.0 KB/s\nDownload: 34.0 KB/s\nCloudflare WARP: Connected (ON)\nRMB: Toggle WARP"
+        );
 
         let _ = app.update(Message::MetricPressed("net".into()));
-        let (val, color, hint) = app.first_metric_display();
+        let (val, color, ring, hint) = app.first_metric_display();
         assert_eq!(val, "12 KB 34");
         assert_eq!(color, app.theme.fg);
-        assert_eq!(hint, "Upload: 12.0 KB/s\nDownload: 34.0 KB/s");
+        assert_eq!(ring, Some(saturate(app.theme.accent, 1.2)));
+        assert_eq!(
+            hint,
+            "Upload: 12.0 KB/s\nDownload: 34.0 KB/s\nCloudflare WARP: Connected (ON)\nRMB: Toggle WARP"
+        );
         assert_eq!(app.show_battery_metric, None);
 
-        // Discharging defaults to battery wattage in performance red with remaining time
+        // Discharging defaults to battery wattage without WARP ring, keeping WARP status and RMB hint while installed
         let discharging = sys::BatteryState {
             present: true,
             status: sys::BatteryStatus::Discharging,
@@ -2698,30 +2763,37 @@ mod tests {
             tooltip: "Battery: Discharging\nRemaining: 2h 21m".into(),
         };
         let _ = app.update(Message::MetricsLoaded((
-            "10%".into(),
-            "4.0 GB".into(),
+            cpu.clone(),
+            ram.clone(),
             net.clone(),
-            discharging,
+            discharging.clone(),
         )));
-        let (val, color, hint) = app.first_metric_display();
+        let (val, color, ring, hint) = app.first_metric_display();
         assert_eq!(val, "24.60W");
         assert_eq!(color, saturate(app.theme.profiles[2], 0.8));
+        assert_eq!(ring, None);
         assert_eq!(
             hint,
-            "Battery: Discharging\nRemaining: 2h 21m\nLMB: Network traffic"
+            "Battery: Discharging\nRemaining: 2h 21m\nCloudflare WARP: Connected (ON)\nLMB: Network traffic\nRMB: Toggle WARP"
         );
 
-        // Clicking toggles to network traffic in normal theme.fg with LMB: Battery power hint
+        // Clicking toggles to network traffic with WARP ring and both LMB/RMB hints
         let _ = app.update(Message::MetricPressed("net".into()));
-        let (val, color, hint) = app.first_metric_display();
+        let (val, color, ring, hint) = app.first_metric_display();
         assert_eq!(val, "12 KB 34");
         assert_eq!(color, app.theme.fg);
+        assert_eq!(ring, Some(saturate(app.theme.accent, 1.2)));
         assert_eq!(
             hint,
-            "Upload: 12.0 KB/s\nDownload: 34.0 KB/s\nLMB: Battery power"
+            "Upload: 12.0 KB/s\nDownload: 34.0 KB/s\nCloudflare WARP: Connected (ON)\nLMB: Battery power\nRMB: Toggle WARP"
         );
 
-        // Plugging in / charging defaults to network traffic, and toggles to green wattage
+        // Plugging in / charging with WARP installed but disconnected -> no ring, keeps WARP status and RMB hint
+        let net_warp_off = sys::NetState {
+            warp: sys::WarpStatus::Disconnected,
+            tooltip: "Upload: 12.0 KB/s\nDownload: 34.0 KB/s\nCloudflare WARP: Disconnected (OFF)".into(),
+            ..net.clone()
+        };
         let charging = sys::BatteryState {
             present: true,
             status: sys::BatteryStatus::Charging,
@@ -2730,26 +2802,72 @@ mod tests {
             tooltip: "Battery: Charging\nRemaining: 10h 31m".into(),
         };
         let _ = app.update(Message::MetricsLoaded((
-            "10%".into(),
-            "4.0 GB".into(),
-            net,
-            charging,
+            cpu.clone(),
+            ram.clone(),
+            net_warp_off,
+            charging.clone(),
         )));
-        let (val, color, hint) = app.first_metric_display();
+        let (val, color, ring, hint) = app.first_metric_display();
         assert_eq!(val, "12 KB 34");
         assert_eq!(color, app.theme.fg);
+        assert_eq!(ring, None);
         assert_eq!(
             hint,
-            "Upload: 12.0 KB/s\nDownload: 34.0 KB/s\nLMB: Battery power"
+            "Upload: 12.0 KB/s\nDownload: 34.0 KB/s\nCloudflare WARP: Disconnected (OFF)\nLMB: Battery power\nRMB: Toggle WARP"
         );
 
         let _ = app.update(Message::MetricPressed("net".into()));
-        let (val, color, hint) = app.first_metric_display();
+        let (val, color, ring, hint) = app.first_metric_display();
         assert_eq!(val, "6.42W");
         assert_eq!(color, saturate(app.theme.profiles[0], 0.8));
+        assert_eq!(ring, None);
         assert_eq!(
             hint,
-            "Battery: Charging\nRemaining: 10h 31m\nLMB: Network traffic"
+            "Battery: Charging\nRemaining: 10h 31m\nCloudflare WARP: Disconnected (OFF)\nLMB: Network traffic\nRMB: Toggle WARP"
+        );
+
+        // WARP not installed -> no ring, no WARP tooltip line, no RMB hint
+        let net_no_warp = sys::NetState {
+            text: "12 KB 34".into(),
+            tooltip: "Upload: 12.0 KB/s\nDownload: 34.0 KB/s".into(),
+            disconnected: false,
+            warp: sys::WarpStatus::NotInstalled,
+        };
+        let _ = app.update(Message::MetricsLoaded((
+            cpu.clone(),
+            ram.clone(),
+            net_no_warp.clone(),
+            no_battery,
+        )));
+        let (val, color, ring, hint) = app.first_metric_display();
+        assert_eq!(val, "12 KB 34");
+        assert_eq!(color, app.theme.fg);
+        assert_eq!(ring, None);
+        assert_eq!(hint, "Upload: 12.0 KB/s\nDownload: 34.0 KB/s");
+
+        let _ = app.update(Message::MetricsLoaded((
+            cpu,
+            ram,
+            net_no_warp,
+            discharging,
+        )));
+        let (val, color, ring, hint) = app.first_metric_display();
+        assert_eq!(val, "24.60W");
+        assert_eq!(color, saturate(app.theme.profiles[2], 0.8));
+        assert_eq!(ring, None);
+        assert_eq!(
+            hint,
+            "Battery: Discharging\nRemaining: 2h 21m\nLMB: Network traffic"
+        );
+
+        let _ = app.update(Message::MetricPressed("net".into()));
+        let (val, color, ring, hint) = app.first_metric_display();
+        assert_eq!(val, "12 KB 34");
+        assert_eq!(color, app.theme.fg);
+        assert_eq!(ring, None);
+        assert_eq!(
+            hint,
+            "Upload: 12.0 KB/s\nDownload: 34.0 KB/s\nLMB: Battery power"
         );
     }
 }
