@@ -2128,19 +2128,30 @@ def create_partition_wizard(
         #progress { height: auto; color: $accent; margin-bottom: 1; }
         #context { height: auto; margin-bottom: 1; color: $foreground; text-opacity: 85%; }
         #label { height: auto; text-style: bold; }
-        OptionList { height: auto; max-height: 10; border: solid $foreground; padding: 0; background: $background; }
-        OptionList:focus { border: solid $accent; }
-        Input { height: 3; border: solid $foreground; }
-        Input:focus { border: solid $accent; }
+        OptionList { height: auto; max-height: 10; border: solid $foreground; padding: 0; background: $background; color: $foreground; }
+        OptionList:focus { border: solid $accent; background-tint: transparent; }
+        OptionList > .option-list--option { color: $foreground; background: $background; }
+        OptionList > .option-list--option-highlighted { color: $accent; background: $background; text-style: bold; }
+        OptionList:focus > .option-list--option-highlighted { color: ansi_black; background: $accent; text-style: none; }
+        OptionList > .option-list--option-disabled { color: $text-disabled; background: $background; }
+        Input { height: 3; border: solid $foreground; background: $background; color: $foreground; }
+        Input:focus { border: solid $accent; background-tint: transparent; }
+        Input > .input--cursor { color: ansi_black; background: $accent; text-style: none; }
         #hint { height: auto; color: $foreground; text-opacity: 70%; margin-top: 1; }
         #error { height: auto; min-height: 1; color: $error; }
         #actions { height: 3; align-horizontal: center; }
-        Button { width: auto; min-width: 20; border: solid $foreground; }
-        Button:focus { border: solid $accent; }
+        Button { width: auto; min-width: 20; border: solid $foreground; background: $background; color: $foreground; text-style: none; }
+        Button:focus { border: solid $accent; background: $accent; color: ansi_black; text-style: none; }
         #continue { margin-left: 2; }
         #defaults { height: auto; margin-top: 1; color: $foreground; text-opacity: 70%; }
         #review { height: auto; margin-bottom: 1; }
-        RadioSet { height: auto; border: none; padding: 0; }
+        RadioSet { height: auto; border: none; padding: 0; background: $background; }
+        RadioSet:focus { border: none; background-tint: transparent; }
+        RadioSet > RadioButton { background: $background; color: $foreground; }
+        RadioSet > RadioButton.-on > .toggle--button { color: $accent; text-style: bold; }
+        RadioSet:focus > RadioButton.-selected { background: $accent; color: ansi_black; text-style: none; }
+        RadioSet:focus > RadioButton.-selected > .toggle--label { background: $accent; color: ansi_black; text-style: none; }
+        RadioSet:focus > RadioButton.-selected > .toggle--button { background: $accent; color: ansi_black; text-style: none; }
         #controls { height: auto; padding: 0 1; background: $panel; }
         .small #card { margin-top: 0; padding: 0 1; }
         """
