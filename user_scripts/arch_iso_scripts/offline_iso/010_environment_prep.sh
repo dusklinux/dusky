@@ -20,7 +20,7 @@ die()      { msg_err "$1"; exit 1; }
 
 usage() {
     cat <<'EOF'
-Usage: 002_environment_prep.sh [OPTIONS]
+Usage: 010_environment_prep.sh [OPTIONS]
 
 Options:
   -a, --auto          Run autonomously with no interactive prompts.

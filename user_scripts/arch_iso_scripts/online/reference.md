@@ -1,6 +1,7 @@
 
 declare -ra ISO_SEQUENCE=(
-  "020_environment_prep.sh --auto"
+  "010_environment_prep.sh --auto"
+  "020_set_variables.py"
   "030_partitioning.sh --auto"
   "040_disk_mount.sh --auto"
   "050_mirrorlist.sh | IGNORE"
