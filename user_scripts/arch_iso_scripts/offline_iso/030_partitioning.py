@@ -70,7 +70,7 @@ def restore_terminal() -> None:
     """Ensure cursor-key/mouse modes are off, cursor is visible, and termios is sane."""
     try:
         sys.stdout.write(
-            "\x1b[?1l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l\x1b[?25h\x1b[0m"
+            "\x1b[?1049l\x1b[?1l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l\x1b[?25h\x1b[0m"
         )
         sys.stdout.flush()
     except Exception:
@@ -117,6 +117,7 @@ DUSKY_EFI_PARTNAME = "DUSKY_EFI"
 DUSKY_ROOT_PARTNAME = "DUSKY_ROOT"
 STATE_ENV = Path("/tmp/arch_install_state.env")
 STATE_JSON = Path("/tmp/dusky_state.json")
+STORAGE_STATE_JSON = Path("/root/arch_install/storage_state.json")
 VALID_PART_RE = re.compile(r"^[a-zA-Z0-9_./-]+$")
 BTRFS_CSUM = "blake2"
 
@@ -259,27 +260,26 @@ def detect_boot_mode() -> Literal["UEFI", "BIOS"]:
 
 def parse_credentials(path: str = "./.arch_credentials") -> dict[str, str]:
     out: dict[str, str] = {}
-    cred = Path(path)
-    if not cred.exists():
+    candidates = [Path(path), Path("/root/arch_install/.arch_credentials")]
+    cred = next((p for p in candidates if p.is_file()), None)
+    if cred is None:
         return out
+    wanted = {"TARGET_USER", "ENCRYPT_ROOT", "ROOT_PASS"}
     try:
-        script = (
-            f"set +u; source {shlex.quote(str(cred))} 2>/dev/null; "
-            'printf "TARGET_USER=%s\\nENCRYPT_ROOT=%s\\nROOT_PASS=%s\\n" '
-            '"$TARGET_USER" "$ENCRYPT_ROOT" "$ROOT_PASS"'
-        )
-        r = subprocess.run(
-            ["bash", "-c", script],
-            text=True,
-            capture_output=True,
-            check=False,
-            timeout=5,
-        )
-        for line in r.stdout.split("\n"):
+        for raw_line in cred.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("export "):
+                line = line[7:].lstrip()
             if "=" not in line:
                 continue
-            k, v = line.split("=", 1)
-            out[k] = v
+            k, raw_v = line.split("=", 1)
+            k = k.strip()
+            if k not in wanted:
+                continue
+            tokens = shlex.split(raw_v, posix=True)
+            out[k] = tokens[0] if tokens else ""
     except Exception:
         pass
     return out
@@ -334,7 +334,11 @@ def _is_live_iso_disk(dev: dict) -> bool:
             return True
         for lbl_key in ("label", "partlabel"):
             lbl = str(node.get(lbl_key) or "").strip().upper()
-            if lbl and (lbl in iso_labels or lbl.startswith("ARCH_")):
+            if lbl and (
+                lbl in iso_labels
+                or lbl.startswith("ARCHISO")
+                or bool(re.fullmatch(r"ARCH_\d{6}", lbl))
+            ):
                 return True
         npath = node.get("path") or node.get("name")
         if npath and iso_devs:
@@ -704,6 +708,10 @@ def teardown_target_storage(target_dev: str, max_retries: int = 4) -> None:
 
             # Mount namespace cleanup
             seen_ns_inodes = set()
+            try:
+                seen_ns_inodes.add(Path("/proc/self/ns/mnt").stat().st_ino)
+            except OSError:
+                pass
             for proc_dir in Path("/proc").glob("[0-9]*"):
                 try:
                     ns_mnt = proc_dir / "ns" / "mnt"
@@ -799,17 +807,18 @@ def teardown_target_storage(target_dev: str, max_retries: int = 4) -> None:
         # 5. Flush Dirty Page Buffers
         run("blockdev", "--flushbufs", resolved_disk, check=False, capture=True)
 
-        # 5.5. Deregister Btrfs kernel device references.
+        # 5.5. Deregister Btrfs kernel device references scoped strictly to resolved_disk.
         try:
-            dev_name = Path(resolved_disk).name
             for btrfs_uuid_dir in Path("/sys/fs/btrfs").iterdir():
                 if btrfs_uuid_dir.name == "features":
                     continue
                 devices_dir = btrfs_uuid_dir / "devices"
                 if devices_dir.is_dir():
                     for dev_link in devices_dir.iterdir():
-                        if dev_name in dev_link.name:
-                            part_dev = f"/dev/{dev_link.name}"
+                        part_dev = f"/dev/{dev_link.name}"
+                        if Path(part_dev).exists() and device_is_on_disk(
+                            part_dev, resolved_disk
+                        ):
                             console.print(
                                 f"[yellow]>> Deregistering stale Btrfs reference on {part_dev} (UUID: {btrfs_uuid_dir.name})[/yellow]"
                             )
@@ -822,7 +831,6 @@ def teardown_target_storage(target_dev: str, max_retries: int = 4) -> None:
                                 check=False,
                                 capture=True,
                             )
-            run("btrfs", "device", "scan", "--forget", check=False, capture=True)
         except Exception:
             pass
 
@@ -873,6 +881,7 @@ def teardown_target_storage(target_dev: str, max_retries: int = 4) -> None:
                             "device",
                             "scan",
                             "--forget",
+                            part_dev,
                             check=False,
                             capture=True,
                         )
@@ -958,26 +967,52 @@ def get_ram_kb() -> int:
     return phys_kb
 
 
+def _parse_efi_size_mib(efi_size: str) -> int:
+    m = re.fullmatch(r"(\d+(?:\.\d+)?)\s*(M|MiB|G|GiB)", efi_size.strip(), re.I)
+    if not m:
+        raise ValueError(f"Invalid EFI size: {efi_size}")
+    val = float(m.group(1))
+    unit = m.group(2).lower()
+    mib = int(round(val * 1024)) if unit in ("g", "gib") else int(round(val))
+    if mib < 64:
+        raise ValueError(f"EFI size {efi_size} ({mib} MiB) is below the 64 MiB FAT32 minimum.")
+    return mib
+
+
 def write_gpt_sfdisk(
     disk: str, boot_mode: str, encrypt: bool, efi_size: str = "1.3G"
 ) -> tuple[str, str | None]:
-    root_type = LUKS_GUID if encrypt else LINUX_ROOT_GUID
+    # DPS v1.0/v2.0: keep architecture-specific Linux Root GUID even when encrypted with LUKS2.
+    root_type = LINUX_ROOT_GUID
+    r_bytes = run("blockdev", "--getsize64", disk, check=False, capture=True)
+    disk_mib = (
+        int(r_bytes.stdout.strip()) // (1024 * 1024)
+        if r_bytes.returncode == 0 and r_bytes.stdout.strip().isdigit()
+        else 0
+    )
     sfdisk_input = "label: gpt\n\n"
     if boot_mode == "UEFI":
+        efi_mib = _parse_efi_size_mib(efi_size)
+        if disk_mib and (efi_mib + 1024 > disk_mib):
+            raise ValueError(
+                f"Disk {disk} ({disk_mib} MiB) is too small for {efi_mib} MiB EFI + root partition."
+            )
+        aligned_efi = f"{efi_mib}MiB"
         sfdisk_input += (
-            f'start=1MiB, size={efi_size}, type={EFI_GUID}, name="{DUSKY_EFI_PARTNAME}"\n'
+            f'start=1MiB, size={aligned_efi}, type={EFI_GUID}, name="{DUSKY_EFI_PARTNAME}"\n'
         )
         sfdisk_input += (
             f'size=+, type={root_type}, name="{DUSKY_ROOT_PARTNAME}"\n'
         )
     else:
+        aligned_efi = "2MiB"
         sfdisk_input += (
-            f'start=1MiB, size=2M, type={BIOS_GUID}, name="{DUSKY_BIOS_LABEL}"\n'
+            f'start=1MiB, size=2MiB, type={BIOS_GUID}, name="{DUSKY_BIOS_LABEL}"\n'
         )
         sfdisk_input += (
             f'size=+, type={root_type}, name="{DUSKY_ROOT_PARTNAME}"\n'
         )
-    console.print(f"[cyan]Writing GPT to {disk} (wipe) EFI={efi_size}[/cyan]")
+    console.print(f"[cyan]Writing GPT to {disk} (wipe) EFI={aligned_efi}[/cyan]")
 
     # 0. Pre-wipe existing child partition superblocks/LUKS headers (archinstall wipe_dev pattern)
     for existing_part in get_partitions_list(disk):
@@ -1060,14 +1095,7 @@ def write_gpt_sfdisk(
                 capture=True,
             )
         run("blockdev", "--rereadpt", disk, check=False, capture=True)
-        try:
-            run("partx", "-u", disk, check=False, capture=True)
-        except Exception:
-            pass
-        try:
-            run("partx", "-a", disk, check=False, capture=True)
-        except Exception:
-            pass
+        run("partx", "-u", disk, check=False, capture=True)
     finally:
         run(
             "udevadm",
@@ -1080,15 +1108,14 @@ def write_gpt_sfdisk(
         run(
             "udevadm",
             "trigger",
+            f"--parent-match={disk}",
             "--settle",
-            "-w",
-            "--timeout=10",
-            disk,
             check=False,
             capture=True,
         )
-    except Exception:
         run("udevadm", "settle", "--timeout=10", check=False, capture=True)
+    except Exception:
+        pass
     try:
         run(
             "udevadm",
@@ -1353,6 +1380,26 @@ def _is_non_rotational(dev_path: str) -> bool:
     return found_any
 
 
+def _blkid_tag(dev: str | None, tag: str) -> str | None:
+    if not dev or not Path(dev).exists():
+        return None
+    r = run(
+        "blkid",
+        "-p",
+        "-c",
+        "/dev/null",
+        "-o",
+        "value",
+        "-s",
+        tag,
+        dev,
+        check=False,
+        capture=True,
+    )
+    val = (r.stdout or "").strip()
+    return val or None
+
+
 def write_provisioned_state(
     root_part: str,
     efi_part: str | None,
@@ -1361,6 +1408,26 @@ def write_provisioned_state(
     boot_mode: str,
     strategy: int,
 ) -> None:
+    mapped_root = f"/dev/mapper/{TARGET_CRYPT_NAME}" if encrypt else root_part
+    luks_uuid = _blkid_tag(root_part, "UUID") if encrypt else None
+    root_fs_uuid = _blkid_tag(mapped_root, "UUID")
+    root_partuuid = _blkid_tag(root_part, "PART_ENTRY_UUID")
+    efi_uuid = _blkid_tag(efi_part, "UUID") if efi_part else None
+    payload = {
+        "root_part": root_part,
+        "efi_part": efi_part or None,
+        "encrypt": bool(encrypt),
+        "disk": disk,
+        "boot_mode": boot_mode,
+        "strategy": int(strategy),
+        "crypt_name": TARGET_CRYPT_NAME if encrypt else None,
+        "mapped_root": mapped_root,
+        "luks_uuid": luks_uuid,
+        "root_fs_uuid": root_fs_uuid,
+        "root_partuuid": root_partuuid,
+        "efi_uuid": efi_uuid,
+        "btrfs_csum": BTRFS_CSUM if int(strategy) != 4 else None,
+    }
     env = (
         f'PROVISIONED_ROOT_PART="{root_part}"\n'
         + (f'PROVISIONED_EFI_PART="{efi_part}"\n' if efi_part else "")
@@ -1368,23 +1435,19 @@ def write_provisioned_state(
         + f'PROVISIONED_DISK="{disk}"\n'
         + f'PROVISIONED_BOOT_MODE="{boot_mode}"\n'
         + f'PROVISIONED_STRATEGY="{int(strategy)}"\n'
+        + (f'LUKS_UUID="{luks_uuid}"\n' if luks_uuid else "")
+        + (f'ROOT_FS_UUID="{root_fs_uuid}"\n' if root_fs_uuid else "")
+        + (f'EFI_UUID="{efi_uuid}"\n' if efi_uuid else "")
     )
     _atomic_write_0600(STATE_ENV, env)
-    _atomic_write_0600(
-        STATE_JSON,
-        json.dumps(
-            {
-                "root_part": root_part,
-                "efi_part": efi_part or None,
-                "encrypt": bool(encrypt),
-                "disk": disk,
-                "boot_mode": boot_mode,
-                "strategy": int(strategy),
-            },
-            indent=2,
-        )
-        + "\n",
-    )
+    serialized = json.dumps(payload, indent=2) + "\n"
+    _atomic_write_0600(STATE_JSON, serialized)
+    try:
+        STORAGE_STATE_JSON.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        STORAGE_STATE_JSON.parent.chmod(0o700)
+        _atomic_write_0600(STORAGE_STATE_JSON, serialized)
+    except Exception:
+        pass
 
 
 def format_root_and_efi(
@@ -1454,47 +1517,52 @@ def format_root_and_efi(
 
     if do_encrypt and luks_ba is not None:
         mem_kb = get_ram_kb()
-        pbkdf = []
-        if mem_kb < 3_000_000:
-            pbkdf = ["--pbkdf-memory", "262144", "--pbkdf-parallel", "1"]
-        elif mem_kb < 4_200_000:
-            pbkdf = ["--pbkdf-memory", "524288"]
+        max_safe_kb = max(65536, int(mem_kb * 0.35))
+        tiers: list[list[str]] = []
+        if max_safe_kb >= 1_048_576:
+            tiers.append(["--pbkdf-memory", "1048576"])
+        if max_safe_kb >= 524_288:
+            tiers.append(["--pbkdf-memory", "524288"])
+        if max_safe_kb >= 262_144:
+            tiers.append(["--pbkdf-memory", "262144", "--pbkdf-parallel", "1"])
+        tiers.append(["--pbkdf-memory", "131072", "--pbkdf-parallel", "1"])
+        tiers.append(["--pbkdf-memory", "65536", "--pbkdf-parallel", "1"])
         base_luks_fmt = [
             "cryptsetup",
             "--batch-mode",
             "--type",
             "luks2",
+            "--cipher",
+            "aes-xts-plain64",
             "--pbkdf",
             "argon2id",
             "--hash",
             "sha512",
             "--key-size",
             "512",
-            "--use-urandom",
+            "--sector-size",
+            "4096",
             "--label",
             DUSKY_ROOT_LABEL,
         ]
         try:
-            fmt = base_luks_fmt + pbkdf + ["luksFormat", "--key-file", "-", root_part]
-            r = run(*fmt, input_text=luks_ba, check=False, capture=True)
-            if r.returncode == 3:
-                fmt = base_luks_fmt + [
-                    "--pbkdf-memory",
-                    "262144",
-                    "--pbkdf-parallel",
-                    "1",
-                    "luksFormat",
-                    "--key-file",
-                    "-",
-                    root_part,
-                ]
-                r = run(*fmt, input_text=luks_ba, check=False, capture=True)
-            if r.returncode != 0:
-                console.print(f"[red]luksFormat fail {r.returncode}[/red]")
-                console.print(
-                    (r.stderr or b"").decode("utf-8", "replace"), markup=False
+            r = None
+            for pbkdf_opts in tiers:
+                fmt = (
+                    base_luks_fmt
+                    + pbkdf_opts
+                    + ["luksFormat", "--key-file", "-", root_part]
                 )
-                sys.exit(1)
+                r = run(*fmt, input_text=luks_ba, check=False, capture=True)
+                if r.returncode == 0:
+                    break
+                if r.returncode not in (3, -9, 137):
+                    break
+            if r is None or r.returncode != 0:
+                detail = ((r.stderr if r else b"") or b"").decode("utf-8", "replace")
+                raise RuntimeError(
+                    f"luksFormat failed (rc={r.returncode if r else -1}): {detail.strip()}"
+                )
             crypt_open_args = [
                 "cryptsetup",
                 "open",
@@ -1517,16 +1585,15 @@ def format_root_and_efi(
                 *crypt_open_args, input_text=luks_ba, check=False, capture=True
             )
             if ro.returncode != 0:
-                console.print("[red]cryptsetup open fail[/red]")
-                console.print(
-                    (ro.stderr or b"").decode("utf-8", "replace"), markup=False
-                )
-                sys.exit(1)
+                detail = (ro.stderr or b"").decode("utf-8", "replace")
+                raise RuntimeError(f"cryptsetup open failed: {detail.strip()}")
         finally:
             if luks_ba:
                 for i in range(len(luks_ba)):
                     luks_ba[i] = 0
         btrfs_target = f"/dev/mapper/{TARGET_CRYPT_NAME}"
+        if not wait_for_dev(btrfs_target, 10):
+            raise RuntimeError(f"{btrfs_target} did not appear after cryptsetup open")
 
     mkfs_cmd = ["mkfs.btrfs", "-f"]
     if BTRFS_CSUM != "crc32c":
@@ -1760,6 +1827,10 @@ def execute_strategy_wipe(
                         f"[yellow]Partition {part} still busy, waiting... ({_settle + 1}/5)[/yellow]"
                     )
                     time.sleep(2)
+            else:
+                raise RuntimeError(
+                    f"Partition {part} is still held exclusively busy after 5 settle attempts."
+                )
 
         format_root_and_efi(
             root_part,
@@ -1995,11 +2066,11 @@ def execute_partition_plan(
 
 def valid_efi_size(s: str) -> str:
     s_clean = s.strip()
-    if re.match(r"^\d+(\.\d+)?\s*(M|MiB|G|GiB)\s*$", s_clean, re.I):
-        return s_clean.replace(" ", "")
-    raise argparse.ArgumentTypeError(
-        f"Invalid EFI size {s}, use like 1.3G, 1331M, 2G"
-    )
+    try:
+        _parse_efi_size_mib(s_clean)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+    return s_clean.replace(" ", "")
 
 
 def create_partition_wizard(
@@ -2731,7 +2802,10 @@ def create_partition_wizard(
                 if opt.id == "cancel":
                     self.action_cancel()
                     return
+                # Setting allow_bios removes STEP_BIOS from compute_steps(); do not increment step_index.
                 self.allow_bios = True
+                self.render_step()
+                return
 
             elif step_id == STEP_DISK:
                 idx = options_w.highlighted
@@ -2833,9 +2907,29 @@ def create_partition_wizard(
                 if self.strategy == 4:
                     self.root_is_luks = is_luks_device(self.root_part)
                     if self.root_is_luks:
+                        already_open = False
+                        if Path(f"/dev/mapper/{TARGET_CRYPT_NAME}").exists():
+                            rs = run(
+                                "cryptsetup",
+                                "status",
+                                TARGET_CRYPT_NAME,
+                                check=False,
+                                capture=True,
+                            )
+                            for ln in rs.stdout.splitlines():
+                                if ln.strip().lower().startswith("device:"):
+                                    if _same_dev(
+                                        ln.split(":", 1)[1].strip(),
+                                        self.root_part,
+                                    ):
+                                        already_open = True
+                                    break
                         cred_pw = self.creds.get("ROOT_PASS", "")
-                        if cred_pw and test_luks_passphrase(
-                            self.root_part, cred_pw.encode("utf-8")
+                        if already_open or (
+                            cred_pw
+                            and test_luks_passphrase(
+                                self.root_part, cred_pw.encode("utf-8")
+                            )
                         ):
                             self.needs_rescue_pass = False
                         else:
@@ -2987,20 +3081,6 @@ def create_partition_wizard(
             self.step_index += 1
             self.render_step()
 
-        def on_key(self, event: events.Key) -> None:
-            if (
-                event.key == "enter"
-                and self.current_step_id == STEP_ENCRYPT
-                and self.query_one("#encryption", RadioSet).has_focus
-            ):
-                enc_w = self.query_one("#encryption", RadioSet)
-                selected_idx = getattr(enc_w, "_selected", None)
-                if selected_idx in (0, 1) and enc_w.pressed_index != selected_idx:
-                    enc_w.action_toggle_button()
-                event.stop()
-                event.prevent_default()
-                self.advance()
-
         def on_option_list_option_selected(
             self, event: OptionList.OptionSelected
         ) -> None:
@@ -3137,9 +3217,9 @@ def prompt_headless_root_and_efi(
                 format_efi = ans == "y"
             if not format_efi and not probe_vfat_valid(efi):
                 console.print(
-                    f"[yellow]{efi} does not contain FAT32 (vfat); enabling EFI format.[/yellow]"
+                    f"[red]{efi} does not contain FAT32 (vfat) and formatting was declined. Aborting to prevent unintended data loss.[/red]"
                 )
-                format_efi = True
+                return None, None, False
     return root, efi, format_efi
 
 
@@ -3169,6 +3249,11 @@ def build_headless_plan(
             )
             console.print(f"[green]Only one disk found: {target_dev}[/green]")
         else:
+            if args.auto or not sys.stdin.isatty():
+                console.print(
+                    "[red]Multiple eligible disks detected; specify --disk /dev/... for unattended execution.[/red]"
+                )
+                return None
             show_disks_table(disks)
             ans = Prompt.ask(
                 f"Select disk (1-{len(disks)} or q to abort)",
@@ -3244,10 +3329,11 @@ def main() -> int:
         help="Non-interactive, default to Wipe Entire Drive",
     )
     parser.add_argument("--disk", type=str, help="Target disk /dev/...")
-    parser.add_argument(
+    enc_group = parser.add_mutually_exclusive_group()
+    enc_group.add_argument(
         "--encrypt", action="store_true", help="Enable LUKS2"
     )
-    parser.add_argument(
+    enc_group.add_argument(
         "--no-encrypt", action="store_true", help="Disable LUKS2"
     )
     parser.add_argument(
@@ -3314,9 +3400,13 @@ def main() -> int:
         if not any(
             _same_dev(resolved, d.get("path") or d.get("name")) for d in disks
         ):
-            raise ValueError(
-                f"{resolved} is not an available whole disk of at least 1 GiB"
+            console.print(
+                Text(
+                    f"{resolved} is not an available whole disk of at least 1 GiB",
+                    style="red",
+                )
             )
+            return 1
         preset_disk = resolved
 
     if args.auto or not is_tty:

@@ -23,11 +23,19 @@ from rich.prompt import Confirm, Prompt
 from rich import box
 
 def make_console():
-    term = os.environ.get("TERM","")
-    if term in ("dumb","unknown",""):
+    term = os.environ.get("TERM", "")
+    if term in ("dumb", "unknown", ""):
         os.environ["TERM"] = "linux"
-        return Console(color_system=None, force_terminal=False, no_color=True, legacy_windows=False, safe_box=False)
-    return Console(color_system="auto", force_terminal=None, legacy_windows=False, safe_box=False, highlight=False, markup=True)
+        term = "linux"
+    is_basic_vt = term in ("linux", "dumb", "vt100")
+    return Console(
+        color_system="standard" if is_basic_vt else "auto",
+        force_terminal=None,
+        legacy_windows=False,
+        safe_box=is_basic_vt,
+        highlight=False,
+        markup=True,
+    )
 
 def refresh_console():
     global console
@@ -36,9 +44,10 @@ def refresh_console():
 console = make_console()
 
 EFI_GPT_TYPE = "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
-BTRFS_OPTS = "rw,noatime,compress=zstd:3,discard=async"
+BTRFS_OPTS = "rw,noatime,compress-force=zstd:1,space_cache=v2,discard=async"
 STATE_ENV = Path("/tmp/arch_install_state.env")
 STATE_JSON = Path("/tmp/dusky_state.json")
+STORAGE_STATE_JSON = Path("/root/arch_install/storage_state.json")
 DUSKY_EFI_LABEL = "DUSKY_EFI"
 DUSKY_ROOT_LABEL = "DUSKY_ROOT"
 SWAPFILE_PATH = Path("/mnt/swap/swapfile")
@@ -96,13 +105,15 @@ def mountinfo_targets(text: str, prefix: str = "/mnt") -> list[str]:
     return sorted(targets, key=lambda path: (path.count("/"), len(path)), reverse=True)
 
 def detect_boot_mode():
-    try:
-        state = json.loads(STATE_JSON.read_text())
-        bm = str(state.get("boot_mode", "")).upper()
-        if bm in ("UEFI", "BIOS"):
-            return bm
-    except Exception:
-        pass
+    for candidate in (STORAGE_STATE_JSON, STATE_JSON):
+        try:
+            if candidate.is_file():
+                state = json.loads(candidate.read_text(encoding="utf-8"))
+                bm = str(state.get("boot_mode", "")).upper()
+                if bm in ("UEFI", "BIOS"):
+                    return bm
+        except Exception:
+            pass
     if Path("/sys/firmware/efi").is_dir():
         return "UEFI"
     try:
@@ -197,6 +208,10 @@ def unmount_mount_tree():
     # Clean up mount namespaces holding /mnt
     try:
         seen_ns_inodes = set()
+        try:
+            seen_ns_inodes.add(Path("/proc/self/ns/mnt").stat().st_ino)
+        except OSError:
+            pass
         for proc_dir in Path("/proc").glob("[0-9]*"):
             try:
                 ns_mnt = proc_dir / "ns" / "mnt"
@@ -248,42 +263,65 @@ def ensure_subvolume(path: Path, nocow=False, rescue=False) -> bool:
         run("chattr", "+C", str(path), capture=True)
     return True
 
+def _parse_shell_kv(path: Path) -> dict[str, str]:
+    parsed: dict[str, str] = {}
+    if not path.is_file():
+        return parsed
+    try:
+        for raw_line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("export "):
+                line = line[7:].lstrip()
+            if "=" not in line:
+                continue
+            k, raw_v = line.split("=", 1)
+            tokens = shlex.split(raw_v, posix=True)
+            parsed[k.strip()] = tokens[0] if tokens else ""
+    except Exception:
+        pass
+    return parsed
+
+
+def _atomic_write_0600(destination: Path, content: str) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix=f".{destination.name}.", dir=destination.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(content)
+        temporary.chmod(0o600)
+        temporary.replace(destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def load_state():
-    state={}
-    if STATE_JSON.exists():
-        try:
-            state.update(json.loads(STATE_JSON.read_text()))
-        except:
-            pass
-    if STATE_ENV.exists():
-        try:
-            script=(
-                f'set +u; source {shlex.quote(str(STATE_ENV))} 2>/dev/null; '
-                'printf "PROVISIONED_ROOT_PART=%s\\nPROVISIONED_EFI_PART=%s\\nENCRYPT_ROOT=%s\\nPROVISIONED_DISK=%s\\nPROVISIONED_BOOT_MODE=%s\\nPROVISIONED_STRATEGY=%s\\n" '
-                '"$PROVISIONED_ROOT_PART" "$PROVISIONED_EFI_PART" "$ENCRYPT_ROOT" "$PROVISIONED_DISK" "$PROVISIONED_BOOT_MODE" "$PROVISIONED_STRATEGY"'
-            )
-            r=subprocess.run(["bash","-c",script],text=True,capture_output=True,check=False,timeout=5)
-            for line in r.stdout.splitlines():
-                if "=" not in line:
-                    continue
-                k,v=line.split("=",1)
-                if not v:
-                    continue
-                if k=="PROVISIONED_ROOT_PART":
-                    state.setdefault("root_part",v)
-                elif k=="PROVISIONED_EFI_PART":
-                    state.setdefault("efi_part",v)
-                elif k=="ENCRYPT_ROOT":
-                    state.setdefault("encrypt",v=="1")
-                elif k=="PROVISIONED_DISK":
-                    state.setdefault("disk",v)
-                elif k=="PROVISIONED_BOOT_MODE":
-                    state.setdefault("boot_mode",v)
-                elif k=="PROVISIONED_STRATEGY" and v.isdigit():
-                    state.setdefault("strategy",int(v))
-        except:
-            pass
+    state = {}
+    for candidate in (STORAGE_STATE_JSON, STATE_JSON):
+        if candidate.is_file():
+            try:
+                data = json.loads(candidate.read_text(encoding="utf-8"))
+                for k, v in data.items():
+                    state.setdefault(k, v)
+            except Exception:
+                pass
+    env_map = _parse_shell_kv(STATE_ENV)
+    if env_map.get("PROVISIONED_ROOT_PART"):
+        state.setdefault("root_part", env_map["PROVISIONED_ROOT_PART"])
+    if env_map.get("PROVISIONED_EFI_PART"):
+        state.setdefault("efi_part", env_map["PROVISIONED_EFI_PART"])
+    if env_map.get("ENCRYPT_ROOT") in ("0", "1"):
+        state.setdefault("encrypt", env_map["ENCRYPT_ROOT"] == "1")
+    if env_map.get("PROVISIONED_DISK"):
+        state.setdefault("disk", env_map["PROVISIONED_DISK"])
+    if env_map.get("PROVISIONED_BOOT_MODE"):
+        state.setdefault("boot_mode", env_map["PROVISIONED_BOOT_MODE"])
+    if env_map.get("PROVISIONED_STRATEGY", "").isdigit():
+        state.setdefault("strategy", int(env_map["PROVISIONED_STRATEGY"]))
     return state
+
 
 def get_partition_path(disk,num):
     disk=disk.rstrip("/")
@@ -295,17 +333,26 @@ def get_partition_path(disk,num):
         return f"{disk}p{num_str}"
     return f"{disk}{num_str}"
 
+
 def load_root_password():
-    cred_file = Path("./.arch_credentials")
-    if not cred_file.exists():
-        return None
-    try:
-        script = f'set +u; source {shlex.quote(str(cred_file))} && printf "%s" "$ROOT_PASS"'
-        result = subprocess.run(["bash", "-c", script], capture_output=True, check=True, timeout=5)
-        # Binary output preserves the exact key bytes, including whitespace.
-        return bytearray(result.stdout) if result.stdout else None
-    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        return None
+    for cred_file in (Path("./.arch_credentials"), Path("/root/arch_install/.arch_credentials")):
+        kv = _parse_shell_kv(cred_file)
+        if kv.get("ROOT_PASS"):
+            return bytearray(kv["ROOT_PASS"].encode("utf-8"))
+    return None
+
+def flatten_lsblk(data):
+    nodes = []
+    def _walk(item_list):
+        for item in item_list:
+            nodes.append(item)
+            if item.get("children"):
+                _walk(item.get("children"))
+    if isinstance(data, dict):
+        _walk(data.get("blockdevices", []))
+    elif isinstance(data, list):
+        _walk(data)
+    return nodes
 
 def _is_valid_block_partition(rp: Path) -> bool:
     if not rp.exists() or not rp.is_block_device():
@@ -327,26 +374,37 @@ def determine_root_partition(auto_mode):
     elif auto_mode and state.get("encrypt") is True and mapped.exists():
         root_part = mapper_backing()
     elif auto_mode:
-        r=run("lsblk","-pnro","NAME,FSTYPE,LABEL",check=False,capture=True)
-        btrfs_parts=[]
-        duskies=[]
-        for line in r.stdout.splitlines():
-            cols=line.split()
-            if len(cols)<2:
+        r = run(
+            "lsblk",
+            "--json",
+            "--paths",
+            "--tree",
+            "-o",
+            "PATH,TYPE,FSTYPE,LABEL",
+            check=False,
+            capture=True,
+        )
+        btrfs_parts = []
+        duskies = []
+        try:
+            nodes = flatten_lsblk(json.loads(r.stdout or "{}"))
+        except Exception:
+            nodes = []
+        for node in nodes:
+            if node.get("type") != "part":
                 continue
-            name, fstype = cols[0], cols[1]
-            label=cols[2] if len(cols)>2 else ""
+            name = node.get("path") or ""
+            fstype = (node.get("fstype") or "").strip()
+            label = (node.get("label") or "").strip()
             if fstype in ("btrfs", "crypto_LUKS"):
-                if label==DUSKY_ROOT_LABEL:
+                if label == DUSKY_ROOT_LABEL:
                     duskies.append(name)
-                if fstype=="btrfs":
+                if fstype == "btrfs":
                     btrfs_parts.append(name)
-        if len(duskies)==1:
-            root_part=Path(duskies[0]).resolve()
-            mapped_root=root_part
-        elif len(btrfs_parts)==1:
-            root_part=Path(btrfs_parts[0]).resolve()
-            mapped_root=root_part
+        if len(duskies) == 1:
+            root_part = Path(duskies[0]).resolve()
+        elif len(btrfs_parts) == 1:
+            root_part = Path(btrfs_parts[0]).resolve()
         else:
             console.print("[red]Cannot auto-detect btrfs/LUKS root[/red]")
             sys.exit(1)
@@ -381,15 +439,36 @@ def determine_root_partition(auto_mode):
         if mapped.exists() and mapper_backing() != root_part:
             run("cryptsetup", "close", "cryptroot", check=False, capture=True)
         if not mapped.exists():
-            args = ["cryptsetup", "open", "--allow-discards"]
-            block = Path("/sys/class/block") / root_part.name
-            if (block / "partition").exists():
-                block = block.resolve().parent
-            try:
-                if (block / "queue/rotational").read_text().strip() == "0":
-                    args += ["--perf-no_read_workqueue", "--perf-no_write_workqueue"]
-            except OSError:
-                pass
+            args = ["cryptsetup", "open", "--type", "luks2", "--allow-discards"]
+            pending = [root_part.name]
+            seen_blk: set[str] = set()
+            is_ssd = True
+            found_rot = False
+            while pending:
+                bname = pending.pop()
+                if bname in seen_blk:
+                    continue
+                seen_blk.add(bname)
+                block = Path("/sys/class/block") / bname
+                try:
+                    if (block / "partition").exists():
+                        pending.append(block.resolve().parent.name)
+                        continue
+                    slaves = block / "slaves"
+                    if slaves.is_dir() and any(slaves.iterdir()):
+                        pending.extend(s.name for s in slaves.iterdir())
+                        continue
+                    rot = block / "queue/rotational"
+                    if rot.is_file():
+                        found_rot = True
+                        if rot.read_text().strip() != "0":
+                            is_ssd = False
+                            break
+                except OSError:
+                    is_ssd = False
+                    break
+            if found_rot and is_ssd:
+                args += ["--perf-no_read_workqueue", "--perf-no_write_workqueue"]
             unlocked = False
             password = load_root_password()
             if password:
@@ -483,19 +562,6 @@ def is_mounted(dev):
         return r.stdout.strip() or None
     except:
         return None
-
-def flatten_lsblk(data):
-    nodes = []
-    def _walk(item_list):
-        for item in item_list:
-            nodes.append(item)
-            if item.get("children"):
-                _walk(item.get("children"))
-    if isinstance(data, dict):
-        _walk(data.get("blockdevices", []))
-    elif isinstance(data, list):
-        _walk(data)
-    return nodes
 
 def auto_detect_efi_partition(root_disk, root_part):
     try:
@@ -600,45 +666,66 @@ def assemble_fhs(mapped_root, efi_part, active_subvols: set[str] | None = None):
     else:
         run("mount","-o",f"{BTRFS_OPTS},subvolid=5",str(mapped_root),"/mnt",capture=True)
     
-    # Removed "home/.snapshots" from this loop to prevent creating a masked directory inside the @ subvolume root
-    for mp in ["home",".snapshots","var/log","var/cache","var/tmp","var/lib/machines","var/lib/portables","var/lib/libvirt","var/lib/mysql","var/lib/postgres","swap","boot","proc","sys","dev","run","etc","tmp","root","mnt","opt","srv"]:
-        Path(f"/mnt/{mp}").mkdir(parents=True,exist_ok=True)
-        
-    mounts=[
-        ("@home", f"{BTRFS_OPTS},subvol=@home","/mnt/home"),
-        ("@snapshots", f"{BTRFS_OPTS},subvol=@snapshots","/mnt/.snapshots"),
-        ("@var_log", f"{BTRFS_OPTS},subvol=@var_log","/mnt/var/log"),
-        ("@var_cache", f"{BTRFS_OPTS},subvol=@var_cache","/mnt/var/cache"),
-        ("@var_tmp", f"{BTRFS_OPTS},subvol=@var_tmp","/mnt/var/tmp"),
-        ("@var_lib_machines", f"{BTRFS_OPTS},subvol=@var_lib_machines","/mnt/var/lib/machines"),
-        ("@var_lib_portables", f"{BTRFS_OPTS},subvol=@var_lib_portables","/mnt/var/lib/portables"),
-        ("@var_lib_libvirt", f"{BTRFS_OPTS},subvol=@var_lib_libvirt","/mnt/var/lib/libvirt"),
-        ("@var_lib_mysql", f"{BTRFS_OPTS},subvol=@var_lib_mysql","/mnt/var/lib/mysql"),
-        ("@var_lib_postgres", f"{BTRFS_OPTS},subvol=@var_lib_postgres","/mnt/var/lib/postgres"),
-        ("@swap", f"{BTRFS_OPTS},subvol=@swap","/mnt/swap"),
+    mounts = [
+        ("@home", f"{BTRFS_OPTS},subvol=@home", "/mnt/home"),
+        ("@snapshots", f"{BTRFS_OPTS},subvol=@snapshots", "/mnt/.snapshots"),
+        ("@var_log", f"{BTRFS_OPTS},subvol=@var_log", "/mnt/var/log"),
+        ("@var_cache", f"{BTRFS_OPTS},subvol=@var_cache", "/mnt/var/cache"),
+        ("@var_tmp", f"{BTRFS_OPTS},subvol=@var_tmp", "/mnt/var/tmp"),
+        ("@var_lib_machines", f"{BTRFS_OPTS},subvol=@var_lib_machines", "/mnt/var/lib/machines"),
+        ("@var_lib_portables", f"{BTRFS_OPTS},subvol=@var_lib_portables", "/mnt/var/lib/portables"),
+        ("@var_lib_libvirt", f"{BTRFS_OPTS},subvol=@var_lib_libvirt", "/mnt/var/lib/libvirt"),
+        ("@var_lib_mysql", f"{BTRFS_OPTS},subvol=@var_lib_mysql", "/mnt/var/lib/mysql"),
+        ("@var_lib_postgres", f"{BTRFS_OPTS},subvol=@var_lib_postgres", "/mnt/var/lib/postgres"),
+        ("@swap", f"{BTRFS_OPTS},subvol=@swap", "/mnt/swap"),
     ]
+    if strategy != 4:
+        # Removed "home/.snapshots" from this loop to prevent creating a masked directory inside the @ subvolume root
+        for mp in ["home", ".snapshots", "var/log", "var/cache", "var/tmp", "var/lib/machines", "var/lib/portables", "var/lib/libvirt", "var/lib/mysql", "var/lib/postgres", "swap", "boot", "proc", "sys", "dev", "run", "etc", "tmp", "root", "mnt", "opt", "srv"]:
+            Path(f"/mnt/{mp}").mkdir(parents=True, exist_ok=True)
+        Path("/mnt/tmp").chmod(0o1777)
+        Path("/mnt/root").chmod(0o700)
+
     for sub_name, opts, tgt in mounts:
         if sub_name in active_subvols:
-            run("mount","-o",opts,str(mapped_root),tgt,capture=True)
-        
+            Path(tgt).mkdir(parents=True, exist_ok=True)
+            run("mount", "-o", opts, str(mapped_root), tgt, capture=True)
+            if strategy != 4 and sub_name == "@snapshots":
+                Path(tgt).chmod(0o750)
+
     if "@home_snapshots" in active_subvols:
         # Safely created over the active @home subvolume mount
-        Path("/mnt/home/.snapshots").mkdir(parents=True,exist_ok=True)
-        run("mount","-o",f"{BTRFS_OPTS},subvol=@home_snapshots",str(mapped_root),"/mnt/home/.snapshots",capture=True)
-    
-    if BOOT_MODE=="UEFI" and efi_part:
+        Path("/mnt/home/.snapshots").mkdir(parents=True, exist_ok=True)
+        run("mount", "-o", f"{BTRFS_OPTS},subvol=@home_snapshots", str(mapped_root), "/mnt/home/.snapshots", capture=True)
+        if strategy != 4:
+            Path("/mnt/home/.snapshots").chmod(0o750)
+
+    if BOOT_MODE == "UEFI" and efi_part:
+        Path("/mnt/boot").mkdir(parents=True, exist_ok=True)
         console.print(f"[yellow]>> Mounting EFI {efi_part} to /mnt/boot (hardened)...[/yellow]")
-        run("mount","-t","vfat","-o","fmask=0077,dmask=0077,noexec,nosuid,nodev",str(efi_part),"/mnt/boot",capture=True)
+        run("mount", "-t", "vfat", "-o", "fmask=0077,dmask=0077,noexec,nosuid,nodev", str(efi_part), "/mnt/boot", capture=True)
         if strategy != 4:
             sync_secondary_efi_bootloaders("/mnt/boot", str(efi_part))
 
-    if STATE_JSON.exists() and strategy != 4:
+    if strategy != 4:
+        enriched = dict(state)
+        enriched.update(
+            {
+                "mapped_root": str(mapped_root),
+                "efi_part": str(efi_part) if efi_part else None,
+                "boot_mode": BOOT_MODE,
+                "btrfs_opts": BTRFS_OPTS,
+                "active_subvols": sorted(active_subvols),
+                "flat_root": "@" not in active_subvols,
+            }
+        )
+        serialized = json.dumps(enriched, indent=2) + "\n"
         try:
-            chroot_etc = Path("/mnt/etc")
-            chroot_etc.mkdir(parents=True, exist_ok=True)
-            dst_state = chroot_etc / "dusky_state.json"
-            dst_state.write_text(STATE_JSON.read_text(errors="ignore"), encoding="utf-8")
-            dst_state.chmod(0o600)
+            _atomic_write_0600(STATE_JSON, serialized)
+            STORAGE_STATE_JSON.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            STORAGE_STATE_JSON.parent.chmod(0o700)
+            _atomic_write_0600(STORAGE_STATE_JSON, serialized)
+            _atomic_write_0600(Path("/mnt/etc/dusky_state.json"), serialized)
         except Exception:
             pass
 
@@ -796,24 +883,39 @@ def initialize_swapfile():
         console.print(Text(f"Warning: Cannot determine swap space: {error}", style="yellow"))
         return
     minimum = 256 * 1024**2
-    desired_size = min(4 * 1024**3, int(available * 0.8))
+    root_reserve = 4 * 1024**3
+    headroom = max(0, available - root_reserve)
+    desired_size = min(4 * 1024**3, int(available * 0.25), headroom)
     if desired_size < minimum:
-        console.print("[yellow]Warning: Insufficient space for a swapfile[/yellow]")
+        console.print("[yellow]Warning: Insufficient free headroom above 4 GiB root reserve for swapfile[/yellow]")
         return
     size_str = f"{desired_size // (1024**2)}M"
     if existing_size >= minimum and abs(existing_size - desired_size) < 512 * 1024**2:
-        if run("swapon", str(SWAPFILE_PATH), check=False).returncode == 0:
-            console.print("[green]>> Existing swapfile re-activated[/green]")
-            return
+        attrs = run("lsattr", "-d", str(SWAPFILE_PATH), check=False, capture=True).stdout or ""
+        mode = SWAPFILE_PATH.stat().st_mode & 0o777
+        if "C" in (attrs.split()[0] if attrs.split() else "") and mode == 0o600:
+            if run("swapon", str(SWAPFILE_PATH), check=False).returncode == 0:
+                console.print("[green]>> Existing swapfile re-activated[/green]")
+                return
 
     SWAPFILE_PATH.unlink(missing_ok=True)
     run("chattr", "+C", str(SWAPFILE_PATH.parent), check=False, capture=True)
-    result = run("btrfs", "filesystem", "mkswapfile", "--size", size_str,
-                 "--uuid", "clear", str(SWAPFILE_PATH), check=False)
+    result = run(
+        "btrfs",
+        "filesystem",
+        "mkswapfile",
+        "--size",
+        size_str,
+        "--uuid",
+        "clear",
+        str(SWAPFILE_PATH),
+        check=False,
+    )
     if result.returncode == 0 and SWAPFILE_PATH.is_file():
         if run("swapon", str(SWAPFILE_PATH), check=False).returncode == 0:
             console.print(f"[green]>> Swapfile ({size_str}) created and activated.[/green]")
             return
+        SWAPFILE_PATH.unlink(missing_ok=True)
     detail = (result.stderr or "").strip()
     console.print(Text(f"Warning: Swapfile activation skipped. {detail}", style="yellow"))
 
@@ -826,6 +928,8 @@ def teardown_state():
     unmount_mount_tree()
 
 def run_common(auto_mode):
+    global BOOT_MODE
+    BOOT_MODE = detect_boot_mode()
     teardown_state()
     mapped_root,root_part,root_disk=determine_root_partition(auto_mode)
     validate_root_state(mapped_root)
