@@ -347,8 +347,8 @@ post_hook   = '''
 # post_hook   = '''
 #   if command -v spicetify >/dev/null 2>&1 && [ -d "$HOME/.config/spicetify/Themes/Comfy" ]; then
 #       ln -nfs "$HOME/.config/matugen/generated/spotify-colors.ini" "$HOME/.config/spicetify/Themes/Comfy/color.ini"
-#       # refresh only rewrites theme colors/CSS (fast); fall back to a full apply if needed
-#       spicetify refresh -n >/dev/null 2>&1 || spicetify apply -n >/dev/null 2>&1 || :
+#       # After a Spotify update `apply` fails until the backup is re-captured; `backup apply` self-heals
+#       spicetify apply -n || spicetify backup apply || :
 #       # Hot-reload a running Spotify (Ctrl+Shift+R needs devtools, enabled at setup).
 #       # Hyprland 0.55+ (Lua config): dispatch takes a Lua expression.
 #       if pgrep -x spotify >/dev/null; then
