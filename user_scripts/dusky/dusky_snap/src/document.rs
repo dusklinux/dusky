@@ -95,6 +95,9 @@ fn default_font() -> String {
 }
 impl Layer {
     pub fn bounds(&self) -> Rect {
+        if self.points.is_empty() {
+            return Rect::default();
+        }
         let mut r = Rect {
             x: f64::MAX,
             y: f64::MAX,
@@ -121,7 +124,7 @@ impl Layer {
                 x: r.x,
                 y: r.y,
                 w: width.max(size),
-                h: self.text.lines().count().max(1) as f64 * size * 1.5,
+                h: self.text.lines().count().max(1) as f64 * size * 1.3,
             };
         }
         let pad = self.width * 3.0;

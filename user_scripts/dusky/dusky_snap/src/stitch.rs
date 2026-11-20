@@ -2,14 +2,13 @@ use crate::Result;
 use image::RgbaImage;
 use std::sync::{
     Condvar, Mutex,
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    atomic::{AtomicBool, Ordering},
 };
 
 pub const DOWNSAMPLE_CROSS: usize = 4;
 pub const MIN_OVERLAP_DEN: usize = 4;
-pub const MIN_OVERLAP_PIXELS: usize = 12;
+pub const MIN_OVERLAP_PIXELS: usize = 16;
 pub const MIN_MOTION_PIXELS: usize = 3;
-pub const WIDELY_OPENABLE_EDGE: usize = 32_767;
 pub const MAX_STITCHED_BYTES: usize = 512 * 1024 * 1024;
 pub const MAX_STITCHED_PIXELS: usize = MAX_STITCHED_BYTES / 4;
 
@@ -21,20 +20,32 @@ pub const MIN_CONFIDENCE: f64 = 1.10;
 pub const MIN_ERROR_MARGIN: f64 = 0.75;
 pub const MAX_FORWARD_CANDIDATES: usize = 64;
 pub const PATH_DELTA_TOLERANCE: isize = 2;
-pub const MAX_STATIONARY_EDGE: usize = 128;
+pub const MAX_STATIONARY_EDGE: usize = 384;
 pub const STATIONARY_EDGE_ERROR: f64 = 1.0;
-pub const MAX_STATIONARY_SCORING_EDGE_DEN: usize = 4;
-pub const NEAR_STATIONARY_ERROR: f64 = 1.0;
+pub const BORDER_TOLERANCE_PX: usize = 2;
+pub const BORDER_TOLERANCE_ERROR: f64 = 4.0;
+pub const BORDER_CONFIRM_LINES: usize = 6;
+pub const MAX_STATIONARY_SCORING_EDGE_DEN: usize = 3;
+pub const MAX_NEAR_STATIONARY_HALO: usize = 24;
+pub const NEAR_STATIONARY_ERROR: f64 = 4.0;
 
 pub const AUTO_END_CONFIRMATION_PROBES: usize = 2;
 pub const NOTCHES_PER_TICK: i32 = 3;
 pub const PROBE_NOTCHES: i32 = 1;
 pub const MAX_BLANK_FIRST_FRAMES: usize = 8;
 
+const SIG_BUCKETS: usize = 16;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Axis {
     Vertical,
     Horizontal,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SearchDirection {
+    ForwardOnly,
+    Bidirectional,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -77,7 +88,6 @@ pub struct GrayView {
     pub pixels: Vec<u8>,
     pub width: usize,
     pub height: usize,
-    pub source_width: usize,
 }
 
 impl GrayView {
@@ -95,13 +105,6 @@ impl GrayView {
         }
     }
 
-    pub fn source_scale(&self, axis: Axis) -> usize {
-        match axis {
-            Axis::Vertical => 1,
-            Axis::Horizontal => (self.source_width / self.width.max(1)).max(1),
-        }
-    }
-
     pub fn crop_axis(&self, axis: Axis, start: usize, end: usize) -> Self {
         let len = self.axis_len(axis);
         let s = start.min(len);
@@ -110,7 +113,6 @@ impl GrayView {
             Axis::Vertical => Self {
                 width: self.width,
                 height: e - s,
-                source_width: self.source_width,
                 pixels: self.pixels[s * self.width..e * self.width].to_vec(),
             },
             Axis::Horizontal => {
@@ -123,7 +125,6 @@ impl GrayView {
                 Self {
                     width: cw,
                     height: self.height,
-                    source_width: cw * self.source_scale(axis),
                     pixels,
                 }
             }
@@ -168,12 +169,58 @@ pub fn downsample_to_gray(image: &RgbaImage, axis: Axis) -> GrayView {
         pixels,
         width: dst_w,
         height: dst_h,
-        source_width: src_w,
     }
 }
 
 fn cross_margin(cross_len: usize) -> usize {
     (cross_len / 12).min(cross_len.saturating_sub(1) / 2)
+}
+
+/// Fast zero-shift MAD across the non-margin interior for settlement and idle checks.
+pub fn frame_diff_at_zero(prev: &GrayView, cur: &GrayView, axis: Axis) -> f64 {
+    if prev.width != cur.width
+        || prev.height != cur.height
+        || prev.pixels.len() != prev.width * prev.height
+        || cur.pixels.len() != cur.width * cur.height
+    {
+        return f64::INFINITY;
+    }
+    let axis_len = prev.axis_len(axis);
+    let cross_len = prev.cross_len(axis);
+    if axis_len == 0 || cross_len == 0 {
+        return f64::INFINITY;
+    }
+    let margin = cross_margin(cross_len);
+    let cross_end = cross_len.saturating_sub(margin).max(margin + 1).min(cross_len);
+    let a_step = (axis_len / 128).max(1);
+    let c_step = ((cross_end - margin) / 64).max(1);
+    let mut total = 0u64;
+    let mut count = 0u64;
+    match axis {
+        Axis::Vertical => {
+            for along in (0..axis_len).step_by(a_step) {
+                let row = along * prev.width;
+                for cross in (margin..cross_end).step_by(c_step) {
+                    total += prev.pixels[row + cross].abs_diff(cur.pixels[row + cross]) as u64;
+                    count += 1;
+                }
+            }
+        }
+        Axis::Horizontal => {
+            for along in (0..axis_len).step_by(a_step) {
+                for cross in (margin..cross_end).step_by(c_step) {
+                    let idx = cross * prev.width + along;
+                    total += prev.pixels[idx].abs_diff(cur.pixels[idx]) as u64;
+                    count += 1;
+                }
+            }
+        }
+    }
+    if count == 0 {
+        f64::INFINITY
+    } else {
+        total as f64 / count as f64
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -185,11 +232,12 @@ pub struct StationaryEdges {
 fn edge_line_error(prev: &GrayView, cur: &GrayView, axis: Axis, along: usize) -> f64 {
     let cross_len = prev.cross_len(axis);
     let margin = cross_margin(cross_len);
-    let step = (cross_len / 128).max(1);
+    let cross_end = cross_len.saturating_sub(margin).max(margin + 1).min(cross_len);
+    let step = ((cross_end - margin) / 128).max(1);
     let mut total = 0u64;
     let mut count = 0u64;
     let mut cross = margin;
-    while cross < cross_len.saturating_sub(margin) {
+    while cross < cross_end {
         let idx = match axis {
             Axis::Vertical => along * prev.width + cross,
             Axis::Horizontal => cross * prev.width + along,
@@ -205,23 +253,120 @@ fn edge_line_error(prev: &GrayView, cur: &GrayView, axis: Axis, along: usize) ->
     }
 }
 
-pub fn stationary_scoring_edges(prev: &GrayView, cur: &GrayView, axis: Axis) -> StationaryEdges {
-    let axis_len = prev.axis_len(axis);
-    let max_edge = axis_len / MAX_STATIONARY_SCORING_EDGE_DEN;
-    let mut edges = StationaryEdges::default();
-    while edges.lead < max_edge
-        && edge_line_error(prev, cur, axis, edges.lead) <= STATIONARY_EDGE_ERROR
-    {
-        edges.lead += 1;
+fn scan_stationary_depth(max_edge: usize, err_at: impl Fn(usize) -> f64) -> usize {
+    let mut depth = 0;
+    while depth < max_edge {
+        let err = err_at(depth);
+        if err <= STATIONARY_EDGE_ERROR {
+            depth += 1;
+            continue;
+        }
+        if depth < BORDER_TOLERANCE_PX
+            && err <= BORDER_TOLERANCE_ERROR
+            && depth + BORDER_CONFIRM_LINES < max_edge
+            && (1..=BORDER_CONFIRM_LINES).all(|k| err_at(depth + k) <= STATIONARY_EDGE_ERROR)
+        {
+            depth += 1;
+            continue;
+        }
+        break;
     }
-    while edges.trail < max_edge
-        && edge_line_error(prev, cur, axis, axis_len - 1 - edges.trail) <= STATIONARY_EDGE_ERROR
-    {
-        edges.trail += 1;
-    }
-    edges
+    depth
 }
 
+pub fn stationary_scoring_edges(prev: &GrayView, cur: &GrayView, axis: Axis) -> StationaryEdges {
+    let axis_len = prev.axis_len(axis);
+    let min_keep = MIN_OVERLAP_PIXELS + MIN_MOTION_PIXELS;
+    if axis_len <= min_keep {
+        return StationaryEdges::default();
+    }
+    let max_edge = (axis_len / MAX_STATIONARY_SCORING_EDGE_DEN)
+        .min(MAX_STATIONARY_EDGE)
+        .min((axis_len - min_keep) / 2);
+    let lead = scan_stationary_depth(max_edge, |d| edge_line_error(prev, cur, axis, d));
+    let trail = scan_stationary_depth(max_edge, |d| {
+        edge_line_error(prev, cur, axis, axis_len - 1 - d)
+    });
+    StationaryEdges { lead, trail }
+}
+
+/// Compact 16-bucket cross-axis signature per scroll-axis line for fast full-overlap search.
+struct AxisSignature {
+    lines: Vec<[u8; SIG_BUCKETS]>,
+    buckets: usize,
+}
+
+impl AxisSignature {
+    fn build(view: &GrayView, axis: Axis) -> Self {
+        let axis_len = view.axis_len(axis);
+        let cross_len = view.cross_len(axis);
+        let margin = cross_margin(cross_len);
+        let cross_end = cross_len.saturating_sub(margin).max(margin + 1).min(cross_len);
+        let inner = cross_end - margin;
+        let buckets = inner.min(SIG_BUCKETS).max(1);
+        let mut lines = vec![[0u8; SIG_BUCKETS]; axis_len];
+
+        match axis {
+            Axis::Vertical => {
+                for (along, sig) in lines.iter_mut().enumerate() {
+                    let row = &view.pixels[along * view.width..(along + 1) * view.width];
+                    for (b, slot) in sig.iter_mut().take(buckets).enumerate() {
+                        let start = margin + (b * inner) / buckets;
+                        let end = (margin + ((b + 1) * inner) / buckets).max(start + 1);
+                        let mut sum = 0u32;
+                        for &px in &row[start..end] {
+                            sum += px as u32;
+                        }
+                        *slot = (sum / (end - start) as u32) as u8;
+                    }
+                }
+            }
+            Axis::Horizontal => {
+                for (along, sig) in lines.iter_mut().enumerate() {
+                    for (b, slot) in sig.iter_mut().take(buckets).enumerate() {
+                        let start = margin + (b * inner) / buckets;
+                        let end = (margin + ((b + 1) * inner) / buckets).max(start + 1);
+                        let mut sum = 0u32;
+                        for cross in start..end {
+                            sum += view.pixels[cross * view.width + along] as u32;
+                        }
+                        *slot = (sum / (end - start) as u32) as u8;
+                    }
+                }
+            }
+        }
+        Self { lines, buckets }
+    }
+
+    fn score_shift(&self, other: &Self, shift: isize, max_shift: usize) -> f64 {
+        let axis_len = self.lines.len();
+        let mag = shift.unsigned_abs();
+        if mag > max_shift || mag >= axis_len {
+            return f64::INFINITY;
+        }
+        let overlap = axis_len - mag;
+        let (prev_start, cur_start) = if shift >= 0 { (mag, 0) } else { (0, mag) };
+        let step = (overlap / 64).max(1);
+        let buckets = self.buckets;
+        let mut total = 0u64;
+        let mut count = 0u64;
+        for along in (0..overlap).step_by(step) {
+            let a = &self.lines[prev_start + along];
+            let b = &other.lines[cur_start + along];
+            for k in 0..buckets {
+                total += a[k].abs_diff(b[k]) as u64;
+            }
+            count += buckets as u64;
+        }
+        if count == 0 {
+            f64::INFINITY
+        } else {
+            total as f64 / count as f64
+        }
+    }
+}
+
+/// Full-overlap 2D grayscale SAD over the actual overlapping region of a candidate shift.
 pub fn score_shift(
     prev: &GrayView,
     cur: &GrayView,
@@ -234,29 +379,27 @@ pub fn score_shift(
     let axis_len = prev.axis_len(axis);
     let cross_len = prev.cross_len(axis);
     let magnitude = shift.unsigned_abs();
-    if magnitude > max_shift || max_shift >= axis_len {
+    if magnitude > max_shift || magnitude >= axis_len {
         return f64::INFINITY;
     }
-    let match_extent = axis_len - max_shift;
-    let available = axis_len - magnitude;
-    if available < match_extent || match_extent == 0 {
+    let overlap = axis_len - magnitude;
+    if overlap == 0 {
         return f64::INFINITY;
     }
-    let centered = (available - match_extent) / 2;
     let (prev_start, cur_start) = if shift >= 0 {
-        (centered + magnitude, centered)
+        (magnitude, 0)
     } else {
-        (centered, centered + magnitude)
+        (0, magnitude)
     };
     let margin = cross_margin(cross_len);
-    let cross_end = cross_len.saturating_sub(margin);
+    let cross_end = cross_len.saturating_sub(margin).max(margin + 1).min(cross_len);
     let a_step = axis_step.max(1);
     let c_step = cross_step.max(1);
     let mut total = 0u64;
     let mut count = 0u64;
     match axis {
         Axis::Vertical => {
-            for along in (0..match_extent).step_by(a_step) {
+            for along in (0..overlap).step_by(a_step) {
                 let pr = (prev_start + along) * prev.width;
                 let cr = (cur_start + along) * cur.width;
                 for cross in (margin..cross_end).step_by(c_step) {
@@ -266,7 +409,7 @@ pub fn score_shift(
             }
         }
         Axis::Horizontal => {
-            for along in (0..match_extent).step_by(a_step) {
+            for along in (0..overlap).step_by(a_step) {
                 let pc = prev_start + along;
                 let cc = cur_start + along;
                 for cross in (margin..cross_end).step_by(c_step) {
@@ -286,7 +429,7 @@ pub fn score_shift(
 }
 
 pub fn classify_motion(prev: &GrayView, cur: &GrayView, axis: Axis) -> MotionEstimate {
-    classify_with_bound(prev, cur, axis, None)
+    classify_motion_directed(prev, cur, axis, SearchDirection::Bidirectional, None)
 }
 
 pub fn classify_motion_bounded(
@@ -295,13 +438,20 @@ pub fn classify_motion_bounded(
     axis: Axis,
     max_source_delta: usize,
 ) -> MotionEstimate {
-    classify_with_bound(prev, cur, axis, Some(max_source_delta))
+    classify_motion_directed(
+        prev,
+        cur,
+        axis,
+        SearchDirection::Bidirectional,
+        Some(max_source_delta),
+    )
 }
 
-fn classify_with_bound(
+pub fn classify_motion_directed(
     prev: &GrayView,
     cur: &GrayView,
     axis: Axis,
+    direction: SearchDirection,
     max_source_delta: Option<usize>,
 ) -> MotionEstimate {
     if prev.width != cur.width
@@ -320,15 +470,16 @@ fn classify_with_bound(
     if edges.lead + edges.trail > 0 {
         let pc = prev.crop_axis(axis, edges.lead, axis_len - edges.trail);
         let cc = cur.crop_axis(axis, edges.lead, axis_len - edges.trail);
-        return classify_motion_cropped(&pc, &cc, axis, max_source_delta);
+        return classify_motion_cropped(&pc, &cc, axis, direction, max_source_delta);
     }
-    classify_motion_cropped(prev, cur, axis, max_source_delta)
+    classify_motion_cropped(prev, cur, axis, direction, max_source_delta)
 }
 
 fn classify_motion_cropped(
     prev: &GrayView,
     cur: &GrayView,
     axis: Axis,
+    direction: SearchDirection,
     max_source_delta: Option<usize>,
 ) -> MotionEstimate {
     let axis_len = prev.axis_len(axis);
@@ -340,17 +491,13 @@ fn classify_motion_cropped(
         .max(MIN_OVERLAP_PIXELS)
         .min(axis_len.saturating_sub(1));
     let safe_max_shift = axis_len.saturating_sub(min_overlap);
-    let source_scale = prev.source_scale(axis);
     let max_shift = max_source_delta
-        .map(|d| (d / source_scale).min(safe_max_shift))
+        .map(|d| d.min(safe_max_shift))
         .unwrap_or(safe_max_shift);
     if max_shift < MIN_MOTION_PIXELS {
         return MotionEstimate::default();
     }
-    let match_extent = axis_len - max_shift;
-    let coarse_axis = (match_extent / 32).max(1);
-    let coarse_cross = (cross_len / 48).max(1);
-    let fine_axis = (match_extent / 128).max(1);
+    let fine_axis = (axis_len / 160).max(1);
     let fine_cross = (cross_len / 128).max(1);
 
     let zero_error = score_shift(prev, cur, axis, 0, max_shift, fine_axis, fine_cross);
@@ -365,20 +512,22 @@ fn classify_motion_cropped(
         };
     }
 
+    let prev_sig = AxisSignature::build(prev, axis);
+    let cur_sig = AxisSignature::build(cur, axis);
     let max_s = max_shift as isize;
-    let mut coarse: Vec<(isize, f64)> = (-max_s..=max_s)
-        .map(|s| {
-            (
-                s,
-                score_shift(prev, cur, axis, s, max_shift, coarse_axis, coarse_cross),
-            )
-        })
+    let min_s = match direction {
+        SearchDirection::ForwardOnly => 0,
+        SearchDirection::Bidirectional => -max_s,
+    };
+
+    let mut coarse: Vec<(isize, f64)> = (min_s..=max_s)
+        .map(|s| (s, prev_sig.score_shift(&cur_sig, s, max_shift)))
         .collect();
     coarse.sort_by(|a, b| a.1.total_cmp(&b.1));
 
-    let mut fine: Vec<(isize, f64)> = Vec::new();
-    for &(s, _) in coarse.iter().take(12) {
-        for cand in (s - 1).max(-max_s)..=(s + 1).min(max_s) {
+    let mut fine: Vec<(isize, f64)> = Vec::with_capacity(48);
+    for &(s, _) in coarse.iter().take(16) {
+        for cand in (s - 1).max(min_s)..=(s + 1).min(max_s) {
             if !fine.iter().any(|&(existing, _)| existing == cand) {
                 fine.push((
                     cand,
@@ -394,6 +543,11 @@ fn classify_motion_cropped(
 
     let runner_neighborhood = (axis_len as isize / 256).clamp(6, 16);
     let mut runner_error = f64::INFINITY;
+    for &(s, err) in &fine {
+        if (s - best_shift).abs() > runner_neighborhood {
+            runner_error = runner_error.min(err);
+        }
+    }
     let mut taken = 0;
     for &(s, _) in &coarse {
         if (s - best_shift).abs() <= runner_neighborhood {
@@ -418,8 +572,8 @@ fn classify_motion_cropped(
         runner_error / best_error
     };
 
-    let source_delta = (best_shift.unsigned_abs() * source_scale) as i32;
-    if (source_delta as usize) <= MIN_MOTION_PIXELS && best_error <= MAX_STATIONARY_ERROR {
+    let delta_abs = best_shift.unsigned_abs();
+    if delta_abs <= MIN_MOTION_PIXELS && best_error <= MAX_STATIONARY_ERROR {
         return MotionEstimate {
             motion: Motion {
                 kind: MotionKind::Stationary,
@@ -442,15 +596,10 @@ fn classify_motion_cropped(
     let margin = runner_error - best_error;
     if confidence < MIN_CONFIDENCE || margin < MIN_ERROR_MARGIN {
         if best_error <= MAX_AMBIGUOUS_ERROR {
-            let signed = if best_shift > 0 {
-                source_delta
-            } else {
-                -source_delta
-            };
             return MotionEstimate {
                 motion: Motion {
                     kind: MotionKind::Ambiguous,
-                    delta: signed,
+                    delta: best_shift as i32,
                 },
                 error: best_error,
                 confidence,
@@ -472,7 +621,7 @@ fn classify_motion_cropped(
             } else {
                 MotionKind::Reverse
             },
-            delta: source_delta,
+            delta: delta_abs as i32,
         },
         error: best_error,
         confidence,
@@ -569,25 +718,18 @@ pub fn forward_candidate_set(prev: &GrayView, cur: &GrayView, axis: Axis) -> For
         .max(MIN_OVERLAP_PIXELS)
         .min(axis_len.saturating_sub(1));
     let max_shift = axis_len.saturating_sub(min_overlap);
-    let source_scale = prev.source_scale(axis);
-    result.search_max_delta = Some((max_shift * source_scale) as i32);
-    let min_shift = MIN_MOTION_PIXELS / source_scale + 1;
+    result.search_max_delta = Some(max_shift as i32);
+    let min_shift = MIN_MOTION_PIXELS + 1;
     if min_shift > max_shift {
         return result;
     }
-    let match_extent = axis_len - max_shift;
-    let coarse_axis = (match_extent / 32).max(1);
-    let coarse_cross = (cross_len / 48).max(1);
-    let fine_axis = (match_extent / 256).max(1);
-    let fine_cross = (cross_len / 256).max(1);
+    let fine_axis = (axis_len / 200).max(1);
+    let fine_cross = (cross_len / 160).max(1);
 
+    let prev_sig = AxisSignature::build(prev, axis);
+    let cur_sig = AxisSignature::build(cur, axis);
     let mut coarse: Vec<(isize, f64)> = (min_shift as isize..=max_shift as isize)
-        .map(|s| {
-            (
-                s,
-                score_shift(prev, cur, axis, s, max_shift, coarse_axis, coarse_cross),
-            )
-        })
+        .map(|s| (s, prev_sig.score_shift(&cur_sig, s, max_shift)))
         .collect();
     coarse.sort_by(|a, b| a.1.total_cmp(&b.1));
     let Some(&(_, coarse_best)) = coarse.first() else {
@@ -624,7 +766,7 @@ pub fn forward_candidate_set(prev: &GrayView, cur: &GrayView, axis: Axis) -> For
                 best = (s, e);
             }
         }
-        let delta = (best.0.unsigned_abs() * source_scale) as i32;
+        let delta = best.0.unsigned_abs() as i32;
         if (delta as usize) <= MIN_MOTION_PIXELS || best.1 > MAX_MATCH_ERROR {
             continue;
         }
@@ -688,8 +830,18 @@ impl ForwardLookahead {
         found
     }
 
-    pub fn resolve_auto(&self, lookahead: &GrayView) -> ForwardLookaheadResolution {
-        let probe = classify_motion(&self.pending, lookahead, self.axis);
+    pub fn resolve_auto(
+        &self,
+        lookahead: &GrayView,
+        expected_ratio: f64,
+    ) -> ForwardLookaheadResolution {
+        let probe = classify_motion_directed(
+            &self.pending,
+            lookahead,
+            self.axis,
+            SearchDirection::ForwardOnly,
+            None,
+        );
         if probe.motion.kind == MotionKind::Stationary {
             let best = self.first.candidates.first().copied();
             let tag = if !self.first.truncated && self.first.candidates.len() == 1 {
@@ -708,7 +860,7 @@ impl ForwardLookahead {
         }
         let second = forward_candidate_set(&self.pending, lookahead, self.axis);
         let cumulative = forward_candidate_set(&self.origin, lookahead, self.axis);
-        resolve_forward_candidate_sets(&self.first, &second, &cumulative, true)
+        resolve_forward_candidate_sets(&self.first, &second, &cumulative, Some(expected_ratio))
     }
 }
 
@@ -716,7 +868,7 @@ pub fn resolve_forward_candidate_sets(
     first: &ForwardCandidateSet,
     second: &ForwardCandidateSet,
     cumulative: &ForwardCandidateSet,
-    allow_physical_prior: bool,
+    expected_ratio: Option<f64>,
 ) -> ForwardLookaheadResolution {
     let consistent = |f: &ForwardCandidateSet,
                       s: &ForwardCandidateSet,
@@ -765,19 +917,31 @@ pub fn resolve_forward_candidate_sets(
         })
     });
 
-    let cadence_cmp = |a: &ForwardMatchPath, b: &ForwardMatchPath| {
-        let score = |p: &ForwardMatchPath| {
+    let target_ratio = expected_ratio.unwrap_or(NOTCHES_PER_TICK as f64 / PROBE_NOTCHES as f64);
+    let select_by_cadence = |mut candidates: Vec<ForwardMatchPath>| -> Option<ForwardMatchPath> {
+        candidates.sort_by(|a, b| {
+            a.total_error
+                .total_cmp(&b.total_error)
+                .then(a.first_delta.cmp(&b.first_delta))
+                .then(a.second_delta.cmp(&b.second_delta))
+        });
+        let best_err = candidates.first()?.total_error;
+        candidates.retain(|p| !errors_are_distinct(best_err, p.total_error));
+        let ratio_err = |p: &ForwardMatchPath| {
             let r = p.first_delta as f64 / (p.second_delta.max(1) as f64);
-            (r - 3.0).abs().min((r - 2.5).abs())
+            (r - target_ratio).abs()
         };
-        a.total_error
-            .total_cmp(&b.total_error)
-            .then_with(|| score(a).total_cmp(&score(b)))
-            .then(a.first_delta.cmp(&b.first_delta))
+        candidates.sort_by(|a, b| {
+            ratio_err(a)
+                .total_cmp(&ratio_err(b))
+                .then_with(|| a.total_error.total_cmp(&b.total_error))
+                .then(a.first_delta.cmp(&b.first_delta))
+        });
+        candidates.first().copied()
     };
 
     let Some(best) = best_consistent else {
-        if allow_physical_prior
+        if expected_ratio.is_some()
             && let Some(max_d) = cumulative.search_max_delta
         {
             let mut unverifiable = Vec::new();
@@ -794,8 +958,7 @@ pub fn resolve_forward_candidate_sets(
                     }
                 }
             }
-            unverifiable.sort_by(cadence_cmp);
-            if let Some(p) = unverifiable.first().copied() {
+            if let Some(p) = select_by_cadence(unverifiable) {
                 return ForwardLookaheadResolution {
                     tag: LookaheadTag::LowErrorPeriodic,
                     path: Some(p),
@@ -818,16 +981,14 @@ pub fn resolve_forward_candidate_sets(
             first_match: None,
         };
     }
-    if allow_physical_prior {
-        let mut graded = paths;
-        graded.sort_by(cadence_cmp);
-        if let Some(p) = graded.first().copied() {
-            return ForwardLookaheadResolution {
-                tag: LookaheadTag::LowErrorPeriodic,
-                path: Some(p),
-                first_match: None,
-            };
-        }
+    if expected_ratio.is_some()
+        && let Some(p) = select_by_cadence(paths)
+    {
+        return ForwardLookaheadResolution {
+            tag: LookaheadTag::LowErrorPeriodic,
+            path: Some(p),
+            first_match: None,
+        };
     }
     ForwardLookaheadResolution {
         tag: LookaheadTag::Unresolved,
@@ -846,14 +1007,13 @@ pub fn classify_forward_with_lookahead(
     cur: &GrayView,
     axis: Axis,
 ) -> ForwardMatch {
-    let estimate = classify_motion(prev, cur, axis);
+    let estimate =
+        classify_motion_directed(prev, cur, axis, SearchDirection::ForwardOnly, None);
     let matcher_grade_ambiguity = estimate.motion.kind == MotionKind::Unmatchable
         && estimate.error.is_finite()
         && estimate.error <= MAX_MATCH_ERROR;
-    let needs_lookahead = matches!(
-        estimate.motion.kind,
-        MotionKind::Ambiguous | MotionKind::Reverse
-    ) || matcher_grade_ambiguity;
+    let needs_lookahead =
+        matches!(estimate.motion.kind, MotionKind::Ambiguous) || matcher_grade_ambiguity;
     if !needs_lookahead {
         return ForwardMatch::Classified(estimate);
     }
@@ -900,8 +1060,10 @@ pub struct StitchAccumulator {
     first_rgba: Vec<u8>,
     bands: Vec<TailBand>,
     total_delta: usize,
-    edge_sums: Vec<u64>,
-    edge_counts: Vec<u64>,
+    lead_edge_sums: Vec<u64>,
+    lead_edge_counts: Vec<u64>,
+    trail_edge_sums: Vec<u64>,
+    trail_edge_counts: Vec<u64>,
     aligned_sums: Vec<u64>,
     aligned_counts: Vec<u64>,
 }
@@ -931,7 +1093,7 @@ fn reflect_rgba_in_place(pixels: &mut [u8], width: usize, height: usize, axis: A
 }
 
 impl StitchAccumulator {
-    pub fn new(first: &RgbaImage, axis: Axis) -> Result<Self> {
+    pub fn new(first: RgbaImage, axis: Axis) -> Result<Self> {
         let width = first.width() as usize;
         let height = first.height() as usize;
         if width == 0 || height == 0 {
@@ -947,7 +1109,7 @@ impl StitchAccumulator {
         } else {
             height
         };
-        let max_edge = (axis_len / 4).min(MAX_STATIONARY_EDGE);
+        let max_edge = (axis_len / MAX_STATIONARY_SCORING_EDGE_DEN).min(MAX_STATIONARY_EDGE);
         Ok(Self {
             axis,
             direction: Direction::None,
@@ -956,11 +1118,13 @@ impl StitchAccumulator {
             axis_len,
             cross_len,
             max_edge,
-            first_rgba: first.as_raw().clone(),
+            first_rgba: first.into_raw(),
             bands: Vec::new(),
             total_delta: 0,
-            edge_sums: vec![0; max_edge],
-            edge_counts: vec![0; max_edge],
+            lead_edge_sums: vec![0; max_edge],
+            lead_edge_counts: vec![0; max_edge],
+            trail_edge_sums: vec![0; max_edge],
+            trail_edge_counts: vec![0; max_edge],
             aligned_sums: vec![0; max_edge],
             aligned_counts: vec![0; max_edge],
         })
@@ -979,11 +1143,8 @@ impl StitchAccumulator {
     }
 
     pub fn would_exceed_budget(&self, delta: usize) -> bool {
-        self.cross_len * (self.axis_len + self.total_delta + delta) > MAX_STITCHED_PIXELS
-    }
-
-    pub fn exceeds_widely_openable_edge(&self) -> bool {
-        self.current_extent() > WIDELY_OPENABLE_EDGE || self.cross_len > WIDELY_OPENABLE_EDGE
+        self.cross_len.saturating_mul(self.axis_len + self.total_delta + delta)
+            > MAX_STITCHED_PIXELS
     }
 
     pub fn push_forward(&mut self, frame: &RgbaImage, delta: usize) -> Result<()> {
@@ -1043,7 +1204,15 @@ impl StitchAccumulator {
 
         let retained_extent = delta + self.max_edge;
         let source_axis_start = self.axis_len.saturating_sub(retained_extent);
-        let cross_step = (self.cross_len / 512).max(1);
+
+        // Exclude outer cross margins (scrollbars / window borders) from stationary strip detection.
+        let margin = cross_margin(self.cross_len);
+        let cross_end = self
+            .cross_len
+            .saturating_sub(margin)
+            .max(margin + 1)
+            .min(self.cross_len);
+        let cross_step = ((cross_end - margin) / 256).max(1);
 
         let rgba = match self.axis {
             Axis::Vertical => bits[source_axis_start * self.width * 4..].to_vec(),
@@ -1059,18 +1228,23 @@ impl StitchAccumulator {
         };
 
         for depth in 0..self.max_edge {
-            let pos = self.axis_len - depth - 1;
-            for cross in (0..self.cross_len).step_by(cross_step) {
-                let (x, y) = if self.axis == Axis::Vertical {
-                    (cross, pos)
+            let lead_pos = depth;
+            let trail_pos = self.axis_len - depth - 1;
+            for cross in (margin..cross_end).step_by(cross_step) {
+                let (lx, ly, tx, ty) = if self.axis == Axis::Vertical {
+                    (cross, lead_pos, cross, trail_pos)
                 } else {
-                    (pos, cross)
+                    (lead_pos, cross, trail_pos, cross)
                 };
-                let off = (y * self.width + x) * 4;
+                let loff = (ly * self.width + lx) * 4;
+                let toff = (ty * self.width + tx) * 4;
                 for c in 0..3 {
-                    self.edge_sums[depth] +=
-                        self.first_rgba[off + c].abs_diff(bits[off + c]) as u64;
-                    self.edge_counts[depth] += 1;
+                    self.lead_edge_sums[depth] +=
+                        self.first_rgba[loff + c].abs_diff(bits[loff + c]) as u64;
+                    self.lead_edge_counts[depth] += 1;
+                    self.trail_edge_sums[depth] +=
+                        self.first_rgba[toff + c].abs_diff(bits[toff + c]) as u64;
+                    self.trail_edge_counts[depth] += 1;
                 }
             }
         }
@@ -1092,7 +1266,7 @@ impl StitchAccumulator {
                 continue;
             }
             let aligned = pos - delta;
-            for cross in (0..self.cross_len).step_by(cross_step) {
+            for cross in (margin..cross_end).step_by(cross_step) {
                 let (prev_off, other_off) = if self.axis == Axis::Vertical {
                     (
                         (pos - prev_start) * prev_row_bytes + cross * 4,
@@ -1121,31 +1295,39 @@ impl StitchAccumulator {
         Ok(())
     }
 
+    pub fn stationary_leading_strip(&self) -> usize {
+        if self.bands.is_empty() {
+            return 0;
+        }
+        scan_stationary_depth(self.max_edge, |depth| {
+            if self.lead_edge_counts[depth] == 0 {
+                f64::INFINITY
+            } else {
+                self.lead_edge_sums[depth] as f64 / self.lead_edge_counts[depth] as f64
+            }
+        })
+    }
+
     pub fn stationary_trailing_strip(&self) -> usize {
         if self.bands.is_empty() {
             return 0;
         }
-        let mut strip = 0;
-        for depth in 0..self.max_edge {
-            let err = if self.edge_counts[depth] == 0 {
+        scan_stationary_depth(self.max_edge, |depth| {
+            if self.trail_edge_counts[depth] == 0 {
                 f64::INFINITY
             } else {
-                self.edge_sums[depth] as f64 / self.edge_counts[depth] as f64
-            };
-            if err > STATIONARY_EDGE_ERROR {
-                break;
+                self.trail_edge_sums[depth] as f64 / self.trail_edge_counts[depth] as f64
             }
-            strip += 1;
-        }
-        strip
+        })
     }
 
     pub fn near_stationary_trailing_zone(&self, strip: usize) -> usize {
-        if self.bands.is_empty() {
+        if strip == 0 || self.bands.is_empty() {
             return 0;
         }
+        let limit = (strip + MAX_NEAR_STATIONARY_HALO).min(self.max_edge);
         let mut zone = 0;
-        for depth in strip..self.max_edge {
+        for depth in strip..limit {
             let err = if self.aligned_counts[depth] == 0 {
                 0.0
             } else {
@@ -1160,14 +1342,15 @@ impl StitchAccumulator {
     }
 
     pub fn finish(&self) -> Result<RgbaImage> {
+        let lead = self.stationary_leading_strip();
         let strip = self.stationary_trailing_strip();
-        let trailing = strip + self.near_stationary_trailing_zone(strip);
+        let trailing = (strip + self.near_stationary_trailing_zone(strip)).min(self.max_edge);
         let content_extent = self.axis_len.saturating_sub(trailing);
-        if content_extent == 0 {
-            return Err("Stationary trailing edge covers entire capture".into());
+        if content_extent <= lead {
+            return Err("Stationary edges cover the entire capture".into());
         }
         for band in &self.bands {
-            if band.delta >= content_extent {
+            if band.delta > content_extent.saturating_sub(lead) {
                 return Err("Scroll delta exceeds non-stationary content area".into());
             }
         }
@@ -1269,7 +1452,6 @@ pub enum ManualEvent {
     Kept,
     Pending,
     Still,
-    PendingDropped,
     ReSeeded,
     Ambiguous,
     Unmatchable,
@@ -1321,12 +1503,28 @@ impl ManualCapture {
         }
     }
 
+    pub fn is_reverse(&self) -> bool {
+        self.direction == Direction::Reverse
+            || self
+                .accumulator
+                .as_ref()
+                .is_some_and(|a| a.direction() == Direction::Reverse)
+    }
+
+    pub fn has_pending(&self) -> bool {
+        self.pending.is_some()
+    }
+
     pub fn coalesce_threshold(axis_len: usize) -> usize {
-        (axis_len / 20).clamp(8, 32).min(axis_len.saturating_sub(1).max(1))
+        (axis_len / 20)
+            .clamp(8, 32)
+            .min(axis_len.saturating_sub(1).max(1))
     }
 
     pub fn manual_search_bound(axis_len: usize) -> usize {
-        (axis_len / 8).clamp(128, 512).min(axis_len.saturating_sub(1).max(1))
+        (axis_len / 8)
+            .clamp(128, 512)
+            .min(axis_len.saturating_sub(1).max(1))
     }
 
     pub fn current_extent(&self) -> usize {
@@ -1352,8 +1550,13 @@ impl ManualCapture {
         false
     }
 
+    #[allow(dead_code)]
     pub fn feed(&mut self, cropped: RgbaImage) -> (ManualEvent, String) {
         let gray = downsample_to_gray(&cropped, self.axis);
+        self.feed_with_gray(cropped, gray)
+    }
+
+    pub fn feed_with_gray(&mut self, cropped: RgbaImage, gray: GrayView) -> (ManualEvent, String) {
         let axis_len = gray.axis_len(self.axis);
         if self.accumulator.is_none() {
             if image_is_uniform(&cropped) {
@@ -1361,15 +1564,12 @@ impl ManualCapture {
                 if self.blank_first_frames >= MAX_BLANK_FIRST_FRAMES {
                     return (
                         ManualEvent::Error,
-                        "Capture shows only a solid color · Cancel and select another region".into(),
+                        "Capture shows only a solid color · press Esc to cancel".into(),
                     );
                 }
-                return (
-                    ManualEvent::Blank,
-                    "Waiting for detailed content…".into(),
-                );
+                return (ManualEvent::Blank, "Waiting for detailed content…".into());
             }
-            match StitchAccumulator::new(&cropped, self.axis) {
+            match StitchAccumulator::new(cropped, self.axis) {
                 Ok(acc) => {
                     self.accumulator = Some(acc);
                     self.last_gray = gray.clone();
@@ -1378,7 +1578,7 @@ impl ManualCapture {
                     return (
                         ManualEvent::Seeded,
                         format!(
-                            "Capturing · 1 frame ({} px) · scroll the page",
+                            "Manual capture · 1 frame ({} px) · scroll the page or press Done (Enter)",
                             self.current_extent()
                         ),
                     );
@@ -1388,7 +1588,7 @@ impl ManualCapture {
         }
 
         let at_rest = self.previous_gray.as_ref().is_some_and(|prev| {
-            classify_motion(prev, &gray, self.axis).motion.kind == MotionKind::Stationary
+            frame_diff_at_zero(prev, &gray, self.axis) <= STATIONARY_ERROR
         });
         self.previous_gray = Some(gray.clone());
 
@@ -1397,7 +1597,7 @@ impl ManualCapture {
             return (
                 ManualEvent::Kept,
                 format!(
-                    "Capturing · {} frames ({} px)",
+                    "Capturing · {} frames ({} px) · press Done (Enter) when finished",
                     self.kept,
                     self.current_extent()
                 ),
@@ -1407,7 +1607,10 @@ impl ManualCapture {
         let axis = self.axis;
         let classify_pair = move |prev_g: &GrayView, cur_g: &GrayView| -> MotionEstimate {
             let mut est = classify_motion(prev_g, cur_g, axis);
-            if matches!(est.motion.kind, MotionKind::Ambiguous | MotionKind::Unmatchable) {
+            if matches!(
+                est.motion.kind,
+                MotionKind::Ambiguous | MotionKind::Unmatchable
+            ) {
                 let bound = Self::manual_search_bound(axis_len);
                 let bounded = classify_motion_bounded(prev_g, cur_g, axis, bound);
                 let delta_abs = bounded.motion.delta.unsigned_abs() as usize;
@@ -1434,8 +1637,10 @@ impl ManualCapture {
         };
 
         let mut est = classify_pair(&self.last_gray, &gray);
-        if matches!(est.motion.kind, MotionKind::Ambiguous | MotionKind::Unmatchable)
-            && self.pending.is_some()
+        if matches!(
+            est.motion.kind,
+            MotionKind::Ambiguous | MotionKind::Unmatchable
+        ) && self.pending.is_some()
         {
             self.flush_pending();
             est = classify_pair(&self.last_gray, &gray);
@@ -1463,7 +1668,7 @@ impl ManualCapture {
                     (
                         ManualEvent::Still,
                         format!(
-                            "Capturing · {} frames ({} px) · scroll the page",
+                            "Capturing · {} frames ({} px) · scroll the page or press Done (Enter)",
                             self.kept,
                             self.current_extent()
                         ),
@@ -1494,16 +1699,15 @@ impl ManualCapture {
                 if self.accumulator.as_ref().is_some_and(|a| a.frame_count() == 1)
                     && self.pending.is_none()
                     && at_rest
+                    && let Ok(acc) = StitchAccumulator::new(cropped, self.axis)
                 {
-                    if let Ok(acc) = StitchAccumulator::new(&cropped, self.axis) {
-                        self.accumulator = Some(acc);
-                        self.last_gray = gray;
-                        self.direction = Direction::None;
-                        return (
-                            ManualEvent::ReSeeded,
-                            "Restarted from current appearance · scroll the page".into(),
-                        );
-                    }
+                    self.accumulator = Some(acc);
+                    self.last_gray = gray;
+                    self.direction = Direction::None;
+                    return (
+                        ManualEvent::ReSeeded,
+                        "Restarted from current view · scroll the page".into(),
+                    );
                 }
                 (
                     ManualEvent::Unmatchable,
@@ -1550,7 +1754,7 @@ impl ManualCapture {
         if acc.would_exceed_budget(delta) {
             return (
                 ManualEvent::Full,
-                "Reached maximum capture size · press Edit result".into(),
+                "Reached maximum capture size · press Done (Enter)".into(),
             );
         }
         let res = if dir == Direction::Forward {
@@ -1580,14 +1784,22 @@ impl ManualCapture {
         self.flush_pending();
         self.accumulator
             .as_ref()
-            .ok_or_else(|| -> Box<dyn std::error::Error + Send + Sync> { "No frames were captured".into() })?
+            .ok_or_else(|| -> Box<dyn std::error::Error + Send + Sync> {
+                "No frames were captured".into()
+            })?
             .finish()
     }
 }
 
+struct HandshakeState {
+    ready_cycle: u64,
+    ack_cycle: u64,
+    notches: i32,
+    consumed: bool,
+}
+
 pub struct CaptureHandshake {
-    ready_cycle: AtomicU64,
-    state: Mutex<(u64, i32, bool)>,
+    state: Mutex<HandshakeState>,
     cv: Condvar,
 }
 
@@ -1600,38 +1812,60 @@ impl Default for CaptureHandshake {
 impl CaptureHandshake {
     pub fn new() -> Self {
         Self {
-            ready_cycle: AtomicU64::new(0),
-            state: Mutex::new((0, NOTCHES_PER_TICK, true)),
+            state: Mutex::new(HandshakeState {
+                ready_cycle: 0,
+                ack_cycle: 0,
+                notches: NOTCHES_PER_TICK,
+                consumed: true,
+            }),
             cv: Condvar::new(),
         }
     }
 
-    pub fn ready_cycle(&self) -> u64 {
-        self.ready_cycle.load(Ordering::Acquire)
+    pub fn publish_ready(&self) -> u64 {
+        let mut guard = self.state.lock().unwrap();
+        guard.ready_cycle += 1;
+        let cycle = guard.ready_cycle;
+        self.cv.notify_all();
+        cycle
     }
 
-    pub fn publish_ready(&self) -> u64 {
-        self.ready_cycle.fetch_add(1, Ordering::AcqRel) + 1
+    pub fn wait_for_ready(&self, last_cycle: u64, stop: &AtomicBool) -> Option<u64> {
+        let mut guard = self.state.lock().unwrap();
+        while !stop.load(Ordering::Acquire) {
+            if guard.ready_cycle > last_cycle {
+                return Some(guard.ready_cycle);
+            }
+            let (next_guard, _) = self
+                .cv
+                .wait_timeout(guard, std::time::Duration::from_millis(25))
+                .unwrap();
+            guard = next_guard;
+        }
+        None
     }
 
     pub fn acknowledge_with_notches(&self, cycle: u64, notches: i32) {
         let mut guard = self.state.lock().unwrap();
-        if guard.0 < cycle {
-            *guard = (cycle, notches, false);
+        if guard.ack_cycle < cycle {
+            guard.ack_cycle = cycle;
+            guard.notches = notches;
+            guard.consumed = false;
             self.cv.notify_all();
         }
     }
 
     pub fn notify_stop(&self) {
+        let _guard = self.state.lock().unwrap();
         self.cv.notify_all();
     }
 
     pub fn wait_for_capture(&self, cycle: u64, stop: &AtomicBool) -> Option<i32> {
         let mut guard = self.state.lock().unwrap();
         while !stop.load(Ordering::Acquire) {
-            if guard.0 == cycle && !guard.2 {
-                guard.2 = true;
-                return Some(guard.1);
+            if guard.ack_cycle == cycle && !guard.consumed {
+                guard.consumed = true;
+                return Some(guard.notches);
             }
             let (next_guard, _) = self
                 .cv
@@ -1713,6 +1947,7 @@ pub struct AutoCapture {
     stationary_probes: usize,
     consecutive_no_scroll: usize,
     calibration: AutoStepCalibration,
+    expected_ratio: f64,
     blank_first_frames: usize,
     pub(crate) kept: usize,
     ended: bool,
@@ -1729,6 +1964,7 @@ impl AutoCapture {
             stationary_probes: 0,
             consecutive_no_scroll: 0,
             calibration: AutoStepCalibration::default(),
+            expected_ratio: NOTCHES_PER_TICK as f64 / PROBE_NOTCHES as f64,
             blank_first_frames: 0,
             kept: 0,
             ended: false,
@@ -1736,29 +1972,35 @@ impl AutoCapture {
         }
     }
 
-    pub fn from_manual(mut manual: ManualCapture) -> Self {
+    pub fn from_manual(mut manual: ManualCapture) -> std::result::Result<Self, ManualCapture> {
         manual.flush_pending();
-        let can_reuse = manual
-            .accumulator
-            .as_ref()
-            .is_some_and(|a| a.direction() != Direction::Reverse);
-        if can_reuse {
-            Self {
-                axis: manual.axis,
-                accumulator: manual.accumulator,
-                last_gray: manual.last_gray,
-                lookahead: None,
-                stationary_probes: 0,
-                consecutive_no_scroll: 0,
-                calibration: AutoStepCalibration::default(),
-                blank_first_frames: 0,
-                kept: manual.kept,
-                ended: false,
-                halted: false,
-            }
-        } else {
-            Self::new(manual.axis)
+        if manual.is_reverse() {
+            return Err(manual);
         }
+        Ok(Self {
+            axis: manual.axis,
+            accumulator: manual.accumulator,
+            last_gray: manual.last_gray,
+            lookahead: None,
+            stationary_probes: 0,
+            consecutive_no_scroll: 0,
+            calibration: AutoStepCalibration::default(),
+            expected_ratio: NOTCHES_PER_TICK as f64 / PROBE_NOTCHES as f64,
+            blank_first_frames: 0,
+            kept: manual.kept,
+            ended: false,
+            halted: false,
+        })
+    }
+
+    pub fn set_expected_ratio(&mut self, ratio: f64) {
+        if ratio.is_finite() && ratio > 0.0 {
+            self.expected_ratio = ratio;
+        }
+    }
+
+    pub fn last_gray(&self) -> Option<&GrayView> {
+        self.accumulator.is_some().then_some(&self.last_gray)
     }
 
     pub fn current_extent(&self) -> usize {
@@ -1780,12 +2022,19 @@ impl AutoCapture {
     pub fn finish(&self) -> Result<RgbaImage> {
         self.accumulator
             .as_ref()
-            .ok_or_else(|| -> Box<dyn std::error::Error + Send + Sync> { "No frames were captured".into() })?
+            .ok_or_else(|| -> Box<dyn std::error::Error + Send + Sync> {
+                "No frames were captured".into()
+            })?
             .finish()
     }
 
+    #[allow(dead_code)]
     pub fn feed(&mut self, cropped: RgbaImage) -> AutoOutcome {
         let gray = downsample_to_gray(&cropped, self.axis);
+        self.feed_with_gray(cropped, gray)
+    }
+
+    pub fn feed_with_gray(&mut self, cropped: RgbaImage, gray: GrayView) -> AutoOutcome {
         if self.accumulator.is_none() {
             if image_is_uniform(&cropped) {
                 self.blank_first_frames += 1;
@@ -1797,7 +2046,7 @@ impl AutoCapture {
                         estimate: MotionEstimate::default(),
                         first_delta: 0,
                         second_delta: 0,
-                        status: "Capture shows only a solid color · retry".into(),
+                        status: "Capture shows only a solid color · press Esc to cancel".into(),
                     };
                 }
                 return AutoOutcome {
@@ -1809,7 +2058,7 @@ impl AutoCapture {
                     status: "Waiting for content…".into(),
                 };
             }
-            match StitchAccumulator::new(&cropped, self.axis) {
+            match StitchAccumulator::new(cropped, self.axis) {
                 Ok(acc) => {
                     self.accumulator = Some(acc);
                     self.last_gray = gray;
@@ -1820,10 +2069,7 @@ impl AutoCapture {
                         estimate: MotionEstimate::default(),
                         first_delta: 0,
                         second_delta: 0,
-                        status: format!(
-                            "Auto-scrolling · 1 frame ({} px)",
-                            self.current_extent()
-                        ),
+                        status: format!("Auto-scrolling · 1 frame ({} px)", self.current_extent()),
                     };
                 }
                 Err(e) => {
@@ -1840,12 +2086,11 @@ impl AutoCapture {
             }
         }
 
-        if let Some((la, f1_img, f1_gray)) = self.lookahead.clone() {
-            let res = la.resolve_auto(&gray);
+        if let Some((la, f1_img, f1_gray)) = self.lookahead.take() {
+            let res = la.resolve_auto(&gray, self.expected_ratio);
             match res.tag {
                 LookaheadTag::Resolved | LookaheadTag::LowErrorPeriodic => {
                     let path = res.path.unwrap();
-                    self.lookahead = None;
                     self.stationary_probes = 0;
                     let Some(acc) = &mut self.accumulator else {
                         unreachable!()
@@ -1882,16 +2127,18 @@ impl AutoCapture {
                         estimate: la.estimate(),
                         first_delta: 0,
                         second_delta: 0,
-                        status: "Reached capture limit · press Edit result".into(),
+                        status: "Reached capture limit · press Done (Enter)".into(),
                     };
                 }
                 LookaheadTag::StationaryProbe => {
                     self.stationary_probes += 1;
                     if self.stationary_probes < AUTO_END_CONFIRMATION_PROBES {
+                        let est = la.estimate();
+                        self.lookahead = Some((la, f1_img, f1_gray));
                         return AutoOutcome {
                             event: AutoEvent::ProbeAgain,
                             ack: AutoAck::Probe,
-                            estimate: la.estimate(),
+                            estimate: est,
                             first_delta: 0,
                             second_delta: 0,
                             status: "Confirming alignment at end of page…".into(),
@@ -1916,7 +2163,6 @@ impl AutoCapture {
                         self.last_gray = f1_gray;
                         self.kept += 1;
                     }
-                    self.lookahead = None;
                     self.ended = true;
                     return AutoOutcome {
                         event: AutoEvent::ReachedEndAtSeam,
@@ -1925,14 +2171,13 @@ impl AutoCapture {
                         first_delta: cand.map_or(0, |c| c.delta),
                         second_delta: 0,
                         status: format!(
-                            "End reached · {} frames ({} px) · Continue or Edit result",
+                            "End reached · {} frames ({} px) · press Done (Enter)",
                             self.kept,
                             self.current_extent()
                         ),
                     };
                 }
                 LookaheadTag::Unresolved => {
-                    self.lookahead = None;
                     if let Some(path) = res.path
                         && path.first_delta > 0
                         && path.second_delta > 0
@@ -1944,7 +2189,10 @@ impl AutoCapture {
                         self.kept += 1;
                         self.calibration
                             .record_verified_normal_step(path.first_delta);
-                        if acc.push_forward(&cropped, path.second_delta as usize).is_ok() {
+                        if acc
+                            .push_forward(&cropped, path.second_delta as usize)
+                            .is_ok()
+                        {
                             self.last_gray = gray;
                             self.kept += 1;
                             return AutoOutcome {
@@ -1968,7 +2216,7 @@ impl AutoCapture {
                         estimate: la.estimate(),
                         first_delta: 0,
                         second_delta: 0,
-                        status: "Auto-scroll paused on repeated pattern · Continue or Edit result"
+                        status: "Paused on repeated pattern · Resume Auto, Manual, or Done (Enter)"
                             .into(),
                     };
                 }
@@ -1997,7 +2245,7 @@ impl AutoCapture {
                             first_delta: 0,
                             second_delta: 0,
                             status: format!(
-                                "End reached · {} frames ({} px) · Continue or Edit result",
+                                "End reached · {} frames ({} px) · press Done (Enter)",
                                 self.kept,
                                 self.current_extent()
                             ),
@@ -2035,7 +2283,7 @@ impl AutoCapture {
                             estimate: est,
                             first_delta: 0,
                             second_delta: 0,
-                            status: "Reached capture limit · press Edit result".into(),
+                            status: "Reached capture limit · press Done (Enter)".into(),
                         }
                     }
                 }
@@ -2047,8 +2295,7 @@ impl AutoCapture {
                         estimate: est,
                         first_delta: 0,
                         second_delta: 0,
-                        status: "Auto-scroll paused: lost alignment · Continue or Edit result"
-                            .into(),
+                        status: "Auto-scroll paused: lost alignment · Manual or Done (Enter)".into(),
                     }
                 }
             },
@@ -2074,8 +2321,21 @@ impl AutoCapture {
 mod tests {
     use super::*;
 
+    fn synthetic_page(w: u32, h: u32) -> RgbaImage {
+        let mut page = RgbaImage::new(w, h);
+        for (x, y, p) in page.enumerate_pixels_mut() {
+            *p = image::Rgba([
+                ((x * 31 + y * 17) % 251) as u8,
+                ((x * 13 + y * 7 + (y / 9) * 29) % 253) as u8,
+                ((x * 5 + y * 11) % 255) as u8,
+                255,
+            ]);
+        }
+        page
+    }
+
     #[test]
-    fn periodic_pattern_resolves_via_three_frame_lookahead() {
+    fn periodic_pattern_resolves_via_three_frame_lookahead_and_dynamic_ratio() {
         let f1 = ForwardCandidateSet {
             candidates: vec![
                 ForwardMatchCandidate { delta: 40, error: 0.5 },
@@ -2098,35 +2358,87 @@ mod tests {
             truncated: false,
             search_max_delta: Some(200),
         };
-        let res = resolve_forward_candidate_sets(&f1, &f2, &cum, true);
+        let res = resolve_forward_candidate_sets(&f1, &f2, &cum, Some(3.0));
         assert_eq!(res.tag, LookaheadTag::LowErrorPeriodic);
         assert_eq!(res.path.unwrap().first_delta, 120);
         assert_eq!(res.path.unwrap().second_delta, 40);
+
+        let res_one = resolve_forward_candidate_sets(&f1, &f2, &cum, Some(1.0));
+        assert_eq!(res_one.path.unwrap().first_delta, 80);
+        assert_eq!(res_one.path.unwrap().second_delta, 80);
     }
 
     #[test]
     fn horizontal_and_reverse_stitch_accumulator_roundtrip() {
-        let mut page = RgbaImage::new(220, 80);
-        for (x, y, p) in page.enumerate_pixels_mut() {
-            *p = image::Rgba([
-                ((x * 31 + y * 17) % 251) as u8,
-                ((x * 13 + y * 7) % 253) as u8,
-                (x % 255) as u8,
-                255,
-            ]);
-        }
+        let page = synthetic_page(220, 80);
         let a = image::imageops::crop_imm(&page, 0, 0, 120, 80).to_image();
         let b = image::imageops::crop_imm(&page, 50, 0, 120, 80).to_image();
         let c = image::imageops::crop_imm(&page, 100, 0, 120, 80).to_image();
 
-        let mut acc = StitchAccumulator::new(&a, Axis::Horizontal).unwrap();
+        let mut acc = StitchAccumulator::new(a.clone(), Axis::Horizontal).unwrap();
         acc.push_forward(&b, 50).unwrap();
         acc.push_forward(&c, 50).unwrap();
         assert_eq!(acc.finish().unwrap(), page);
 
-        let mut rev = StitchAccumulator::new(&c, Axis::Horizontal).unwrap();
+        let mut rev = StitchAccumulator::new(c, Axis::Horizontal).unwrap();
         rev.push_reverse(&b, 50).unwrap();
         rev.push_reverse(&a, 50).unwrap();
         assert_eq!(rev.finish().unwrap(), page);
+    }
+
+    #[test]
+    fn hidpi_sticky_header_footer_and_moving_scrollbar_stitch_cleanly() {
+        let page = synthetic_page(320, 900);
+        let header_h = 160u32;
+        let footer_h = 160u32;
+        let view_h = 720u32;
+        let content_h = view_h - header_h - footer_h; // 400
+
+        let viewport = |scroll_y: u32| {
+            let mut frame = RgbaImage::from_pixel(320, view_h, image::Rgba([28, 32, 42, 255]));
+            let content = image::imageops::crop_imm(&page, 0, scroll_y, 320, content_h).to_image();
+            image::imageops::replace(&mut frame, &content, 0, header_h as i64);
+            // Moving vertical scrollbar on the right edge (inside outer 1/12 cross margin).
+            let thumb_y = (scroll_y / 2).min(view_h - 60);
+            for y in thumb_y..thumb_y + 60 {
+                for x in 312..320 {
+                    frame.put_pixel(x, y, image::Rgba([220, 220, 230, 255]));
+                }
+            }
+            frame
+        };
+
+        let mut auto = AutoCapture::new(Axis::Vertical);
+        for sy in [0, 200, 400] {
+            let out = auto.feed(viewport(sy));
+            assert!(
+                matches!(out.event, AutoEvent::Seeded | AutoEvent::Appended),
+                "unexpected event {:?}: {}",
+                out.event,
+                out.status
+            );
+        }
+        let stitched = auto.finish().unwrap();
+        assert_eq!(stitched.dimensions(), (320, view_h + 400));
+        // Inner body (excluding scrollbar column) matches ground truth page exactly.
+        let body = image::imageops::crop_imm(&stitched, 0, header_h, 300, 800).to_image();
+        let expected = image::imageops::crop_imm(&page, 0, 0, 300, 800).to_image();
+        assert_eq!(body, expected);
+    }
+
+    #[test]
+    fn subpixel_noisy_frames_do_not_trigger_runaway_trailing_halo() {
+        let page = synthetic_page(240, 600);
+        let a = image::imageops::crop_imm(&page, 0, 0, 240, 300).to_image();
+        let mut b = image::imageops::crop_imm(&page, 0, 120, 240, 300).to_image();
+        // Add +/-2 subpixel noise across the whole frame (exceeding old NEAR_STATIONARY_ERROR = 1.0).
+        for p in b.pixels_mut() {
+            p[0] = p[0].saturating_add(2);
+        }
+        let mut acc = StitchAccumulator::new(a, Axis::Vertical).unwrap();
+        acc.push_forward(&b, 120).unwrap();
+        assert_eq!(acc.stationary_trailing_strip(), 0);
+        assert_eq!(acc.near_stationary_trailing_zone(0), 0);
+        assert_eq!(acc.finish().unwrap().dimensions(), (240, 420));
     }
 }

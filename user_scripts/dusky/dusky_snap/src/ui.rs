@@ -41,12 +41,17 @@ enum ScrollMode {
     Auto,
     Paused,
 }
-#[derive(Clone, Default)]
-struct ScrollProgress {
+enum ScrollEngine {
+    Manual(capture::stitch::ManualCapture),
+    Auto(capture::stitch::AutoCapture),
+}
+
+#[derive(Default)]
+struct ScrollSession {
+    engine: Option<ScrollEngine>,
     frames: usize,
     extent: usize,
     status: String,
-    crop: Option<Rect>,
 }
 #[derive(Clone, Copy, Debug)]
 enum Motion {
@@ -117,9 +122,11 @@ enum Message {
     SelectionReady(std::result::Result<(Document, Option<picture::Handle>), String>),
     Ocr(std::result::Result<String, String>),
     Notice(std::result::Result<(), String>),
+    PrepareFallback(u64),
+    ScrollParked(std::result::Result<Rect, String>),
     ScrollTick,
-    ScrollFrame(std::result::Result<(capture::stitch::ManualCapture, String), String>),
-    AutoEnded(std::result::Result<(capture::stitch::AutoCapture, String), String>),
+    ScrollEnded(ScrollMode, std::result::Result<String, String>),
+    ScrollFinished(std::result::Result<(Document, picture::Handle), String>),
     Expire(u64),
     Hover(bool),
     Platform(Platform),
@@ -150,6 +157,7 @@ struct Gesture {
     points: Vec<Point>,
     original: Option<Layer>,
     resize: Option<usize>,
+    checkpointed: bool,
 }
 struct App {
     options: Options,
@@ -173,6 +181,7 @@ struct App {
     pan: Vector,
     window: Option<window::Id>,
     editor_size: Option<Size>,
+    prepare_serial: u64,
     more: bool,
     history: bool,
     picker_controls: bool,
@@ -192,17 +201,16 @@ struct App {
     expiry: u64,
     remaining: Duration,
     expiry_start: Instant,
-    scroll_manual: Option<capture::stitch::ManualCapture>,
-    scroll_auto: Option<capture::stitch::AutoCapture>,
+    scroll_session: Arc<std::sync::Mutex<ScrollSession>>,
     scroll_mode: ScrollMode,
     scroll_axis: capture::stitch::Axis,
     scroll_frames: usize,
     scroll_extent: usize,
     scroll_stop: Arc<AtomicBool>,
     scroll_handshake: Option<Arc<capture::stitch::CaptureHandshake>>,
-    scroll_live: Arc<std::sync::Mutex<ScrollProgress>>,
     scroll_pending: Option<Action>,
     scroll_origin: Option<Rect>,
+    scroll_parked: bool,
 }
 struct SharedPixels(Arc<::image::RgbaImage>);
 impl AsRef<[u8]> for SharedPixels {
@@ -222,6 +230,23 @@ fn job<T: Send + 'static>(
     done: impl FnOnce(std::result::Result<T, String>) -> Message + Send + 'static,
 ) -> Task<Message> {
     crate::worker::perform(move || done(work().map_err(|e| e.to_string())))
+}
+fn spawn_thread_task<T: Send + 'static>(
+    name: &'static str,
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Task<T> {
+    Task::future(async move {
+        let (tx, rx) = iced::futures::channel::oneshot::channel();
+        let spawned = std::thread::Builder::new()
+            .name(name.into())
+            .spawn(move || {
+                let _ = tx.send(work());
+            });
+        if spawned.is_err() {
+            panic!("failed to spawn {name} thread");
+        }
+        rx.await.expect("scroll worker completed")
+    })
 }
 fn delay(duration: Duration, message: Message) -> Task<Message> {
     Task::perform(
@@ -344,11 +369,12 @@ fn instance(o: &Options) -> Result<Option<InstanceGuard>> {
     let _ = std::fs::remove_file(&sock_path);
     let socket_guard = match UnixListener::bind(&sock_path) {
         Ok(listener) => {
+            let sock_cleanup = sock_path.clone();
             std::thread::spawn(move || {
                 if let Ok((_stream, _)) = listener.accept() {
                     trigger_cancel();
-                    // Fallback: if the UI does not close within 300ms, exit cleanly
-                    std::thread::sleep(Duration::from_millis(300));
+                    std::thread::sleep(Duration::from_millis(1500));
+                    let _ = std::fs::remove_file(&sock_cleanup);
                     std::process::exit(0);
                 }
             });
@@ -588,6 +614,7 @@ impl App {
             pan: Vector::ZERO,
             window: None,
             editor_size: None,
+            prepare_serial: 0,
             more: false,
             history: false,
             picker_controls: false,
@@ -607,17 +634,16 @@ impl App {
             expiry: 1,
             remaining: Duration::from_secs(10),
             expiry_start: Instant::now(),
-            scroll_manual: None,
-            scroll_auto: None,
+            scroll_session: Arc::new(std::sync::Mutex::new(ScrollSession::default())),
             scroll_mode: ScrollMode::Manual,
             scroll_axis: capture::stitch::Axis::Vertical,
             scroll_frames: 0,
             scroll_extent: 0,
             scroll_stop: Arc::new(AtomicBool::new(false)),
             scroll_handshake: None,
-            scroll_live: Arc::new(std::sync::Mutex::new(ScrollProgress::default())),
             scroll_pending: None,
             scroll_origin: None,
+            scroll_parked: false,
         };
         let mut tasks = vec![
             window::latest().map(|id| id.map(Message::Opened).unwrap_or(Message::Notice(Ok(())))),
@@ -638,13 +664,13 @@ impl App {
         if let Some(h) = &self.scroll_handshake {
             h.notify_stop();
         }
-        if self.phase == Phase::Preparing {
+        if matches!(
+            self.phase,
+            Phase::Pick | Phase::Preparing | Phase::Scroll | Phase::Preview
+        ) {
             return iced::exit();
         }
         if self.busy {
-            if self.phase == Phase::Scroll {
-                self.scroll_pending = Some(Action::Close);
-            }
             return Task::none();
         }
         self.busy = true;
@@ -712,8 +738,8 @@ impl App {
             self.scroll_pending = None;
             self.scroll_mode = ScrollMode::Paused;
             self.status = "Paused · press Done (Enter) to finish, or Resume Auto".into();
-            if let Ok(mut live) = self.scroll_live.lock() {
-                live.status = self.status.clone();
+            if let Ok(mut s) = self.scroll_session.lock() {
+                s.status = self.status.clone();
             }
             self.scroll_stop.store(true, Ordering::Release);
             if let Some(h) = &self.scroll_handshake {
@@ -746,17 +772,19 @@ impl App {
                     }
                     _ => {}
                 }
-                if let Ok(mut live) = self.scroll_live.lock() {
-                    live.status = self.status.clone();
+                if let Ok(mut s) = self.scroll_session.lock() {
+                    s.status = self.status.clone();
                 }
                 self.scroll_pending = Some(action);
                 self.scroll_stop.store(true, Ordering::Release);
                 if let Some(h) = &self.scroll_handshake {
                     h.notify_stop();
                 }
+                return Task::none();
             }
             return Task::none();
         }
+
         match action {
             Action::Close => return self.close(),
             Action::Undo => {
@@ -886,49 +914,52 @@ impl App {
                     capture::stitch::Axis::Vertical => capture::stitch::Axis::Horizontal,
                     capture::stitch::Axis::Horizontal => capture::stitch::Axis::Vertical,
                 };
-                self.scroll_manual = None;
-                self.scroll_auto = None;
+                if let Ok(mut s) = self.scroll_session.lock() {
+                    s.engine = None;
+                    s.frames = 0;
+                    s.extent = 0;
+                }
                 self.scroll_frames = 0;
                 self.scroll_extent = 0;
-                return self.scroll_frame(None);
+                return self.scroll_frame();
             }
-            Action::ScrollFrame => return self.scroll_frame(None),
+            Action::ScrollFrame => return self.scroll_frame(),
             Action::ScrollAuto => return self.scroll_auto(),
             Action::ScrollDone => {
-                let live_crop = self.scroll_live.lock().ok().and_then(|l| l.crop);
-                if let Some(c) = live_crop {
-                    self.scroll_origin = Some(c);
-                    self.doc_mut().state.crop = c;
-                }
-                let stitched = if let Some(a) = self.scroll_auto.as_ref() {
-                    Some(a.finish())
-                } else if let Some(m) = self.scroll_manual.as_mut() {
-                    Some(m.finish())
-                } else if let Some(crop) = self.scroll_origin {
-                    let src = &self.capture.document.source;
-                    let x = crop.x.max(0.0) as u32;
-                    let y = crop.y.max(0.0) as u32;
-                    let w = (crop.w as u32).min(src.width().saturating_sub(x)).max(1);
-                    let h = (crop.h as u32).min(src.height().saturating_sub(y)).max(1);
-                    Some(Ok(::image::imageops::crop_imm(src.as_ref(), x, y, w, h).to_image()))
-                } else {
-                    None
-                };
-                if let Some(res) = stitched {
-                    match res {
-                        Ok(image) => {
-                            self.scroll_auto = None;
-                            self.scroll_manual = None;
-                            self.capture.document = Document::new(image);
-                            self.phase = Phase::Edit;
-                            self.zoom = 1.0;
-                            self.pan = Vector::ZERO;
-                            return self.resize().chain(self.render());
-                        }
-                        Err(e) => self.status = e.to_string(),
-                    }
-                }
-                return Task::none();
+                self.busy = true;
+                self.status = "Stitching captured frames…".into();
+                let session_arc = self.scroll_session.clone();
+                let fallback_source = self.capture.document.source.clone();
+                let fallback_crop = self.scroll_origin;
+                return job(
+                    move || {
+                        let mut guard = session_arc
+                            .lock()
+                            .map_err(|_| "Scroll session lock poisoned")?;
+                        let stitched = match guard.engine.as_mut() {
+                            Some(ScrollEngine::Auto(a)) => a.finish()?,
+                            Some(ScrollEngine::Manual(m)) => m.finish()?,
+                            None => {
+                                let crop = fallback_crop.ok_or("No scroll region selected")?;
+                                let x = crop.x.max(0.0).round() as u32;
+                                let y = crop.y.max(0.0).round() as u32;
+                                let w = (crop.w.max(0.0).round() as u32)
+                                    .min(fallback_source.width().saturating_sub(x))
+                                    .max(1);
+                                let h = (crop.h.max(0.0).round() as u32)
+                                    .min(fallback_source.height().saturating_sub(y))
+                                    .max(1);
+                                ::image::imageops::crop_imm(fallback_source.as_ref(), x, y, w, h)
+                                    .to_image()
+                            }
+                        };
+                        let doc = Document::new(stitched);
+                        let handle = owned_handle(doc.render()?);
+                        guard.engine = None;
+                        Ok((doc, handle))
+                    },
+                    Message::ScrollFinished,
+                );
             }
         }
         self.render()
@@ -1026,7 +1057,6 @@ impl App {
                         || {
                             Ok(output::recent_paths()?
                                 .into_iter()
-                                .take(5)
                                 .filter_map(|p| {
                                     let source = p.with_file_name(format!(
                                         "{}-thumb.png",
@@ -1035,6 +1065,7 @@ impl App {
                                     let im = ::image::open(source).ok()?.into_rgba8();
                                     Some((p, owned_handle(im)))
                                 })
+                                .take(5)
                                 .collect())
                         },
                         |r| Message::Recents(r.unwrap_or_default()),
@@ -1050,7 +1081,7 @@ impl App {
                 if let Some(p) = self.text_anchor.take()
                     && !self.text_draft.is_empty()
                 {
-                    let layer = self.layer(vec![p, p], self.text_draft.clone());
+                    let layer = self.layer(vec![p], self.text_draft.clone());
                     self.doc_mut().checkpoint();
                     self.doc_mut().state.layers.push(layer);
                     self.text_draft.clear();
@@ -1121,12 +1152,19 @@ impl App {
                             self.capture.document = doc;
                             self.image = image;
                             self.image_size = im_dimensions(self.doc());
+                            self.zoom = 1.0;
+                            self.pan = Vector::ZERO;
                             let size = window_size(self.doc(), Phase::Edit, &self.capture.monitor);
                             self.editor_size =
                                 Some(Size::new(size.width.round(), size.height.round()));
                             self.phase = Phase::Preparing;
                             self.busy = true;
-                            return self.resize();
+                            self.prepare_serial = self.prepare_serial.wrapping_add(1);
+                            let serial = self.prepare_serial;
+                            return Task::batch([
+                                self.resize(),
+                                delay(Duration::from_millis(350), Message::PrepareFallback(serial)),
+                            ]);
                         }
                         return self.export(
                             doc,
@@ -1145,6 +1183,13 @@ impl App {
                         self.phase = Phase::Pick;
                         self.status = e;
                     }
+                }
+            }
+            Message::PrepareFallback(serial) => {
+                if self.phase == Phase::Preparing && serial == self.prepare_serial {
+                    self.editor_size = None;
+                    self.phase = Phase::Edit;
+                    self.busy = false;
                 }
             }
             Message::Rendered(serial, result) => {
@@ -1352,57 +1397,78 @@ impl App {
                     }
                 }
             }
+            Message::ScrollParked(res) => {
+                self.busy = false;
+                match res {
+                    Ok(crop) => {
+                        self.scroll_parked = true;
+                        self.scroll_origin = Some(crop);
+                        self.doc_mut().state.crop = crop;
+                        if let Some(pending) = self.scroll_pending.take() {
+                            return self.act(pending);
+                        }
+                        return self.scroll_frame();
+                    }
+                    Err(e) => {
+                        self.status = e;
+                        if let Some(pending) = self.scroll_pending.take() {
+                            return self.act(pending);
+                        }
+                    }
+                }
+            }
             Message::ScrollTick => {
                 if self.phase == Phase::Scroll && self.busy {
-                    let live_crop = if let Ok(live) = self.scroll_live.lock() {
-                        if !live.status.is_empty() {
-                            self.status = live.status.clone();
+                    if let Ok(s) = self.scroll_session.lock() {
+                        if !s.status.is_empty() {
+                            self.status = s.status.clone();
                         }
-                        self.scroll_frames = live.frames;
-                        self.scroll_extent = live.extent;
-                        live.crop
-                    } else {
-                        None
-                    };
-                    if let Some(c) = live_crop {
-                        self.scroll_origin = Some(c);
-                        self.doc_mut().state.crop = c;
+                        self.scroll_frames = s.frames;
+                        self.scroll_extent = s.extent;
                     }
                     return delay(Duration::from_millis(100), Message::ScrollTick);
                 }
             }
-            Message::ScrollFrame(r) => {
+            Message::ScrollEnded(mode, res) => {
                 self.busy = false;
                 self.scroll_handshake = None;
-                self.scroll_mode = ScrollMode::Manual;
-                match r {
-                    Ok((session, status)) => {
-                        self.scroll_frames = session.kept;
-                        self.scroll_extent = session.current_extent();
-                        self.scroll_manual = Some(session);
-                        self.status = status;
-                    }
+                self.scroll_mode = mode;
+                match res {
+                    Ok(status) => self.status = status,
                     Err(e) => self.status = e,
+                }
+                if let Ok(s) = self.scroll_session.lock() {
+                    self.scroll_frames = s.frames;
+                    self.scroll_extent = s.extent;
                 }
                 if let Some(pending) = self.scroll_pending.take() {
                     return self.act(pending);
                 }
             }
-            Message::AutoEnded(r) => {
+            Message::ScrollFinished(res) => {
                 self.busy = false;
-                self.scroll_handshake = None;
-                self.scroll_mode = ScrollMode::Paused;
-                match r {
-                    Ok((session, status)) => {
-                        self.scroll_frames = session.kept;
-                        self.scroll_extent = session.current_extent();
-                        self.scroll_auto = Some(session);
-                        self.status = status;
+                match res {
+                    Ok((doc, handle)) => {
+                        self.capture.document = doc;
+                        self.image = handle;
+                        self.image_size = im_dimensions(self.doc());
+                        self.zoom = 1.0;
+                        self.pan = Vector::ZERO;
+                        let size = window_size(self.doc(), Phase::Edit, &self.capture.monitor);
+                        self.editor_size =
+                            Some(Size::new(size.width.round(), size.height.round()));
+                        self.phase = Phase::Preparing;
+                        self.busy = true;
+                        self.prepare_serial = self.prepare_serial.wrapping_add(1);
+                        let serial = self.prepare_serial;
+                        return Task::batch([
+                            self.resize(),
+                            delay(Duration::from_millis(350), Message::PrepareFallback(serial)),
+                        ]);
                     }
-                    Err(e) => self.status = e,
-                }
-                if let Some(pending) = self.scroll_pending.take() {
-                    return self.act(pending);
+                    Err(e) => {
+                        self.status = e;
+                    }
                 }
             }
             Message::Smoke => {
@@ -1466,6 +1532,7 @@ impl App {
                     points: vec![],
                     original: None,
                     resize: None,
+                    checkpointed: false,
                 });
                 return Task::none();
             }
@@ -1499,6 +1566,7 @@ impl App {
                 points: vec![p],
                 original: None,
                 resize: None,
+                checkpointed: false,
             };
             if self.phase == Phase::Edit && self.tool == Tool::Select {
                 self.selected = self
@@ -1509,13 +1577,16 @@ impl App {
                     .rposition(|l| l.bounds().contains(p));
                 if let Some(i) = self.selected {
                     let l = self.doc().state.layers[i].clone();
-                    g.resize = l
-                        .points
-                        .iter()
-                        .enumerate()
-                        .filter(|(j, _)| *j == 0 || *j + 1 == l.points.len())
-                        .find(|(_, q)| (p.x - q.x).hypot(p.y - q.y) < 12.0 / self.zoom as f64)
-                        .map(|(j, _)| j);
+                    g.resize = if l.points.len() >= 2 {
+                        l.points
+                            .iter()
+                            .enumerate()
+                            .filter(|(j, _)| *j == 0 || *j + 1 == l.points.len())
+                            .find(|(_, q)| (p.x - q.x).hypot(p.y - q.y) < 12.0 / self.zoom as f64)
+                            .map(|(j, _)| j)
+                    } else {
+                        None
+                    };
                     self.width = l.width;
                     self.filled = l.filled;
                     self.color = format!(
@@ -1524,7 +1595,6 @@ impl App {
                         (l.color[1] * 255.0) as u8,
                         (l.color[2] * 255.0) as u8
                     );
-                    self.doc_mut().checkpoint();
                     g.original = Some(l);
                 }
             }
@@ -1557,17 +1627,24 @@ impl App {
             }
             if self.phase == Phase::Edit
                 && self.tool == Tool::Select
-                && let (Some(i), Some(g)) = (self.selected, self.gesture.as_ref())
+                && let (Some(i), Some(g)) = (self.selected, self.gesture.as_mut())
                 && let Some(mut l) = g.original.clone()
             {
-                if let Some(j) = g.resize {
-                    l.points[j] = p;
-                } else {
-                    l.translate(p.x - g.start.x, p.y - g.start.y);
+                let dist = (p.x - g.start.x).hypot(p.y - g.start.y);
+                if dist > 0.5 {
+                    if !g.checkpointed {
+                        self.capture.document.checkpoint();
+                        g.checkpointed = true;
+                    }
+                    if let Some(j) = g.resize {
+                        l.points[j] = p;
+                    } else {
+                        l.translate(p.x - g.start.x, p.y - g.start.y);
+                    }
+                    self.capture.document.state.layers[i] = l;
+                    self.capture.document.revision = self.capture.document.revision.wrapping_add(1);
+                    return self.render();
                 }
-                self.doc_mut().state.layers[i] = l;
-                self.doc_mut().revision = self.doc().revision.wrapping_add(1);
-                return self.render();
             }
         } else if matches!(motion, Motion::Up) {
             let Some(mut g) = self.gesture.take() else {
@@ -1577,17 +1654,16 @@ impl App {
             let rect = Rect::between(g.start, p).pixel_bounds();
             if self.phase == Phase::Pick {
                 let bounds = self.doc().state.crop;
-                let window = if rect.w < 4.0 && rect.h < 4.0 {
+                let is_click = rect.w < 4.0 && rect.h < 4.0;
+                if is_click && self.options.mode == "region" {
+                    return Task::none();
+                }
+                let rect = if is_click {
                     self.capture
                         .windows
                         .iter()
                         .find(|w| w.rect.contains(p))
-                        .cloned()
-                } else {
-                    None
-                };
-                let rect = if rect.w < 4.0 && rect.h < 4.0 {
-                    window.as_ref().map_or(bounds, |w| w.rect)
+                        .map_or(bounds, |w| w.rect)
                 } else {
                     rect.intersect(bounds)
                 };
@@ -1598,43 +1674,55 @@ impl App {
                     self.doc_mut().checkpoint();
                     self.doc_mut().state.crop = rect;
                     self.scroll_origin = Some(rect);
+                    self.scroll_parked = false;
+                    self.scroll_frames = 0;
+                    self.scroll_extent = 0;
+                    self.scroll_mode = ScrollMode::Manual;
+                    if let Ok(mut s) = self.scroll_session.lock() {
+                        *s = ScrollSession::default();
+                    }
                     self.phase = Phase::Scroll;
+                    self.busy = true;
                     self.status = "Preparing scroll capture…".into();
-                    let size = window_size(self.doc(), self.phase, &self.capture.monitor);
-                    let workspace = self.capture.monitor.workspace().to_owned();
+                    let hud_size = window_size(self.doc(), self.phase, &self.capture.monitor);
+                    let monitor = self.capture.monitor.clone();
+                    let source_size = self.capture.document.source.dimensions();
+                    let axis = self.scroll_axis;
                     let pre = self
                         .window
                         .map(|id| {
                             Task::batch([
                                 window::set_mode(id, window::Mode::Windowed),
-                                window::resize(id, size),
+                                window::resize(id, hud_size),
                             ])
                         })
                         .unwrap_or_else(Task::none);
-                    return Task::batch([pre, self.scroll_frame(Some((size, workspace)))]);
+                    return pre.chain(job(
+                        move || park_scroll_hud(&monitor, rect, source_size, hud_size, axis),
+                        Message::ScrollParked,
+                    ));
                 }
                 let mut doc = self.doc().clone();
                 doc.checkpoint();
                 doc.state.crop = rect;
-                let editor = self.options.editor;
-                let cursor = self.options.cursor;
-                self.busy = true;
-                if self.options.editor {
-                    self.phase = Phase::Preparing;
+                if !self.options.editor {
+                    let action = if self.options.save {
+                        if self.options.copy {
+                            Action::Both
+                        } else {
+                            Action::Save
+                        }
+                    } else {
+                        Action::Copy
+                    };
+                    return self.export(doc, action);
                 }
+                self.busy = true;
+                self.phase = Phase::Preparing;
                 return job(
                     move || {
-                        if let Some(window) = window
-                            && let Some(image) = capture::window(&window.identifier, cursor)?
-                        {
-                            doc = Document::new(image);
-                        }
-                        let image = if editor {
-                            Some(owned_handle(doc.render()?))
-                        } else {
-                            None
-                        };
-                        Ok((doc, image))
+                        let image = owned_handle(doc.render()?);
+                        Ok((doc, Some(image)))
                     },
                     Message::SelectionReady,
                 );
@@ -1642,6 +1730,9 @@ impl App {
             match self.tool {
                 Tool::Select => {
                     if let (Some(i), Some(mut l)) = (self.selected, g.original) {
+                        if !g.checkpointed {
+                            return Task::none();
+                        }
                         if let Some(j) = g.resize {
                             l.points[j] = p;
                         } else {
@@ -1675,7 +1766,10 @@ impl App {
                 Tool::Ocr => {
                     let mut doc = self.doc().clone();
                     if rect.w > 2.0 && rect.h > 2.0 {
-                        doc.state.crop = rect.intersect(doc.state.crop);
+                        let sub = rect.intersect(doc.state.crop);
+                        if sub.w >= 1.0 && sub.h >= 1.0 {
+                            doc.state.crop = sub;
+                        }
                     }
                     let config = self.config.clone();
                     self.busy = true;
@@ -1686,6 +1780,8 @@ impl App {
                     let points = if matches!(self.tool, Tool::Pen | Tool::Highlight) {
                         g.points.push(p);
                         g.points
+                    } else if self.tool == Tool::Marker {
+                        vec![g.start]
                     } else {
                         vec![g.start, p]
                     };
@@ -1711,52 +1807,69 @@ impl App {
         }
         Task::none()
     }
-    fn scroll_frame(&mut self, resize_first: Option<(Size, String)>) -> Task<Message> {
+fn scroll_frame(&mut self) -> Task<Message> {
         let Some(crop) = self.scroll_origin else {
             return Task::none();
         };
+        if !self.scroll_parked {
+            return Task::none();
+        }
         self.busy = true;
         self.scroll_mode = ScrollMode::Manual;
         self.scroll_stop = Arc::new(AtomicBool::new(false));
         let stop = self.scroll_stop.clone();
         let monitor = self.capture.monitor.clone();
         let axis = self.scroll_axis;
-        let mut session = if let Some(m) = self.scroll_manual.take() {
-            m
-        } else if let Some(a) = self.scroll_auto.take() {
-            capture::stitch::ManualCapture::from_auto(a)
-        } else {
-            capture::stitch::ManualCapture::new(axis)
-        };
-        self.scroll_frames = session.kept;
-        self.scroll_extent = session.current_extent();
-        let live = self.scroll_live.clone();
-        if let Ok(mut l) = live.lock() {
-            l.frames = self.scroll_frames;
-            l.extent = self.scroll_extent;
-            l.status = "Manual capture active · scroll the window or press Done".into();
+        let session_arc = self.scroll_session.clone();
+        if let Ok(mut s) = session_arc.lock() {
+            s.status = "Manual capture active · scroll the page or press Done (Enter)".into();
         }
-        self.status = "Manual capture active · scroll the window or press Done".into();
-        let hud_size = window_size(self.doc(), Phase::Scroll, &self.capture.monitor);
+        self.status = "Manual capture active · scroll the page or press Done (Enter)".into();
+
         Task::batch([
             delay(Duration::from_millis(100), Message::ScrollTick),
-            job(
-                move || {
-                    let _ = resize_first;
-                    let mut crop = crop;
-                    let _park = ParkedWindow::new(&monitor, &mut crop, hud_size, true)?;
-                    if let Ok(mut l) = live.lock() {
-                        l.crop = Some(crop);
-                    }
+            spawn_thread_task("snap-scroll-manual", move || {
+                let run = || -> Result<String> {
+                    let mut session = {
+                        let mut guard = session_arc
+                            .lock()
+                            .map_err(|_| "Scroll session lock poisoned")?;
+                        match guard.engine.take() {
+                            Some(ScrollEngine::Manual(m)) => m,
+                            Some(ScrollEngine::Auto(a)) => {
+                                capture::stitch::ManualCapture::from_auto(a)
+                            }
+                            None => capture::stitch::ManualCapture::new(axis),
+                        }
+                    };
                     let capturer = capture::ScrollCapturer::new(&monitor)?;
-                    let mut last_status = String::new();
+                    let mut last_status =
+                        String::from("Manual capture · scroll the page or press Done (Enter)");
+                    let mut last_event = capture::stitch::ManualEvent::Still;
                     while !stop.load(Ordering::Acquire) {
                         let frame = capturer.grab(crop, false)?;
-                        let (ev, status) = session.feed(frame);
-                        if let Ok(mut l) = live.lock() {
-                            l.frames = session.kept;
-                            l.extent = session.current_extent();
-                            l.status = status.clone();
+                        let gray = capture::stitch::downsample_to_gray(&frame, axis);
+                        let is_normal_streak = matches!(
+                            last_event,
+                            capture::stitch::ManualEvent::Seeded
+                                | capture::stitch::ManualEvent::Kept
+                                | capture::stitch::ManualEvent::Still
+                        );
+                        let is_idle = session.accumulator.is_some()
+                            && is_normal_streak
+                            && !session.has_pending()
+                            && capture::stitch::frame_diff_at_zero(&session.last_gray, &gray, axis)
+                                <= capture::stitch::STATIONARY_ERROR;
+                        if is_idle {
+                            std::thread::sleep(Duration::from_millis(80));
+                            continue;
+                        }
+                        let (ev, status) = session.feed_with_gray(frame, gray);
+                        last_event = ev;
+                        if let Ok(mut s) = session_arc.lock() {
+                            s.frames = session.kept;
+                            s.extent = session.current_extent();
+                            s.status = status.clone();
                         }
                         last_status = status;
                         if matches!(
@@ -1766,19 +1879,42 @@ impl App {
                         ) {
                             break;
                         }
-                        std::thread::sleep(Duration::from_millis(100));
+                        let sleep_ms = if matches!(ev, capture::stitch::ManualEvent::Still) {
+                            80
+                        } else {
+                            50
+                        };
+                        std::thread::sleep(Duration::from_millis(sleep_ms));
                     }
                     session.flush_pending();
-                    Ok((session, last_status))
-                },
-                Message::ScrollFrame,
-            ),
+                    if let Ok(mut s) = session_arc.lock() {
+                        s.frames = session.kept;
+                        s.extent = session.current_extent();
+                        s.status = last_status.clone();
+                        s.engine = Some(ScrollEngine::Manual(session));
+                    }
+                    Ok(last_status)
+                };
+                Message::ScrollEnded(ScrollMode::Manual, run().map_err(|e| e.to_string()))
+            }),
         ])
     }
+
     fn scroll_auto(&mut self) -> Task<Message> {
         let Some(crop) = self.scroll_origin else {
             return Task::none();
         };
+        if !self.scroll_parked {
+            return Task::none();
+        }
+        if let Ok(s) = self.scroll_session.lock()
+            && matches!(&s.engine, Some(ScrollEngine::Manual(m)) if m.is_reverse())
+        {
+            self.status =
+                "Cannot auto-scroll after upward manual scroll · continue manually or press Done (Enter)"
+                    .into();
+            return Task::none();
+        }
         self.busy = true;
         self.scroll_mode = ScrollMode::Auto;
         self.scroll_stop = Arc::new(AtomicBool::new(false));
@@ -1786,40 +1922,49 @@ impl App {
         let handshake = Arc::new(capture::stitch::CaptureHandshake::new());
         self.scroll_handshake = Some(handshake.clone());
         let monitor = self.capture.monitor.clone();
+        let source_size = self.capture.document.source.dimensions();
         let axis = self.scroll_axis;
-        let mut session = if let Some(mut a) = self.scroll_auto.take() {
-            a.resume();
-            a
-        } else if let Some(m) = self.scroll_manual.take() {
-            capture::stitch::AutoCapture::from_manual(m)
-        } else {
-            capture::stitch::AutoCapture::new(axis)
-        };
-        self.scroll_frames = session.kept;
-        self.scroll_extent = session.current_extent();
-        let live = self.scroll_live.clone();
-        if let Ok(mut l) = live.lock() {
-            l.frames = self.scroll_frames;
-            l.extent = self.scroll_extent;
-            l.status = "Auto-scrolling… · press Space to pause, Enter when done".into();
+        let session_arc = self.scroll_session.clone();
+        if let Ok(mut s) = session_arc.lock() {
+            s.status = "Auto-scrolling… · press Space to pause, Enter when done".into();
         }
         self.status = "Auto-scrolling… · press Space to pause, Enter when done".into();
-        let hud_size = window_size(self.doc(), Phase::Scroll, &self.capture.monitor);
+
         Task::batch([
             delay(Duration::from_millis(100), Message::ScrollTick),
-            job(
-                move || {
-                    let mut crop = crop;
-                    let _park = ParkedWindow::new(&monitor, &mut crop, hud_size, true)?;
-                    if let Ok(mut l) = live.lock() {
-                        l.crop = Some(crop);
-                    }
+            spawn_thread_task("snap-scroll-auto", move || {
+                let run = || -> Result<String> {
+                    let mut session = {
+                        let mut guard = session_arc
+                            .lock()
+                            .map_err(|_| "Scroll session lock poisoned")?;
+                        match guard.engine.take() {
+                            Some(ScrollEngine::Auto(mut a)) => {
+                                a.resume();
+                                a
+                            }
+                            Some(ScrollEngine::Manual(m)) => {
+                                match capture::stitch::AutoCapture::from_manual(m) {
+                                    Ok(a) => a,
+                                    Err(m) => {
+                                        guard.engine = Some(ScrollEngine::Manual(m));
+                                        return Err(
+                                            "Cannot auto-scroll after upward manual scroll".into(),
+                                        );
+                                    }
+                                }
+                            }
+                            None => capture::stitch::AutoCapture::new(axis),
+                        }
+                    };
+
                     let capturer = capture::ScrollCapturer::new(&monitor)?;
                     let injector = crate::input::spawn_scroll_injector(
                         stop.clone(),
                         handshake.clone(),
                         monitor.clone(),
                         crop,
+                        source_size,
                         axis,
                     )?;
                     let extent = if axis == capture::stitch::Axis::Vertical {
@@ -1828,34 +1973,36 @@ impl App {
                         crop.w
                     };
                     let mut notches_per_tick = 1i32;
-                    let mut notches_fitted = false;
+                    let mut recent_per_notch: Vec<f64> = Vec::with_capacity(6);
                     let mut last_cycle = 0u64;
-                    let mut last_crop: Option<::image::RgbaImage> = None;
                     let mut last_status = String::from("Auto-scrolling…");
 
                     while !stop.load(Ordering::Acquire) {
-                        let cycle = handshake.ready_cycle();
-                        if cycle == 0 || cycle == last_cycle {
-                            std::thread::sleep(Duration::from_millis(20));
-                            continue;
-                        }
-                        let Ok(cropped) =
-                            capturer.acquire_settled_frame(crop, last_crop.as_ref(), &stop)
-                        else {
+                        let Some(cycle) = handshake.wait_for_ready(last_cycle, &stop) else {
                             break;
                         };
-                        let out = session.feed(cropped.clone());
-                        if let Ok(mut l) = live.lock() {
-                            l.frames = session.kept;
-                            l.extent = session.current_extent();
-                            l.status = out.status.clone();
+                        let Ok((cropped, gray)) = capturer.acquire_settled_frame(
+                            crop,
+                            axis,
+                            session.last_gray(),
+                            &stop,
+                        ) else {
+                            break;
+                        };
+                        session.set_expected_ratio(
+                            notches_per_tick as f64 / capture::stitch::PROBE_NOTCHES as f64,
+                        );
+                        let out = session.feed_with_gray(cropped, gray);
+                        if let Ok(mut s) = session_arc.lock() {
+                            s.frames = session.kept;
+                            s.extent = session.current_extent();
+                            s.status = out.status.clone();
                         }
                         last_status = out.status.clone();
                         if out.event == capture::stitch::AutoEvent::Blank {
-                            std::thread::sleep(Duration::from_millis(20));
+                            std::thread::sleep(Duration::from_millis(35));
                             continue;
                         }
-                        last_crop = Some(cropped);
                         last_cycle = cycle;
 
                         let per_notch = if out.event == capture::stitch::AutoEvent::Appended
@@ -1873,12 +2020,16 @@ impl App {
                         } else {
                             0.0
                         };
-                        if !notches_fitted && per_notch > 0.0 {
-                            notches_per_tick = ((extent * 0.45) / per_notch.max(1.0))
-                                .round()
-                                .clamp(1.0, 12.0)
-                                as i32;
-                            notches_fitted = true;
+                        if per_notch > 0.0 {
+                            recent_per_notch.push(per_notch);
+                            if recent_per_notch.len() > 6 {
+                                recent_per_notch.remove(0);
+                            }
+                            let mut sorted = recent_per_notch.clone();
+                            sorted.sort_by(f64::total_cmp);
+                            let median = sorted[sorted.len() / 2].max(1.0);
+                            let desired = ((extent * 0.40) / median).round().clamp(1.0, 10.0) as i32;
+                            notches_per_tick = desired.min((notches_per_tick * 2).max(2));
                         }
 
                         match out.ack {
@@ -1894,13 +2045,20 @@ impl App {
                             break;
                         }
                     }
+
                     stop.store(true, Ordering::Release);
                     handshake.notify_stop();
                     let _ = injector.join();
-                    Ok((session, last_status))
-                },
-                Message::AutoEnded,
-            ),
+                    if let Ok(mut s) = session_arc.lock() {
+                        s.frames = session.kept;
+                        s.extent = session.current_extent();
+                        s.status = last_status.clone();
+                        s.engine = Some(ScrollEngine::Auto(session));
+                    }
+                    Ok(last_status)
+                };
+                Message::ScrollEnded(ScrollMode::Paused, run().map_err(|e| e.to_string()))
+            }),
         ])
     }
     fn view(&self) -> Element<'_, Message> {
@@ -1915,30 +2073,7 @@ impl App {
         if matches!(self.phase, Phase::Pick | Phase::Edit) {
             return widget::responsive(|size| self.overlay(size)).into();
         }
-        let header = row![
-            mouse_area(
-                container(
-                    text(if self.pin {
-                        "Pinned capture"
-                    } else {
-                        "Dusky Snap"
-                    })
-                    .size(13)
-                )
-                .width(Length::Fill)
-                .padding(6)
-            )
-            .on_press(Message::Drag),
-            icon_button(
-                "close",
-                "Close · Esc",
-                Message::Act(Action::Close),
-                false,
-                self.theme.palette().text
-            )
-        ]
-        .align_y(iced::Alignment::Center)
-        .spacing(12);
+
         if self.phase == Phase::Scroll {
             let frames = self.scroll_frames.max(1);
             let dim_label = match self.scroll_axis {
@@ -2011,7 +2146,7 @@ impl App {
                             .on_press(Message::Act(Action::ScrollStop)),
                     );
             } else {
-                let auto_label = if self.scroll_auto.is_some() || frames > 1 {
+                let auto_label = if frames > 1 {
                     "Resume Auto"
                 } else {
                     "Auto Scroll"
@@ -2204,9 +2339,12 @@ impl App {
                 return stack.into();
             }
             let controls = row![
-                active_button("Region", false).on_press(Message::Mode("region")),
-                active_button("Window", false).on_press(Message::Mode("window")),
-                active_button("Scroll", self.options.mode == "scroll").on_press(Message::Mode("scroll")),
+                active_button("Region", self.options.mode == "region")
+                    .on_press(Message::Mode("region")),
+                active_button("Window", self.options.mode == "window")
+                    .on_press(Message::Mode("window")),
+                active_button("Scroll", self.options.mode == "scroll")
+                    .on_press(Message::Mode("scroll")),
                 checkbox(self.options.editor)
                     .label("Annotate")
                     .on_toggle(Message::Annotate),
@@ -2931,177 +3069,118 @@ fn resize_window(size: Size, position: Option<(i32, i32)>, workspace: &str) -> R
     capture::command("hyprctl", &["eval", &script], None, Duration::from_secs(2))?;
     Ok(())
 }
-struct ParkedWindow {
-    address: String,
-    x: i64,
-    y: i64,
-    offscreen: bool,
-}
-impl ParkedWindow {
-    fn new(
-        monitor: &Monitor,
-        crop: &mut Rect,
-        hud_size: Size,
-        move_cursor: bool,
-    ) -> Result<Self> {
-        let deadline = Instant::now() + Duration::from_secs(2);
-        let client = loop {
-            let client = own_window()?;
-            if client["fullscreen"].as_i64() == Some(0) {
-                break client;
-            }
-            if Instant::now() >= deadline {
-                return Err("Hyprland did not leave fullscreen".into());
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        };
-        let address = client["address"]
-            .as_str()
-            .ok_or("Window has no address")?
-            .to_string();
-        let x = client["at"][0].as_i64().ok_or("Missing window x")?;
-        let y = client["at"][1].as_i64().ok_or("Missing window y")?;
-        let is_pinned = client["pinned"].as_bool().unwrap_or(false);
+fn park_scroll_hud(
+    monitor: &Monitor,
+    mut crop: Rect,
+    source_size: (u32, u32),
+    hud_size: Size,
+    axis: capture::stitch::Axis,
+) -> Result<Rect> {
+    let client = own_window()?;
+    let address = client["address"]
+        .as_str()
+        .ok_or("Window has no address")?
+        .to_string();
+    let is_pinned = client["pinned"].as_bool().unwrap_or(false);
 
-        let width = hud_size.width.ceil() as i64;
-        let height = hud_size.height.ceil() as i64;
-        let (mw, mh) = monitor.logical_size();
-        let [reserved_left, reserved_top, reserved_right, reserved_bottom] = monitor.reserved;
-        let (pw, ph) = if monitor.transform % 2 == 1 {
-            (monitor.height, monitor.width)
+    let width = hud_size.width.ceil() as i64;
+    let height = hud_size.height.ceil() as i64;
+    let (mw, mh) = monitor.logical_size();
+    let [reserved_left, reserved_top, reserved_right, reserved_bottom] = monitor.reserved;
+    let pw = source_size.0.max(1) as f64;
+    let ph = source_size.1.max(1) as f64;
+
+    let cx = crop.x * mw as f64 / pw;
+    let mut cy = crop.y * mh as f64 / ph;
+    let right = (crop.x + crop.w) * mw as f64 / pw;
+    let mut bottom = (crop.y + crop.h) * mh as f64 / ph;
+
+    let margin = 12.0;
+    let gap = 12.0;
+    let work_left = reserved_left as f64 + margin;
+    let work_top = reserved_top as f64 + margin;
+    let work_right = (mw - reserved_right) as f64 - margin;
+    let work_bottom = (mh - reserved_bottom) as f64 - margin;
+
+    let req_h = height as f64 + gap;
+    let req_w = width as f64 + gap;
+    let min_crop_h = 96.0;
+
+    let mut has_bottom = work_bottom - bottom >= req_h;
+    let mut has_top = cy - work_top >= req_h;
+    let has_right = work_right - right >= req_w;
+    let has_left = cx - work_left >= req_w;
+
+    if !has_bottom && !has_top && !has_right && !has_left {
+        let max_bottom = (work_bottom - req_h).floor();
+        if max_bottom - cy >= min_crop_h {
+            bottom = max_bottom;
+            crop.h = ((bottom - cy) * ph / mh as f64).round().max(1.0);
+            has_bottom = true;
         } else {
-            (monitor.width, monitor.height)
-        };
-
-        let cx = crop.x * mw as f64 / pw as f64;
-        let mut cy = crop.y * mh as f64 / ph as f64;
-        let right = (crop.x + crop.w) * mw as f64 / pw as f64;
-        let mut bottom = (crop.y + crop.h) * mh as f64 / ph as f64;
-
-        let margin = 12.0;
-        let gap = 12.0;
-        let work_left = reserved_left as f64 + margin;
-        let work_top = reserved_top as f64 + margin;
-        let work_right = (mw - reserved_right) as f64 - margin;
-        let work_bottom = (mh - reserved_bottom) as f64 - margin;
-
-        let req_h = height as f64 + gap;
-        let req_w = width as f64 + gap;
-        let min_crop_h = 96.0;
-
-        let mut has_bottom = work_bottom - bottom >= req_h;
-        let mut has_top = cy - work_top >= req_h;
-        let has_right = work_right - right >= req_w;
-        let has_left = cx - work_left >= req_w;
-
-        // If the region covers the full screen height/width, reserve a clean strip
-        // outside `crop` (matching oma-snap's reserveChromeStrip) so the HUD never
-        // overlaps `crop` or gets baked into captured frames.
-        if !has_bottom && !has_top && !has_right && !has_left {
-            let max_bottom = (work_bottom - req_h).floor();
-            if max_bottom - cy >= min_crop_h {
-                bottom = max_bottom;
-                crop.h = ((bottom - cy) * ph as f64 / mh as f64).round();
-                has_bottom = true;
-            } else {
-                let min_top = (work_top + req_h).ceil();
-                if bottom - min_top >= min_crop_h {
-                    cy = min_top;
-                    crop.y = (cy * ph as f64 / mh as f64).round();
-                    crop.h = ((bottom - cy) * ph as f64 / mh as f64).round();
-                    has_top = true;
-                }
+            let min_top = (work_top + req_h).ceil();
+            if bottom - min_top >= min_crop_h {
+                cy = min_top;
+                crop.y = (cy * ph / mh as f64).round();
+                crop.h = ((bottom - cy) * ph / mh as f64).round().max(1.0);
+                has_top = true;
             }
         }
-
-        let min_x = work_left.round() as i64;
-        let max_x = (work_right - width as f64).floor() as i64;
-        let middle_x = (((cx + right - width as f64) / 2.0).round() as i64)
-            .clamp(min_x, max_x.max(min_x));
-
-        let min_y = work_top.round() as i64;
-        let max_y = (work_bottom - height as f64).floor() as i64;
-        let middle_y = (((cy + bottom - height as f64) / 2.0).round() as i64)
-            .clamp(min_y, max_y.max(min_y));
-
-        // Prefer parking directly below the capture region, then above, then beside,
-        // and clamp strictly inside the monitor's usable workarea.
-        let (local_x, local_y) = if has_bottom {
-            (middle_x, (bottom + gap).ceil() as i64)
-        } else if has_top {
-            (middle_x, (cy - gap - height as f64).floor() as i64)
-        } else if has_right {
-            ((right + gap).ceil() as i64, middle_y)
-        } else if has_left {
-            ((cx - gap - width as f64).floor() as i64, middle_y)
-        } else {
-            (middle_x, max_y.max(min_y))
-        };
-
-        let position = (
-            monitor.x as i64 + local_x.clamp(min_x, max_x.max(min_x)),
-            monitor.y as i64 + local_y.clamp(min_y, max_y.max(min_y)),
-        );
-
-        let selector = serde_json::to_string(&format!("address:{address}"))?;
-        let clear_pick_rule =
-            r#"hl.window_rule({name="dusky_snap_pick",match={class="^__dusky_snap_disabled__$"}}); "#;
-        let ensure_pin = if !is_pinned {
-            "hl.dispatch(hl.dsp.window.pin({window=w})); "
-        } else {
-            ""
-        };
-        let cursor_cmd = if move_cursor {
-            let (park_px, park_py) = crate::input::auto_scroll_park_point(*crop);
-            let cur_x = monitor.x as f64 + park_px as f64 * mw as f64 / pw as f64;
-            let cur_y = monitor.y as f64 + park_py as f64 * mh as f64 / ph as f64;
-            format!(
-                "; hl.dispatch(hl.dsp.cursor.move({{x={},y={}}}))",
-                cur_x.round() as i64,
-                cur_y.round() as i64
-            )
-        } else {
-            String::new()
-        };
-
-        let script = format!(
-            "{clear_pick_rule}local w={selector}; {ensure_pin}\
-             hl.dispatch(hl.dsp.window.resize({{window=w,x={width},y={height},relative=false}})); \
-             hl.dispatch(hl.dsp.window.move({{window=w,x={},y={},relative=false}})){cursor_cmd}",
-            position.0, position.1
-        );
-        capture::command("hyprctl", &["eval", &script], None, Duration::from_secs(2))?;
-        std::thread::sleep(Duration::from_millis(120));
-
-        Ok(Self {
-            address,
-            x,
-            y,
-            offscreen: false,
-        })
     }
 
-    fn move_to(&self, x: i64, y: i64) -> Result<()> {
-        let script = format!(
-            "hl.dispatch(hl.dsp.window.move({{window={},x={x},y={y},relative=false}}))",
-            serde_json::to_string(&format!("address:{}", self.address))?
-        );
-        capture::command(
-            "hyprctl",
-            &["eval", &script],
-            None,
-            Duration::from_secs(2),
-        )?;
-        Ok(())
-    }
+    let min_x = work_left.round() as i64;
+    let max_x = (work_right - width as f64).floor() as i64;
+    let middle_x =
+        (((cx + right - width as f64) / 2.0).round() as i64).clamp(min_x, max_x.max(min_x));
+
+    let min_y = work_top.round() as i64;
+    let max_y = (work_bottom - height as f64).floor() as i64;
+    let middle_y =
+        (((cy + bottom - height as f64) / 2.0).round() as i64).clamp(min_y, max_y.max(min_y));
+
+    let (local_x, local_y) = if has_bottom {
+        (middle_x, (bottom + gap).ceil() as i64)
+    } else if has_top {
+        (middle_x, (cy - gap - height as f64).floor() as i64)
+    } else if has_right {
+        ((right + gap).ceil() as i64, middle_y)
+    } else if has_left {
+        ((cx - gap - width as f64).floor() as i64, middle_y)
+    } else {
+        (middle_x, max_y.max(min_y))
+    };
+
+    let position = (
+        monitor.x as i64 + local_x.clamp(min_x, max_x.max(min_x)),
+        monitor.y as i64 + local_y.clamp(min_y, max_y.max(min_y)),
+    );
+
+    let selector = serde_json::to_string(&format!("address:{address}"))?;
+    let clear_pick_rule =
+        r#"hl.window_rule({name="dusky_snap_pick",match={class="^__dusky_snap_disabled__$"}}); "#;
+    let ensure_pin = if !is_pinned {
+        "hl.dispatch(hl.dsp.window.pin({window=w})); "
+    } else {
+        ""
+    };
+    let (park_px, park_py) = crate::input::auto_scroll_park_point(crop, axis);
+    let cur_x = monitor.x as f64 + park_px as f64 * mw as f64 / pw;
+    let cur_y = monitor.y as f64 + park_py as f64 * mh as f64 / ph;
+    let script = format!(
+        "{clear_pick_rule}local w={selector}; {ensure_pin}\
+         hl.dispatch(hl.dsp.window.resize({{window=w,x={width},y={height},relative=false}})); \
+         hl.dispatch(hl.dsp.window.move({{window=w,x={},y={},relative=false}})); \
+         hl.dispatch(hl.dsp.cursor.move({{x={},y={}}}))",
+        position.0,
+        position.1,
+        cur_x.round() as i64,
+        cur_y.round() as i64
+    );
+    capture::command("hyprctl", &["eval", &script], None, Duration::from_secs(2))?;
+    std::thread::sleep(Duration::from_millis(120));
+    Ok(crop)
 }
-impl Drop for ParkedWindow {
-    fn drop(&mut self) {
-        if self.offscreen {
-            let _ = self.move_to(self.x, self.y);
-        }
-    }
-}
+
 fn set_pinned(pin: bool) -> Result<()> {
     let clients: serde_json::Value = serde_json::from_slice(&capture::command(
         "hyprctl",
@@ -3367,12 +3446,14 @@ impl canvas::Program<Message> for Surface<'_> {
                 );
             }
             let selection = drag_selection.or_else(|| {
-                hover.and_then(|p| {
-                    app.capture
-                        .windows
-                        .iter()
-                        .find(|w| w.rect.contains(p))
-                        .map(|w| w.rect)
+                (app.options.mode != "region").then_some(()).and_then(|_| {
+                    hover.and_then(|p| {
+                        app.capture
+                            .windows
+                            .iter()
+                            .find(|w| w.rect.contains(p))
+                            .map(|w| w.rect)
+                    })
                 })
             });
             if let Some(r) = selection {
@@ -3441,6 +3522,13 @@ impl canvas::Program<Message> for Surface<'_> {
                 if app.tool == Tool::Highlight {
                     ink.a = 0.3;
                 }
+                let stroke = |w: f32, c: Color| {
+                    canvas::Stroke::default()
+                        .with_color(c)
+                        .with_width(w.max(1.0))
+                        .with_line_cap(canvas::LineCap::Round)
+                        .with_line_join(canvas::LineJoin::Round)
+                };
                 let a = view.screen(g.start);
                 let b = view.screen(g.last);
                 match app.tool {
@@ -3452,33 +3540,24 @@ impl canvas::Program<Message> for Surface<'_> {
                             }
                             p.line_to(b);
                         });
-                        frame.stroke(
-                            &path,
-                            canvas::Stroke::default()
-                                .with_color(ink)
-                                .with_width((app.width as f32 * view.scale).max(1.0)),
-                        );
+                        let mult = if app.tool == Tool::Highlight { 5.0 } else { 1.0 };
+                        frame.stroke(&path, stroke(app.width as f32 * mult * view.scale, ink));
                     }
                     Tool::Arrow | Tool::DoubleArrow | Tool::Curve | Tool::Line => {
+                        let mid = iced::Point::new(
+                            (a.x + b.x) / 2.0 - (b.y - a.y) * 0.2,
+                            (a.y + b.y) / 2.0 + (b.x - a.x) * 0.2,
+                        );
                         let path = canvas::Path::new(|p| {
                             p.move_to(a);
                             if app.tool == Tool::Curve {
-                                let mid = iced::Point::new(
-                                    (a.x + b.x) / 2.0 - (b.y - a.y) * 0.2,
-                                    (a.y + b.y) / 2.0 + (b.x - a.x) * 0.2,
-                                );
                                 p.bezier_curve_to(mid, mid, b);
                             } else {
                                 p.line_to(b);
                             }
                         });
-                        frame.stroke(
-                            &path,
-                            canvas::Stroke::default()
-                                .with_color(ink)
-                                .with_width((app.width as f32 * view.scale).max(1.0)),
-                        );
-                        if matches!(app.tool, Tool::Arrow | Tool::DoubleArrow) {
+                        frame.stroke(&path, stroke(app.width as f32 * view.scale, ink));
+                        if matches!(app.tool, Tool::Arrow | Tool::DoubleArrow | Tool::Curve) {
                             let mut head = |tip: iced::Point, tail: iced::Point| {
                                 let angle = (tip.y - tail.y).atan2(tip.x - tail.x);
                                 let length = (app.width as f32 * 4.0).max(12.0) * view.scale;
@@ -3498,9 +3577,13 @@ impl canvas::Program<Message> for Surface<'_> {
                                     ink,
                                 );
                             };
-                            head(b, a);
-                            if app.tool == Tool::DoubleArrow {
-                                head(a, b);
+                            if app.tool == Tool::Curve {
+                                head(b, mid);
+                            } else {
+                                head(b, a);
+                                if app.tool == Tool::DoubleArrow {
+                                    head(a, b);
+                                }
                             }
                         }
                     }
@@ -3555,6 +3638,66 @@ impl canvas::Program<Message> for Surface<'_> {
                             },
                         );
                         outline(&mut frame, Rect::between(g.start, g.last));
+                    }
+                    Tool::Marker => {
+                        let r = (app.width as f32 * 4.0 + 9.0) * view.scale;
+                        frame.fill(&canvas::Path::circle(a, r), ink);
+                        let next_n = app
+                            .doc()
+                            .state
+                            .layers
+                            .iter()
+                            .filter(|l| l.tool == Tool::Marker)
+                            .count()
+                            + 1;
+                        frame.fill_text(canvas::Text {
+                            content: next_n.to_string(),
+                            position: a,
+                            align_x: iced::alignment::Horizontal::Center.into(),
+                            align_y: iced::alignment::Vertical::Center,
+                            color: Color::WHITE,
+                            size: ((app.width as f32 * 4.0 + 8.0) * view.scale).max(8.0).into(),
+                            ..Default::default()
+                        });
+                    }
+                    Tool::Spotlight => {
+                        let r = view.bounds(Rect::between(g.start, g.last));
+                        let dim = Color::from_rgba(0.0, 0.0, 0.0, 0.55);
+                        let vx0 = view.rect.x;
+                        let vy0 = view.rect.y;
+                        let vx1 = view.rect.x + view.rect.width;
+                        let vy1 = view.rect.y + view.rect.height;
+
+                        let rx0 = r.x.clamp(vx0, vx1);
+                        let ry0 = r.y.clamp(vy0, vy1);
+                        let rx1 = (r.x + r.width).clamp(vx0, vx1);
+                        let ry1 = (r.y + r.height).clamp(vy0, vy1);
+                        let rh = (ry1 - ry0).max(0.0);
+                        let rw = (rx1 - rx0).max(0.0);
+
+                        frame.fill_rectangle(
+                            iced::Point::new(vx0, vy0),
+                            Size::new(view.rect.width, (ry0 - vy0).max(0.0)),
+                            dim,
+                        );
+                        frame.fill_rectangle(
+                            iced::Point::new(vx0, ry1),
+                            Size::new(view.rect.width, (vy1 - ry1).max(0.0)),
+                            dim,
+                        );
+                        frame.fill_rectangle(
+                            iced::Point::new(vx0, ry0),
+                            Size::new((rx0 - vx0).max(0.0), rh),
+                            dim,
+                        );
+                        frame.fill_rectangle(
+                            iced::Point::new(rx1, ry0),
+                            Size::new((vx1 - rx1).max(0.0), rh),
+                            dim,
+                        );
+                        if rw > 0.0 || rh > 0.0 {
+                            outline(&mut frame, Rect::between(g.start, g.last));
+                        }
                     }
                     _ => outline(&mut frame, Rect::between(g.start, g.last)),
                 }
@@ -3711,28 +3854,11 @@ mod tests {
             assert_eq!(app.phase, Phase::Pick);
             assert!(app.busy);
             assert_eq!(app.doc().state.crop, original);
-            let mut doc = app.doc().clone();
-            doc.state.crop = Rect {
-                x: 80.0,
-                y: 60.0,
-                w: 160.0,
-                h: 100.0,
-            };
-            let _ = app.update(Message::SelectionReady(Ok((doc, None))));
-            assert_eq!(
-                app.phase,
-                Phase::Pick,
-                "clipboard/save worker must not display editor"
-            );
-            assert!(app.busy);
-            assert_eq!(
-                app.doc().state.crop,
-                original,
-                "export owns selection; picker remains unchanged"
-            );
-            let _ = app.update(Message::Finished(Err("clipboard unavailable".into())));
+            let _ = app.update(Message::Finished(Err("write failed".into())));
+            assert_eq!(app.phase, Phase::Pick);
             assert!(!app.busy);
             assert_eq!(app.doc().state.crop, original);
+            assert_eq!(app.status, "write failed");
         }
         let mut app = picker(Options {
             editor: true,
@@ -3741,7 +3867,7 @@ mod tests {
         let original = app.doc().state.crop;
         let _ = app.pointer(Motion::Down, Point::new(80.0, 60.0));
         let _ = app.pointer(Motion::Up, Point::new(240.0, 160.0));
-        let _ = app.update(Message::SelectionReady(Err("window capture failed".into())));
+        let _ = app.update(Message::SelectionReady(Err("render failed".into())));
         assert_eq!(app.phase, Phase::Pick);
         assert!(!app.busy);
         assert_eq!(app.doc().state.crop, original);
@@ -3838,7 +3964,6 @@ mod tests {
                     w: 160.0,
                     h: 100.0,
                 },
-                identifier: String::new(),
             }],
             pointer: Some(Point::new(140.0, 110.0)),
         };

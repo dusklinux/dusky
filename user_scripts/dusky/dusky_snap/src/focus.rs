@@ -72,7 +72,10 @@ pub fn handoff(window: &dyn Window) -> Result<()> {
     let surface = wl_surface::WlSurface::from_id(&conn, id)?;
     let (globals, mut queue) = registry_queue_init::<State>(&conn)?;
     let qh = queue.handle();
-    let manager: HyprlandFocusGrabManagerV1 = globals.bind(&qh, 1..=1, ())?;
+    let Ok(manager) = globals.bind::<HyprlandFocusGrabManagerV1, _, _>(&qh, 1..=1, ()) else {
+        globals.destroy();
+        return Ok(());
+    };
     let grab = manager.create_grab(&qh, ());
     grab.add_surface(&surface);
     grab.commit();

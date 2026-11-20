@@ -481,7 +481,7 @@ checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 
 [[package]]
 name = "dusky_snap"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "chrono",
  "cosmic-text",

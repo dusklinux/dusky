@@ -80,13 +80,10 @@ struct Client {
     floating: bool,
     #[serde(default, rename = "focusHistoryID")]
     order: i64,
-    #[serde(default, rename = "stableId")]
-    identifier: String,
 }
 #[derive(Clone, Debug)]
 pub struct Window {
     pub rect: Rect,
-    pub identifier: String,
 }
 #[derive(Clone)]
 pub struct Capture {
@@ -138,65 +135,15 @@ fn window_targets(
                 w: c.size[0] * sx,
                 h: c.size[1] * sy,
             }
+            .pixel_bounds()
             .intersect(bounds);
-            Window {
-                rect,
-                identifier: c.identifier,
-            }
+            Window { rect }
         })
         .filter(|w| w.rect.w > 0.0 && w.rect.h > 0.0)
         .collect()
 }
 
 pub use crate::process::command;
-
-struct WindowCaptureStyle {
-    cleanup: String,
-}
-
-impl WindowCaptureStyle {
-    fn new(identifier: &str) -> Result<Self> {
-        let identifier = serde_json::to_string(identifier)?;
-        let select =
-            format!("for _,w in ipairs(hl.get_windows()) do if w.stable_id=={identifier} then ");
-        let style = Self {
-            cleanup: format!(
-                "{select}hl.dispatch(hl.dsp.window.tag({{window=w,tag=\"-dusky-snap-capture\"}})) end end"
-            ),
-        };
-        // A single reusable rule, scoped to the selected window by a temporary
-        // tag. no_anim makes the dim change settle on the capture frame, without
-        // a sleep or changing focus. Removing the tag restores the user's rules.
-        let script = format!(
-            "hl.window_rule({{name=\"dusky_snap_capture\",match={{tag=\"dusky-snap-capture\"}},no_dim=true,no_anim=true}}); \
-             for _,w in ipairs(hl.get_windows({{tag=\"dusky-snap-capture\"}})) do \
-             hl.dispatch(hl.dsp.window.tag({{window=w,tag=\"-dusky-snap-capture\"}})) end; \
-             {select}hl.dispatch(hl.dsp.window.tag({{window=w,tag=\"+dusky-snap-capture\"}})) end end"
-        );
-        let reply = command("hyprctl", &["eval", &script], None, Duration::from_secs(2))?;
-        if reply.trim_ascii() != b"ok" {
-            return Err(format!(
-                "Cannot prepare window capture: {}",
-                String::from_utf8_lossy(&reply)
-            )
-            .into());
-        }
-        Ok(style)
-    }
-}
-
-impl Drop for WindowCaptureStyle {
-    fn drop(&mut self) {
-        if let Err(error) = command(
-            "hyprctl",
-            &["eval", &self.cleanup],
-            None,
-            Duration::from_secs(2),
-        ) {
-            eprintln!("Cannot restore captured window appearance: {error}");
-        }
-    }
-}
 
 fn output_image(
     conn: &libwayshot::WayshotConnection,
@@ -212,45 +159,6 @@ fn output_image(
         output.transform = wayland_client::protocol::wl_output::Transform::Normal;
     }
     Ok(conn.screenshot_single_output(output, cursor)?.into_rgba8())
-}
-
-pub fn window(identifier: &str, cursor: bool) -> Result<Option<RgbaImage>> {
-    if identifier.is_empty() {
-        return Ok(None);
-    }
-    let conn = libwayshot::WayshotConnection::new()?;
-    if !conn.toplevel_capture_support() {
-        return Ok(None);
-    }
-    // Closed click-away popups remain selectable in the frozen desktop.
-    let Some(window) = conn
-        .get_all_toplevels()
-        .iter()
-        .find(|w| w.active && w.identifier == identifier)
-    else {
-        return Ok(None);
-    };
-    let _style = WindowCaptureStyle::new(identifier)?;
-    let mut image = conn.screenshot_toplevel(window, cursor)?.into_rgba8();
-    straight_alpha(&mut image);
-    Ok(Some(image))
-}
-
-fn straight_alpha(image: &mut RgbaImage) {
-    // Wayland buffers carry premultiplied electrical RGB values;
-    // our document and PNG encoder require straight alpha.
-    for pixel in image.pixels_mut() {
-        let alpha = pixel[3] as u16;
-        match alpha {
-            0 => pixel.0[..3].fill(0),
-            255 => {}
-            _ => {
-                for channel in &mut pixel.0[..3] {
-                    *channel = ((*channel as u16 * 255) / alpha).min(255) as u8;
-                }
-            }
-        }
-    }
 }
 
 pub fn take(o: &Options) -> Result<Capture> {
@@ -269,8 +177,9 @@ pub fn take(o: &Options) -> Result<Capture> {
         .find(|m| m.name == monitor.name)
         .ok_or("Focused output was disconnected")?;
     let source = output_image(&conn, output, o.cursor)?;
-    let sx = source.width() as f64 / output.logical_size().width as f64;
-    let sy = source.height() as f64 / output.logical_size().height as f64;
+    let logical = output.logical_size();
+    let sx = source.width() as f64 / logical.width.max(1) as f64;
+    let sy = source.height() as f64 / logical.height.max(1) as f64;
     let bounds = Rect {
         x: 0.0,
         y: 0.0,
@@ -286,6 +195,7 @@ pub fn take(o: &Options) -> Result<Capture> {
         pointer: bounds.contains(pointer).then_some(pointer),
     })
 }
+
 pub fn load(o: &Options) -> Result<Capture> {
     if o.file.is_none() && !o.clipboard {
         return take(o);
@@ -315,6 +225,7 @@ pub fn load(o: &Options) -> Result<Capture> {
         pointer: None,
     })
 }
+
 #[path = "stitch.rs"]
 pub mod stitch;
 
@@ -337,10 +248,10 @@ impl ScrollCapturer {
 
     pub fn grab(&self, crop: Rect, cursor: bool) -> Result<RgbaImage> {
         let image = output_image(&self.conn, &self.output, cursor)?;
-        let x = crop.x.max(0.0) as u32;
-        let y = crop.y.max(0.0) as u32;
-        let w = (crop.w as u32).min(image.width().saturating_sub(x));
-        let h = (crop.h as u32).min(image.height().saturating_sub(y));
+        let x = crop.x.max(0.0).round() as u32;
+        let y = crop.y.max(0.0).round() as u32;
+        let w = (crop.w.max(0.0).round() as u32).min(image.width().saturating_sub(x));
+        let h = (crop.h.max(0.0).round() as u32).min(image.height().saturating_sub(y));
         if w == 0 || h == 0 {
             return Err("Scroll region is outside the output".into());
         }
@@ -350,208 +261,58 @@ impl ScrollCapturer {
     pub fn acquire_settled_frame(
         &self,
         crop: Rect,
-        before: Option<&RgbaImage>,
+        axis: stitch::Axis,
+        before: Option<&stitch::GrayView>,
         stop: &std::sync::atomic::AtomicBool,
-    ) -> Result<RgbaImage> {
+    ) -> Result<(RgbaImage, stitch::GrayView)> {
         use std::sync::atomic::Ordering;
+        const MOTION_START_MAD: f64 = 1.25;
+
         let start = std::time::Instant::now();
         let mut moved = before.is_none();
-        let mut last: Option<RgbaImage> = None;
+        let mut prev: Option<(RgbaImage, stitch::GrayView)> = None;
+        let mut calm_streak = 0u8;
+
         while !stop.load(Ordering::Acquire) {
             let current = self.grab(crop, false)?;
+            let cur_gray = stitch::downsample_to_gray(&current, axis);
+
             if !moved {
-                if before.is_some_and(|b| b.as_raw() != current.as_raw()) {
+                let diff = before.map_or(f64::INFINITY, |b| {
+                    stitch::frame_diff_at_zero(b, &cur_gray, axis)
+                });
+                if diff > MOTION_START_MAD {
                     moved = true;
-                } else if start.elapsed() >= Duration::from_millis(650) {
-                    return Ok(current);
+                } else if start.elapsed() >= Duration::from_millis(500) {
+                    return Ok((current, cur_gray));
                 } else {
-                    std::thread::sleep(Duration::from_millis(35));
+                    std::thread::sleep(Duration::from_millis(25));
                     continue;
                 }
             }
-            if let Some(prev) = last.as_ref() {
-                if prev.as_raw() == current.as_raw() {
-                    return Ok(current);
-                }
-                let prev_g = stitch::downsample_to_gray(prev, stitch::Axis::Vertical);
-                let cur_g = stitch::downsample_to_gray(&current, stitch::Axis::Vertical);
-                if stitch::classify_motion(&prev_g, &cur_g, stitch::Axis::Vertical).motion.kind
-                    == stitch::MotionKind::Stationary
-                {
-                    return Ok(current);
+
+            if let Some((_, ref prev_gray)) = prev {
+                let diff = stitch::frame_diff_at_zero(prev_gray, &cur_gray, axis);
+                if diff <= stitch::STATIONARY_ERROR {
+                    calm_streak += 1;
+                    if calm_streak >= 2 {
+                        return Ok((current, cur_gray));
+                    }
+                } else {
+                    calm_streak = 0;
                 }
             }
-            last = Some(current);
-            if start.elapsed() >= Duration::from_millis(1800) {
-                return Ok(last.unwrap());
+
+            prev = Some((current, cur_gray));
+            if start.elapsed() >= Duration::from_millis(1500) {
+                return Ok(prev.unwrap());
             }
-            std::thread::sleep(Duration::from_millis(45));
+            std::thread::sleep(Duration::from_millis(30));
         }
         Err("Scroll capture stopped".into())
     }
 }
 
-pub fn frame(monitor: &Monitor, crop: Rect, cursor: bool) -> Result<RgbaImage> {
-    ScrollCapturer::new(monitor)?.grab(crop, cursor)
-}
-
-pub fn stitch(previous: &RgbaImage, next: &RgbaImage) -> Result<RgbaImage> {
-    if previous.width() != next.width()
-        || previous.height() < next.height()
-        || next.height() < 16
-    {
-        return Err("Scroll frame dimensions changed".into());
-    }
-    if previous.as_raw()[previous.as_raw().len() - next.as_raw().len()..] == *next.as_raw() {
-        return Ok(previous.clone());
-    }
-    if stitch::image_is_uniform(next) {
-        return Err("Frame has too little detail for reliable alignment".into());
-    }
-    let tail_y = previous.height() - next.height();
-    let tail = image::imageops::crop_imm(previous, 0, tail_y, previous.width(), next.height())
-        .to_image();
-    let prev_gray = stitch::downsample_to_gray(&tail, stitch::Axis::Vertical);
-    let next_gray = stitch::downsample_to_gray(next, stitch::Axis::Vertical);
-    let est = stitch::classify_motion(&prev_gray, &next_gray, stitch::Axis::Vertical);
-    if est.motion.kind == stitch::MotionKind::Stationary {
-        return Ok(previous.clone());
-    }
-    if est.motion.kind != stitch::MotionKind::Forward || est.motion.delta <= 0 {
-        return Err(format!(
-            "Cannot align frames (error {:.1}); scroll less and capture again",
-            est.error
-        )
-        .into());
-    }
-    let overlap = next.height().saturating_sub(est.motion.delta as u32);
-    let h = previous.height() + next.height() - overlap;
-    if u64::from(h) * u64::from(next.width()) > stitch::MAX_STITCHED_PIXELS as u64 {
-        return Err("Scroll capture reached its memory budget".into());
-    }
-    let mut out = RgbaImage::new(next.width(), h);
-    let previous_bytes = previous.as_raw().len();
-    out.as_mut()[..previous_bytes].copy_from_slice(previous.as_raw());
-    out.as_mut()[previous_bytes..]
-        .copy_from_slice(&next.as_raw()[overlap as usize * next.width() as usize * 4..]);
-    Ok(out)
-}
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn stitch_scrolled_fixture() {
-        let mut page = RgbaImage::new(80, 180);
-        for (x, y, p) in page.enumerate_pixels_mut() {
-            *p = image::Rgba([
-                ((x * 37 + y * 23) % 251) as u8,
-                ((y * 11 + x * 3) % 253) as u8,
-                (y % 255) as u8,
-                255,
-            ]);
-        }
-        let a = image::imageops::crop_imm(&page, 0, 0, 80, 110).to_image();
-        let b = image::imageops::crop_imm(&page, 0, 70, 80, 110).to_image();
-        assert_eq!(stitch(&a, &b).unwrap(), page);
-        assert_eq!(stitch(&a, &a).unwrap(), a);
-    }
-}
-
-#[derive(Clone)]
-pub struct Stitcher {
-    pub image: RgbaImage,
-    accumulator: stitch::StitchAccumulator,
-    last_gray: stitch::GrayView,
-    axis: stitch::Axis,
-}
-impl Stitcher {
-    pub fn new(image: RgbaImage) -> Self {
-        Self::with_axis(image, stitch::Axis::Vertical)
-    }
-    pub fn with_axis(image: RgbaImage, axis: stitch::Axis) -> Self {
-        let accumulator =
-            stitch::StitchAccumulator::new(&image, axis).expect("valid initial scroll frame");
-        let last_gray = stitch::downsample_to_gray(&image, axis);
-        Self {
-            image,
-            accumulator,
-            last_gray,
-            axis,
-        }
-    }
-    pub fn append(&mut self, next: RgbaImage) -> Result<bool> {
-        let next_gray = stitch::downsample_to_gray(&next, self.axis);
-        if self.last_gray.width != next_gray.width || self.last_gray.height != next_gray.height {
-            return Err("Scroll frame dimensions changed".into());
-        }
-        let est = stitch::classify_motion(&self.last_gray, &next_gray, self.axis);
-        if est.motion.kind == stitch::MotionKind::Stationary {
-            return Ok(false);
-        }
-        if stitch::image_is_uniform(&next) {
-            return Err("Frame has too little detail for reliable alignment".into());
-        }
-        match est.motion.kind {
-            stitch::MotionKind::Forward => {
-                self.accumulator
-                    .push_forward(&next, est.motion.delta as usize)?;
-                self.last_gray = next_gray;
-                self.image = self.accumulator.finish()?;
-                Ok(true)
-            }
-            stitch::MotionKind::Reverse => {
-                self.accumulator
-                    .push_reverse(&next, est.motion.delta as usize)?;
-                self.last_gray = next_gray;
-                self.image = self.accumulator.finish()?;
-                Ok(true)
-            }
-            _ => Err(format!(
-                "Cannot align frames (error {:.1}); scroll less and capture again",
-                est.error
-            )
-            .into()),
-        }
-    }
-}
-
-#[cfg(test)]
-mod scrolling_regression {
-    use super::*;
-    #[test]
-    fn sticky_header_and_footer_are_kept_once() {
-        let mut page = RgbaImage::new(80, 200);
-        for (x, y, p) in page.enumerate_pixels_mut() {
-            *p = image::Rgba([
-                ((x * 17 + y * 23) % 251) as u8,
-                ((y * 7 + x * 3) % 253) as u8,
-                (y % 255) as u8,
-                255,
-            ]);
-        }
-        let viewport = |y| {
-            let content = image::imageops::crop_imm(&page, 0, y, 80, 80).to_image();
-            let mut frame = RgbaImage::from_pixel(80, 100, image::Rgba([33, 44, 55, 255]));
-            image::imageops::replace(&mut frame, &content, 0, 10);
-            frame
-        };
-        let mut s = Stitcher::new(viewport(0));
-        s.append(viewport(50)).unwrap();
-        s.append(viewport(100)).unwrap();
-        assert_eq!(s.image.dimensions(), (80, 200));
-        let body = image::imageops::crop_imm(&s.image, 0, 10, 80, 180).to_image();
-        assert_eq!(
-            body,
-            image::imageops::crop_imm(&page, 0, 0, 80, 180).to_image()
-        );
-    }
-    #[test]
-    fn unrelated_frames_fail_instead_of_corrupting_output() {
-        let a = RgbaImage::from_pixel(80, 60, image::Rgba([0, 0, 0, 255]));
-        let b = RgbaImage::from_pixel(80, 60, image::Rgba([255, 255, 255, 255]));
-        assert!(stitch(&a, &b).is_err());
-    }
-}
 #[cfg(test)]
 mod process_regression {
     use super::*;
@@ -588,23 +349,11 @@ mod workspace_regression {
     }
 
     #[test]
-    fn window_capture_converts_premultiplied_alpha_for_documents() {
-        let mut image =
-            RgbaImage::from_raw(3, 1, vec![200, 100, 50, 255, 64, 32, 16, 128, 0, 0, 0, 0])
-                .unwrap();
-        straight_alpha(&mut image);
-        assert_eq!(
-            image.into_raw(),
-            vec![200, 100, 50, 255, 127, 63, 31, 128, 0, 0, 0, 0]
-        );
-    }
-
-    #[test]
     fn pinned_windows_win_over_focused_windows_across_workspaces() {
         for workspace in ["1", "2", "special:magic"] {
             let clients: Vec<Client> = serde_json::from_value(serde_json::json!([
                 {"at":[0,0],"size":[640,480],"workspace":{"address":workspace},"focusHistoryID":0},
-                {"at":[100,80],"size":[200,150],"workspace":{"address":"1"},"floating":true,"pinned":true,"focusHistoryID":9,"stableId":"pin-id"},
+                {"at":[100,80],"size":[200,150],"workspace":{"address":"1"},"floating":true,"pinned":true,"focusHistoryID":9},
                 {"at":[90,70],"size":[240,180],"workspace":{"address":workspace},"floating":true,"focusHistoryID":1},
                 {"at":[0,0],"size":[640,480],"workspace":{"address":"other"},"floating":true,"pinned":true,"hidden":true,"focusHistoryID":0},
                 {"at":[900,900],"size":[200,150],"workspace":{"address":"other"},"floating":true,"pinned":true,"focusHistoryID":0},
@@ -636,7 +385,15 @@ mod workspace_regression {
                 },
             );
             assert_eq!(windows.len(), 3);
-            assert_eq!(windows[0].identifier, "pin-id");
+            assert_eq!(
+                windows[0].rect,
+                Rect {
+                    x: 100.0,
+                    y: 80.0,
+                    w: 200.0,
+                    h: 150.0
+                }
+            );
             let hover = Point::new(150.0, 120.0);
             assert_eq!(
                 windows
@@ -664,9 +421,12 @@ mod workspace_regression {
 
     #[test]
     fn pinned_window_geometry_uses_monitor_offsets_scale_and_clipping() {
-        let clients: Vec<Client> = serde_json::from_str(r#"[
+        let clients: Vec<Client> = serde_json::from_str(
+            r#"[
             {"at":[-1350,150],"size":[200,100],"workspace":{"address":"other"},"pinned":true,"floating":true}
-        ]"#).unwrap();
+        ]"#,
+        )
+        .unwrap();
         let monitor = Monitor {
             x: -1280,
             y: 120,
@@ -694,6 +454,38 @@ mod workspace_regression {
             }]
         );
     }
+
+    #[test]
+    fn fractional_window_geometry_snaps_to_integer_pixel_bounds() {
+        let clients: Vec<Client> = serde_json::from_str(
+            r#"[
+            {"at":[10,15],"size":[101,51],"workspace":{"address":"1"}}
+        ]"#,
+        )
+        .unwrap();
+        let monitor = Monitor {
+            x: 0,
+            y: 0,
+            active_workspace: Workspace {
+                address: "1".into(),
+            },
+            ..Default::default()
+        };
+        let bounds = Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 1920.0,
+            h: 1080.0,
+        };
+        let targets = window_targets(clients, &monitor, 1.25, 1.25, bounds);
+        assert_eq!(targets.len(), 1);
+        let r = targets[0].rect;
+        assert_eq!(r.x.fract(), 0.0);
+        assert_eq!(r.y.fract(), 0.0);
+        assert_eq!(r.w.fract(), 0.0);
+        assert_eq!(r.h.fract(), 0.0);
+    }
+
     #[test]
     fn special_workspace_clients_do_not_need_numeric_ids() {
         let client: Client = serde_json::from_str(r#"{"at":[0,0],"size":[640,480],"workspace":{"address":"special:magic","type":"special","name":"special:magic"}}"#).unwrap();

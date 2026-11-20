@@ -1,6 +1,6 @@
 pkgname=dusky_snap
-pkgver=0.4.1
-pkgrel=3
+pkgver=0.4.2
+pkgrel=1
 pkgdesc='Dusky Snap Wayland screenshot and annotation tool'
 arch=('x86_64')
 license=('custom')

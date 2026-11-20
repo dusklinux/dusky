@@ -179,17 +179,23 @@ pub fn copy(bytes: Vec<u8>, mime: &str) -> Result<()> {
     }
     Ok(())
 }
-pub fn destination(config: &Config) -> Result<PathBuf> {
-    let directory = if let Some(p) = &config.directory {
-        p.clone()
-    } else {
-        let pictures = command("xdg-user-dir", &["PICTURES"], None, Duration::from_secs(2))
+fn pictures_dir() -> &'static Path {
+    static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        command("xdg-user-dir", &["PICTURES"], None, Duration::from_secs(2))
             .ok()
             .and_then(|b| String::from_utf8(b).ok())
             .map(|s| PathBuf::from(s.trim()))
             .filter(|p| p.is_absolute())
-            .unwrap_or_else(|| home().join("Pictures"));
-        pictures.join("Screenshots")
+            .unwrap_or_else(|| home().join("Pictures"))
+    })
+}
+
+pub fn destination(config: &Config) -> Result<PathBuf> {
+    let directory = if let Some(p) = &config.directory {
+        p.clone()
+    } else {
+        pictures_dir().join("Screenshots")
     };
     let mut name = String::new();
     std::fmt::write(
@@ -225,7 +231,10 @@ fn persist_in(doc: &Document, base: &Path, preview: Option<RgbaImage>) -> Result
 
     let source = dir.join(format!("{}.png", doc.id));
     if !source.exists() {
-        atomic_write(&source, &encode(&doc.source)?)?;
+        let working_source = base.join("working").join(format!("{}.png", doc.id));
+        if !(working_source.exists() && fs::rename(&working_source, &source).is_ok()) {
+            atomic_write(&source, &encode(&doc.source)?)?;
+        }
     }
     let state = dir.join(format!("{}.json", doc.id));
     atomic_write(&state, &serde_json::to_vec(&doc.saved())?)?;
@@ -234,7 +243,8 @@ fn persist_in(doc: &Document, base: &Path, preview: Option<RgbaImage>) -> Result
         None => thumbnail(&doc.render()?, 240, 160),
     };
     atomic_write(&dir.join(format!("{}-thumb.png", doc.id)), &encode(&thumb)?)?;
-    let mut recents = recent_paths_in(base)?;
+
+    let mut recents = json_entries_sorted(&dir)?;
     recents.retain(|p| p.file_stem() != state.file_stem());
     recents.insert(0, state.clone());
     for p in recents.iter().skip(5) {
@@ -246,11 +256,54 @@ fn persist_in(doc: &Document, base: &Path, preview: Option<RgbaImage>) -> Result
                 fs::remove_file(p.with_file_name(format!("{}-thumb.png", id.to_string_lossy())));
         }
     }
+    let working_dir = base.join("working");
     for ext in ["png", "json"] {
-        let _ = fs::remove_file(base.join("working").join(format!("{}.{}", doc.id, ext)));
+        let _ = fs::remove_file(working_dir.join(format!("{}.{}", doc.id, ext)));
+    }
+    if let Some(cutoff) = std::time::SystemTime::now().checked_sub(Duration::from_secs(24 * 3600))
+        && let Ok(entries) = fs::read_dir(&working_dir)
+    {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let is_stale = entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .is_ok_and(|t| t < cutoff);
+            if !is_stale {
+                continue;
+            }
+            match path.extension().and_then(|e| e.to_str()) {
+                Some("json") => {
+                    let _ = fs::remove_file(&path);
+                    let _ = fs::remove_file(path.with_extension("png"));
+                }
+                Some("png") => {
+                    if !path.with_extension("json").exists() {
+                        let _ = fs::remove_file(&path);
+                    }
+                }
+                Some("tmp") => {
+                    let _ = fs::remove_file(&path);
+                }
+                _ => {}
+            }
+        }
     }
     Ok(state)
 }
+fn json_entries_sorted(dir: &Path) -> Result<Vec<PathBuf>> {
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut entries: Vec<_> = fs::read_dir(dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|e| e == "json"))
+        .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
+        .collect();
+    entries.sort_by_key(|e| std::cmp::Reverse(e.0));
+    Ok(entries.into_iter().map(|e| e.1).collect())
+}
+
 pub fn recent_paths() -> Result<Vec<PathBuf>> {
     recent_paths_in(&runtime()?)
 }

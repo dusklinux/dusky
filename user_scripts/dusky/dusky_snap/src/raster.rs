@@ -8,14 +8,134 @@ use image::{Rgba, RgbaImage};
 use std::cell::RefCell;
 use tiny_skia::{FillRule, LineCap, LineJoin, Paint, PathBuilder, Pixmap, Stroke, Transform};
 
+fn composite_pixmap(out: &mut RgbaImage, overlay: &Pixmap) {
+    for (dst, src) in out
+        .pixels_mut()
+        .zip(overlay.data().as_chunks::<4>().0.iter())
+    {
+        let a = src[3] as u32;
+        if a == 0 {
+            continue;
+        }
+        let da = dst[3] as u32;
+        let alpha = a + (da * (255 - a) + 127) / 255;
+        for k in 0..3 {
+            dst[k] =
+                ((src[k] as u32 * 255 + (dst[k] as u32 * da * (255 - a) + 127) / 255 + alpha / 2)
+                    / alpha)
+                    .min(255) as u8;
+        }
+        dst[3] = alpha as u8;
+    }
+}
+
+fn box_blur_h(src: &[[f32; 4]], dst: &mut [[f32; 4]], w: usize, h: usize, r: usize) {
+    if w == 0 || h == 0 {
+        return;
+    }
+    let inv = 1.0 / (2 * r + 1) as f32;
+    for y in 0..h {
+        let row = y * w;
+        let mut acc = [0.0f32; 4];
+        for i in -(r as isize)..=(r as isize) {
+            let x = i.clamp(0, w as isize - 1) as usize;
+            let p = src[row + x];
+            for c in 0..4 {
+                acc[c] += p[c];
+            }
+        }
+        for x in 0..w {
+            for c in 0..4 {
+                dst[row + x][c] = acc[c] * inv;
+            }
+            let sub = (x as isize - r as isize).clamp(0, w as isize - 1) as usize;
+            let add = (x as isize + r as isize + 1).clamp(0, w as isize - 1) as usize;
+            let ps = src[row + sub];
+            let pa = src[row + add];
+            for c in 0..4 {
+                acc[c] += pa[c] - ps[c];
+            }
+        }
+    }
+}
+
+fn box_blur_v(src: &[[f32; 4]], dst: &mut [[f32; 4]], w: usize, h: usize, r: usize) {
+    if w == 0 || h == 0 {
+        return;
+    }
+    let inv = 1.0 / (2 * r + 1) as f32;
+    for x in 0..w {
+        let mut acc = [0.0f32; 4];
+        for i in -(r as isize)..=(r as isize) {
+            let y = i.clamp(0, h as isize - 1) as usize;
+            let p = src[y * w + x];
+            for c in 0..4 {
+                acc[c] += p[c];
+            }
+        }
+        for y in 0..h {
+            for c in 0..4 {
+                dst[y * w + x][c] = acc[c] * inv;
+            }
+            let sub = (y as isize - r as isize).clamp(0, h as isize - 1) as usize;
+            let add = (y as isize + r as isize + 1).clamp(0, h as isize - 1) as usize;
+            let ps = src[sub * w + x];
+            let pa = src[add * w + x];
+            for c in 0..4 {
+                acc[c] += pa[c] - ps[c];
+            }
+        }
+    }
+}
+
+fn fast_box_blur_rgba(sample: &RgbaImage, sigma: f32) -> RgbaImage {
+    let (w, h) = (sample.width() as usize, sample.height() as usize);
+    if w == 0 || h == 0 {
+        return sample.clone();
+    }
+    let r = (sigma.round() as usize).max(1);
+    let mut a: Vec<[f32; 4]> = sample
+        .pixels()
+        .map(|p| {
+            let alpha = p[3] as f32 / 255.0;
+            [p[0] as f32 * alpha, p[1] as f32 * alpha, p[2] as f32 * alpha, p[3] as f32]
+        })
+        .collect();
+    let mut b = vec![[0.0f32; 4]; w * h];
+    for _ in 0..3 {
+        box_blur_h(&a, &mut b, w, h, r);
+        box_blur_v(&b, &mut a, w, h, r);
+    }
+    let mut out = RgbaImage::new(w as u32, h as u32);
+    for (dst, p) in out.pixels_mut().zip(a.iter()) {
+        let a_u8 = p[3].round().clamp(0.0, 255.0) as u8;
+        if a_u8 == 0 {
+            *dst = Rgba([0, 0, 0, 0]);
+        } else {
+            let inv_a = 255.0 / p[3].max(1.0);
+            *dst = Rgba([
+                (p[0] * inv_a).round().clamp(0.0, 255.0) as u8,
+                (p[1] * inv_a).round().clamp(0.0, 255.0) as u8,
+                (p[2] * inv_a).round().clamp(0.0, 255.0) as u8,
+                a_u8,
+            ]);
+        }
+    }
+    out
+}
+
 pub fn render(doc: &Document) -> Result<RgbaImage> {
     let canvas = doc.canvas();
-    let pad = if doc.state.backdrop > 0 { 32 } else { 0 };
-    let w = canvas.w as u32 + pad * 2;
-    let h = canvas.h as u32 + pad * 2;
-    if w == 0 || h == 0 || u64::from(w) * u64::from(h) > 160_000_000 {
+    let pad: u64 = if doc.state.backdrop > 0 { 32 } else { 0 };
+    if canvas.w < 1.0 || canvas.h < 1.0 {
+        return Err("Canvas has invalid dimensions".into());
+    }
+    let w64 = canvas.w as u64 + pad * 2;
+    let h64 = canvas.h as u64 + pad * 2;
+    if w64 == 0 || h64 == 0 || w64.saturating_mul(h64) > 160_000_000 {
         return Err("Canvas exceeds the 160 megapixel render budget".into());
     }
+    let (w, h, pad) = (w64 as u32, h64 as u32, pad as u32);
     let mut out = RgbaImage::new(w, h);
     if doc.state.backdrop > 0 {
         let colors = [[31, 33, 43], [71, 56, 135], [15, 97, 110], [140, 61, 82]];
@@ -23,13 +143,17 @@ pub fn render(doc: &Document) -> Result<RgbaImage> {
         for (x, y, p) in out.enumerate_pixels_mut() {
             let t = 0.55 * (x as f64 / w as f64 + y as f64 / h as f64) / 2.0;
             let shadow = if doc.state.shadow {
-                let dx = (pad as f64 - x as f64)
+                let sdx = (pad as f64 - x as f64)
                     .max(x as f64 - (w - pad) as f64)
                     .max(0.0);
-                let dy = (pad as f64 + 4.0 - y as f64)
+                let sdy = (pad as f64 + 4.0 - y as f64)
                     .max(y as f64 - (h - pad) as f64 - 4.0)
                     .max(0.0);
-                1.0 - 0.25 * (-(dx * dx + dy * dy) / 72.0).exp()
+                if sdx == 0.0 && sdy == 0.0 {
+                    0.75
+                } else {
+                    1.0 - 0.25 * (-(sdx * sdx + sdy * sdy) / 72.0).exp()
+                }
             } else {
                 1.0
             };
@@ -79,104 +203,91 @@ pub fn render(doc: &Document) -> Result<RgbaImage> {
             }
         }
     }
-    for layer in doc
-        .state
-        .layers
-        .iter()
-        .filter(|l| matches!(l.tool, Tool::Redact | Tool::Pixelate | Tool::Blur))
-    {
-        let Some(&a) = layer.points.first() else {
+
+    let mut overlay: Option<Pixmap> = None;
+    for layer in &doc.state.layers {
+        if matches!(layer.tool, Tool::Cut | Tool::Insert) {
             continue;
-        };
-        let b = *layer.points.last().unwrap_or(&a);
-        let rect = Rect::between(a, b).pixel_bounds().intersect(canvas);
-        if layer.tool == Tool::Blur {
-            let region = rect.intersect(Rect {
-                x: -dx as f64,
-                y: -dy as f64,
-                w: w as f64,
-                h: h as f64,
-            });
+        }
+        if matches!(layer.tool, Tool::Redact | Tool::Pixelate | Tool::Blur) {
+            if let Some(pix) = overlay.take() {
+                composite_pixmap(&mut out, &pix);
+            }
+            let Some(&a) = layer.points.first() else {
+                continue;
+            };
+            let b = *layer.points.last().unwrap_or(&a);
+            let region = Rect::between(a, b)
+                .pixel_bounds()
+                .intersect(canvas)
+                .intersect(Rect {
+                    x: -dx as f64,
+                    y: -dy as f64,
+                    w: w as f64,
+                    h: h as f64,
+                });
             if region.w < 1.0 || region.h < 1.0 {
                 continue;
             }
-            let radius = layer.width.clamp(1.0, 80.0) as f32;
-            let halo = (radius * 3.0).ceil() as u32;
-            let x = (region.x as i32 + dx) as u32;
-            let y = (region.y as i32 + dy) as u32;
-            let left = x.saturating_sub(halo);
-            let top = y.saturating_sub(halo);
-            let right = (x + region.w as u32).saturating_add(halo).min(w);
-            let bottom = (y + region.h as u32).saturating_add(halo).min(h);
-            let sample =
-                image::imageops::crop_imm(&out, left, top, right - left, bottom - top).to_image();
-            let blurred = image::imageops::blur(&sample, radius);
-            let patch = image::imageops::crop_imm(
-                &blurred,
-                x - left,
-                y - top,
-                region.w as u32,
-                region.h as u32,
-            );
-            image::imageops::replace(&mut out, &patch.to_image(), x as i64, y as i64);
-            continue;
-        }
-        let step = (layer.width * 4.0).max(8.0) as i32;
-        for y in rect.y as i32..(rect.y + rect.h) as i32 {
-            for x in rect.x as i32..(rect.x + rect.w) as i32 {
-                let (ox, oy) = (x + dx, y + dy);
-                if ox < 0 || oy < 0 || ox >= w as i32 || oy >= h as i32 {
-                    continue;
+            let rx = (region.x as i32 + dx) as u32;
+            let ry = (region.y as i32 + dy) as u32;
+            let rw = region.w as u32;
+            let rh = region.h as u32;
+            match layer.tool {
+                Tool::Blur => {
+                    let radius = layer.width.clamp(1.0, 80.0) as f32;
+                    let halo = (radius * 3.0).ceil() as u32;
+                    let left = rx.saturating_sub(halo);
+                    let top = ry.saturating_sub(halo);
+                    let right = (rx + rw).saturating_add(halo).min(w);
+                    let bottom = (ry + rh).saturating_add(halo).min(h);
+                    let sample =
+                        image::imageops::crop_imm(&out, left, top, right - left, bottom - top)
+                            .to_image();
+                    let blurred = fast_box_blur_rgba(&sample, radius);
+                    let patch =
+                        image::imageops::crop_imm(&blurred, rx - left, ry - top, rw, rh).to_image();
+                    image::imageops::replace(&mut out, &patch, rx as i64, ry as i64);
                 }
-                let pixel = if layer.tool == Tool::Redact {
-                    Rgba([0, 0, 0, 255])
-                } else {
-                    let sx = (rect.x as i32 + ((x - rect.x as i32) / step) * step)
-                        .clamp(0, source.width() as i32 - 1) as u32;
-                    let sy = (rect.y as i32 + ((y - rect.y as i32) / step) * step)
-                        .clamp(0, source.height() as i32 - 1) as u32;
-                    let p = source.get_pixel(sx, sy);
-                    Rgba([p[0], p[1], p[2], 255])
-                };
-                *out.get_pixel_mut(ox as u32, oy as u32) = pixel;
+                Tool::Redact => {
+                    for y in ry..ry + rh {
+                        for x in rx..rx + rw {
+                            *out.get_pixel_mut(x, y) = Rgba([0, 0, 0, 255]);
+                        }
+                    }
+                }
+                Tool::Pixelate => {
+                    let step = (layer.width * 4.0).max(8.0) as u32;
+                    let mut by = ry;
+                    while by < ry + rh {
+                        let bh = step.min(ry + rh - by);
+                        let mut bx = rx;
+                        while bx < rx + rw {
+                            let bw = step.min(rx + rw - bx);
+                            let sample = *out.get_pixel(bx, by);
+                            for y in by..by + bh {
+                                for x in bx..bx + bw {
+                                    *out.get_pixel_mut(x, y) = sample;
+                                }
+                            }
+                            bx += step;
+                        }
+                        by += step;
+                    }
+                }
+                _ => {}
             }
+        } else {
+            let pix = match overlay.as_mut() {
+                Some(p) => p,
+                None => overlay
+                    .insert(Pixmap::new(w, h).ok_or("Cannot allocate annotation canvas")?),
+            };
+            draw_layer(pix, layer, dx as f32, dy as f32)?;
         }
     }
-    let mut vectors = doc
-        .state
-        .layers
-        .iter()
-        .filter(|l| {
-            !matches!(
-                l.tool,
-                Tool::Redact | Tool::Pixelate | Tool::Blur | Tool::Cut | Tool::Insert
-            )
-        })
-        .peekable();
-    if vectors.peek().is_none() {
-        return Ok(out);
-    }
-    let mut overlay = Pixmap::new(w, h).ok_or("Cannot allocate annotation canvas")?;
-    for layer in vectors {
-        draw_layer(&mut overlay, layer, dx as f32, dy as f32)?;
-    }
-    for (dst, src) in out
-        .pixels_mut()
-        .zip(overlay.data().as_chunks::<4>().0.iter())
-    {
-        let a = src[3] as u32;
-        if a == 0 {
-            continue;
-        }
-        let da = dst[3] as u32;
-        let alpha = a + (da * (255 - a) + 127) / 255;
-        for k in 0..3 {
-            dst[k] =
-                ((src[k] as u32 * 255 + (dst[k] as u32 * da * (255 - a) + 127) / 255 + alpha / 2)
-                    / alpha)
-                    .min(255) as u8;
-        }
-        dst[3] = alpha as u8;
+    if let Some(pix) = overlay {
+        composite_pixmap(&mut out, &pix);
     }
     Ok(out)
 }
@@ -420,38 +531,46 @@ fn text(
                 pixels.push((gx, gy, w, h, c));
             },
         );
+        let mut blend_px = |px: i32, py: i32, r: u8, g: u8, b: u8, a: u8| {
+            if a == 0 || px < 0 || py < 0 || px >= pix.width() as i32 || py >= pix.height() as i32 {
+                return;
+            }
+            let idx = (py as usize * pix.width() as usize + px as usize) * 4;
+            let dst = &mut pix.data_mut()[idx..idx + 4];
+            let sa = a as u32;
+            let inv = 255 - sa;
+            let sr = (r as u32 * sa + 127) / 255;
+            let sg = (g as u32 * sa + 127) / 255;
+            let sb = (b as u32 * sa + 127) / 255;
+            dst[0] = (sr + (dst[0] as u32 * inv + 127) / 255).min(255) as u8;
+            dst[1] = (sg + (dst[1] as u32 * inv + 127) / 255).min(255) as u8;
+            dst[2] = (sb + (dst[2] as u32 * inv + 127) / 255).min(255) as u8;
+            dst[3] = (sa + (dst[3] as u32 * inv + 127) / 255).min(255) as u8;
+        };
+        let ox = x.round() as i32;
+        let oy = y.round() as i32;
         if style == 1 {
             for &(gx, gy, w, h, c) in &pixels {
-                if let Some(r) = tiny_skia::Rect::from_xywh(
-                    x + gx as f32 - 1.0,
-                    y + gy as f32 - 1.0,
-                    w as f32 + 2.0,
-                    h as f32 + 2.0,
-                ) {
-                    pix.fill_rect(
-                        r,
-                        &paint([0.02, 0.02, 0.03, c.a() as f64 / 255.0]),
-                        Transform::identity(),
-                        None,
-                    );
+                let a = c.a();
+                if a == 0 {
+                    continue;
+                }
+                for dy in -1..=h as i32 {
+                    for dx in -1..=w as i32 {
+                        blend_px(ox + gx + dx, oy + gy + dy, 5, 5, 8, a);
+                    }
                 }
             }
         }
         for (gx, gy, w, h, c) in pixels {
-            if let Some(r) =
-                tiny_skia::Rect::from_xywh(x + gx as f32, y + gy as f32, w as f32, h as f32)
-            {
-                pix.fill_rect(
-                    r,
-                    &paint([
-                        c.r() as f64 / 255.0,
-                        c.g() as f64 / 255.0,
-                        c.b() as f64 / 255.0,
-                        c.a() as f64 / 255.0,
-                    ]),
-                    Transform::identity(),
-                    None,
-                );
+            let a = c.a();
+            if a == 0 {
+                continue;
+            }
+            for dy in 0..h as i32 {
+                for dx in 0..w as i32 {
+                    blend_px(ox + gx + dx, oy + gy + dy, c.r(), c.g(), c.b(), a);
+                }
             }
         }
     });

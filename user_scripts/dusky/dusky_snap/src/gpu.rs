@@ -32,16 +32,16 @@ fn detect_primary_gpu_vendor(
     aq_devices: Option<&str>,
 ) -> Option<(String, String, String)> {
     // 1. Check AQ_DRM_DEVICES (set by Hyprland via gpu.lua, ordered with primary card first)
-    if let Some(aq_devices) = aq_devices
-        && let Some(first) = aq_devices.split(':').next()
-    {
-        let p = std::path::Path::new(first.trim());
-        if let Ok(real) = std::fs::canonicalize(p)
-            && let Some(name) = real.file_name().and_then(|s| s.to_str())
-            && is_card_name(name)
-            && let Some(pair) = read_card_vendor_driver(drm, name)
-        {
-            return Some(pair);
+    if let Some(aq_devices) = aq_devices {
+        for entry in aq_devices.split(':') {
+            let p = std::path::Path::new(entry.trim());
+            if let Ok(real) = std::fs::canonicalize(p)
+                && let Some(name) = real.file_name().and_then(|s| s.to_str())
+                && is_card_name(name)
+                && let Some(pair) = read_card_vendor_driver(drm, name)
+            {
+                return Some(pair);
+            }
         }
     }
 
@@ -79,86 +79,100 @@ pub fn inherit_session_environment(command: &mut Command) {
     }
 }
 
+fn data_dirs() -> Vec<std::path::PathBuf> {
+    let raw = env::var("XDG_DATA_DIRS").unwrap_or_default();
+    let dirs: Vec<_> = raw
+        .split(':')
+        .filter(|s| !s.is_empty())
+        .map(std::path::PathBuf::from)
+        .collect();
+    if dirs.is_empty() {
+        vec![
+            std::path::PathBuf::from("/usr/local/share"),
+            std::path::PathBuf::from("/usr/share"),
+        ]
+    } else {
+        dirs
+    }
+}
+
+fn find_data_file(rel: &str) -> Option<String> {
+    data_dirs()
+        .into_iter()
+        .map(|d| d.join(rel))
+        .find(|p| p.is_file())
+        .map(|p| p.to_string_lossy().into_owned())
+}
+
 fn configure_environment() -> Vec<&'static str> {
     let mut keys = Vec::with_capacity(4);
-    // Iced discovers the enabled WGPU backends unless explicitly overridden.
-    // Filter driver discovery before starting any threads.
-    let power_overridden = env::var_os("WGPU_POWER_PREF").is_some();
-    if !power_overridden {
-        unsafe { env::set_var("WGPU_POWER_PREF", "low") };
-        keys.push("WGPU_POWER_PREF");
-    }
-    // Respect explicit GPU/offload selection, including the legacy Vulkan API.
-    if power_overridden
-        || [
-            "WGPU_ADAPTER_NAME",
-            "VK_DRIVER_FILES",
-            "VK_ICD_FILENAMES",
-            "VK_ADD_DRIVER_FILES",
-            "VK_LOADER_DRIVERS_SELECT",
-            "VK_LOADER_DRIVERS_DISABLE",
-            "VK_LOADER_DEVICE_SELECT",
-            "DRI_PRIME",
-            "MESA_VK_DEVICE_SELECT",
-            "MESA_LOADER_DRIVER_OVERRIDE",
-            "__NV_PRIME_RENDER_OFFLOAD",
-            "__NV_PRIME_RENDER_OFFLOAD_PROVIDER",
-            "__EGL_VENDOR_LIBRARY_FILENAMES",
-            "__EGL_VENDOR_LIBRARY_DIRS",
-        ]
-        .iter()
-        .any(|name| env::var_os(name).is_some())
-    {
+    let explicit_override = [
+        "WGPU_POWER_PREF",
+        "WGPU_ADAPTER_NAME",
+        "VK_DRIVER_FILES",
+        "VK_ICD_FILENAMES",
+        "VK_ADD_DRIVER_FILES",
+        "VK_LOADER_DRIVERS_SELECT",
+        "VK_LOADER_DRIVERS_DISABLE",
+        "VK_LOADER_DEVICE_SELECT",
+        "DRI_PRIME",
+        "MESA_VK_DEVICE_SELECT",
+        "MESA_LOADER_DRIVER_OVERRIDE",
+        "__NV_PRIME_RENDER_OFFLOAD",
+        "__NV_PRIME_RENDER_OFFLOAD_PROVIDER",
+        "__EGL_VENDOR_LIBRARY_FILENAMES",
+        "__EGL_VENDOR_LIBRARY_DIRS",
+    ]
+    .iter()
+    .any(|name| env::var_os(name).is_some());
+    if explicit_override {
         return keys;
     }
 
     let aq_devices = env::var("AQ_DRM_DEVICES").ok();
-    let Some((vendor, driver, pci_device)) =
-        detect_primary_gpu_vendor(Path::new("/sys/class/drm"), aq_devices.as_deref())
-    else {
-        return keys;
-    };
+    let primary = detect_primary_gpu_vendor(Path::new("/sys/class/drm"), aq_devices.as_deref());
+    let mut set_prime = false;
 
-    // 2. Determine matching Vulkan ICD candidates based on the actual primary GPU
-    let candidates = driver_candidates(&vendor, &driver);
-    if candidates.is_empty() {
-        return keys;
+    if let Some((vendor, driver, pci_device)) = primary {
+        let candidates = driver_candidates(&vendor, &driver);
+        if !candidates.is_empty() {
+            if matches!(vendor.as_str(), "0x8086" | "0x1002" | "0x1af4") {
+                if matches!(vendor.as_str(), "0x8086" | "0x1002")
+                    && pci_device.split([':', '.']).count() == 4
+                    && pci_device
+                        .chars()
+                        .all(|c| c.is_ascii_hexdigit() || c == ':' || c == '.')
+                {
+                    let prime = format!("pci-{}", pci_device.replace([':', '.'], "_"));
+                    unsafe { env::set_var("DRI_PRIME", prime) };
+                    keys.push("DRI_PRIME");
+                    set_prime = true;
+                }
+                let mesa_fallback = "/usr/share/glvnd/egl_vendor.d/50_mesa.json";
+                if let Some(mesa_egl) = find_data_file("glvnd/egl_vendor.d/50_mesa.json")
+                    .or_else(|| Path::new(mesa_fallback).is_file().then(|| mesa_fallback.into()))
+                {
+                    unsafe { env::set_var("__EGL_VENDOR_LIBRARY_FILENAMES", mesa_egl) };
+                    keys.push("__EGL_VENDOR_LIBRARY_FILENAMES");
+                }
+            }
+            let drivers: Vec<String> = candidates
+                .iter()
+                .filter_map(|c| {
+                    let rel = c.strip_prefix("/usr/share/").unwrap_or(c);
+                    find_data_file(rel).or_else(|| Path::new(c).is_file().then(|| (*c).into()))
+                })
+                .collect();
+            if !drivers.is_empty() {
+                unsafe { env::set_var("VK_DRIVER_FILES", drivers.join(":")) };
+                keys.push("VK_DRIVER_FILES");
+            }
+        }
     }
 
-    // Mesa selects this PCI GPU for EGL and puts it first for Vulkan.
-    // This does not prevent enumeration/initialization of same-driver GPUs.
-    // Leave unknown/non-PCI devices to their driver defaults.
-    if matches!(vendor.as_str(), "0x8086" | "0x1002" | "0x1af4") {
-        if matches!(vendor.as_str(), "0x8086" | "0x1002")
-            && pci_device.split([':', '.']).count() == 4
-            && pci_device
-                .chars()
-                .all(|c| c.is_ascii_hexdigit() || c == ':' || c == '.')
-        {
-            let prime = format!("pci-{}", pci_device.replace([':', '.'], "_"));
-            unsafe { env::set_var("DRI_PRIME", prime) };
-            keys.push("DRI_PRIME");
-        }
-        let mesa_egl = "/usr/share/glvnd/egl_vendor.d/50_mesa.json";
-        if env::var_os("__EGL_VENDOR_LIBRARY_FILENAMES").is_none()
-            && std::path::Path::new(mesa_egl).is_file()
-        {
-            unsafe { env::set_var("__EGL_VENDOR_LIBRARY_FILENAMES", mesa_egl) };
-            keys.push("__EGL_VENDOR_LIBRARY_FILENAMES");
-        }
-    }
-
-    // Include all installed matching ICDs: ANV and HASVK cover different Intel
-    // generations. Driver filtering is not physical-device filtering.
-    // Unrecognized filenames retain normal discovery, including custom ICDs.
-    let drivers: Vec<_> = candidates
-        .iter()
-        .copied()
-        .filter(|candidate| std::path::Path::new(candidate).is_file())
-        .collect();
-    if !drivers.is_empty() {
-        unsafe { env::set_var("VK_DRIVER_FILES", drivers.join(":")) };
-        keys.push("VK_DRIVER_FILES");
+    if !set_prime {
+        unsafe { env::set_var("WGPU_POWER_PREF", "low") };
+        keys.push("WGPU_POWER_PREF");
     }
     keys
 }
@@ -179,7 +193,7 @@ fn driver_candidates(vendor: &str, driver: &str) -> &'static [&'static str] {
         ],
         // NVIDIA (Desktop discrete GPU or single-GPU system)
         "0x10de" => {
-            if driver == "nouveau" {
+            if matches!(driver, "nouveau" | "nova") {
                 &[
                     "/usr/share/vulkan/icd.d/nouveau_icd.x86_64.json",
                     "/usr/share/vulkan/icd.d/nouveau_icd.json",
@@ -229,6 +243,11 @@ mod tests {
             detect_primary_gpu_vendor(&root, Some(&ordered)).unwrap().0,
             "0x8086"
         );
+        let fallback = format!("/missing:{}", root.join("card10").display());
+        assert_eq!(
+            detect_primary_gpu_vendor(&root, Some(&fallback)).unwrap().0,
+            "0x10de"
+        );
         assert!(detect_primary_gpu_vendor(&root, Some("/missing")).is_none());
         std::fs::remove_dir_all(root.join("card10")).unwrap();
         assert_eq!(detect_primary_gpu_vendor(&root, None).unwrap().0, "0x8086");
@@ -248,6 +267,11 @@ mod tests {
         );
         assert!(
             driver_candidates("0x10de", "nouveau")
+                .iter()
+                .all(|p| p.contains("nouveau"))
+        );
+        assert!(
+            driver_candidates("0x10de", "nova")
                 .iter()
                 .all(|p| p.contains("nouveau"))
         );
