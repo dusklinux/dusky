@@ -444,6 +444,13 @@ hl.window_rule({
     center = true
 })
 
+--- Spotify: always opens in special:music (toggle with SUPER+SHIFT+M) ---
+hl.window_rule({
+    name = "spotify-special-music",
+    match = { class = "^(Spotify|spotify)$" },
+    workspace = "special:music silent"
+})
+
 --- Default Applications ---
 hl.window_rule({
     name = "default_apps_switcher",
