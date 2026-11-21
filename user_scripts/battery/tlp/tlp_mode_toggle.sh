@@ -3,6 +3,8 @@
 set -euo pipefail
 
 readonly STATE_FILE="$HOME/.config/dusky/settings/tlp_state"
+# Last profile the user explicitly chose (or "auto"); re-applied at login by `restore`.
+readonly SELECTION_FILE="$HOME/.config/dusky/settings/tlp_selection"
 readonly STATE_DIR="${STATE_FILE%/*}"
 readonly LOCK_FILE="${XDG_RUNTIME_DIR:-$STATE_DIR}/tlp_toggle.lock"
 readonly -a PROFILES=('power-saver' 'balanced' 'performance')
@@ -32,6 +34,7 @@ USAGE
     tlp-toggle balanced            Select Balanced
     tlp-toggle power-saver         Select Power Saver
     tlp-toggle auto                Apply saved settings and resume automatic operation
+    tlp-toggle restore             Re-apply the last chosen profile (run at login)
     tlp-toggle status              Print active profile
     tlp-toggle status --json       Print Waybar JSON
     tlp-toggle status --probe      Print profile, power source, and mode
@@ -57,10 +60,22 @@ case "$action" in
         case "$flag" in ''|--reverse|-r) ;; *) err "Unknown toggle option: $flag" ;; esac ;;
     status)
         case "$flag" in ''|--json|--probe|-p|--probe-json|--json-probe|-j) ;; *) err "Unknown status option: $flag" ;; esac ;;
-    performance|balanced|power-saver|auto)
+    performance|balanced|power-saver|auto|restore)
         [[ -z $flag ]] || err "$action takes no arguments." ;;
     *) err "Unknown command: $action" ;;
 esac
+quiet=0
+if [[ $action == restore ]]; then
+    # Login hook: never fail loudly. No TLP, no saved choice, or "auto" means
+    # TLP's own boot-time selection is already correct.
+    command -v tlp-stat >/dev/null && command -v tlp >/dev/null || exit 0
+    selection=''
+    [[ -r $SELECTION_FILE ]] && read -r selection < "$SELECTION_FILE" || :
+    case "$selection" in
+        performance|balanced|power-saver) action=$selection; quiet=1 ;;
+        *) exit 0 ;;
+    esac
+fi
 command -v tlp-stat >/dev/null || err 'tlp-stat is not installed.'
 
 current=unknown
@@ -218,7 +233,14 @@ temporary=$(mktemp -- "${STATE_FILE}.XXXXXX")
 trap 'rm -f -- "$temporary"' EXIT
 printf '%s\n' "$current" > "$temporary"
 mv -f -- "$temporary" "$STATE_FILE"
-if command -v notify-send >/dev/null; then
+# Remember explicit choices so `restore` can re-apply them after a reboot.
+if (( ! quiet )); then
+    selection=$current
+    [[ $target == start ]] && selection=auto
+    printf '%s\n' "$selection" > "$temporary"
+    mv -f -- "$temporary" "$SELECTION_FILE"
+fi
+if (( ! quiet )) && command -v notify-send >/dev/null; then
     (exec {lock_fd}>&-; notify-send --app-name=dusky-tlp --urgency=low \
         --icon="${NOTIFY_ICON[$current]}" \
         --hint=string:x-canonical-private-synchronous:power-profile \
