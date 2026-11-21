@@ -272,7 +272,7 @@ const EDITOR_TITLE: &str = "Dusky Snap - Annotate";
 
 fn float_rules(picker: Option<&Monitor>) -> Result<()> {
     let mut rules = String::from(
-        r#"hl.window_rule({name="dusky_snap_native",match={class="^dusky-snap(-(pin|pick))?$"},float=true,center=true,no_dim=true,no_blur=true,opacity="1.0 override 1.0 override",persistent_size=false,border_size=0,no_shadow=true,decorate=false,rounding=0}); hl.window_rule({name="dusky_snap_pin",match={class="^dusky-snap-(pin|pick)$"},pin=true})"#,
+        r#"hl.window_rule({name="dusky_snap_native",match={class="^dusky-snap(-(pin|pick))?$"},float=true,center=true,no_dim=true,no_blur=true,opacity="1.0 override 1.0 override 1.0 override",persistent_size=false,border_size=0,no_shadow=true,decorate=false,rounding=0}); hl.window_rule({name="dusky_snap_pin",match={class="^dusky-snap-(pin|pick)$"},pin=true})"#,
     );
     // Only the ready, unpinned editor participates in compositor blur.
     rules.push_str(&format!(
@@ -283,7 +283,7 @@ fn float_rules(picker: Option<&Monitor>) -> Result<()> {
         // A normal fullscreen surface loses pointer events to pinned windows.
         // Map the picker as the top pinned float, covering the captured output.
         rules.push_str(&format!(
-            r#"; hl.window_rule({{name="dusky_snap_pick",match={{class="^dusky-snap-pick$"}},monitor={},size="monitor_w monitor_h",move="0 0",center=false,no_anim=true}})"#,
+            r#"; hl.window_rule({{name="dusky_snap_pick",match={{class="^dusky-snap-pick$"}},monitor={},size="monitor_w monitor_h",move="0 0",center=false,force_rgbx=true,no_anim=true}})"#,
             serde_json::to_string(&monitor.name)?
         ));
     }
@@ -498,7 +498,11 @@ pub fn run(options: Options, start: Instant) -> Result<()> {
     .subscription(App::subscription)
     .theme(|app: &App| app.theme.clone())
     .style(|app: &App, _| iced::theme::Style {
-        background_color: Color::TRANSPARENT,
+        background_color: if app.phase == Phase::Pick {
+            Color::BLACK
+        } else {
+            Color::TRANSPARENT
+        },
         text_color: app.theme.palette().text,
     })
     .run()?;
@@ -2282,7 +2286,8 @@ fn scroll_frame(&mut self) -> Task<Message> {
                 .height(h)
                 .content_fit(iced::ContentFit::Contain),
         )
-        .on_press(Message::Drag);
+        .on_press(Message::Drag)
+        .on_right_press(Message::Act(Action::Save));
         let bar_width = width.min(270.0);
         widget::stack![
             widget::pin(image).position(iced::Point::new(
@@ -2472,14 +2477,14 @@ fn scroll_frame(&mut self) -> Task<Message> {
             container(horizontal(toolbar)).max_width((bar_width - 128.0).max(1.0)),
             icon_button(
                 "copy",
-                "Copy and close · Ctrl+C / right-click",
+                "Copy and close · Ctrl+C",
                 Message::Act(Action::Copy),
                 false,
                 self.theme.palette().primary
             ),
             icon_button(
                 "save",
-                "Save and close · Ctrl+S",
+                "Save and close · Ctrl+S / right-click",
                 Message::Act(Action::Save),
                 false,
                 ink
@@ -3302,7 +3307,8 @@ impl canvas::Program<Message> for Surface<'_> {
             return None;
         }
         let p = position?;
-        let source = self.view(bounds.size()).source(p);
+        let view = self.view(bounds.size());
+        let source = view.source(p);
         let motion = match event {
             canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right))
                 if self.app.phase == Phase::Edit
@@ -3310,9 +3316,9 @@ impl canvas::Program<Message> for Surface<'_> {
                     && cursor.is_over(bounds)
                     && self.app.text_anchor.is_none()
                     && self.app.save_path.is_none()
-                    && self.app.doc().canvas().contains(source) =>
+                    && view.rect.contains(p) =>
             {
-                return Some(canvas::Action::publish(Message::Act(Action::Copy)).and_capture());
+                return Some(canvas::Action::publish(Message::Act(Action::Save)).and_capture());
             }
             canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
                 if cursor.is_over(bounds) =>
@@ -3452,27 +3458,29 @@ impl canvas::Program<Message> for Surface<'_> {
             });
             if let Some(r) = selection {
                 let b = view.bounds(r);
-                let dim = Color::from_rgba(0.0, 0.0, 0.0, 0.45);
-                frame.fill_rectangle(
-                    iced::Point::ORIGIN,
-                    Size::new(bounds.width, b.y.max(0.0)),
-                    dim,
-                );
-                frame.fill_rectangle(
-                    iced::Point::new(0.0, b.y + b.height),
-                    Size::new(bounds.width, (bounds.height - b.y - b.height).max(0.0)),
-                    dim,
-                );
-                frame.fill_rectangle(
-                    iced::Point::new(0.0, b.y),
-                    Size::new(b.x.max(0.0), b.height),
-                    dim,
-                );
-                frame.fill_rectangle(
-                    iced::Point::new(b.x + b.width, b.y),
-                    Size::new((bounds.width - b.x - b.width).max(0.0), b.height),
-                    dim,
-                );
+                if drag_selection.is_some() {
+                    let dim = Color::from_rgba(0.0, 0.0, 0.0, 0.45);
+                    frame.fill_rectangle(
+                        iced::Point::ORIGIN,
+                        Size::new(bounds.width, b.y.max(0.0)),
+                        dim,
+                    );
+                    frame.fill_rectangle(
+                        iced::Point::new(0.0, b.y + b.height),
+                        Size::new(bounds.width, (bounds.height - b.y - b.height).max(0.0)),
+                        dim,
+                    );
+                    frame.fill_rectangle(
+                        iced::Point::new(0.0, b.y),
+                        Size::new(b.x.max(0.0), b.height),
+                        dim,
+                    );
+                    frame.fill_rectangle(
+                        iced::Point::new(b.x + b.width, b.y),
+                        Size::new((bounds.width - b.x - b.width).max(0.0), b.height),
+                        dim,
+                    );
+                }
                 outline(&mut frame, r);
                 for (x, y) in [
                     (b.x, b.y),
@@ -4016,14 +4024,34 @@ mod tests {
                 pixel(&plain, 10, 110),
                 "crosshair at {scale}"
             );
-            assert!(
-                pixel(&guides, 20, 20)[0] < pixel(&plain, 20, 20)[0],
-                "outside window dims at {scale}"
+            assert_eq!(
+                pixel(&guides, 20, 20),
+                pixel(&plain, 20, 20),
+                "outside window stays undimmed on passive hover at {scale}"
+            );
+            assert_ne!(
+                pixel(&guides, 80, 60),
+                pixel(&plain, 80, 60),
+                "hovered window outline renders at {scale}"
             );
             assert_eq!(
                 pixel(&guides, 100, 100),
                 pixel(&plain, 100, 100),
                 "selected pixels stay clear at {scale}"
+            );
+            app.gesture = Some(Gesture {
+                start: Point::new(80.0, 60.0),
+                last: Point::new(240.0, 160.0),
+                points: vec![],
+                original: None,
+                resize: None,
+                checkpointed: false,
+            });
+            let dragged = draw(&app, scale);
+            app.gesture = None;
+            assert!(
+                pixel(&dragged, 20, 20)[0] < pixel(&plain, 20, 20)[0],
+                "outside drag selection dims at {scale}"
             );
             app.hover = None;
             app.zoom = 0.5;

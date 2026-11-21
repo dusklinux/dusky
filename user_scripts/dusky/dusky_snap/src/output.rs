@@ -84,6 +84,8 @@ pub fn encode(image: &RgbaImage) -> Result<Vec<u8>> {
         encoder.set_color(png::ColorType::Rgba);
         encoder.set_depth(png::BitDepth::Eight);
         encoder.set_compression(png::Compression::Fast);
+        // Leave Wayland scanout PNGs untagged (matching grim) so color-managed
+        // viewers pass raw device pixels through without a second EOTF/gamut shift.
         let mut writer = encoder.write_header()?;
         writer.write_image_data(image.as_raw())?;
     }
@@ -457,5 +459,22 @@ mod tests {
             let image = RgbaImage::new(source.0, source.1);
             assert_eq!(thumbnail(&image, 260, 340).dimensions(), expected);
         }
+    }
+
+    #[test]
+    fn encoded_png_is_untagged_without_color_space_chunks() {
+        let image = RgbaImage::from_pixel(4, 4, image::Rgba([64, 128, 192, 255]));
+        let bytes = encode(&image).unwrap();
+        let decoder = png::Decoder::new(std::io::Cursor::new(&bytes));
+        let mut reader = decoder.read_info().unwrap();
+        let info = reader.info();
+        assert!(info.srgb.is_none());
+        assert!(info.source_gamma.is_none());
+        assert!(info.source_chromaticities.is_none());
+        assert!(info.icc_profile.is_none());
+
+        let mut decoded = vec![0; reader.output_buffer_size().unwrap()];
+        let frame = reader.next_frame(&mut decoded).unwrap();
+        assert_eq!(&decoded[..frame.buffer_size()], image.as_raw().as_slice());
     }
 }

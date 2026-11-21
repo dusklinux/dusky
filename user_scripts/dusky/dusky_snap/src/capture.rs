@@ -145,6 +145,15 @@ fn window_targets(
 
 pub use crate::process::command;
 
+fn force_opaque(image: &mut RgbaImage) {
+    // Physical output formats like XRGB8888 leave undefined/compositor-blended
+    // values in byte 3, and libwayshot 0.9 preserves byte 3 as-is. Forcing
+    // 255 guarantees the output scanout is 100% physically opaque.
+    for chunk in image.as_mut().chunks_exact_mut(4) {
+        chunk[3] = 255;
+    }
+}
+
 fn output_image(
     conn: &libwayshot::WayshotConnection,
     output: &libwayshot::output::OutputInfo,
@@ -158,7 +167,9 @@ fn output_image(
         // WLR screencopy still needs the original output transform.
         output.transform = wayland_client::protocol::wl_output::Transform::Normal;
     }
-    Ok(conn.screenshot_single_output(output, cursor)?.into_rgba8())
+    let mut image = conn.screenshot_single_output(output, cursor)?.into_rgba8();
+    force_opaque(&mut image);
+    Ok(image)
 }
 
 pub fn take(o: &Options) -> Result<Capture> {
@@ -510,5 +521,20 @@ mod workspace_regression {
         }
         let trailing = [bytes.as_slice(), b" {}"].concat();
         assert!(parse_snapshot(&trailing).is_err());
+    }
+
+    #[test]
+    fn output_capture_forces_opaque_alpha_without_altering_rgb() {
+        let mut image = RgbaImage::from_raw(
+            3,
+            1,
+            vec![12, 34, 56, 0, 100, 150, 200, 217, 255, 128, 64, 255],
+        )
+        .unwrap();
+        force_opaque(&mut image);
+        assert_eq!(
+            image.into_raw(),
+            vec![12, 34, 56, 255, 100, 150, 200, 255, 255, 128, 64, 255]
+        );
     }
 }
