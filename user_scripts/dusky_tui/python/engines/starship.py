@@ -22,13 +22,13 @@ following the same pattern as the Waybar engine.
 ===============================================================================
 """
 
-lazy import hashlib
-lazy import json
+import hashlib
+import json
 import os
 import re
-lazy import tempfile
-lazy from pathlib import Path
-lazy from typing import Any
+import tempfile
+from pathlib import Path
+from typing import Any
 
 from python.frontend.core_types import BaseEngine
 
@@ -86,7 +86,7 @@ class StarshipEngine(BaseEngine):
             path = self.presets_dir / f"{name}.toml"
         try:
             return path.read_text(encoding="utf-8") if path.is_file() else None
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             return None
 
     def _normalize_name(self, name: str) -> str:
@@ -106,12 +106,12 @@ class StarshipEngine(BaseEngine):
         for stem, path in self._bundled_presets().items():
             try:
                 candidates.append((f"preset:{stem}", path.read_text(encoding="utf-8")))
-            except OSError:
+            except (OSError, UnicodeDecodeError):
                 pass
         for stem, path in self._custom_presets().items():
             try:
                 candidates.append((f"custom:{stem}", path.read_text(encoding="utf-8")))
-            except OSError:
+            except (OSError, UnicodeDecodeError):
                 pass
         for name, content in candidates:
             if content is not None and _content_hash(content) == content_hash:
@@ -125,8 +125,10 @@ class StarshipEngine(BaseEngine):
         state_data: dict[str, Any] = {}
         if self.state_file.exists():
             try:
-                state_data = json.loads(self.state_file.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
+                parsed = json.loads(self.state_file.read_text(encoding="utf-8"))
+                if isinstance(parsed, dict):
+                    state_data = parsed
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
                 state_data = {}
 
         active = "preset:dusky"
@@ -134,7 +136,7 @@ class StarshipEngine(BaseEngine):
         try:
             if self.config_path.is_file():
                 current_hash = _content_hash(self.config_path.read_text(encoding="utf-8"))
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             pass
 
         saved = state_data.get("active_prompt")
@@ -263,7 +265,7 @@ class StarshipEngine(BaseEngine):
                         return False, f"Config file not found: {self.config_path}", ""
                     try:
                         content = self.config_path.read_text(encoding="utf-8")
-                    except OSError as e:
+                    except (OSError, UnicodeDecodeError) as e:
                         return False, f"Failed to read config: {e}", ""
                     dest = self.custom_dir / f"{name}.toml"
                     if not self._atomic_write(dest, content):

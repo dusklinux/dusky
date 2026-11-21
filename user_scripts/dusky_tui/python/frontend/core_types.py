@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
+import math
 import re
-lazy import copy
-lazy import math
 from functools import lru_cache
 from dataclasses import dataclass, field
 from typing import Any, Literal
 from abc import ABC, abstractmethod
-lazy from python.frontend.colors import parse_literal_color
 
 # =============================================================================
 # CORE UTILITIES & CONSTANTS
@@ -27,6 +25,21 @@ _BOOL_TRUE = frozenset({"true", "1", "yes", "on", "t", "y"})
 _BOOL_FALSE = frozenset({"false", "0", "no", "off", "f", "n"})
 _SCALAR_TYPES = frozenset((bool, int, float, str, bytes))
 _COLOR_PREFIXES = ("#", "0x", "rgb(", "rgba(", "hsl(", "hsla(", "oklch(")
+
+
+def _load_parse_literal_color() -> Any:
+    fn = globals().get("parse_literal_color")
+    if fn is None:
+        from python.frontend.colors import parse_literal_color as fn
+
+        globals()["parse_literal_color"] = fn
+    return fn
+
+
+def __getattr__(name: str) -> Any:
+    if name == "parse_literal_color":
+        return _load_parse_literal_color()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 @lru_cache(maxsize=2048)
@@ -51,7 +64,7 @@ def is_theme_variable(val: str) -> bool:
         return False
     if not _RE_VAR_IDENT.fullmatch(val_lower):
         return False
-    return parse_literal_color(val, True) is None
+    return _load_parse_literal_color()(val, True) is None
 
 
 def _is_valid_hypr_gradient(text: str) -> bool:
@@ -63,8 +76,9 @@ def _is_valid_hypr_gradient(text: str) -> bool:
         tokens = tokens[:-1]
     if len(tokens) < 2:
         return False
+    parse_color = _load_parse_literal_color()
     return all(
-        parse_literal_color(tok, True) is not None or is_theme_variable(tok)
+        parse_color(tok, True) is not None or is_theme_variable(tok)
         for tok in tokens
     )
 
@@ -77,7 +91,7 @@ def color_preview_hex(value: str, color_field: bool = False) -> str | None:
         return None
     if color_field and is_theme_variable(stripped):
         return None
-    color = parse_literal_color(stripped, color_field)
+    color = _load_parse_literal_color()(stripped, color_field)
     return color.hex if color is not None else None
 
 
@@ -117,6 +131,8 @@ def clone_value(v: Any) -> Any:
         return {k: clone_value(x) for k, x in v.items()}
     if value_type is tuple:
         return tuple(clone_value(x) for x in v)
+    import copy
+
     return copy.deepcopy(v)
 
 
@@ -319,7 +335,7 @@ class ConfigItem:
                     if not text:
                         raise ValueError("Empty theme variable name.")
                 if (
-                    parse_literal_color(text, True) is not None
+                    _load_parse_literal_color()(text, True) is not None
                     or is_theme_variable(text)
                     or ((" " in text or "\t" in text) and _is_valid_hypr_gradient(text))
                 ):

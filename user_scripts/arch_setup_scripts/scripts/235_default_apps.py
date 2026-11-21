@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #d: Select default applications or restore saved choices after an update
-"""Dusky default apps. Python 3.15+ standard library only; run as the desktop user.
+"""Dusky default apps. Python 3.14+ standard library only; run as the desktop user.
 
 Menus: --file-manager, --browser, --text-editor, --terminal.
 Direct selection: --terminal --set foot. Restore: --apply-state (alias --auto).
@@ -27,6 +27,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -92,7 +93,7 @@ class Category:
 
 
 # Shared catalog for CLI flags, interactive menus, and automatic state restoration.
-CATEGORIES: frozendict[str, Category] = frozendict({
+CATEGORIES: MappingProxyType[str, Category] = MappingProxyType({
     "file-manager": Category(
         "fileManager",
         "File Manager",
@@ -170,7 +171,7 @@ CATEGORIES: frozendict[str, Category] = frozendict({
 })
 
 # Include both shared-mime-info and file(1) MIME types so xdg-open and portals resolve consistently.
-MIMES: frozendict[str, tuple[str, ...]] = frozendict({
+MIMES: MappingProxyType[str, tuple[str, ...]] = MappingProxyType({
     "file-manager": ("inode/directory",),
     "browser": (
         "x-scheme-handler/http",
@@ -225,13 +226,13 @@ MIMES: frozendict[str, tuple[str, ...]] = frozendict({
     ),
 })
 
-PRIMARY_MIME: frozendict[str, str] = frozendict({
+PRIMARY_MIME: MappingProxyType[str, str] = MappingProxyType({
     "file-manager": "inode/directory",
     "browser": "x-scheme-handler/https",
     "text-editor": "text/plain",
 })
 
-DESKTOP_CATEGORIES: frozendict[str, str] = frozendict({
+DESKTOP_CATEGORIES: MappingProxyType[str, str] = MappingProxyType({
     "file-manager": "System;FileManager;",
     "browser": "Network;WebBrowser;",
     "text-editor": "Utility;TextEditor;",
@@ -416,12 +417,12 @@ def tokens(text: str, *, strict: bool = True) -> list[Token]:
             if strict:
                 raise ValueError("Unterminated Lua string")
             continue
-        if token.lastgroup == "symbol" and value == "[" and LONG_BRACKET_RE.prefixmatch(text[token.start():]):
+        if token.lastgroup == "symbol" and value == "[" and LONG_BRACKET_RE.match(text, token.start()):
             if strict:
                 raise ValueError("Unterminated Lua long string")
             continue
         if token.lastgroup == "comment":
-            opening = BLOCK_COMMENT_RE.prefixmatch(value)
+            opening = BLOCK_COMMENT_RE.match(value)
             if opening and not value.endswith(f"]{opening[1]}]"):
                 if strict:
                     raise ValueError("Unterminated Lua block comment")
@@ -795,8 +796,12 @@ def validate_desktop_path(path: Path) -> None:
             raise ValueError(f"Desktop entry is hidden: {path}")
         if (try_exec := desktop.get("TryExec")) and not shutil.which(try_exec):
             raise ValueError(f"Desktop entry requires an unavailable command ({try_exec}): {path}")
-    except (ConfigError, KeyError, ValueError) as error:
-        if isinstance(error, ValueError) and str(error).startswith("Desktop entry"):
+    except (ConfigError, KeyError, UnicodeDecodeError, ValueError) as error:
+        if (
+            isinstance(error, ValueError)
+            and not isinstance(error, UnicodeDecodeError)
+            and str(error).startswith("Desktop entry")
+        ):
             raise
         raise ValueError(f"Invalid desktop entry {path}: {error}") from error
 
@@ -818,7 +823,7 @@ def mime_defaults(text: str, updates: Mapping[str, str], *, strict: bool = True)
     found = False
     for line in text.splitlines(keepends=True):
         stripped = line.strip()
-        header = SECTION_HEADER_RE.prefixmatch(stripped)
+        header = SECTION_HEADER_RE.match(stripped)
         if header:
             if section == "Default Applications" and pending:
                 output.extend(f"{key}={value}\n" for key, value in pending.items())
@@ -878,7 +883,7 @@ def file_manager_service(app: App, data_home: Path) -> bytes | None:
             parser = make_ini_parser()
             try:
                 parser.read(path, encoding="utf-8")
-            except (ConfigError, OSError):
+            except (ConfigError, OSError, UnicodeDecodeError):
                 continue
             if not parser.has_section("D-BUS Service"):
                 continue
@@ -910,7 +915,7 @@ class Switcher:
     def _read_text_safe(self, path: Path) -> str:
         try:
             return path.read_text(encoding="utf-8") if path.is_file() else ""
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             return ""
 
     def current(self) -> dict[str, str]:
@@ -923,7 +928,7 @@ class Switcher:
         if smart.is_file():
             try:
                 key = smart.read_text(encoding="utf-8").strip()
-            except OSError as error:
+            except (OSError, UnicodeDecodeError):
                 if strict:
                     raise
                 return None
@@ -936,7 +941,7 @@ class Switcher:
         if state.is_file():
             try:
                 value = state.read_text(encoding="utf-8").strip()
-            except OSError as error:
+            except (OSError, UnicodeDecodeError):
                 if strict:
                     raise
                 return None
