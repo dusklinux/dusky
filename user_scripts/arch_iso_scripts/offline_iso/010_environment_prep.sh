@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # -----------------------------------------------------------------------------
 # MODULE: LIVE ENVIRONMENT PREP (OFFLINE SAFE)
-# Description: Font, Cowspace, Battery, Time, Keyring
+# Description: Battery, Cowspace, Time, Keyring
 # -----------------------------------------------------------------------------
 set -euo pipefail
 
@@ -102,11 +102,7 @@ else
     msg_info "Autonomous mode enabled."
 fi
 
-# 1. Console Font
-msg_info "Setting console font..."
-setfont ter-v22b || setfont ter-v24b || setfont latarcyrheb-sun24 || msg_warn "Could not set font. Continuing..."
-
-# 2. Battery Threshold
+# 1. Battery Threshold
 BAT_DIR=""
 if [[ -d /sys/class/power_supply ]]; then
     BAT_DIR=$(find /sys/class/power_supply -maxdepth 1 -name "BAT*" -print -quit)
@@ -141,7 +137,7 @@ else
     msg_info "No battery detected. Skipping battery threshold."
 fi
 
-# 3. Cowspace
+# 2. Cowspace
 COWSPACE_PATH="/run/archiso/cowspace"
 if mountpoint -q "$COWSPACE_PATH" 2>/dev/null; then
     TOTAL_RAM=$(free -h | awk '/^Mem:/ {print $2}')
@@ -185,11 +181,11 @@ else
     msg_info "Cowspace mount not detected. Skipping Cowspace handling."
 fi
 
-# 4. Time
+# 3. Time
 msg_info "Configuring Time (NTP)..."
 timedatectl set-ntp true
 
-# 5. Pacman Init (Offline Safe)
+# 4. Pacman Init (Offline Safe)
 msg_info "Initializing Local Pacman Keys..."
 
 msg_info "1/2: pacman-key --init"

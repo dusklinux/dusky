@@ -1565,6 +1565,51 @@ def is_rich_or_ssh_terminal() -> bool:
     return False
 
 
+def configure_live_console_font() -> None:
+    """Apply the live VT console font before any Rich or Textual UI renders."""
+    if os.geteuid() != 0 or is_in_chroot():
+        return
+    if any(os.environ.get(k) for k in ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY", "WAYLAND_DISPLAY", "TERM_PROGRAM")):
+        return
+    if os.environ.get("COLORTERM", "") in ("truecolor", "24bit"):
+        return
+    term = os.environ.get("TERM", "")
+    if any(t in term for t in ("kitty", "foot", "alacritty", "ghostty", "wezterm", "tmux", "screen")):
+        return
+    try:
+        if not sys.stdout.isatty():
+            return
+        tty_name = os.ttyname(sys.stdout.fileno())
+    except OSError:
+        return
+    if not re.match(r"^/dev/tty\d+$", tty_name):
+        return
+    for stream in (sys.stdin, sys.stderr):
+        with suppress(OSError):
+            if stream and stream.isatty() and os.ttyname(stream.fileno()).startswith("/dev/pts/"):
+                return
+    setfont_bin = shutil.which("setfont")
+    if not setfont_bin:
+        return
+    with suppress(OSError):
+        sys.stdout.write("\x1b[2J\x1b[H")
+        sys.stdout.flush()
+    for font in ("ter-v22b", "ter-v24b", "latarcyrheb-sun24"):
+        try:
+            res = subprocess.run(
+                [setfont_bin, "-C", tty_name, font],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+                check=False,
+            )
+            if res.returncode == 0:
+                return
+        except (OSError, subprocess.SubprocessError):
+            continue
+
+
 def is_in_chroot() -> bool:
     """Detect if running inside an active chroot environment."""
     try:
@@ -2999,6 +3044,9 @@ def main():
     repo_valid, repo_reason = (True, "not required")
     if not inspection and (selected_profile is None or "offline" in selected_profile.name.lower()):
         repo_valid, repo_reason = verify_offline_repo_fast()
+
+    if not inspection and phase1:
+        configure_live_console_font()
 
     if not selected_profile and not args.profile:
         for profile_check in [
