@@ -183,7 +183,9 @@ tooltip label,
     color: @error;
     font-size: 16px;
     margin: 6px 1px;
-    padding: 3px 0px;
+    /* the power glyph overflows its advance width to the right; pad the
+       right side so it lines up with the capsules above */
+    padding: 3px 3px 3px 0px;
     transition: all 0.2s ease;
 }
 

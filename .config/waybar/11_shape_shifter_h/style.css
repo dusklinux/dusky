@@ -118,6 +118,9 @@ window#waybar > box {
 #custom-weather, #backlight, #custom-net-speed { color: @tertiary; }
 #custom-notification { color: @on_surface; font-size: 14px; }
 #network { color: @on_surface; font-size: 14px; }
+/* The wifi/ethernet nerd-font glyphs overflow their advance width to the right;
+   shift the padding (same total width) so the icon sits centred in its pill. */
+#network { padding: 0px 14px 0px 6px; }
 #bluetooth { color: @on_surface; font-size: 11px; }
 #pulseaudio.output { color: @on_surface; font-size: 11px; }
 #battery { color: @on_surface; font-weight: 700; }
