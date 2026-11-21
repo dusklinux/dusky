@@ -1654,11 +1654,7 @@ impl App {
             let rect = Rect::between(g.start, p).pixel_bounds();
             if self.phase == Phase::Pick {
                 let bounds = self.doc().state.crop;
-                let is_click = rect.w < 4.0 && rect.h < 4.0;
-                if is_click && self.options.mode == "region" {
-                    return Task::none();
-                }
-                let rect = if is_click {
+                let rect = if rect.w < 4.0 && rect.h < 4.0 {
                     self.capture
                         .windows
                         .iter()
@@ -3446,14 +3442,12 @@ impl canvas::Program<Message> for Surface<'_> {
                 );
             }
             let selection = drag_selection.or_else(|| {
-                (app.options.mode != "region").then_some(()).and_then(|_| {
-                    hover.and_then(|p| {
-                        app.capture
-                            .windows
-                            .iter()
-                            .find(|w| w.rect.contains(p))
-                            .map(|w| w.rect)
-                    })
+                hover.and_then(|p| {
+                    app.capture
+                        .windows
+                        .iter()
+                        .find(|w| w.rect.contains(p))
+                        .map(|w| w.rect)
                 })
             });
             if let Some(r) = selection {
