@@ -111,6 +111,20 @@ log() {
     esac
 }
 
+# arch-chroot bind-mounts /run into /mnt/run, allowing target-only tmpfiles
+# (e.g. 50-plymouth.conf) to leak hooks into the live ISO's shutdown config;
+# replaying live systemd-tmpfiles runs 20-mkinitcpio.conf's f+ rule to restore baseline.
+restore_live_shutdown_ramfs_conf() {
+    (( IN_CHROOT == 0 )) || return 0
+    command -v systemd-tmpfiles >/dev/null 2>&1 || return 0
+    [[ -f /run/initramfs/mkinitcpio-shutdown.conf ]] || return 0
+
+    if ! systemd-tmpfiles --create --prefix=/run/initramfs/mkinitcpio-shutdown.conf; then
+        log "WARN" "Failed to restore /run/initramfs/mkinitcpio-shutdown.conf on live ISO."
+    fi
+    return 0
+}
+
 # Inspection and marker maintenance do not need package installation,
 # networking, or a chroot boundary crossing.
 declare -a phase_args=("$PHASE_FLAG")
@@ -279,6 +293,9 @@ if (( orchestrator_exit != 0 )); then
     else
         log "ERR" "Orchestrator exited with code: $orchestrator_exit"
     fi
+    if (( IN_CHROOT == 0 )); then
+        restore_live_shutdown_ramfs_conf
+    fi
     exit "$orchestrator_exit"
 fi
 
@@ -349,6 +366,8 @@ if (( IN_CHROOT == 0 )) && [[ "$PHASE_FLAG" == --phase1 ]]; then
     arch-chroot "$CHROOT_MNT" /bin/bash "${TMP_DIR}/${SCRIPT_NAME}" "${phase2_args[@]}" 9>&-
     chroot_exit=$?
     set -e
+
+    restore_live_shutdown_ramfs_conf
 
     # Check for auto-poweroff request across chroot boundary BEFORE scrubbing payload
     declare -i auto_poweroff_requested=0
