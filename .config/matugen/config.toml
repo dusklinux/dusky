@@ -347,8 +347,14 @@ post_hook   = '''
 # post_hook   = '''
 #   if command -v spicetify >/dev/null 2>&1 && [ -d "$HOME/.config/spicetify/Themes/Comfy" ]; then
 #       ln -nfs "$HOME/.config/matugen/generated/spotify-colors.ini" "$HOME/.config/spicetify/Themes/Comfy/color.ini"
+#       # After a Spotify update `apply` fails until the backup is re-captured; `backup apply` self-heals
 #       spicetify apply -n || spicetify backup apply || :
-#       hyprctl dispatch sendshortcut "CTRL_SHIFT, R, class:^(Spotify)$" || :
+#       # Hot-reload a running Spotify (Ctrl+Shift+R needs devtools, enabled at setup).
+#       # Hyprland 0.55+ (Lua config): dispatch takes a Lua expression.
+#       if pgrep -x spotify >/dev/null; then
+#           hyprctl dispatch 'hl.dsp.send_shortcut({ mods = "CTRL SHIFT", key = "R", window = "class:^(Spotify)$" })' >/dev/null 2>&1 \
+#             || hyprctl dispatch sendshortcut "CTRL_SHIFT, R, class:^(Spotify)$" >/dev/null 2>&1 || :
+#       fi
 #   fi
 # '''
 
