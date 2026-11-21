@@ -252,6 +252,14 @@ window#waybar > box {
   color: alpha(@on_surface_variant, 0.4);
 }
 
+/* Occupied (has windows) but not active: a soft bubble so it stands out
+   from empty persistent workspaces. Declared before .visible/.active/
+   :hover/.urgent so those still take precedence. */
+#workspaces button:not(.empty) {
+  background-color: alpha(@secondary_container, 0.45);
+  color: @on_surface;
+}
+
 #workspaces button.visible {
   background-color: @glass_workspace_btn_visible;
   color: @on_surface;

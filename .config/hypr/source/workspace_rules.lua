@@ -55,52 +55,52 @@
 --   no_shadow       (bool)    -- Disable window shadows on this workspace.
 --   animation       (string)  -- Override workspace switch animation style.
 -- ==============================================================================
-hl.workspace_rule({ workspace = "1", layout = nil, persistent = false, monitor = "", default = false, default_name = "",
+hl.workspace_rule({ workspace = "1", layout = nil, persistent = false, monitor = "", default = false, default_name = "1",
     border_size = nil, gaps_in = nil, gaps_out = nil, float_gaps = nil,
     no_border = nil, no_rounding = nil, no_shadow = nil, decorate = nil, animation = nil,
     layout_opts = { orientation = nil, direction = nil },
 })
-hl.workspace_rule({ workspace = "2", layout = nil, persistent = false, monitor = "", default = false, default_name = "",
+hl.workspace_rule({ workspace = "2", layout = nil, persistent = false, monitor = "", default = false, default_name = "2",
     border_size = nil, gaps_in = nil, gaps_out = nil, float_gaps = nil,
     no_border = nil, no_rounding = nil, no_shadow = nil, decorate = nil, animation = nil,
     layout_opts = { orientation = nil, direction = nil },
 })
-hl.workspace_rule({ workspace = "3", layout = nil, persistent = false, monitor = "", default = false, default_name = "",
+hl.workspace_rule({ workspace = "3", layout = nil, persistent = false, monitor = "", default = false, default_name = "3",
     border_size = nil, gaps_in = nil, gaps_out = nil, float_gaps = nil,
     no_border = nil, no_rounding = nil, no_shadow = nil, decorate = nil, animation = nil,
     layout_opts = { orientation = nil, direction = nil },
 })
-hl.workspace_rule({ workspace = "4", layout = nil, persistent = false, monitor = "", default = false, default_name = "",
+hl.workspace_rule({ workspace = "4", layout = nil, persistent = false, monitor = "", default = false, default_name = "4",
     border_size = nil, gaps_in = nil, gaps_out = nil, float_gaps = nil,
     no_border = nil, no_rounding = nil, no_shadow = nil, decorate = nil, animation = nil,
     layout_opts = { orientation = nil, direction = nil },
 })
-hl.workspace_rule({ workspace = "5", layout = nil, persistent = false, monitor = "", default = false, default_name = "",
+hl.workspace_rule({ workspace = "5", layout = nil, persistent = false, monitor = "", default = false, default_name = "5",
     border_size = nil, gaps_in = nil, gaps_out = nil, float_gaps = nil,
     no_border = nil, no_rounding = nil, no_shadow = nil, decorate = nil, animation = nil,
     layout_opts = { orientation = nil, direction = nil },
 })
-hl.workspace_rule({ workspace = "6", layout = nil, persistent = false, monitor = "", default = false, default_name = "",
+hl.workspace_rule({ workspace = "6", layout = nil, persistent = false, monitor = "", default = false, default_name = "6",
     border_size = nil, gaps_in = nil, gaps_out = nil, float_gaps = nil,
     no_border = nil, no_rounding = nil, no_shadow = nil, decorate = nil, animation = nil,
     layout_opts = { orientation = nil, direction = nil },
 })
-hl.workspace_rule({ workspace = "7", layout = nil, persistent = false, monitor = "", default = false, default_name = "",
+hl.workspace_rule({ workspace = "7", layout = nil, persistent = false, monitor = "", default = false, default_name = "7",
     border_size = nil, gaps_in = nil, gaps_out = nil, float_gaps = nil,
     no_border = nil, no_rounding = nil, no_shadow = nil, decorate = nil, animation = nil,
     layout_opts = { orientation = nil, direction = nil },
 })
-hl.workspace_rule({ workspace = "8", layout = nil, persistent = false, monitor = "", default = false, default_name = "",
+hl.workspace_rule({ workspace = "8", layout = nil, persistent = false, monitor = "", default = false, default_name = "8",
     border_size = nil, gaps_in = nil, gaps_out = nil, float_gaps = nil,
     no_border = nil, no_rounding = nil, no_shadow = nil, decorate = nil, animation = nil,
     layout_opts = { orientation = nil, direction = nil },
 })
-hl.workspace_rule({ workspace = "9", layout = nil, persistent = false, monitor = "", default = false, default_name = "",
+hl.workspace_rule({ workspace = "9", layout = nil, persistent = false, monitor = "", default = false, default_name = "9",
     border_size = nil, gaps_in = nil, gaps_out = nil, float_gaps = nil,
     no_border = nil, no_rounding = nil, no_shadow = nil, decorate = nil, animation = nil,
     layout_opts = { orientation = nil, direction = nil },
 })
-hl.workspace_rule({ workspace = "10", layout = nil, persistent = false, monitor = "", default = false, default_name = "",
+hl.workspace_rule({ workspace = "10", layout = nil, persistent = false, monitor = "", default = false, default_name = "10",
     border_size = nil, gaps_in = nil, gaps_out = nil, float_gaps = nil,
     no_border = nil, no_rounding = nil, no_shadow = nil, decorate = nil, animation = nil,
     layout_opts = { orientation = nil, direction = nil },
