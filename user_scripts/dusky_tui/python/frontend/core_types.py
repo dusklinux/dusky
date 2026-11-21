@@ -239,11 +239,16 @@ class ConfigItem:
                     return value if math.isfinite(value) else clone_value(self.default)
                 except (ValueError, TypeError, OverflowError):
                     return clone_value(self.default)
-            case "string" | "picker" | "cycle" | "color" if isinstance(raw_val, str):
-                if raw_val.startswith("__VAR__"):
-                    return raw_val[7:]
-                if len(raw_val) >= 2 and raw_val.startswith('"') and raw_val.endswith('"'):
-                    return raw_val[1:-1]
+            case "string" | "picker" | "cycle" | "color":
+                if isinstance(raw_val, str):
+                    if raw_val.startswith("__VAR__"):
+                        return raw_val[7:]
+                    if len(raw_val) >= 2 and raw_val.startswith('"') and raw_val.endswith('"'):
+                        return raw_val[1:-1]
+                elif isinstance(raw_val, int) and not isinstance(raw_val, bool):
+                    return str(raw_val)
+                elif isinstance(raw_val, float) and math.isfinite(raw_val):
+                    return str(int(raw_val)) if raw_val.is_integer() else str(raw_val)
         return raw_val
 
     def parse_user_input(self, raw: Any) -> Any:

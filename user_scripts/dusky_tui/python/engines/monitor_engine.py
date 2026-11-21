@@ -438,8 +438,8 @@ class MonitorLuaEngine(HyprlandLuaEngine):
                 "mirror": live_mirror,
                 "icc": "",
                 "reserved_area": 0,
-                "supports_wide_color": "1" if bt2020_capable else "0",
-                "supports_hdr": "1" if hdr_capable else "0",
+                "supports_wide_color": "0",
+                "supports_hdr": "0",
                 "sdr_min_luminance": 0.2,
                 "sdr_max_luminance": 80,
                 "min_luminance": -1.0,
@@ -556,6 +556,8 @@ class MonitorLuaEngine(HyprlandLuaEngine):
                 if not deleting:
                     value, kind = str(not boolean(value)).lower(), 'bool'
             if ast_scope.startswith('monitor/') and not deleting:
+                if key in ('output', 'mode', 'position', 'mirror', 'icc', 'cm', 'sdr_eotf'):
+                    kind = 'string'
                 if key in ('transform', 'vrr', 'bitdepth', 'reserved_area'):
                     value, kind = str(int(value)), 'int'
                 if key == 'scale':
@@ -573,13 +575,26 @@ class MonitorLuaEngine(HyprlandLuaEngine):
                         kind = 'float'
                 if key in ('sdrbrightness', 'sdrsaturation', 'sdr_min_luminance', 'sdr_max_luminance', 'min_luminance', 'max_luminance', 'max_avg_luminance'):
                     value, kind = str(float(value)), 'float'
+            if ast_scope.startswith('workspace_rule/') and not deleting and key in ('workspace', 'monitor'):
+                kind = 'string'
             translated[key, ast_scope] = (key, ast_scope, value, kind)
+
+        ast_state = getattr(self, '_ast_state', {})
+        existing_sites = {(c['method'], c['id']) for c in self._call_sites}
+
+        def is_missing(scope, key):
+            if f'{scope}/{key}' in ast_state:
+                return False
+            method, sep, identity = scope.partition('/')
+            if sep and ((method == 'monitor' and key == 'output') or (method == 'workspace_rule' and key == 'workspace')):
+                return (method, identity) not in existing_sites
+            return True
 
         def transform(content):
             edits, additions = [], []
             grouped = {}
             for key, scope, value, kind in translated.values():
-                if f'{scope}/{key}' not in getattr(self, '_ast_state', {}):
+                if is_missing(scope, key):
                     grouped.setdefault(scope, []).append(key)
             for scope, keys in grouped.items():
                 method, sep, identity = scope.partition('/')
@@ -600,7 +615,7 @@ class MonitorLuaEngine(HyprlandLuaEngine):
                     else:
                         id_key = 'output' if method == 'monitor' else 'workspace'
                         entries = [f'{id_key} = {self._lua_string(identity)}']
-                        entries.extend(f'[{self._lua_string(key)}] = nil' for key in keys)
+                        entries.extend(f'[{self._lua_string(key)}] = nil' for key in keys if key != id_key)
                         additions.append(f'hl.{method}({{{", ".join(entries)}}})')
                 elif method in ('misc', 'debug', 'render') and not sep:
                     entries = ', '.join(f'[{self._lua_string(key)}] = nil' for key in keys)
@@ -610,7 +625,7 @@ class MonitorLuaEngine(HyprlandLuaEngine):
             return content + ''.join('\n' + block + '\n' for block in additions)
 
         if translated:
-            missing = any(f'{scope}/{key}' not in getattr(self, '_ast_state', {}) for key, scope, _, _ in translated.values())
+            missing = any(is_missing(scope, key) for key, scope, _, _ in translated.values())
             result = self.write_transformed(list(translated.values()), transform) if missing else super().write_batch(list(translated.values()))
             if not result[0]:
                 return result
