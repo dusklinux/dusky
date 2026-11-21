@@ -295,13 +295,13 @@ cond_bind(
 hl.bind(
     "SUPER + ALT + W",
     hl.dsp.exec_cmd(dusky_scripts .. "waybar/wrapper_waybar_swapper.py --next"),
-    { description = "Waybar Swap Configs" }
+    { description = "Waybar: Next Config" }
 )
 
 hl.bind(
     "SUPER + ALT + SHIFT + W",
     hl.dsp.exec_cmd(dusky_scripts .. "waybar/wrapper_waybar_swapper.py --prev"),
-    { description = "Waybar Swap Configs" }
+    { description = "Waybar: Previous Config" }
 )
 
 
