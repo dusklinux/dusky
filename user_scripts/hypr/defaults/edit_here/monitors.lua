@@ -57,10 +57,16 @@
 --                          Some screen-capture tools also break with 10-bit.
 --
 --  cm             STRING   Colour management preset:
---                            "auto"     automatic (default)
---                            "sdronly"  force SDR pipeline
---                            "hdr"      HDR output (requires HDR-capable panel)
+--                            "srgb"     SDR / sRGB pipeline (default)
+--                            "auto"     sRGB for 8-bit, wide gamut for 10-bit
+--                                       when supported
+--                            "wide"     wide colour gamut (BT.2020)
 --                            "edid"     use display's EDID colour profile
+--                            "hdr"      HDR output (requires HDR-capable panel)
+--                            "hdredid"  HDR using display's EDID primaries
+--                            "dcip3"    DCI-P3 colour gamut
+--                            "dp3"      Display P3 colour gamut
+--                            "adobe"    Adobe RGB colour gamut
 --
 --  sdrbrightness  NUMBER   SDR content brightness multiplier when HDR is on.
 --                          Range 0.5–2.0.  Default ~1.0.
