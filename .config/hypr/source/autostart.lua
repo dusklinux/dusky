@@ -15,6 +15,11 @@ hl.on("hyprland.start", function()
     -- --- Protect Compositor from OOM Killer ---
     hl.exec_cmd("sudo choom -n -250 -p $(pgrep -x Hyprland)")
 
+    -- --- Restore the last chosen power profile (TLP) ---
+    -- Re-applies the profile picked in Dusky Center / Waybar before the last
+    -- shutdown. No-op without TLP, without a saved choice, or when "auto" was chosen.
+    hl.exec_cmd("$HOME/user_scripts/battery/tlp/tlp_mode_toggle.sh restore")
+
     -- hl.exec_cmd("$HOME/user_scripts/hypr/layout_notify.sh") -- Keyboard Layout Notify
 
     -- --- CLIPBOARD MANAGER (Systemd Managed) ---
