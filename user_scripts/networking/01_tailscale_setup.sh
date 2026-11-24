@@ -150,7 +150,7 @@ systemctl enable --now tailscaled
 # connection up: status/IP output alone cannot distinguish a stopped connection.
 log_step "Connect / Authenticate"
 while true; do
-    if tailscale up --qr; then
+    if tailscale up --qr --accept-routes; then
         break
     else
         exit_code=$?
@@ -159,11 +159,21 @@ while true; do
         read -r retry_resp || exit 1
         case "${retry_resp:-r}" in
             [Rr]*) continue ;;
-            [Ll]*) tailscale up || die "Tailscale connection failed."; break ;;
+            [Ll]*) tailscale up --accept-routes || die "Tailscale connection failed."; break ;;
             *) exit 1 ;;
         esac
     fi
 done
+
+log_info "Configuring Tailscale operator permissions..."
+target_user="${SUDO_USER:-$USER}"
+if [[ "$target_user" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ && "$target_user" != "root" ]]; then
+    if tailscale set --operator="$target_user"; then
+        log_succ "Granted non-root Tailscale operator access to '$target_user'."
+    else
+        log_warn "Failed to set Tailscale operator for '$target_user'; non-root CLI access may require sudo."
+    fi
+fi
 
 log_info "Applying firewall policies..."
 if cmd_exists firewall-cmd && svc_active firewalld; then
