@@ -50,6 +50,7 @@ drm_exec
 drm_gpusvm_helper
 drm_gpuvm
 drm_kms_helper
+drm_panel
 drm_suballoc_helper
 drm_ttm_helper
 enclosure
@@ -60,6 +61,7 @@ failover
 fat
 firmware_attributes_class
 fuse
+gcm
 gf128mul
 gpu_sched
 hid_multitouch
@@ -97,6 +99,7 @@ intel_uncore_frequency_common
 intel_vsec
 iommufd
 ip6t_rt
+ip6_udp_tunnel
 ipheth
 ipt_REJECT
 irqbypass
@@ -108,6 +111,7 @@ joydev
 kvm
 kvm_intel
 libarc4
+libcurve25519
 llc
 loop
 lpc_ich
@@ -152,6 +156,7 @@ nvme
 nvme_auth
 nvme_core
 nvme_keyring
+overlay
 pcspkr
 pinctrl_tigerlake
 pkcs8_key_parser
@@ -179,6 +184,7 @@ rndis_host
 roles
 sch_cake
 sch_fq
+sch_fq_codel
 sch_htb
 scsi_transport_sas
 serio_raw
@@ -253,8 +259,10 @@ typec
 typec_ucsi
 uas
 ucsi_acpi
+udp_tunnel
 uhid
 uinput
+unix_diag
 usbnet
 usb_storage
 uvc
@@ -299,6 +307,7 @@ vmw_vsock_virtio_transport
 vmw_vsock_virtio_transport_common
 vsock
 vsock_loopback
+wireguard
 wmi
 wmi_bmof
 x86_pkg_temp_thermal

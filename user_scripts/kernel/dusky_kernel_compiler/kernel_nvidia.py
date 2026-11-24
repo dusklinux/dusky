@@ -3,49 +3,24 @@
 import hashlib
 import os
 from pathlib import Path
-import shutil
 lazy import gzip
 lazy import lzma
+lazy import shutil
 lazy import subprocess
 lazy from compression import zstd
 
-VERSION = "620.70.06"
+VERSION = "620.73.04"
 
-# --- Linux 7.3: kthreads are isolated in nullfs ---------------------------------
+# --- Linux 7.3+: kthreads are isolated in nullfs --------------------------------
 # The open module probes PCI from a dedicated kthread; its unscoped
 # filp_open("/sys/.../config") fails with ENOENT unless it uses init's fs.
 # Without this repair the driver reports RTD3 unavailable and the GPU never
 # reaches runtime D3cold (it stays in D0). This patch is the D3cold/sleep fix.
 RTD3_PATCH_NAME = f"nvidia-{VERSION}-linux-7.3-rtd3.patch"
-RTD3_FILES = ("kernel-open/nvidia/nv-pci.c",)
 ORIGINAL_SHA256 = "ef8315e9a82c601a34c88f975a00381c049480ae35fb17fc6b8d584f59701a3a"
 REPAIRED_SHA256 = "a2b63c909b3b150f833c8d1677abe46e68e9d9cd3be1e2736661f2059a4ff7b9"
 PM_CALLBACKS_SHA256 = "e744d8d7fec01dda39269241246438e83c32ac0e0bcc09d1b50c9e01fd031304"
 
-# --- Linux 7.4: VM_SPECIAL / is_vm_hugetlb_page removal, drm_fb_helper.h move ----
-# Internally version-guarded; a no-op on older trees.
-BUILD_PATCH_NAME = f"nvidia-{VERSION}-linux-7.4.patch"
-BUILD_FILES = (
-    "kernel-open/nvidia-uvm/uvm_hmm.c",
-    "kernel-open/nvidia-drm/nvidia-drm-drv.c",
-    "kernel-open/conftest.sh",
-    "kernel-open/header-presence-tests.mk",
-)
-BUILD_ORIGINAL_SHA256 = {
-    "kernel-open/nvidia-uvm/uvm_hmm.c": "6694801342b8a971ff1e83dbd1996070e92e7e55b12ad32251a656c08c072074",
-    "kernel-open/nvidia-drm/nvidia-drm-drv.c": "69998070b00424a3548493b50c68e67717a5322083874361a0abcdd52ec4ba14",
-    "kernel-open/conftest.sh": "6518c5a65174adc5bee614794e7ca8cb8f6704a5b0550804f78c002ba250edf6",
-    "kernel-open/header-presence-tests.mk": "7353d799e50bfd0dee3724faadb1b19707319c690e437896f7262a2a98f3267a",
-}
-BUILD_REPAIRED_SHA256 = {
-    "kernel-open/nvidia-uvm/uvm_hmm.c": "3f5de38bd8f5a4a3815af75db46f8d3c7f298b0765bc59ea919658af467fa62c",
-    "kernel-open/nvidia-drm/nvidia-drm-drv.c": "049e05ec3d564e293cafc154dbbc7efc364bdc54e6e644c2860dc3267ecfbd6c",
-    "kernel-open/conftest.sh": "873216c91ad58b5b29af8162b47ae41e7cdf1dc46f3fc68c40425904f6b6f6b0",
-    "kernel-open/header-presence-tests.mk": "23603dd5d1a073f87d567ae44b7dc43624fcad6b99d49e5f4a6fdbf873a69721",
-}
-
-# DKMS override blocks. Each is independently idempotent so a config written by
-# the 7.3-only overlay gains the 7.4 block without duplicating the 7.3 one.
 CONFIG_HEADER = "# DKMS override for the tested NVIDIA open driver source version only."
 RTD3_CONFIG_BLOCK = f"""# Linux 7.3 isolates kthreads in nullfs; opt in to init's fs for sysfs open.
 if [[ -r ${{kernel_source_dir}}/include/linux/fs_struct.h ]] &&
@@ -55,48 +30,6 @@ if [[ -r ${{kernel_source_dir}}/include/linux/fs_struct.h ]] &&
         *) PATCH+=("{RTD3_PATCH_NAME}") ;;
     esac
 fi"""
-BUILD_CONFIG_BLOCK = f"""# Linux 7.4 removed VM_SPECIAL/is_vm_hugetlb_page and moved drm_fb_helper.h.
-if [[ -r ${{kernel_source_dir}}/include/linux/mm.h ]] &&
-    grep -Fq 'vma_is_mm_backed' "${{kernel_source_dir}}/include/linux/mm.h"; then
-    case " ${{PATCH[*]}} " in
-        *" {BUILD_PATCH_NAME} "*) ;;
-        *) PATCH+=("{BUILD_PATCH_NAME}") ;;
-    esac
-fi"""
-
-_OVERLAY_CONFIG_BLOCKS = (
-    (RTD3_PATCH_NAME, RTD3_CONFIG_BLOCK),
-    (BUILD_PATCH_NAME, BUILD_CONFIG_BLOCK),
-)
-
-
-def _overlays() -> tuple[tuple[str, tuple[str, ...], dict[str, str], dict[str, str]], ...]:
-    """Resolve the overlay table at call time so tests can patch the hash maps."""
-    return (
-        (RTD3_PATCH_NAME, RTD3_FILES, {RTD3_FILES[0]: ORIGINAL_SHA256}, {RTD3_FILES[0]: REPAIRED_SHA256}),
-        (BUILD_PATCH_NAME, BUILD_FILES, BUILD_ORIGINAL_SHA256, BUILD_REPAIRED_SHA256),
-    )
-
-
-def _overlay_state(source: Path, files: tuple[str, ...], original: dict[str, str], repaired: dict[str, str]) -> str:
-    """Classify one overlay's files as 'original' or 'repaired'; raise on drift."""
-    states: set[str] = set()
-    for rel in files:
-        path = source / rel
-        if not path.is_file():
-            raise ValueError(f"NVIDIA {VERSION} source is missing {rel}; review compat/AGENTS.md")
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()
-        if digest == repaired[rel]:
-            states.add("repaired")
-        elif digest == original[rel]:
-            states.add("original")
-        else:
-            raise ValueError(f"NVIDIA {VERSION} source differs from the tested open driver; "
-                             "review compat/AGENTS.md before installing this kernel")
-    if len(states) != 1:
-        raise ValueError(f"NVIDIA {VERSION} source is partially patched; "
-                         "review compat/AGENTS.md before installing this kernel")
-    return states.pop()
 
 
 def repair_files(source: Path, assets: Path, etc: Path) -> dict[Path, tuple[str, str]]:
@@ -104,46 +37,54 @@ def repair_files(source: Path, assets: Path, etc: Path) -> dict[Path, tuple[str,
     source = Path(source)
     assets = Path(assets)
     etc = Path(etc)
+
     nv_pci = source / "kernel-open/nvidia/nv-pci.c"
     if not nv_pci.is_file():
-        raise ValueError(f"NVIDIA {VERSION} source is missing kernel-open/nvidia/nv-pci.c")
-    if hashlib.sha256((nv_pci.parent / "nv.c").read_bytes()).hexdigest() != PM_CALLBACKS_SHA256:
+        raise ValueError(f"NVIDIA {VERSION} source is missing kernel-open/nvidia/nv-pci.c; review compat/AGENTS.md")
+    nv_c = nv_pci.parent / "nv.c"
+    if not nv_c.is_file():
+        raise ValueError(f"NVIDIA {VERSION} source is missing kernel-open/nvidia/nv.c; review compat/AGENTS.md")
+    dkms_conf = source / "dkms.conf"
+    if not dkms_conf.is_file():
+        raise ValueError(f"NVIDIA {VERSION} source is missing dkms.conf; review compat/AGENTS.md")
+
+    if hashlib.sha256(nv_c.read_bytes()).hexdigest() != PM_CALLBACKS_SHA256:
         raise ValueError("NVIDIA runtime PM callbacks differ from the validated source; review compat/AGENTS.md")
-    if '"kernel-open"' not in (source / "dkms.conf").read_text(encoding="utf-8"):
+    if '"kernel-open"' not in dkms_conf.read_text(encoding="utf-8"):
         raise ValueError(f"NVIDIA {VERSION} source differs from the tested open driver; "
                          "review compat/AGENTS.md before installing this kernel")
 
     target_config = etc / f"nvidia-{VERSION}.conf"
     existing = target_config.read_text(encoding="utf-8") if target_config.exists() else ""
 
-    files: dict[Path, tuple[str, str]] = {}
-    needed: set[str] = set()
-    for patch_name, overlay_files, original, repaired in _overlays():
-        state = _overlay_state(source, overlay_files, original, repaired)
-        if state == "repaired":
-            if patch_name in existing:
-                raise ValueError(f"NVIDIA source already contains this fix, but an older overlay is still configured; "
-                                 f"remove its {patch_name} directive from {target_config} before rebuilding")
-            continue
-        needed.add(patch_name)
-        patch = (assets / patch_name).read_text(encoding="utf-8")
-        target_patch = etc / "nvidia/patches" / patch_name
-        if not target_patch.exists() or target_patch.read_text(encoding="utf-8") != patch:
-            files[target_patch] = (patch, "0644")
+    digest = hashlib.sha256(nv_pci.read_bytes()).hexdigest()
+    if digest == REPAIRED_SHA256:
+        if RTD3_PATCH_NAME in existing:
+            raise ValueError(f"NVIDIA source already contains this fix, but an older overlay is still configured; "
+                             f"remove its {RTD3_PATCH_NAME} directive from {target_config} before rebuilding")
+        return {}
+    if digest != ORIGINAL_SHA256:
+        raise ValueError(f"NVIDIA {VERSION} source differs from the tested open driver; "
+                         "review compat/AGENTS.md before installing this kernel")
 
-    missing_blocks = [block for name, block in _OVERLAY_CONFIG_BLOCKS if name in needed and block not in existing]
-    if missing_blocks:
-        addition = (CONFIG_HEADER + "\n" if not existing else "") + "\n".join(missing_blocks)
-        files[target_config] = ((existing + "\n" if existing else "") + addition, "0644")
+    files: dict[Path, tuple[str, str]] = {}
+    patch = (assets / RTD3_PATCH_NAME).read_text(encoding="utf-8")
+    target_patch = etc / "nvidia/patches" / RTD3_PATCH_NAME
+    if not target_patch.exists() or target_patch.read_text(encoding="utf-8") != patch:
+        files[target_patch] = (patch, "0644")
+
+    if RTD3_CONFIG_BLOCK not in existing:
+        if existing:
+            prefix = existing if existing.endswith("\n") else existing + "\n"
+            content = prefix + RTD3_CONFIG_BLOCK + "\n"
+        else:
+            content = CONFIG_HEADER + "\n" + RTD3_CONFIG_BLOCK + "\n"
+        files[target_config] = (content, "0644")
     return files
 
 
 def target_needs_init_fs(headers: Path) -> bool:
     return "#define scoped_with_init_fs()" in (headers / "include/linux/fs_struct.h").read_text(encoding="utf-8")
-
-
-def target_needs_build_fix(headers: Path) -> bool:
-    return "vma_is_mm_backed" in (headers / "include/linux/mm.h").read_text(encoding="utf-8")
 
 
 def module_uses_init_fs(module: Path) -> bool:
