@@ -1270,8 +1270,8 @@ def main() -> None:
         "-i",
         "--interval",
         type=parse_interval,
-        default=1800,
-        help="Cache freshness interval in seconds (default: 1800)",
+        default=3600,
+        help="Cache freshness interval in seconds (default: 3600)",
     )
     parser.add_argument(
         "--force",
