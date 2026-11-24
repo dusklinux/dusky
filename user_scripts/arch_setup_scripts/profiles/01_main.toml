@@ -68,6 +68,7 @@ scripts = [
     # "U | 090_paru_packages_optional.sh",
     # "S | 095_battery_limiter_again_dusk.sh",
     "U | 100_paru_packages.sh",
+    "S | 064_boot_speed_optimization.py",
     "S | 065_boot_reliability.py",
     "U | 066_session_lifecycle.py",
     # "S | 120_create_mount_directories.sh",

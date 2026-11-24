@@ -90,6 +90,7 @@ tasks = [
     "S | ignore-fail | 055_pacman_reflector.sh",
     # "S | 058_aur_paru_fallback_yay.sh",
     "S | 060_package_installation.py -p updater_packages --no-upgrade --auto-exit",
+    "S | once | 064_boot_speed_optimization.py",
     # "S | 070_openssh_setup.sh",
     # "U | 075_changing_shell_zsh.sh",
     # "S | 085_warp.py",
