@@ -828,6 +828,19 @@ command = "$HOME/user_scripts/performance/zram/zram_swap_manager.py --disable-di
 terminal = false
 requires_root = true
 
+[[pages.layout.items.layout.items]]
+type = "button"
+[pages.layout.items.layout.items.properties]
+title = "Hibernation Setup & Audit"
+description = "Configure Btrfs swapfile, kernel offset, and resume hooks"
+button_text = "Configure"
+icon = "weather-clear-night-symbolic"
+style = "suggested"
+[pages.layout.items.layout.items.on_press]
+type = "exec"
+command = "kitty --class 218_hibernation_setup.py --hold sh -c \"$HOME/user_scripts/arch_setup_scripts/scripts/218_hibernation_setup.py\""
+terminal = false
+
 [[pages.layout.items.layout]]
 type = "section"
 [pages.layout.items.layout.properties]
@@ -4591,6 +4604,19 @@ style = "suggested"
 [pages.layout.items.on_press]
 type = "exec"
 command = "kitty --class 465_sddm_setup.sh --hold sh -c \"$HOME/user_scripts/arch_setup_scripts/scripts/465_sddm_setup.sh\""
+terminal = false
+
+[[pages.layout.items]]
+type = "button"
+[pages.layout.items.properties]
+title = "Hibernation Setup"
+button_text = "Setup"
+description = "Configure Btrfs swapfile, kernel offset, and resume hooks"
+icon = "weather-clear-night-symbolic"
+style = "suggested"
+[pages.layout.items.on_press]
+type = "exec"
+command = "kitty --class 218_hibernation_setup.py --hold sh -c \"$HOME/user_scripts/arch_setup_scripts/scripts/218_hibernation_setup.py\""
 terminal = false
 
 [[pages.layout]]

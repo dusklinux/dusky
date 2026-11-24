@@ -35,6 +35,7 @@ scripts = [
     "U | 150_mkinitcpio_restore_and_generate.sh",
     "U | 151_systemd_bootloader.py",
     "U | 160_zram_config.sh",
+    "U | 162_hibernation_setup.py --auto",
     "U | 165_deploy_dusky_run.py",
     "U | 170_services.sh",
     # Restore the installed system's mirrors without requiring internet to finish.
