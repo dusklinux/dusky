@@ -67,8 +67,8 @@ No full ISO installation or power-loss recovery test was performed.
 TOML is resolved in this order:
 
 1. `dusky_config.toml` in the current working directory.
-2. `$XDG_CONFIG_HOME/dusky/dusky_config.toml` (normally `~/.config/dusky/`).
-3. `$HOME/user_scripts/dusky/dusky_center/dusky_config.toml`.
+2. `$HOME/user_scripts/dusky/dusky_center/dusky_config.toml`.
+3. `$XDG_CONFIG_HOME/dusky/dusky_config.toml` (normally `~/.config/dusky/`).
 4. `dusky_config.toml` beside the running executable.
 5. `/usr/share/dusky_center/dusky_config.toml` (packaged defaults).
 

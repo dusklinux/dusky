@@ -95,12 +95,12 @@ impl AppConfig {
     pub fn load() -> Result<Self, String> {
         let mut candidates = vec![
             PathBuf::from("dusky_config.toml"),
-            dirs_fallback().join("dusky_config.toml"),
         ];
         if let Some(home) = std::env::var_os("HOME").filter(|home| !home.is_empty()) {
             candidates.push(PathBuf::from(home)
                 .join("user_scripts/dusky/dusky_center/dusky_config.toml"));
         }
+        candidates.push(dirs_fallback().join("dusky_config.toml"));
         if let Ok(executable) = std::env::current_exe()
             && let Some(parent) = executable.parent()
         {
