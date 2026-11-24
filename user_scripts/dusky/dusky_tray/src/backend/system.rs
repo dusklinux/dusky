@@ -2204,24 +2204,397 @@ pub fn battery_state() -> BatteryState {
     read_battery_state(Path::new("/sys/class/power_supply"))
 }
 
-pub fn weather_text() -> Option<String> {
-    let home = std::env::var("HOME").unwrap_or_default();
-    let p = PathBuf::from(format!("{home}/.config/dusky/settings/waybar_weather"));
-    if let Ok(txt) = std::fs::read_to_string(p)
-        && let Ok(raw) = serde_json::from_str::<serde_json::Value>(&txt)
-    {
-        let data = if raw.get("version").and_then(|v| v.as_i64()) == Some(2) {
-            raw.get("payload").cloned().unwrap_or_default()
-        } else {
-            raw
-        };
-        if let Some(t) = data.get("text").and_then(|x| x.as_str())
-            && !t.trim().is_empty()
-        {
-            return Some(t.trim().to_owned());
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WeatherState {
+    pub temperature: String,
+    #[allow(dead_code)]
+    pub condition_glyph: Option<String>,
+    pub condition: Option<String>,
+    pub temp_max: Option<String>,
+    pub temp_min: Option<String>,
+    pub precip_chance: Option<String>,
+    pub location: Option<String>,
+    pub offline_note: Option<String>,
+}
+
+impl WeatherState {
+    pub fn is_offline(&self) -> bool {
+        self.offline_note.is_some()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct WeatherFileStamp {
+    dev: u64,
+    ino: u64,
+    len: u64,
+    modified: Option<std::time::SystemTime>,
+}
+
+#[derive(Debug, Clone)]
+struct WeatherCache {
+    stamp: WeatherFileStamp,
+    state: Option<WeatherState>,
+}
+
+fn strip_pango(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut in_tag = false;
+    for ch in input.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => out.push(ch),
+            _ => {}
         }
     }
+    if !out.contains('&') {
+        return out;
+    }
+    out.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&#39;", "'")
+        .replace("&amp;", "&")
+}
+
+fn is_signed_number(s: &str) -> bool {
+    let s = s.strip_prefix(['-', '+', '−']).unwrap_or(s);
+    if s.is_empty() {
+        return false;
+    }
+    let mut saw_digit = false;
+    let mut saw_dot = false;
+    for b in s.bytes() {
+        if b.is_ascii_digit() {
+            saw_digit = true;
+        } else if b == b'.' && !saw_dot {
+            saw_dot = true;
+        } else {
+            return false;
+        }
+    }
+    saw_digit
+}
+
+fn is_temp_token(token: &str) -> bool {
+    let Some(deg_pos) = token.find('°') else {
+        return false;
+    };
+    let num = &token[..deg_pos];
+    let unit = &token[deg_pos + '°'.len_utf8()..];
+    (unit.is_empty() || matches!(unit, "C" | "F" | "c" | "f")) && is_signed_number(num)
+}
+
+fn is_percent_token(token: &str) -> bool {
+    let Some(num) = token.strip_suffix('%') else {
+        return false;
+    };
+    !num.starts_with(['-', '+', '−']) && is_signed_number(num)
+}
+
+fn is_symbol_token(token: &str) -> bool {
+    !token.is_empty() && !token.chars().any(|c| c.is_ascii_alphanumeric())
+}
+
+fn take_temp(tokens: &[&str], idx: usize) -> Option<(String, usize)> {
+    let tok = *tokens.get(idx)?;
+    if is_temp_token(tok) {
+        return Some((tok.to_owned(), 1));
+    }
+    if let Some(&next) = tokens.get(idx + 1)
+        && is_signed_number(tok)
+        && matches!(next, "°C" | "°F" | "°c" | "°f" | "°")
+    {
+        return Some((format!("{tok}{next}"), 2));
+    }
     None
+}
+
+fn extract_temp_and_glyph(raw: &str) -> (Option<String>, Option<String>) {
+    let tokens: Vec<&str> = raw.split_whitespace().collect();
+    let mut temp = None;
+    let mut plain_num = None;
+    let mut glyph = None;
+
+    if let Some(&first) = tokens.first()
+        && is_symbol_token(first)
+    {
+        glyph = Some(first.to_owned());
+    }
+
+    let mut i = 0;
+    while i < tokens.len() {
+        if let Some((t, _used)) = take_temp(&tokens, i) {
+            temp = Some(t);
+            break;
+        }
+        if plain_num.is_none() && is_signed_number(tokens[i]) {
+            plain_num = Some(tokens[i].to_owned());
+        }
+        i += 1;
+    }
+
+    (temp.or(plain_num), glyph)
+}
+
+fn tokenize_metrics(line: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    for raw in line.split_whitespace() {
+        if let Some(first) = raw.chars().next()
+            && matches!(first, '' | '' | '')
+        {
+            let split = first.len_utf8();
+            out.push(&raw[..split]);
+            if split < raw.len() {
+                out.push(&raw[split..]);
+            }
+        } else {
+            out.push(raw);
+        }
+    }
+    out
+}
+
+fn is_metrics_line(line: &str) -> bool {
+    if line.contains(['', '', '']) {
+        return true;
+    }
+    let tokens = tokenize_metrics(line);
+    let mut temps = 0usize;
+    let mut percents = 0usize;
+    let mut i = 0;
+    while i < tokens.len() {
+        if let Some((_, used)) = take_temp(&tokens, i) {
+            temps += 1;
+            i += used;
+            continue;
+        }
+        if is_percent_token(tokens[i]) {
+            percents += 1;
+        }
+        i += 1;
+    }
+    temps >= 2 || (temps >= 1 && percents >= 1)
+}
+
+fn parse_metrics_line(line: &str) -> (Option<String>, Option<String>, Option<String>) {
+    let tokens = tokenize_metrics(line);
+    let mut temp_max = None;
+    let mut temp_min = None;
+    let mut precip = None;
+
+    let mut i = 0;
+    while i < tokens.len() {
+        match tokens[i] {
+            "" => {
+                if let Some((t, used)) = take_temp(&tokens, i + 1) {
+                    temp_max = Some(t);
+                    i += 1 + used;
+                    continue;
+                }
+            }
+            "" => {
+                if let Some((t, used)) = take_temp(&tokens, i + 1) {
+                    temp_min = Some(t);
+                    i += 1 + used;
+                    continue;
+                }
+            }
+            "" => {
+                if let Some(&next) = tokens.get(i + 1)
+                    && is_percent_token(next)
+                {
+                    precip = Some(next.to_owned());
+                    i += 2;
+                    continue;
+                }
+            }
+            _ => {
+                if let Some((t, used)) = take_temp(&tokens, i) {
+                    if temp_max.is_none() {
+                        temp_max = Some(t);
+                    } else if temp_min.is_none() {
+                        temp_min = Some(t);
+                    }
+                    i += used;
+                    continue;
+                }
+                if is_percent_token(tokens[i]) && precip.is_none() {
+                    precip = Some(tokens[i].to_owned());
+                }
+            }
+        }
+        i += 1;
+    }
+
+    (temp_max, temp_min, precip)
+}
+
+fn parse_weather_json(raw_json: &str) -> Option<WeatherState> {
+    let root: serde_json::Value = serde_json::from_str(raw_json).ok()?;
+    let is_v2 = root.get("version").and_then(|v| v.as_i64()) == Some(2);
+    let data = if is_v2 {
+        root.get("payload")?
+    } else {
+        &root
+    };
+
+    let (text_temp, text_glyph) = data
+        .get("text")
+        .and_then(|v| v.as_str())
+        .map(extract_temp_and_glyph)
+        .unwrap_or((None, None));
+
+    let mut hero_temp = None;
+    let mut condition_glyph = None;
+    let mut condition = None;
+    let mut temp_max = None;
+    let mut temp_min = None;
+    let mut precip_chance = None;
+    let mut offline_note = None;
+
+    if let Some(raw_tooltip) = data.get("tooltip").and_then(|v| v.as_str()) {
+        let cleaned = strip_pango(raw_tooltip);
+        for raw_line in cleaned.lines() {
+            let line = raw_line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            if line.starts_with('⚠') || line.to_ascii_lowercase().contains("offline") {
+                let note = line.trim_start_matches('⚠').trim();
+                offline_note = Some(if note.is_empty() {
+                    "Offline — cached data".to_owned()
+                } else {
+                    note.to_owned()
+                });
+                continue;
+            }
+            if is_metrics_line(line) {
+                let (hi, lo, rain) = parse_metrics_line(line);
+                if hi.is_some() {
+                    temp_max = hi;
+                }
+                if lo.is_some() {
+                    temp_min = lo;
+                }
+                if rain.is_some() {
+                    precip_chance = rain;
+                }
+                continue;
+            }
+            if hero_temp.is_none() {
+                let tokens: Vec<&str> = line.split_whitespace().collect();
+                if let Some((t, used)) = take_temp(&tokens, 0)
+                    && used == tokens.len()
+                {
+                    hero_temp = Some(t);
+                    continue;
+                }
+            }
+            if condition.is_none() {
+                let mut parts = line.splitn(2, char::is_whitespace);
+                let first = parts.next().unwrap_or("");
+                let rest = parts.next().map(str::trim).unwrap_or("");
+                if is_symbol_token(first) && !rest.is_empty() {
+                    condition_glyph = Some(first.to_owned());
+                    condition = Some(rest.to_owned());
+                } else {
+                    condition = Some(line.to_owned());
+                }
+            }
+        }
+    }
+
+    let temperature = hero_temp.or(text_temp)?;
+
+    let class_offline = match data.get("class") {
+        Some(serde_json::Value::String(s)) => {
+            let lower = s.to_ascii_lowercase();
+            lower.contains("offline") || lower.contains("stale")
+        }
+        Some(serde_json::Value::Array(arr)) => arr.iter().any(|v| {
+            v.as_str().is_some_and(|s| {
+                let lower = s.to_ascii_lowercase();
+                lower.contains("offline") || lower.contains("stale")
+            })
+        }),
+        _ => false,
+    };
+    if offline_note.is_none() && class_offline {
+        offline_note = Some("Offline — cached data".to_owned());
+    }
+
+    let location = is_v2
+        .then(|| root.get("city").and_then(|v| v.as_str()))
+        .flatten()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            data.get("alt")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        })
+        .map(str::to_owned);
+
+    Some(WeatherState {
+        temperature,
+        condition_glyph: condition_glyph.or(text_glyph),
+        condition,
+        temp_max,
+        temp_min,
+        precip_chance,
+        location,
+        offline_note,
+    })
+}
+
+fn weather_state_from_path(
+    path: &Path,
+    cache: &mut Option<WeatherCache>,
+) -> Option<WeatherState> {
+    use std::os::unix::fs::MetadataExt;
+
+    let Ok(meta) = std::fs::metadata(path) else {
+        *cache = None;
+        return None;
+    };
+    let stamp = WeatherFileStamp {
+        dev: meta.dev(),
+        ino: meta.ino(),
+        len: meta.len(),
+        modified: meta.modified().ok(),
+    };
+    if let Some(cached) = cache.as_ref()
+        && cached.stamp == stamp
+    {
+        return cached.state.clone();
+    }
+    let state = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|raw| parse_weather_json(&raw));
+    *cache = Some(WeatherCache {
+        stamp,
+        state: state.clone(),
+    });
+    state
+}
+
+pub fn weather_state() -> Option<WeatherState> {
+    static PATH: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    static CACHE: std::sync::Mutex<Option<WeatherCache>> = std::sync::Mutex::new(None);
+
+    let path = PATH
+        .get_or_init(|| {
+            std::env::var_os("HOME")
+                .filter(|h| !h.is_empty())
+                .map(|h| PathBuf::from(h).join(".config/dusky/settings/waybar_weather"))
+        })
+        .as_ref()?;
+    let mut guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    weather_state_from_path(path, &mut guard)
 }
 
 #[derive(Debug, Clone, Default)]
@@ -3181,6 +3554,127 @@ mod tests {
         assert_eq!(state.text, "6.42W");
         assert_eq!(state.tooltip, "Battery: 6%\nRemaining: 10h 31m");
         assert!((state.watts - 6.42).abs() < 1e-6);
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn weather_parses_v2_live_payload() {
+        let json = r#"{
+          "version": 2,
+          "saved_at": 1795516390.0,
+          "payload": {
+            "text": "   11°C",
+            "alt": "City",
+            "tooltip": "<span size='xx-large'>11°C</span>\n<big> Partly cloudy</big>\n 12°C   -1°C   0%",
+            "class": "weather"
+          },
+          "effective_unit": "metric",
+          "country_code": "NO",
+          "city": "City"
+        }"#;
+        let state = parse_weather_json(json).unwrap();
+        assert_eq!(state.temperature, "11°C");
+        assert_eq!(state.condition_glyph.as_deref(), Some(""));
+        assert_eq!(state.condition.as_deref(), Some("Partly cloudy"));
+        assert_eq!(state.temp_max.as_deref(), Some("12°C"));
+        assert_eq!(state.temp_min.as_deref(), Some("-1°C"));
+        assert_eq!(state.precip_chance.as_deref(), Some("0%"));
+        assert_eq!(state.location.as_deref(), Some("City"));
+        assert_eq!(state.offline_note, None);
+        assert!(!state.is_offline());
+    }
+
+    #[test]
+    fn weather_parses_offline_pango_note_and_class_fallback() {
+        let offline_v2 = r#"{
+          "version": 2,
+          "payload": {
+            "text": "   11°C",
+            "alt": "City",
+            "tooltip": "<span size='xx-large'>11°C</span>\n<big> Partly cloudy</big>\n 12°C   -1°C   45%\n\n<span color='#ff6b6b'>⚠ Offline — cached 18m ago</span>",
+            "class": "weather"
+          },
+          "city": "City"
+        }"#;
+        let state = parse_weather_json(offline_v2).unwrap();
+        assert!(state.is_offline());
+        assert_eq!(state.precip_chance.as_deref(), Some("45%"));
+        assert_eq!(
+            state.offline_note.as_deref(),
+            Some("Offline — cached 18m ago")
+        );
+
+        let class_only = r#"{
+          "version": 2,
+          "payload": {
+            "text": " 9°C",
+            "class": ["weather", "offline"]
+          }
+        }"#;
+        let fallback = parse_weather_json(class_only).unwrap();
+        assert!(fallback.is_offline());
+        assert_eq!(
+            fallback.offline_note.as_deref(),
+            Some("Offline — cached data")
+        );
+    }
+
+    #[test]
+    fn weather_parses_v1_imperial_entities_and_rejects_invalid() {
+        let v1_rich = r#"{
+          "text": "  72.5 °F",
+          "alt": "Seattle",
+          "tooltip": "<span size='xx-large'>72.5°F</span>\n<big>Rain &amp; Drizzle</big>\n 78°F   54°F   80%"
+        }"#;
+        let state = parse_weather_json(v1_rich).unwrap();
+        assert_eq!(state.temperature, "72.5°F");
+        assert_eq!(state.condition_glyph.as_deref(), Some(""));
+        assert_eq!(state.condition.as_deref(), Some("Rain & Drizzle"));
+        assert_eq!(state.temp_max.as_deref(), Some("78°F"));
+        assert_eq!(state.temp_min.as_deref(), Some("54°F"));
+        assert_eq!(state.precip_chance.as_deref(), Some("80%"));
+        assert_eq!(state.location.as_deref(), Some("Seattle"));
+        assert!(!state.is_offline());
+
+        let v1_text_only = r#"{"text": "   -3 °C"}"#;
+        let minimal = parse_weather_json(v1_text_only).unwrap();
+        assert_eq!(minimal.temperature, "-3°C");
+        assert_eq!(minimal.condition, None);
+        assert_eq!(minimal.temp_max, None);
+        assert_eq!(minimal.location, None);
+
+        for invalid in ["", "not json", "{}", r#"{"text":"   "}"#, r#"{"version":2}"#] {
+            assert!(parse_weather_json(invalid).is_none(), "{invalid:?}");
+        }
+    }
+
+    #[test]
+    fn weather_stat_cache_reuses_and_invalidates_on_replace_or_remove() {
+        let root = runtime_dir().join(format!("weather-cache-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let file = root.join("waybar_weather");
+        let tmp = root.join("waybar_weather.tmp");
+
+        let mut cache = None;
+        assert!(weather_state_from_path(&file, &mut cache).is_none());
+        assert!(cache.is_none());
+
+        std::fs::write(&file, r#"{"text":"11°C"}"#).unwrap();
+        let first = weather_state_from_path(&file, &mut cache).unwrap();
+        assert_eq!(first.temperature, "11°C");
+        assert!(cache.is_some());
+
+        // Atomic rename with identical length still changes inode and invalidates cache.
+        std::fs::write(&tmp, r#"{"text":"22°C"}"#).unwrap();
+        std::fs::rename(&tmp, &file).unwrap();
+        let updated = weather_state_from_path(&file, &mut cache).unwrap();
+        assert_eq!(updated.temperature, "22°C");
+
+        std::fs::remove_file(&file).unwrap();
+        assert!(weather_state_from_path(&file, &mut cache).is_none());
+        assert!(cache.is_none());
 
         std::fs::remove_dir_all(root).unwrap();
     }

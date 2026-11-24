@@ -41,7 +41,7 @@ pub enum Message {
     WindowEvent(iced_core::window::Id, iced_core::window::Event),
     BlurConfigured,
     GlobalBlurLoaded(Option<bool>),
-    WeatherLoaded(Option<String>),
+    WeatherLoaded(Option<sys::WeatherState>),
     MetricsLoaded((sys::CpuState, sys::RamState, sys::NetState, sys::BatteryState)),
     TogglesLoaded(u64, ToggleSnapshot),
     RadioLoaded(u64, u64, (Option<bool>, Option<bool>)),
@@ -158,7 +158,7 @@ pub struct TrayApp {
     theme: AppTheme,
     time_text: String,
     date_text: String,
-    weather: Option<String>,
+    weather: Option<sys::WeatherState>,
     cpu: sys::CpuState,
     ram: sys::RamState,
     net: sys::NetState,
@@ -305,7 +305,7 @@ impl TrayApp {
             RefreshKind::GlobalBlur => {
                 worker::start(sys::global_blur_enabled).map(Message::GlobalBlurLoaded)
             }
-            RefreshKind::Weather => worker::start(sys::weather_text).map(Message::WeatherLoaded),
+            RefreshKind::Weather => worker::start(sys::weather_state).map(Message::WeatherLoaded),
             RefreshKind::Metrics => worker::start(|| {
                 let (cpu, ram) = sys::cpu_ram_state();
                 let net = sys::net_state();
@@ -1052,16 +1052,44 @@ impl TrayApp {
         }
     }
 
-    fn render_rich_tooltip(label: &str, theme: AppTheme) -> Element<'static, Message> {
-        let lines: Vec<&str> = label.lines().collect();
-        let total_lines = lines.len();
-        let key_color = Self::mix(theme.accent, theme.fg, 0.10);
+    fn render_action_hint(trigger: &str, desc: &str, theme: AppTheme) -> Element<'static, Message> {
         let action_fg = saturate(theme.accent, 1.2);
         let action_bg = Color {
             a: 0.15,
             ..theme.accent
         };
         let action_desc_color = Self::mix(theme.fg, theme.muted, 0.12);
+
+        let badge = container(
+            text(trigger.to_owned())
+                .size(11)
+                .font(Font {
+                    weight: Weight::Bold,
+                    ..Font::DEFAULT
+                })
+                .color(action_fg),
+        )
+        .padding([1, 5])
+        .style(move |_| container::Style {
+            background: Some(action_bg.into()),
+            border: Border {
+                radius: 4.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        let mut action_row = row![badge].spacing(6).align_y(Vertical::Center);
+        if !desc.is_empty() {
+            action_row = action_row.push(text(desc.to_owned()).size(12).color(action_desc_color));
+        }
+        action_row.into()
+    }
+
+    fn render_rich_tooltip(label: &str, theme: AppTheme) -> Element<'static, Message> {
+        let lines: Vec<&str> = label.lines().collect();
+        let total_lines = lines.len();
+        let key_color = Self::mix(theme.accent, theme.fg, 0.10);
 
         let mut col = column![].spacing(3);
         let mut prev_was_action = false;
@@ -1086,34 +1114,7 @@ impl TrayApp {
                 if idx > 0 && !prev_was_action && !prev_was_blank {
                     col = col.push(Space::new().height(3.0));
                 }
-                let badge = container(
-                    text(trigger.to_owned())
-                        .size(11)
-                        .font(Font {
-                            weight: Weight::Bold,
-                            ..Font::DEFAULT
-                        })
-                        .color(action_fg),
-                )
-                .padding([1, 5])
-                .style(move |_| container::Style {
-                    background: Some(action_bg.into()),
-                    border: Border {
-                        radius: 4.0.into(),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                });
-
-                let mut action_row = row![badge].spacing(6).align_y(Vertical::Center);
-                if !desc.is_empty() {
-                    action_row = action_row.push(
-                        text(desc.to_owned())
-                            .size(12)
-                            .color(action_desc_color),
-                    );
-                }
-                col = col.push(action_row);
+                col = col.push(Self::render_action_hint(trigger, desc, theme));
                 prev_was_action = true;
                 prev_was_blank = false;
                 continue;
@@ -1178,31 +1179,262 @@ impl TrayApp {
         col.into()
     }
 
+    fn render_weather_tooltip(w: &sys::WeatherState, theme: AppTheme) -> Element<'static, Message> {
+        let mut col = column![].spacing(8).width(Length::Fixed(224.0));
+
+        // Tier 1: Hero temperature + optional location chip.
+        let mut hero = row![
+            text(w.temperature.clone())
+                .size(28)
+                .font(Font {
+                    weight: Weight::Bold,
+                    ..Font::DEFAULT
+                })
+                .color(theme.fg)
+        ]
+        .spacing(8)
+        .align_y(Vertical::Center)
+        .width(Length::Fill);
+
+        if let Some(location) = &w.location {
+            let chip_bg = Color {
+                a: 0.13,
+                ..theme.accent
+            };
+            let chip_fg = Self::mix(theme.accent, theme.fg, 0.22);
+            let chip = container(
+                text(location.clone())
+                    .size(11)
+                    .font(Font {
+                        weight: Weight::Semibold,
+                        ..Font::DEFAULT
+                    })
+                    .color(chip_fg),
+            )
+            .padding([2, 7])
+            .style(move |_| container::Style {
+                background: Some(chip_bg.into()),
+                border: Border {
+                    radius: 6.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            });
+            hero = hero.push(Space::new().width(Length::Fill)).push(chip);
+        }
+
+        let mut head = column![hero].spacing(2).width(Length::Fill);
+
+        // Tier 2: Condition description.
+        if let Some(condition) = &w.condition {
+            head = head.push(
+                text(condition.clone())
+                    .size(13)
+                    .font(Font {
+                        weight: Weight::Semibold,
+                        ..Font::DEFAULT
+                    })
+                    .color(Self::mix(theme.fg, theme.muted, 0.10)),
+            );
+        }
+        col = col.push(head);
+
+        // Tier 3: High / Low / Precipitation strip.
+        let mut metric_items: Vec<Element<'static, Message>> = Vec::with_capacity(3);
+        if let Some(hi) = &w.temp_max {
+            metric_items.push(
+                row![
+                    text("▲")
+                        .size(10)
+                        .color(saturate(theme.profiles[2], 0.85)),
+                    text(hi.clone())
+                        .size(12)
+                        .font(Font::MONOSPACE)
+                        .color(theme.fg),
+                ]
+                .spacing(4)
+                .align_y(Vertical::Center)
+                .into(),
+            );
+        }
+        if let Some(lo) = &w.temp_min {
+            metric_items.push(
+                row![
+                    text("▼")
+                        .size(10)
+                        .color(Self::mix(theme.secondary, theme.fg, 0.18)),
+                    text(lo.clone())
+                        .size(12)
+                        .font(Font::MONOSPACE)
+                        .color(theme.fg),
+                ]
+                .spacing(4)
+                .align_y(Vertical::Center)
+                .into(),
+            );
+        }
+        if let Some(precip) = &w.precip_chance {
+            let rain_active = Self::parse_leading_u64(precip).is_some_and(|p| p > 0);
+            let (val_color, val_weight) = if rain_active {
+                (theme.accent, Weight::Semibold)
+            } else {
+                (theme.muted, Weight::Normal)
+            };
+            metric_items.push(
+                row![
+                    text("Rain")
+                        .size(11)
+                        .font(Font {
+                            weight: Weight::Semibold,
+                            ..Font::DEFAULT
+                        })
+                        .color(saturate(theme.accent, 1.15)),
+                    text(precip.clone())
+                        .size(12)
+                        .font(Font {
+                            weight: val_weight,
+                            ..Font::MONOSPACE
+                        })
+                        .color(val_color),
+                ]
+                .spacing(4)
+                .align_y(Vertical::Center)
+                .into(),
+            );
+        }
+        if !metric_items.is_empty() {
+            let mut strip = row![]
+                .spacing(6)
+                .align_y(Vertical::Center)
+                .width(Length::Fill);
+            let count = metric_items.len();
+            for (idx, item) in metric_items.into_iter().enumerate() {
+                if idx > 0 && count > 1 {
+                    strip = strip.push(Space::new().width(Length::Fill));
+                }
+                strip = strip.push(item);
+            }
+            col = col.push(
+                container(strip)
+                    .padding([6, 10])
+                    .width(Length::Fill)
+                    .style(move |_| container::Style {
+                        background: Some(Self::surface(theme, 0.08).into()),
+                        border: Border {
+                            radius: 8.0.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }),
+            );
+        }
+
+        // Tier 4: Conditional offline banner.
+        if let Some(note) = &w.offline_note {
+            col = col.push(
+                container(
+                    text(note.clone())
+                        .size(11)
+                        .font(Font {
+                            weight: Weight::Semibold,
+                            ..Font::DEFAULT
+                        })
+                        .color(theme.danger),
+                )
+                .padding([5, 8])
+                .width(Length::Fill)
+                .style(move |_| container::Style {
+                    background: Some(
+                        Color {
+                            a: 0.14,
+                            ..theme.danger
+                        }
+                        .into(),
+                    ),
+                    border: Border {
+                        radius: 6.0.into(),
+                        color: Color {
+                            a: 0.35,
+                            ..theme.danger
+                        },
+                        width: 1.0,
+                    },
+                    ..Default::default()
+                }),
+            );
+        }
+
+        // Tier 5: Hairline divider + action footer.
+        col = col
+            .push(
+                container(Space::new())
+                    .width(Length::Fill)
+                    .height(Length::Fixed(1.0))
+                    .style(move |_| container::Style {
+                        background: Some(
+                            Color {
+                                a: 0.10,
+                                ..theme.fg
+                            }
+                            .into(),
+                        ),
+                        ..Default::default()
+                    }),
+            )
+            .push(Self::render_action_hint(
+                "LMB:",
+                "Open terminal forecast",
+                theme,
+            ));
+
+        col.into()
+    }
+
+    fn hint_with<'a>(
+        content: impl Into<Element<'a, Message>>,
+        tip: Element<'a, Message>,
+        position: tooltip::Position,
+        padding: f32,
+        theme: AppTheme,
+    ) -> Element<'a, Message> {
+        tooltip(content, tip, position)
+            .gap(8.0)
+            .padding(padding)
+            .snap_within_viewport(true)
+            .style(move |_| {
+                let mut style = Self::card(theme, 10.0);
+                style.background = Some(
+                    Color {
+                        a: 1.0,
+                        ..theme.card_bg
+                    }
+                    .into(),
+                );
+                style.border = Border {
+                    radius: 10.0.into(),
+                    color: Color {
+                        a: 0.14,
+                        ..Self::mix(theme.bg, theme.fg, 0.30)
+                    },
+                    width: 1.0,
+                };
+                style
+            })
+            .into()
+    }
+
     fn hint<'a>(
         content: impl Into<Element<'a, Message>>,
         label: String,
         theme: AppTheme,
     ) -> Element<'a, Message> {
-        tooltip(
+        Self::hint_with(
             content,
             Self::render_rich_tooltip(&label, theme),
             tooltip::Position::Top,
+            10.0,
+            theme,
         )
-        .gap(8.0)
-        .padding(10)
-        .snap_within_viewport(true)
-        .style(move |_| {
-            let mut style = Self::card(theme, 10.0);
-            style.background = Some(
-                Color {
-                    a: 1.0,
-                    ..theme.card_bg
-                }
-                .into(),
-            );
-            style
-        })
-        .into()
     }
 
     fn showing_battery(&self) -> bool {
@@ -1852,28 +2084,28 @@ impl TrayApp {
         let weather: Element<'_, Message> = if self.config.layout.show_weather
             && let Some(w) = &self.weather
         {
-            // The weather cache already contains its own condition glyph. Keep
-            // only its temperature, avoiding duplicated symbols and overflow.
-            let temperature = w
-                .split_whitespace()
-                .filter(|s| s.chars().any(|c| c.is_ascii_digit()))
-                .collect::<Vec<_>>()
-                .join(" ");
-            Self::hint(
+            let pill_color = if w.is_offline() {
+                Self::mix(theme.fg, theme.muted, 0.45)
+            } else {
+                theme.fg
+            };
+            Self::hint_with(
                 button(crate::appearance::glow(
                     row![
-                        Self::icon_label("☁︎", 16.0, Some(theme.fg)),
-                        text(temperature).size(11).color(theme.fg)
+                        Self::icon_label("☁︎", 16.0, Some(pill_color)),
+                        text(w.temperature.clone()).size(11).color(pill_color)
                     ]
                     .spacing(5)
                     .align_y(Vertical::Center)
                     .into(),
                     0.242,
                 ))
-                .padding(0)
+                .padding([2, 5])
                 .on_press(Message::WeatherPressed)
                 .style(move |_, status| Self::flat(theme, status)),
-                "Weather\nLMB: Open terminal forecast".into(),
+                Self::render_weather_tooltip(w, theme),
+                tooltip::Position::Bottom,
+                12.0,
                 theme,
             )
         } else {
@@ -3155,5 +3387,47 @@ mod tests {
             let elem = TrayApp::render_rich_tooltip(sample, theme);
             drop(elem);
         }
+    }
+
+    #[test]
+    fn weather_tooltip_renders_full_offline_and_minimal_states() {
+        let theme = AppTheme::load();
+        let mut app = app();
+
+        let full = sys::WeatherState {
+            temperature: "11°C".into(),
+            condition_glyph: Some("".into()),
+            condition: Some("Partly cloudy".into()),
+            temp_max: Some("12°C".into()),
+            temp_min: Some("-1°C".into()),
+            precip_chance: Some("0%".into()),
+            location: Some("City".into()),
+            offline_note: None,
+        };
+        let offline = sys::WeatherState {
+            precip_chance: Some("65%".into()),
+            offline_note: Some("Offline — cached 15m ago".into()),
+            ..full.clone()
+        };
+        let minimal = sys::WeatherState {
+            temperature: "72°F".into(),
+            condition_glyph: None,
+            condition: None,
+            temp_max: None,
+            temp_min: None,
+            precip_chance: None,
+            location: None,
+            offline_note: None,
+        };
+
+        for sample in [&full, &offline, &minimal] {
+            let _ = app.update(Message::WeatherLoaded(Some(sample.clone())));
+            assert_eq!(app.weather.as_ref(), Some(sample));
+            let elem = TrayApp::render_weather_tooltip(sample, theme);
+            drop(elem);
+        }
+
+        let _ = app.update(Message::WeatherLoaded(None));
+        assert!(app.weather.is_none());
     }
 }
