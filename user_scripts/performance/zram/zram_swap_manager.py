@@ -42,6 +42,7 @@ def die(msg: str, code: int = 1) -> NoReturn:
 ZRAM_CONF_DIR = Path("/etc/systemd/zram-generator.conf.d")
 ZRAM0_CONF = ZRAM_CONF_DIR / "99-zram0.conf"
 LEGACY_ZRAM0_CONFS = [
+    ZRAM_CONF_DIR / "90-dusky.conf",
     ZRAM_CONF_DIR / "99-elite-zram.conf",
     ZRAM_CONF_DIR / "99-elite-zram0.conf",
     ZRAM_CONF_DIR / "99-memtune.conf",
@@ -507,7 +508,7 @@ zram-size = {size_expr}
 zram-resident-limit = {res_limit}
 compression-algorithm = zstd(level=1)
 swap-priority = 32767
-options = discard
+options = discard=pages
 """
     write_file_atomic(ZRAM0_CONF, content)
     for legacy in LEGACY_ZRAM0_CONFS:

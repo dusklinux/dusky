@@ -212,7 +212,7 @@ zram-size = ${ZRAM_SIZE_EXPR}
 zram-resident-limit = ${ZRAM_RESIDENT_LIMIT_EXPR}
 compression-algorithm = ${COMPRESSION_ALGORITHM}
 swap-priority = ${SWAP_PRIORITY}
-options = discard
+options = discard=pages
 EOF
 
 install -Dm0644 "$tmp_config" "$CONFIG_FILE"
