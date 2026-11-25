@@ -217,7 +217,7 @@ def handle_diff_preview(target: str, cur: str, selected: list[str]) -> None:
         full_path = WORK_TREE / path
         try:
             mode = os.lstat(full_path).st_mode
-        except FileNotFoundError:
+        except (FileNotFoundError, NotADirectoryError):
             return ""
         # --no-index treats a directory symlink as a directory and tries to
         # compare a nonexistent child named "null". Show its target instead.
@@ -259,8 +259,20 @@ def handle_diff_preview(target: str, cur: str, selected: list[str]) -> None:
                 "ls-files", "--others", "--exclude-standard", "-z",
                 "--", *batch, literal_pathspecs=True, check=True,
             )
-            for f in out.split("\0"):
-                if f:
+            others = [f for f in out.split("\0") if f]
+            others_set = set(others)
+            for f in others:
+                diff_outputs.append(new_file_diff(f))
+            # Git's ls-files --others skips FIFOs, sockets, and device nodes;
+            # surface explicit special-file notices consistently with unborn HEAD.
+            for f in batch:
+                if f in others_set:
+                    continue
+                try:
+                    mode = os.lstat(WORK_TREE / f).st_mode
+                except (FileNotFoundError, NotADirectoryError):
+                    continue
+                if not (stat.S_ISREG(mode) or stat.S_ISLNK(mode) or stat.S_ISDIR(mode)):
                     diff_outputs.append(new_file_diff(f))
     else:
         # An unborn branch has no base tree. Show the current disk contents,

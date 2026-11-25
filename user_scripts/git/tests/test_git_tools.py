@@ -1176,7 +1176,7 @@ class WorkflowReliabilityTests(BareRepoCase):
         self.git('commit', '-qm', 'conflict')
         self.write('line\nbreak', 'untracked\n')
         buf = io.StringIO()
-        with patch.object(m, 'console', Console(file=buf, color_system=None)), \
+        with patch.object(m, 'console', Console(file=buf, color_system=None, soft_wrap=True)), \
                 patch.object(m, 'fzf_select', return_value=m.get_stash_list()[:1]):
             self.assertFalse(m.pop_or_apply_stash('pop'))
         self.assertIn('Conflict while applying stash@{0}', buf.getvalue())
@@ -1230,7 +1230,7 @@ class WorkflowReliabilityTests(BareRepoCase):
                 raise subprocess.CalledProcessError(1, ['git', *args])
             return orig_run(*args, **kwargs)
         buf = io.StringIO()
-        with patch.object(m, 'console', Console(file=buf, color_system=None)), \
+        with patch.object(m, 'console', Console(file=buf, color_system=None, soft_wrap=True)), \
                 patch.object(m, 'ask_yesno', return_value=True), \
                 patch.object(m, 'run_git', side_effect=fail_revert):
             self.assertFalse(m.safe_revert_last_commit())
