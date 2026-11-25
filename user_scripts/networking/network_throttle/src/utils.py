@@ -7,7 +7,7 @@ from pathlib import Path
 
 # Brand name
 BRAND_NAME = "Dusky Network Limiter"
-SETTINGS_DIR = Path("/home/dusk/.config/dusky/settings/dusky_network_limiter")
+SETTINGS_DIR = Path("/home/$USER/.config/dusky/settings/dusky_network_limiter")
 SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = SETTINGS_DIR / "network_limiter.db"
 
