@@ -115,6 +115,8 @@ BASE_MODEL="${INKLING_BASE_MODEL:-${MODEL_DIR}/Inkling-2-Mini-UD-Q4_K_M.gguf}"
 LORA_MODEL="${INKLING_LORA_MODEL:-${MODEL_DIR}/Inkling-2-Mini-Unbound-v2.1-LoRA-r16.gguf}"
 SRC_DIR="${INKLING_SRC_DIR:-${HOME}/src/llama.cpp}"
 SERVER_BIN="${INKLING_SERVER_BIN:-${SRC_DIR}/build/bin/llama-server}"
+DEFAULT_OT='(blk\.([0-5]|[7-9]|1[0-9]|2[0-3])\.ffn_.*exps|token_embd)=CPU'
+OT_EXPR="${INKLING_OT:-$DEFAULT_OT}"
 
 verify_gguf_file() {
   local path="$1"
@@ -209,9 +211,23 @@ else
   echo "WARNING: LoRA not found at ${LORA_MODEL}; launching base model without --lora." >&2
 fi
 
+HAS_CUSTOM_OT=0
+for arg in "$@"; do
+  case "$arg" in
+    -ot|--override-tensor|-ot=*|--override-tensor=*)
+      HAS_CUSTOM_OT=1
+      break
+      ;;
+  esac
+done
+
 ARGS+=(
   -ngl 99
-  -ot "(exps|token_embd)=CPU"
+)
+if [[ $HAS_CUSTOM_OT -eq 0 && -n "$OT_EXPR" ]]; then
+  ARGS+=(-ot "$OT_EXPR")
+fi
+ARGS+=(
   --no-op-offload
   --load-mode none
   --fit off
