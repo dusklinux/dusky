@@ -935,6 +935,325 @@ class AdditionalTests(BareRepoCase):
             with self.assertRaises(RuntimeError):
                 m.fzf_select(['a'])
 
+
+class ReconcileAndPreflightTests(BareRepoCase):
+
+    def test_reconcile_mm_reverted_and_sync_single_smoke(self):
+        import json
+        self.write('a', 'staged-a\n')
+        self.write('b', 'staged-b\n')
+        self.write('new_am', 'staged-am\n')
+        self.write('other', 'keep\n')
+        self.git('add', 'a', 'b', 'new_am', 'other')
+        self.write('a', 'base\n')
+        self.write('b', 'unstaged-b\n')
+        self.write('new_am', 'unstaged-am\n')
+        with patch.object(m, 'fzf_select', return_value=[]) as picker:
+            self.assertIsNone(m.sync_single())
+        picker.assert_called_once()
+        shown = {json.loads(row.split('\t', 1)[0]) for row in picker.call_args.args[0]}
+        self.assertEqual(shown, {'b', 'new_am', 'other'})
+        self.assertEqual(self.git('diff', 'HEAD', '--', 'a'), b'')
+        self.assertEqual(self.git('diff', '--cached', '--', 'a'), b'')
+        self.assertEqual(self.git('show', ':b'), b'staged-b\n')
+        self.assertEqual((self.w / 'b').read_text(), 'unstaged-b\n')
+        self.assertEqual(self.git('show', ':new_am'), b'staged-am\n')
+        self.assertEqual((self.w / 'new_am').read_text(), 'unstaged-am\n')
+        self.assertEqual(self.git('show', ':other'), b'keep\n')
+
+    def test_reconcile_ad_with_head_and_unborn(self):
+        self.write('temp', 'x\n')
+        self.git('add', 'temp')
+        (self.w / 'temp').unlink()
+        m.reconcile_reverted_staged_entries()
+        self.assertEqual(self.git('ls-files', 'temp'), b'')
+        self.assertEqual(self.git('status', '--porcelain=v1', '-z'), b'')
+
+        self.git('symbolic-ref', 'HEAD', 'refs/heads/unborn')
+        self.git('read-tree', '--empty')
+        self.write('dir/ghost', 'x\n')
+        self.write('keep', 'staged\n')
+        self.git('add', 'dir/ghost', 'keep')
+        (self.w / 'dir/ghost').unlink()
+        (self.w / 'dir').rmdir()
+        self.write('dir', 'now a file\n')
+        self.write('keep', 'edited\n')
+        m.reconcile_reverted_staged_entries()
+        self.assertEqual(self.git('ls-files', 'dir/ghost'), b'')
+        self.assertEqual(self.git('show', ':keep'), b'staged\n')
+        self.assertEqual((self.w / 'keep').read_text(), 'edited\n')
+        self.assertEqual((self.w / 'dir').read_text(), 'now a file\n')
+
+    def test_reconcile_rename_rm_and_rd(self):
+        self.git('mv', 'a', 'renamed')
+        self.write('renamed', 'edited\n')
+        m.reconcile_reverted_staged_entries()
+        self.assertIn(('renamed', 'a', 'RM'), m.changed_entries(tracked_only=True))
+        self.assertEqual(self.git('show', ':renamed'), b'base\n')
+
+        (self.w / 'renamed').unlink()
+        m.reconcile_reverted_staged_entries()
+        self.assertEqual(self.git('ls-files', 'renamed'), b'')
+        self.assertEqual(self.git('status', '--porcelain=v1', '-z'), b'D  a\0')
+
+        self.git('restore', '--source=HEAD', '--staged', '--worktree', 'a')
+        self.git('mv', 'a', 'renamed')
+        (self.w / 'renamed').rename(self.w / 'a')
+        m.reconcile_reverted_staged_entries()
+        self.assertEqual(self.git('ls-files', 'renamed'), b'')
+        self.assertEqual((self.w / 'a').read_text(), 'base\n')
+        self.assertIn(('a', None, 'D '), m.changed_entries(tracked_only=True))
+
+    def test_reconcile_skips_active_sequencer(self):
+        self.write('a', 'staged\n')
+        self.git('add', 'a')
+        self.write('a', 'base\n')
+        (self.g / 'MERGE_HEAD').write_text(self.git('rev-parse', 'HEAD').decode())
+        m.reconcile_reverted_staged_entries()
+        self.assertEqual(self.git('show', ':a'), b'staged\n')
+
+    def test_reconcile_special_and_non_utf8_names(self):
+        names = ['[x]', '-option', ':(glob)*', 'tab\tname', 'line\nbreak']
+        for name in names:
+            self.write(name, 'one\n')
+        raw_path = os.fsencode(self.w) + b'/raw-\xff'
+        with open(raw_path, 'wb') as fh:
+            fh.write(b'one\n')
+        self.git('add', '.')
+        self.git('commit', '-qm', 'special')
+        for name in names:
+            self.write(name, 'two\n')
+        with open(raw_path, 'wb') as fh:
+            fh.write(b'two\n')
+        self.git('add', '.')
+        for name in names:
+            self.write(name, 'one\n')
+        with open(raw_path, 'wb') as fh:
+            fh.write(b'one\n')
+        m.reconcile_reverted_staged_entries()
+        self.assertEqual(self.git('status', '--porcelain=v1', '-z'), b'')
+
+    def test_reconcile_respects_manifest_scope(self):
+        self.write('a', 'staged-a\n')
+        self.write('b', 'staged-b\n')
+        self.git('add', 'a', 'b')
+        self.write('a', 'base\n')
+        self.write('b', 'base\n')
+        self.write('.manifest', '')
+        m.reconcile_reverted_staged_entries()
+        self.assertEqual(self.git('show', ':a'), b'staged-a\n')
+        self.assertEqual(self.git('show', ':b'), b'staged-b\n')
+        self.write('.manifest', 'a\n')
+        m.reconcile_reverted_staged_entries()
+        self.assertEqual(self.git('diff', '--cached', '--', 'a'), b'')
+        self.assertEqual(self.git('show', ':b'), b'staged-b\n')
+
+    def test_picker_distinguishes_duplicate_path_untrack_and_untracked(self):
+        self.git('rm', '--cached', 'a')
+        def select_deleted_only(rows, **kwargs):
+            self.assertEqual(kwargs['delimiter'], '\t')
+            self.assertEqual(kwargs['with_nth'], '3..')
+            picked = [row for row in rows if '[D ]' in row]
+            self.assertEqual(len(picked), 1)
+            return picked
+        with patch.object(m, 'fzf_select', side_effect=select_deleted_only), \
+                patch.object(m, 'ask', return_value='untrack a'), \
+                patch.object(m, 'ask_yesno', return_value=False):
+            m.sync_single()
+        self.assertEqual(self.git('ls-files', 'a'), b'')
+        self.assertEqual((self.w / 'a').read_text(), 'base\n')
+
+    def test_stage_entries_preflight_blocks_sequencer_and_conflicts(self):
+        self.write('a', 'dirty\n')
+        before = self.git('ls-files', '-s', 'a')
+        (self.g / 'MERGE_HEAD').write_text(self.git('rev-parse', 'HEAD').decode())
+        with patch.object(m, 'ask', side_effect=AssertionError('must not prompt')):
+            self.assertFalse(m.stage_entries([('a', None, ' M')], local_only=True))
+        self.assertEqual(self.git('ls-files', '-s', 'a'), before)
+        (self.g / 'MERGE_HEAD').unlink()
+
+        (self.g / 'rebase-merge').mkdir()
+        with patch.object(m, 'ask', side_effect=AssertionError('must not prompt')):
+            self.assertFalse(m.stage_entries([('a', None, ' M')], local_only=True))
+        self.assertEqual(self.git('ls-files', '-s', 'a'), before)
+        (self.g / 'rebase-merge').rmdir()
+
+        blob_b = self.git('rev-parse', 'HEAD:b').decode().strip()
+        subprocess.run(
+            ['git', 'update-index', '--index-info'],
+            input=f'100644 {blob_b} 2\tb\n100644 {blob_b} 3\tb\n'.encode(),
+            env=self.env, cwd=self.w, check=True,
+        )
+        with patch.object(m, 'ask', side_effect=AssertionError('must not prompt')):
+            self.assertFalse(m.stage_entries([('a', None, ' M')], local_only=True))
+        self.assertEqual(self.git('ls-files', '-s', 'a'), before)
+
+
+class WorkflowReliabilityTests(BareRepoCase):
+
+    def test_preview_non_utf8_without_delta_on_real_text_wrapper(self):
+        (self.w / 'raw').write_bytes(b'non-utf8-\xff\n')
+        raw_buf = io.BytesIO()
+        wrapper = io.TextIOWrapper(raw_buf, encoding='utf-8', errors='strict')
+        with patch.object(m.shutil, 'which', return_value=None), patch('sys.stdout', wrapper):
+            m.handle_diff_preview('', 'raw', [])
+        self.assertIn(b'non-utf8-\xff', raw_buf.getvalue())
+
+    def test_preview_fifo_does_not_hang(self):
+        os.mkfifo(self.w / 'pipe')
+        with patch.object(m.shutil, 'which', return_value=None), \
+                patch('sys.stdout', new_callable=io.StringIO) as out:
+            m.handle_diff_preview('', 'pipe', [])
+        self.assertIn("Non-diffable special file: 'pipe'", out.getvalue())
+
+    def test_preview_batches_over_128_files(self):
+        names = [f'f{i:03d}' for i in range(135)]
+        for name in names:
+            self.write(name, 'base\n')
+        self.git('add', '.')
+        self.git('commit', '-qm', 'many')
+        for name in names:
+            self.write(name, f'marker-{name}\n')
+        with patch.object(m, 'run_git', wraps=m.run_git) as calls, \
+                patch.object(m.shutil, 'which', return_value=None), \
+                patch('sys.stdout', new_callable=io.StringIO) as out:
+            m.handle_diff_preview('', names[0], names)
+        self.assertEqual(calls.call_count, 5)
+        self.assertIn('marker-f000', out.getvalue())
+        self.assertIn('marker-f134', out.getvalue())
+
+    def test_diff_preview_json_ignores_empty_selected_tokens(self):
+        import json
+        self.write('a', 'token-marker\n')
+        result = subprocess.run(
+            [sys.executable, '-B', str(ROOT / 'git_dusky.py'),
+             '--diff-preview-json', '', json.dumps('a'), '', json.dumps('a'), ''],
+            env=self.env | {'HOME': str(self.w), 'DUSKY_GIT_DIR': str(self.g)},
+            capture_output=True, check=True,
+        )
+        self.assertIn(b'token-marker', result.stdout)
+
+    def test_create_stash_manifest_scoped_and_special_names(self):
+        self.write('[special]', 'base\n')
+        self.git('add', '[special]')
+        self.git('commit', '-qm', 'special')
+        self.write('.manifest', 'a\n[special]\nnew_in\n')
+        self.write('a', 'mod-a\n')
+        self.write('[special]', 'mod-special\n')
+        self.write('b', 'keep-b\n')
+        self.write('new_in', 'stash-me\n')
+        self.write('new_out', 'keep-out\n')
+        with patch.object(m, 'ask', return_value='scoped stash'), \
+                patch.object(m, 'ask_yesno', return_value=True):
+            m.create_stash()
+        stashes = m.get_stash_list()
+        self.assertEqual(len(stashes), 1)
+        self.assertIn('scoped stash', stashes[0])
+        self.assertEqual((self.w / 'a').read_text(), 'base\n')
+        self.assertEqual((self.w / '[special]').read_text(), 'base\n')
+        self.assertFalse((self.w / 'new_in').exists())
+        self.assertEqual((self.w / 'b').read_text(), 'keep-b\n')
+        self.assertEqual((self.w / 'new_out').read_text(), 'keep-out\n')
+
+    def test_create_stash_refuses_unborn_head(self):
+        self.git('symbolic-ref', 'HEAD', 'refs/heads/unborn')
+        self.git('read-tree', '--empty')
+        with patch.object(m, 'ask', side_effect=AssertionError('must check HEAD first')):
+            self.assertFalse(m.create_stash())
+
+    def test_create_stash_refuses_unscoped_untracked_in_home(self):
+        with patch.object(m, 'HOME', self.w), \
+                patch.object(m, 'ask', return_value='unsafe'), \
+                patch.object(m, 'ask_yesno', return_value=True):
+            self.assertFalse(m.create_stash())
+        self.assertEqual(m.get_stash_list(), [])
+
+    def test_pop_stash_detects_unmerged_conflict(self):
+        self.write('a', 'stashed\n')
+        self.git('stash', 'push', '-m', 'conflict-stash')
+        self.write('a', 'committed\n')
+        self.git('add', 'a')
+        self.git('commit', '-qm', 'conflict')
+        self.write('line\nbreak', 'untracked\n')
+        buf = io.StringIO()
+        with patch.object(m, 'console', Console(file=buf, color_system=None)), \
+                patch.object(m, 'fzf_select', return_value=m.get_stash_list()[:1]):
+            self.assertFalse(m.pop_or_apply_stash('pop'))
+        self.assertIn('Conflict while applying stash@{0}', buf.getvalue())
+        self.assertTrue(m._has_index_conflicts())
+        self.assertEqual(len(m.get_stash_list()), 1)
+
+    def test_checkout_pr_url_variants_and_invalid_inputs(self):
+        remote = self.root / 'origin'
+        subprocess.run(
+            ['git', 'init', '--bare', '--initial-branch=main', str(remote)],
+            env={k: v for k, v in self.env.items() if k not in ('GIT_DIR', 'GIT_WORK_TREE')},
+            check=True, stdout=subprocess.DEVNULL,
+        )
+        self.git('remote', 'add', 'origin', str(remote))
+        self.git('push', 'origin', 'main')
+        head_sha = self.git('rev-parse', 'HEAD').decode().strip()
+        valid_cases = [
+            ('42', 'https://github.com/owner/repo/pull/42/files?w=1#diff-1'),
+            ('43', 'https://github.com/owner/repo/pull/43/commits'),
+            ('44', 'https://github.com/owner/repo/pull/44/checks/'),
+            ('45', 'https://github.com/owner/repo/pull/45/changes?tab=1'),
+            ('46', '46'),
+        ]
+        for pr_num, user_input in valid_cases:
+            subprocess.run(
+                ['git', '--git-dir=' + str(remote), 'update-ref', f'refs/pull/{pr_num}/head', head_sha],
+                env=self.env, check=True,
+            )
+            with patch.object(m, 'ask', return_value=user_input):
+                self.assertIsNone(m.checkout_pr())
+            self.assertEqual(self.git('branch', '--show-current').decode().strip(), f'pr/{pr_num}')
+        for bad in ('42/files', '0', 'https://github.com/owner/repo/issues/42',
+                    'https://github.com/owner/repo/pull/42/unknown'):
+            with self.subTest(bad=bad), patch.object(m, 'ask', return_value=bad), \
+                    patch.object(m, 'run_git', side_effect=AssertionError('invalid PR must not run git')):
+                self.assertFalse(m.checkout_pr())
+
+    def test_safe_revert_last_commit_success_and_conflict(self):
+        self.write('a', 'second\n')
+        self.git('add', 'a')
+        self.git('commit', '-qm', 'second')
+        with patch.object(m, 'ask_yesno', side_effect=[True, False]):
+            self.assertIsNone(m.safe_revert_last_commit())
+        self.assertEqual((self.w / 'a').read_text(), 'base\n')
+        self.assertIn(b'Revert', self.git('log', '-1', '--format=%s'))
+
+        orig_run = m.run_git
+        def fail_revert(*args, **kwargs):
+            if args and args[0] == 'revert':
+                (self.g / 'REVERT_HEAD').write_text(self.git('rev-parse', 'HEAD').decode())
+                raise subprocess.CalledProcessError(1, ['git', *args])
+            return orig_run(*args, **kwargs)
+        buf = io.StringIO()
+        with patch.object(m, 'console', Console(file=buf, color_system=None)), \
+                patch.object(m, 'ask_yesno', return_value=True), \
+                patch.object(m, 'run_git', side_effect=fail_revert):
+            self.assertFalse(m.safe_revert_last_commit())
+        self.assertIn('git revert --abort', buf.getvalue())
+
+    def test_nuclear_revert_detached_head_fails_before_picker(self):
+        self.git('checkout', '--detach')
+        self.write('a', 'private\n')
+        with patch.object(m, 'fzf_select', side_effect=AssertionError('must check branch first')):
+            self.assertFalse(m.nuclear_revert())
+        self.assertEqual((self.w / 'a').read_text(), 'private\n')
+
+    def test_show_delta_sigpipe_tolerance(self):
+        for sigpipe_code in (141, -13):
+            with self.subTest(code=sigpipe_code), \
+                    patch.object(m, '_head_exists', return_value=True), \
+                    patch.object(m, 'run_git', return_value=(sigpipe_code, '', '')):
+                m.show_delta()
+        with patch.object(m, '_head_exists', return_value=True), \
+                patch.object(m, 'run_git', return_value=(2, '', 'err')):
+            with self.assertRaises(subprocess.CalledProcessError):
+                m.show_delta()
+
 class TerminalTests(unittest.TestCase):
 
     def setUp(self):

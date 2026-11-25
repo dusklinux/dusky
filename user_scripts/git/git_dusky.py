@@ -16,6 +16,7 @@ import os
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -86,11 +87,21 @@ GIT_ENV_OVERRIDES: tuple[str, ...] = (
     "GIT_OBJECT_DIRECTORY",
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_PREFIX",
+    "GIT_SUPER_PREFIX",
+    "GIT_NAMESPACE",
     "GIT_LITERAL_PATHSPECS",
     "GIT_GLOB_PATHSPECS",
     "GIT_NOGLOB_PATHSPECS",
     "GIT_ICASE_PATHSPECS",
 )
+_SEQUENCER_MARKERS: tuple[tuple[str, str], ...] = (
+    ("MERGE_HEAD", "MERGE IN PROGRESS"),
+    ("rebase-merge", "REBASE IN PROGRESS"),
+    ("rebase-apply", "REBASE IN PROGRESS"),
+    ("CHERRY_PICK_HEAD", "CHERRY-PICK IN PROGRESS"),
+    ("REVERT_HEAD", "REVERT IN PROGRESS"),
+)
+_UNSET: object = object()
 
 SETTINGS_DIR: Path = HOME / ".config" / "dusky" / "settings"
 LAYOUT_FILE: Path = SETTINGS_DIR / "git_preview_layout"
@@ -204,14 +215,19 @@ def handle_diff_preview(target: str, cur: str, selected: list[str]) -> None:
 
     def new_file_diff(path: str) -> str:
         full_path = WORK_TREE / path
-        if not full_path.exists() and not full_path.is_symlink():
+        try:
+            mode = os.lstat(full_path).st_mode
+        except FileNotFoundError:
             return ""
         # --no-index treats a directory symlink as a directory and tries to
         # compare a nonexistent child named "null". Show its target instead.
-        if full_path.is_symlink() and full_path.is_dir():
-            return f"New symlink: {path!r} → {os.readlink(full_path)!r}\n"
-        if full_path.is_dir():
+        if stat.S_ISLNK(mode):
+            if full_path.is_dir():
+                return f"New symlink: {path!r} → {os.readlink(full_path)!r}\n"
+        elif stat.S_ISDIR(mode):
             return f"Untracked directory: {path!r}\n"
+        elif not stat.S_ISREG(mode):
+            return f"Non-diffable special file: {path!r}\n"
         code, out, err = run_git(
             "diff", "--color=always", "--no-index", "--", "/dev/null", str(full_path)
         )
@@ -223,38 +239,41 @@ def handle_diff_preview(target: str, cur: str, selected: list[str]) -> None:
 
     diff_outputs: list[str] = []
     if target:
-        _, out, _ = run_git(
-            "show", "--color=always", "--patch", "--format=",
-            target, "--", *files, literal_pathspecs=True, check=True,
-        )
-        diff_outputs.append(out)
-    elif run_git("rev-parse", "--verify", "HEAD")[0] == 0:
-        # One diff includes tracked edits and staged additions, with Git's own
-        # handling of renames, symlinks and deleted files.
-        _, out, _ = run_git(
-            "diff", "--color=always", "--patch", "HEAD", "--",
-            *files, literal_pathspecs=True, check=True,
-        )
-        diff_outputs.append(out)
-        _, out, _ = run_git(
-            "ls-files", "--others", "--exclude-standard", "-z",
-            "--", *files, literal_pathspecs=True, check=True,
-        )
-        new_files = [f for f in out.split("\0") if f]
-        for f in new_files:
-            diff_outputs.append(new_file_diff(f))
+        for batch in batched(files, 128):
+            _, out, _ = run_git(
+                "show", "--color=always", "--patch", "--format=",
+                target, "--", *batch, literal_pathspecs=True, check=True,
+            )
+            diff_outputs.append(out)
+    elif _head_exists():
+        # One diff per batch includes tracked edits and staged additions, with
+        # Git's own handling of renames, symlinks and deleted files.
+        for batch in batched(files, 128):
+            _, out, _ = run_git(
+                "diff", "--color=always", "--patch", "HEAD", "--",
+                *batch, literal_pathspecs=True, check=True,
+            )
+            diff_outputs.append(out)
+        for batch in batched(files, 128):
+            _, out, _ = run_git(
+                "ls-files", "--others", "--exclude-standard", "-z",
+                "--", *batch, literal_pathspecs=True, check=True,
+            )
+            for f in out.split("\0"):
+                if f:
+                    diff_outputs.append(new_file_diff(f))
     else:
         # An unborn branch has no base tree. Show the current disk contents,
         # including unstaged edits to newly staged files.
         for f in files:
-            full_path = WORK_TREE / f
-            if full_path.exists() or full_path.is_symlink():
+            if os.path.lexists(WORK_TREE / f):
                 diff_outputs.append(new_file_diff(f))
 
     raw_diff = "".join(diff_outputs)
     if not raw_diff:
         return
 
+    raw_bytes = raw_diff.encode("utf-8", errors="surrogateescape")
     delta_bin = shutil.which("delta")
     try:
         if delta_bin:
@@ -262,12 +281,14 @@ def handle_diff_preview(target: str, cur: str, selected: list[str]) -> None:
             delta_cmd = [delta_bin, "--paging=never"]
             if cols and cols.isdigit():
                 delta_cmd.append(f"--width={cols}")
-            proc = subprocess.run(
-                delta_cmd, input=raw_diff, text=True, errors="surrogateescape", check=False
-            )
+            proc = subprocess.run(delta_cmd, input=raw_bytes, check=False)
             # Ignore SIGPIPE (-13 or 141) when fzf closes the preview pipe early.
             if proc.returncode not in (0, -13, 141):
                 raise subprocess.CalledProcessError(proc.returncode, delta_cmd)
+        elif hasattr(sys.stdout, "buffer"):
+            sys.stdout.flush()
+            sys.stdout.buffer.write(raw_bytes)
+            sys.stdout.buffer.flush()
         else:
             sys.stdout.write(raw_diff)
             sys.stdout.flush()
@@ -414,6 +435,25 @@ def run_git(
     )
 
 
+def _head_exists() -> bool:
+    """True when HEAD resolves to an existing commit (not an unborn branch)."""
+    return run_git("rev-parse", "--verify", "--quiet", "HEAD")[0] == 0
+
+
+def _active_sequencer_state() -> str | None:
+    """Returns active merge/rebase/cherry-pick/revert label, or None if idle."""
+    for marker, label in _SEQUENCER_MARKERS:
+        if (GIT_DIR / marker).exists():
+            return label
+    return None
+
+
+def _has_index_conflicts() -> bool:
+    """True when the Git index contains any unmerged (stage 1-3) entries."""
+    _, out, _ = run_git("ls-files", "--unmerged", "-z", check=True)
+    return bool(out)
+
+
 def check_dependencies() -> None:
     """Validates the execution environment and required binaries."""
     if sys.version_info < (3, 12):
@@ -428,8 +468,8 @@ def check_dependencies() -> None:
             console.print(f"[bold red]✖ Error:[/bold red] '{cmd}' binary missing from $PATH.")
             sys.exit(1)
 
-    if not GIT_DIR.is_dir():
-        console.print(f"[bold red]✖ Error:[/bold red] Bare repository target missing: {GIT_DIR}")
+    if not GIT_DIR.is_dir() or not (GIT_DIR / "HEAD").is_file():
+        console.print(f"[bold red]✖ Error:[/bold red] Bare repository target missing or invalid: {GIT_DIR}")
         sys.exit(1)
 
 
@@ -574,7 +614,7 @@ def changed_entries(
         if not entry:
             continue
         status, path = entry[:2], entry[3:]
-        old = next(entries) if "R" in status or "C" in status else None
+        old = next(entries, None) if "R" in status or "C" in status else None
         if not is_internal_gitdir(path) and not (old and is_internal_gitdir(old)):
             result[(path, old, status)] = None
     if not tracked_only:
@@ -590,7 +630,16 @@ def changed_entries(
 
 def stage_entries(entries: list[ChangedEntry], *, local_only: bool = False) -> bool | None:
     """Stage selected work-tree changes; leave unrelated staged files alone."""
-    if any(status in CONFLICT_STATUSES for _, _, status in entries):
+    if not entries:
+        console.print("[green]No matching changes to commit.[/green]")
+        return None
+    if _active_sequencer_state() is not None:
+        console.print(
+            "[bold red]✖ Finish the active merge/rebase/cherry-pick/revert "
+            "before committing selected files.[/bold red]"
+        )
+        return False
+    if any(status in CONFLICT_STATUSES for _, _, status in entries) or _has_index_conflicts():
         console.print("[bold red]✖ Resolve merge conflicts before selecting files to commit.[/bold red]")
         return False
     selected: set[str] = set()
@@ -601,29 +650,29 @@ def stage_entries(entries: list[ChangedEntry], *, local_only: bool = False) -> b
             selected.add(old)
         if status[1] != " ":
             unstaged.add(path)
-            # Staged renames already removed the source from the index.
-            if old and status[1] == "R":
-                unstaged.add(old)
     if unstaged:
         payload = os.fsencode("\0".join(sorted(unstaged)) + "\0")
         run_git(
             "add", "--all", "--pathspec-from-file=-", "--pathspec-file-nul",
             input_data=payload, literal_pathspecs=True, check=True,
         )
-    if selected:
-        return commit_and_push(sorted(selected), local_only=local_only)
-    console.print("[green]No matching changes to commit.[/green]")
-    return None
+    return commit_and_push(sorted(selected), local_only=local_only)
 
 
-def scoped_entries(*, tracked_only: bool = False) -> list[ChangedEntry]:
-    paths = get_list_pathspecs()
-    if paths == []:
+def scoped_entries(
+    *, tracked_only: bool = False, paths: list[str] | None | object = _UNSET,
+) -> list[ChangedEntry]:
+    resolved_paths: list[str] | None = (
+        get_list_pathspecs() if paths is _UNSET else paths  # type: ignore[assignment]
+    )
+    if resolved_paths == []:
         console.print("[yellow]The manifest has no valid paths; nothing selected.[/yellow]")
         return []
     return [
-        entry for entry in changed_entries(tracked_only=tracked_only, scope=paths)
-        if paths is None or matches_pathspec(entry[0], paths) or matches_pathspec(entry[1], paths)
+        entry for entry in changed_entries(tracked_only=tracked_only, scope=resolved_paths)
+        if resolved_paths is None
+        or matches_pathspec(entry[0], resolved_paths)
+        or matches_pathspec(entry[1], resolved_paths)
     ]
 
 
@@ -679,10 +728,10 @@ def get_commit_preview_cmd() -> str:
     delta_bin = shutil.which("delta")
     if delta_bin:
         return (
-            f"git --no-advice show --color=always {{1}} | "
+            f"git --no-advice show --color=always {{1}} -- | "
             f"{shlex.quote(delta_bin)} --paging=never ${{FZF_PREVIEW_COLUMNS:+--width=$FZF_PREVIEW_COLUMNS}}"
         )
-    return "git --no-advice show --color=always {1}"
+    return "git --no-advice show --color=always {1} --"
 
 
 def get_stash_preview_cmd() -> str:
@@ -691,16 +740,15 @@ def get_stash_preview_cmd() -> str:
     if delta_bin:
         return (
             f"git --no-advice stash show -p --include-untracked --color=always "
-            f"$(printf %s {{1}} | cut -d: -f1) | "
+            f"\"$(printf %s {{1}} | cut -d: -f1)\" | "
             f"{shlex.quote(delta_bin)} --paging=never ${{FZF_PREVIEW_COLUMNS:+--width=$FZF_PREVIEW_COLUMNS}}"
         )
-    return "git --no-advice stash show -p --include-untracked --color=always $(printf %s {1} | cut -d: -f1)"
+    return "git --no-advice stash show -p --include-untracked --color=always \"$(printf %s {1} | cut -d: -f1)\""
 
 
 def get_numstat_map() -> dict[str, str]:
     """Returns a mapping of relative file paths to colorized (+a, -d) diff badges."""
-    run_git("update-index", "--refresh", "-q")
-    base = ["HEAD"] if run_git("rev-parse", "--verify", "HEAD")[0] == 0 else ["--cached"]
+    base = ["HEAD"] if _head_exists() else ["--cached"]
     _, numstat_out, _ = run_git("diff", "--numstat", "-z", *base, check=True)
     res: dict[str, str] = {}
     records = iter(numstat_out.split("\0"))
@@ -709,8 +757,10 @@ def get_numstat_map() -> dict[str, str]:
             continue
         add, delete, path = record.split("\t", 2)
         if not path:  # Renames have two separate NUL-terminated paths.
-            next(records)
-            path = next(records)
+            next(records, "")
+            path = next(records, "")
+            if not path:
+                continue
         if add == "-" and delete == "-":
             res[path] = "\033[90m(binary)\033[0m"
         else:
@@ -724,15 +774,19 @@ def get_numstat_map() -> dict[str, str]:
     return res
 
 
-def reconcile_reverted_staged_entries() -> None:
+def reconcile_reverted_staged_entries(*, paths: list[str] | None | object = _UNSET) -> None:
     """Re-sync staged entries that were subsequently reverted on disk back to HEAD.
 
     Only updates scoped entries whose current disk state matches HEAD (or was
     removed on an unborn branch), preserving unrelated index entries and keeping
     genuine [MM]/[AM] badges intact for the interactive selector.
     """
-    paths = get_list_pathspecs()
-    if paths == []:
+    if _active_sequencer_state() is not None:
+        return
+    resolved_paths: list[str] | None = (
+        get_list_pathspecs() if paths is _UNSET else paths  # type: ignore[assignment]
+    )
+    if resolved_paths == []:
         return
     run_git("update-index", "--refresh", "-q")
     _, pre_out, _ = run_git(
@@ -744,47 +798,53 @@ def reconcile_reverted_staged_entries() -> None:
         if not entry:
             continue
         st, p = entry[:2], entry[3:]
-        old_p = next(pre_it) if "R" in st or "C" in st else None
+        old_p = next(pre_it, None) if "R" in st or "C" in st else None
         if st in CONFLICT_STATUSES:
             continue
         if st[0] not in (" ", "?", "!") and st[1] != " ":
-            if paths is None or matches_pathspec(p, paths) or matches_pathspec(old_p, paths):
+            if (
+                resolved_paths is None
+                or matches_pathspec(p, resolved_paths)
+                or matches_pathspec(old_p, resolved_paths)
+            ):
                 stale_candidates.append(p)
-                if old_p and st[1] == "R":
-                    stale_candidates.append(old_p)
 
     if not stale_candidates:
         return
 
     unique_candidates = sorted(set(stale_candidates))
-    payload = os.fsencode("\0".join(unique_candidates) + "\0")
-    if run_git("rev-parse", "--verify", "HEAD")[0] == 0:
+    if _head_exists():
         _, still_diff_out, _ = run_git(
-            "diff", "--name-only", "-z", "HEAD",
-            "--pathspec-from-file=-", "--pathspec-file-nul",
-            input_data=payload, literal_pathspecs=True, check=True,
+            "diff", "--name-only", "--no-renames", "-z", "HEAD", check=True,
         )
         still_dirty = {p for p in still_diff_out.split("\0") if p}
         reverted = [p for p in unique_candidates if p not in still_dirty]
+        if reverted:
+            rev_payload = os.fsencode("\0".join(reverted) + "\0")
+            run_git(
+                "reset", "--quiet", "HEAD", "--pathspec-from-file=-", "--pathspec-file-nul",
+                input_data=rev_payload, literal_pathspecs=True, check=True,
+            )
     else:
-        reverted = [
-            p for p in unique_candidates
-            if not (WORK_TREE / p).exists() and not (WORK_TREE / p).is_symlink()
-        ]
-
-    if reverted:
-        rev_payload = os.fsencode("\0".join(reverted) + "\0")
-        run_git(
-            "add", "--all", "--pathspec-from-file=-", "--pathspec-file-nul",
-            input_data=rev_payload, literal_pathspecs=True, check=True,
-        )
+        reverted = [p for p in unique_candidates if not os.path.lexists(WORK_TREE / p)]
+        if reverted:
+            rev_payload = os.fsencode("\0".join(reverted) + "\0")
+            run_git(
+                "update-index", "--force-remove", "-z", "--stdin",
+                input_data=rev_payload, check=True,
+            )
 
 
 def sync_single() -> bool | None:
     """Stage and commit selected changes."""
-    reconcile_reverted_staged_entries()
+    paths = get_list_pathspecs()
+    if paths == []:
+        console.print("[yellow]The manifest has no valid paths; nothing selected.[/yellow]")
+        return None
 
-    entries = scoped_entries()
+    reconcile_reverted_staged_entries(paths=paths)
+
+    entries = scoped_entries(paths=paths)
     if not entries:
         console.print("[green]No matching changes to commit.[/green]")
         return None
@@ -801,7 +861,7 @@ def select_changed_entries(
     """Select literal filenames with live Delta preview and colorized hierarchy."""
     numstat_map = get_numstat_map()
     dir_colors: dict[str, str] = {}
-    choices: dict[str, list[ChangedEntry]] = {}
+    choices: dict[str, ChangedEntry] = {}
     displays: list[str] = []
 
     for number, entry in enumerate(entries, 1):
@@ -809,13 +869,14 @@ def select_changed_entries(
         badge = format_status_badge(status)
         display_path = repr(path)[1:-1] if any(ord(c) < 32 for c in path) else path
         colored_path = format_path_colored(display_path, dir_colors)
-        stat = numstat_map.get(path, "")
-        stat_suffix = f"  {stat}" if stat else ""
+        stat_badge = numstat_map.get(path, "")
+        stat_suffix = f"  {stat_badge}" if stat_badge else ""
         old_suffix = f" (from {repr(old)[1:-1]})" if old else ""
         display = f"{number:2d}: {badge} {colored_path}{old_suffix}{stat_suffix}"
         identity = json.dumps(path, ensure_ascii=True)
-        choices.setdefault(identity, []).append(entry)
-        displays.append(f"{identity}\t{display}")
+        row_id = str(number)
+        choices[row_id] = entry
+        displays.append(f"{identity}\t{row_id}\t{display}")
 
     self_bin = shlex.quote(str(Path(__file__).resolve()))
     preview_cmd = f"{self_bin} --diff-preview-json '' {{1}} {{+1}}"
@@ -835,18 +896,21 @@ def select_changed_entries(
         multi=True,
         preview=preview_cmd,
         delimiter="\t",
-        with_nth="2..",
+        with_nth="3..",
         header=header,
         preview_label=" file diff ",
     )
 
-    seen_identities: set[str] = set()
+    seen_rows: set[str] = set()
     result: list[ChangedEntry] = []
     for line in selected or []:
-        identity = line.split("\t", 1)[0]
-        if identity in choices and identity not in seen_identities:
-            seen_identities.add(identity)
-            result.extend(choices[identity])
+        parts = line.split("\t", 2)
+        if len(parts) < 2:
+            continue
+        row_id = parts[1]
+        if row_id in choices and row_id not in seen_rows:
+            seen_rows.add(row_id)
+            result.append(choices[row_id])
     return result
 
 
@@ -1018,11 +1082,10 @@ def commit_selected_index(files: list[str], message: str) -> None:
     """Commit selected staged entries, including deletions whose files still exist."""
     if not files:
         return
-    for state in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply"):
-        if (GIT_DIR / state).exists():
-            raise RuntimeError(
-                "Finish the active merge/rebase/cherry-pick before committing selected files."
-            )
+    if _active_sequencer_state() is not None:
+        raise RuntimeError(
+            "Finish the active merge/rebase/cherry-pick/revert before committing selected files."
+        )
     _, stages, _ = run_git("ls-files", "--stage", "-z", check=True)
     selected = set(files)
     records = {}
@@ -1040,7 +1103,7 @@ def commit_selected_index(files: list[str], message: str) -> None:
     updates += [entry + "\0" for entry in records.values()]
     with tempfile.TemporaryDirectory(prefix="dusky-index-", dir=GIT_DIR) as temp:
         index = Path(temp) / "index"
-        head_exists = run_git("rev-parse", "--verify", "HEAD")[0] == 0
+        head_exists = _head_exists()
         run_git("read-tree", "HEAD" if head_exists else "--empty", index_file=index, check=True)
         run_git(
             "update-index", "-z", "--index-info",
@@ -1115,7 +1178,7 @@ def safe_push(branch: str | None = None) -> bool:
     if not current or (branch is not None and branch != current):
         console.print("[red]Push requires the active named branch.[/red]")
         return False
-    if run_git("rev-parse", "--verify", "HEAD")[0] != 0:
+    if not _head_exists():
         console.print("[red]No commits on current branch to push.[/red]")
         return False
     branch = current
@@ -1149,6 +1212,7 @@ def safe_push(branch: str | None = None) -> bool:
         run_git("merge", "--ff-only", fetched, capture=False, check=True)
         if target is None:
             run_git(*push_args, capture=False, check=True)
+        console.print(f"[green]✔ Fast-forwarded to {escape(remote_branch_label)}.[/green]")
         return True
     console.print("1) Rebase local commits onto upstream\n2) Force push with lease\n3) Cancel")
     choice = ask("Choose [1/2/3] (default 3): ") or "3"
@@ -1173,7 +1237,7 @@ def safe_push(branch: str | None = None) -> bool:
 
 def restore_selected_files() -> bool | None:
     """Restore selected paths in the index and work tree to the last commit."""
-    if run_git("rev-parse", "--verify", "HEAD")[0] != 0:
+    if not _head_exists():
         console.print("[red]No HEAD exists to restore. No files changed.[/red]")
         return False
     entries = scoped_entries(tracked_only=True)
@@ -1211,13 +1275,13 @@ def discard_local_changes() -> bool | None:
     changed_tracked: list[str] = []
     untracked_to_delete: list[str] = []
     tracked_scope: list[str] = []
-    for path, orig_path, status_code in scoped_entries():
+    for path, orig_path, status_code in scoped_entries(paths=valid_paths):
         if status_code == "??":
             untracked_to_delete.append(path)
         else:
             changed_tracked.append(f"➔ {path}" + (f" (from {orig_path})" if orig_path else ""))
             tracked_scope.append(path)
-            if orig_path:
+            if orig_path and "R" in status_code:
                 tracked_scope.append(orig_path)
 
     if not changed_tracked and not untracked_to_delete:
@@ -1273,7 +1337,7 @@ def discard_local_changes() -> bool | None:
             "[yellow]Restore blocked: untracked replacements would be overwritten. No files changed.[/yellow]"
         )
         return False
-    if revert_tracked and run_git("rev-parse", "--verify", "HEAD")[0] != 0:
+    if revert_tracked and not _head_exists():
         console.print("[red]No HEAD exists to restore. No files changed.[/red]")
         return False
 
@@ -1323,10 +1387,10 @@ def reset_local_to_remote() -> bool | None:
     if ask_yesno(f"Reset local state and overwrite all files to match {remote_label}?", default=False):
         try:
             console.print("[bold blue]Fetching latest state from GitHub...[/bold blue]")
-            run_git("fetch", remote, ref, capture=False, check=True)
+            run_git("fetch", "--", remote, ref, capture=False, check=True)
 
             console.print(f"[bold blue]Hard resetting to {remote_label}...[/bold blue]")
-            run_git("reset", "--hard", "FETCH_HEAD", "--quiet", capture=False, check=True)
+            run_git("reset", "--hard", "--quiet", "FETCH_HEAD", capture=False, check=True)
             console.print("[bold green]✔[/bold green] Local state successfully synced with GitHub remote.")
         except subprocess.CalledProcessError:
             console.print("[bold red]✖ Sync operation failed.[/bold red]")
@@ -1360,18 +1424,28 @@ def quick_step_back() -> bool | None:
     remote_label = f"{remote}/{ref.removeprefix('refs/heads/')}"
 
     if ask_yesno("Step back 1 commit on both local and remote?", default=False):
+        prev_head = log_out.splitlines()[0].strip()
+        reset_done = False
         try:
-            run_git("reset", "--hard", "HEAD~1", "--quiet", capture=False, check=True)
+            run_git("reset", "--hard", "--quiet", "HEAD~1", capture=False, check=True)
+            reset_done = True
             console.print("[bold green]✔[/bold green] Local repository reset to HEAD~1.")
 
             console.print(f"[bold blue]Force-pushing to {remote_label}...[/bold blue]")
             run_git(
-                "push", "--force-with-lease", remote, f"refs/heads/{branch_out}:{ref}",
+                "push", "--force-with-lease", "--", remote, f"refs/heads/{branch_out}:{ref}",
                 capture=False, check=True,
             )
             console.print("[bold green]✔[/bold green] Step back 1 commit complete on remote.")
         except subprocess.CalledProcessError:
-            console.print("[bold red]✖ Step back operation failed.[/bold red]")
+            if reset_done:
+                console.print(
+                    f"[bold red]✖ Step back push failed.[/bold red] "
+                    f"Local HEAD was moved from {escape(prev_head)} "
+                    f"(recover with: git reset --hard {escape(prev_head)})."
+                )
+            else:
+                console.print("[bold red]✖ Step back operation failed.[/bold red]")
             return False
     return None
 
@@ -1386,7 +1460,7 @@ def undo_local_commits_to_commit() -> bool | None:
         border_style="yellow",
     ))
 
-    _, log_out, _ = run_git("log", "--format=%h %s", "-n", "30")
+    _, log_out, _ = run_git("log", "--format=%h %s", "-n", "200")
     if not log_out:
         console.print("[bold red]✖ Error:[/bold red] No commit history found.")
         return False
@@ -1408,7 +1482,7 @@ def undo_local_commits_to_commit() -> bool | None:
 
     if ask_yesno(f"Reset local HEAD to {commit_hash} and preserve edits?", default=False):
         try:
-            run_git("reset", commit_hash, capture=False, check=True)
+            run_git("reset", f"{commit_hash}^{{commit}}", capture=False, check=True)
             console.print(
                 f"[bold green]✔[/bold green] Local HEAD reset to {commit_hash}. Changes preserved in working tree."
             )
@@ -1427,7 +1501,7 @@ def delete_local_commits_to_commit() -> bool | None:
         border_style="red",
     ))
 
-    _, log_out, _ = run_git("log", "--format=%h %s", "-n", "30")
+    _, log_out, _ = run_git("log", "--format=%h %s", "-n", "200")
     if not log_out:
         console.print("[bold red]✖ Error:[/bold red] No commit history found.")
         return False
@@ -1449,7 +1523,7 @@ def delete_local_commits_to_commit() -> bool | None:
 
     if ask_yesno(f"Delete all local commits since {commit_hash} and discard all their edits?", default=False):
         try:
-            run_git("reset", "--hard", commit_hash, "--quiet", capture=False, check=True)
+            run_git("reset", "--hard", "--quiet", f"{commit_hash}^{{commit}}", capture=False, check=True)
             console.print(f"[bold green]✔[/bold green] Local state reset to {commit_hash}. Changes discarded.")
         except subprocess.CalledProcessError:
             console.print("[bold red]✖ Reset operation failed.[/bold red]")
@@ -1481,7 +1555,13 @@ def safe_revert_last_commit() -> bool | None:
             if ask_yesno("Push the revert commit to remote?", default=True):
                 return safe_push()
         except subprocess.CalledProcessError:
-            console.print("[bold red]✖ Safe revert operation aborted or failed.[/bold red]")
+            if (GIT_DIR / "REVERT_HEAD").exists():
+                console.print(
+                    "[bold red]✖ Revert stopped due to conflicts.[/bold red] "
+                    "Resolve conflicts and commit, or run 'git revert --abort'."
+                )
+            else:
+                console.print("[bold red]✖ Safe revert operation aborted or failed.[/bold red]")
             return False
     return None
 
@@ -1489,8 +1569,10 @@ def safe_revert_last_commit() -> bool | None:
 def show_delta() -> None:
     """Pipes differential directly through Delta. Pure view — never mutates the index."""
     console.print("[bold blue]Executing Delta differential...[/bold blue]")
-    base = ["HEAD"] if run_git("rev-parse", "--verify", "HEAD")[0] == 0 else ["--cached"]
-    run_git("-c", "core.pager=delta", "diff", *base, capture=False, check=True)
+    base = ["HEAD"] if _head_exists() else ["--cached"]
+    code, _, _ = run_git("-c", "core.pager=delta", "diff", *base, capture=False, check=False)
+    if code not in (0, -13, 141):
+        raise subprocess.CalledProcessError(code, ["git", "diff", *base])
 
 
 def nuclear_revert() -> bool | None:
@@ -1502,9 +1584,16 @@ def nuclear_revert() -> bool | None:
         border_style="red",
     ))
 
-    _, log_out, _ = run_git("log", "--format=%h %s", "-n", "30")
+    _, branch_out, _ = run_git("branch", "--show-current", check=True)
+    branch_out = branch_out.strip()
+    if not branch_out:
+        console.print("[bold red]✖ Error: Detached HEAD state detected. No files changed.[/bold red]")
+        return False
+
+    _, log_out, _ = run_git("log", "--format=%h %s", "-n", "200")
     if not log_out:
-        return None
+        console.print("[bold red]✖ Error:[/bold red] No commit history found.")
+        return False
 
     commits = log_out.splitlines()
     preview_cmd = get_commit_preview_cmd()
@@ -1522,28 +1611,29 @@ def nuclear_revert() -> bool | None:
     console.print(f"\n[bold yellow]Target Commit:[/bold yellow] {escape(target[0])}")
 
     if ask_yesno(f"Execute HARD RESET to {commit_hash}? (Wipes local tracked changes)", default=False):
+        prev_head = commits[0].split()[0]
+        reset_done = False
         try:
-            run_git("reset", "--hard", commit_hash, "--quiet", capture=False, check=True)
+            run_git("reset", "--hard", "--quiet", f"{commit_hash}^{{commit}}", capture=False, check=True)
+            reset_done = True
             console.print(f"[bold green]✔[/bold green] Tracked files restored to {commit_hash}.")
 
             if ask_yesno("FORCE PUSH to overwrite remote timeline?", default=False):
-                _, branch_out, _ = run_git("branch", "--show-current")
-                branch_out = branch_out.strip()
-
-                if not branch_out:
-                    console.print(
-                        "[bold red]✖ Error: Detached HEAD state detected.[/bold red] Aborting force push."
-                    )
-                    return False
-
                 remote, ref = upstream_target(branch_out) or ("origin", f"refs/heads/{branch_out}")
                 run_git(
-                    "push", "--force-with-lease", remote, f"refs/heads/{branch_out}:{ref}",
+                    "push", "--force-with-lease", "--", remote, f"refs/heads/{branch_out}:{ref}",
                     capture=False, check=True,
                 )
                 console.print("[bold green]✔[/bold green] Remote repository obliteration complete.")
         except subprocess.CalledProcessError:
-            console.print("[bold red]✖ Force reset operation interrupted by error.[/bold red]")
+            if reset_done:
+                console.print(
+                    f"[bold red]✖ Force push failed.[/bold red] "
+                    f"Local HEAD was moved from {escape(prev_head)} "
+                    f"(recover with: git reset --hard {escape(prev_head)})."
+                )
+            else:
+                console.print("[bold red]✖ Force reset operation interrupted by error.[/bold red]")
             return False
     return None
 
@@ -1577,14 +1667,17 @@ def checkout_pr() -> bool | None:
         console.print("[bold yellow]⚠ Aborted PR checkout.[/bold yellow]")
         return None
 
-    match = re.fullmatch(r"(?:https://github\.com/[^/]+/[^/]+/pull/)?([1-9]\d*)/?", user_input)
+    match = re.fullmatch(
+        r"(?:https://github\.com/[^/]+/[^/]+/pull/([1-9]\d*)(?:/(?:files|commits|checks|changes))?/?(?:[?#].*)?|([1-9]\d*))",
+        user_input,
+    )
     if not match:
         console.print(
             f"[bold red]✖ Error: Could not parse a valid PR number from '{escape(user_input)}'.[/bold red]"
         )
         return False
 
-    pr_num = match.group(1)
+    pr_num = match.group(1) or match.group(2)
     branch_name = f"pr/{pr_num}"
 
     code, _, _ = run_git("show-ref", "--verify", "--quiet", f"refs/heads/{branch_name}")
@@ -1603,8 +1696,15 @@ def checkout_pr() -> bool | None:
 
     console.print(f"[bold blue]Fetching PR #{pr_num} into branch '{branch_name}'...[/bold blue]")
     try:
-        run_git("fetch", "origin", f"pull/{pr_num}/head:{branch_name}", capture=False, check=True)
-        console.print(f"[bold blue]Switching to branch '{branch_name}'...[/bold blue]")
+        run_git("fetch", "--", "origin", f"pull/{pr_num}/head:{branch_name}", capture=False, check=True)
+    except subprocess.CalledProcessError:
+        console.print(
+            f"[bold red]✖ Failed to fetch PR #{pr_num}. Make sure the PR exists on GitHub remote.[/bold red]"
+        )
+        return False
+
+    console.print(f"[bold blue]Switching to branch '{branch_name}'...[/bold blue]")
+    try:
         run_git("switch", branch_name, capture=False, check=True)
         console.print(Panel.fit(
             f"[bold green]✔ Checked out PR #{pr_num} on branch '{branch_name}'![/bold green]\n\n"
@@ -1614,7 +1714,8 @@ def checkout_pr() -> bool | None:
         ))
     except subprocess.CalledProcessError:
         console.print(
-            f"[bold red]✖ Failed to checkout PR #{pr_num}. Make sure the PR exists on GitHub remote.[/bold red]"
+            f"[bold red]✖ Fetched PR #{pr_num} into '{branch_name}', "
+            f"but switching to it failed (check uncommitted edits).[/bold red]"
         )
         return False
     return None
@@ -1632,7 +1733,7 @@ def create_branch() -> bool | None:
 
     if clean_name.startswith("-") or run_git("check-ref-format", "--branch", clean_name)[0]:
         console.print("[red]Invalid branch name.[/red]")
-        return None
+        return False
     checkout = ask_yesno(f"Switch to branch '{clean_name}' immediately?", default=True)
 
     try:
@@ -1642,7 +1743,7 @@ def create_branch() -> bool | None:
                 f"[bold green]✔ Branch '{clean_name}' created and switched to successfully.[/bold green]"
             )
         else:
-            run_git("branch", clean_name, capture=False, check=True)
+            run_git("branch", "--", clean_name, capture=False, check=True)
             console.print(f"[bold green]✔ Branch '{clean_name}' created successfully.[/bold green]")
     except subprocess.CalledProcessError:
         console.print(f"[bold red]✖ Failed to create branch '{clean_name}'.[/bold red]")
@@ -1669,7 +1770,7 @@ def switch_branch() -> bool | None:
     branches.sort(key=lambda b: b == current_branch)
 
     console.print(f"[bold cyan]Current branch:[/bold cyan] [bold green]{escape(current_branch)}[/bold green]")
-    preview_cmd = "git --no-advice log -n 10 --oneline --color=always {1}"
+    preview_cmd = "git --no-advice log -n 10 --oneline --color=always {1} --"
     selected = fzf_select(branches, prompt="Select Branch to Switch To", preview=preview_cmd)
     if not selected:
         return None
@@ -1708,7 +1809,7 @@ def merge_branch() -> bool | None:
         console.print("[bold yellow]⚠ No other local branches available to merge.[/bold yellow]")
         return None
 
-    preview_cmd = "git --no-advice log -n 10 --oneline --color=always {1}"
+    preview_cmd = "git --no-advice log -n 10 --oneline --color=always {1} --"
     console.print(
         f"[bold cyan]Merging into active branch:[/bold cyan] [bold green]{escape(current_branch)}[/bold green]"
     )
@@ -1736,14 +1837,19 @@ def merge_branch() -> bool | None:
 
 
 def push_branch_to_remote() -> bool | None:
-    """Pushes current or selected branch to remote origin and sets upstream."""
+    """Pushes current branch to its configured upstream (or sets origin upstream)."""
     _, current_branch, _ = run_git("branch", "--show-current")
     current_branch = current_branch.strip()
     if not current_branch:
         console.print("[bold red]✖ Error: Detached HEAD state. Cannot push branch.[/bold red]")
         return False
 
-    if ask_yesno(f"Push current branch '{current_branch}' to origin remote (set-upstream)?", default=True):
+    target = upstream_target(current_branch)
+    if target is None:
+        return safe_push(current_branch)
+    remote, ref = target
+    remote_label = f"{remote}/{ref.removeprefix('refs/heads/')}"
+    if ask_yesno(f"Push current branch '{current_branch}' to {remote_label}?", default=True):
         return safe_push(current_branch)
     return None
 
@@ -1765,7 +1871,7 @@ def delete_local_branch() -> bool | None:
         console.print("[bold yellow]⚠ No other local branches to delete.[/bold yellow]")
         return None
 
-    preview_cmd = "git --no-advice log -n 10 --oneline --color=always {1}"
+    preview_cmd = "git --no-advice log -n 10 --oneline --color=always {1} --"
     selected = fzf_select(other_branches, prompt="Select Local Branch to DELETE", preview=preview_cmd)
     if not selected:
         return None
@@ -1773,7 +1879,7 @@ def delete_local_branch() -> bool | None:
     target_branch = selected[0]
     if ask_yesno(f"Force delete local branch '{target_branch}'?", default=False):
         try:
-            run_git("branch", "-D", target_branch, capture=False, check=True)
+            run_git("branch", "-D", "--", target_branch, capture=False, check=True)
             console.print(f"[bold green]✔ Local branch '{target_branch}' deleted successfully.[/bold green]")
         except subprocess.CalledProcessError:
             console.print(f"[bold red]✖ Failed to delete local branch '{target_branch}'.[/bold red]")
@@ -1810,7 +1916,10 @@ def delete_remote_branch() -> bool | None:
     ))
     if ask_yesno(f"Are you sure you want to delete 'origin/{target_branch}' on GitHub?", default=False):
         try:
-            run_git("push", "origin", "--delete", target_branch, capture=False, check=True)
+            run_git(
+                "push", "--delete", "--", "origin", f"refs/heads/{target_branch}",
+                capture=False, check=True,
+            )
             console.print(
                 f"[bold green]✔ Remote branch 'origin/{target_branch}' deleted successfully.[/bold green]"
             )
@@ -1825,7 +1934,7 @@ def delete_remote_branch() -> bool | None:
 def list_all_branches() -> None:
     """Displays detailed list of all local and remote branches."""
     console.print("\n[bold cyan]All Local & Remote Branches:[/bold cyan]")
-    run_git("-c", "color.ui=always", "branch", "-a", "-v", capture=False, check=True)
+    run_git("--no-pager", "-c", "color.ui=always", "branch", "-a", "-v", capture=False, check=True)
 
 
 def manage_branches() -> None:
@@ -1892,6 +2001,10 @@ def list_stashes() -> None:
 
 def create_stash() -> bool | None:
     """Creates a stash with proper naming scheme: dusky-stash-YYYYMMDD-HHMMSS: description."""
+    if not _head_exists():
+        console.print("[bold red]✖ Error:[/bold red] Cannot create stash without an initial commit (unborn HEAD).")
+        return False
+
     console.print("\n[bold cyan]Enter Stash Description / Label (or 'abort' to cancel):[/bold cyan]")
     desc = ask()
     if not desc or desc.lower() in ("abort", "q"):
@@ -1920,8 +2033,8 @@ def create_stash() -> bool | None:
             )
             return None
         scoped_paths = sorted({
-            name for path, old, _ in entries
-            for name in (path, old) if name is not None
+            name for path, old, status in entries
+            for name in (path, old if "R" in status else None) if name is not None
         })
         stash_args.extend(["--pathspec-from-file=-", "--pathspec-file-nul"])
         input_payload = os.fsencode("\0".join(scoped_paths) + "\0")
@@ -1979,8 +2092,7 @@ def pop_or_apply_stash(action: str = "pop") -> bool | None:
         )
         console.print(f"[bold green]✔ {msg}[/bold green]")
     except subprocess.CalledProcessError:
-        _, conflict_out, _ = run_git("status", "--porcelain=v1")
-        if any(e[:2] in CONFLICT_STATUSES for e in conflict_out.splitlines()):
+        if _has_index_conflicts():
             console.print(
                 f"[bold red]✖ Conflict while applying {stash_ref} — stash kept intact. "
                 "Resolve, then drop manually.[/bold red]"
@@ -2150,16 +2262,10 @@ def print_help() -> None:
 
 def _active_sequencer_badge() -> str:
     """Returns a warning badge if a merge/rebase/cherry-pick/revert is active."""
-    for marker, label in (
-        ("MERGE_HEAD", "MERGE IN PROGRESS"),
-        ("rebase-merge", "REBASE IN PROGRESS"),
-        ("rebase-apply", "REBASE IN PROGRESS"),
-        ("CHERRY_PICK_HEAD", "CHERRY-PICK IN PROGRESS"),
-        ("REVERT_HEAD", "REVERT IN PROGRESS"),
-    ):
-        if (GIT_DIR / marker).exists():
-            return f"  │  [bold {COLORS['error']}]⚠ {label}[/bold {COLORS['error']}]"
-    return ""
+    label = _active_sequencer_state()
+    if label is None:
+        return ""
+    return f"  │  [bold {COLORS['error']}]⚠ {label}[/bold {COLORS['error']}]"
 
 
 def render_dashboard() -> None:
@@ -2308,7 +2414,7 @@ if __name__ == "__main__":
                 selected = sys.argv[4:] if len(sys.argv) > 4 else []
                 if _act == "--diff-preview-json":
                     cur = json.loads(cur) if cur else ""
-                    selected = [json.loads(path) for path in selected]
+                    selected = [json.loads(path) for path in selected if path]
                 handle_diff_preview(target, cur, selected)
                 sys.exit(0)
         main()
