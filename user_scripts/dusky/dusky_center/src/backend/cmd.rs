@@ -230,45 +230,101 @@ unsafe fn libc_killpg(pid: u32) {
     }
 }
 
-/// Fire-and-forget launch outside the panel's cgroup.
+fn executable_available(program: &str) -> bool {
+    if program.is_empty() {
+        return false;
+    }
+    if program.contains('/') {
+        let path = std::path::Path::new(program);
+        path.is_file() && crate::backend::system::access_ok(path, libc::X_OK)
+    } else {
+        crate::backend::system::which(program).is_some()
+    }
+}
+
+fn has_user_dbus() -> bool {
+    if std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_some_and(|v| !v.is_empty()) {
+        return true;
+    }
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .filter(|v| !v.is_empty())
+        .is_some_and(|dir| std::path::Path::new(&dir).join("bus").exists())
+}
+
+/// Fire-and-forget launch outside the panel's process group and cgroup.
 ///
-/// Uses `systemd-run --user --scope` when available (same as Python's
-/// `execute_cmd(detached=True)`). The launcher gets its own process group.
+/// Uses a `pre_exec` double-fork so the intermediate child exits immediately and
+/// is reaped synchronously with zero leaked reaper threads and zero zombies.
+/// Wraps with `systemd-run --user --scope` when a user D-Bus session is reachable.
+pub fn spawn_detached(argv: &[String]) -> Result<(), String> {
+    let Some(program) = argv.first().filter(|p| !p.is_empty()) else {
+        return Err("Empty command".into());
+    };
+    if !executable_available(program) {
+        return Err(format!("Executable not found: {program}"));
+    }
+
+    let mut proc = if has_user_dbus()
+        && let Some(systemd_run) = crate::backend::system::which("systemd-run")
+    {
+        let mut command = Command::new(systemd_run);
+        command
+            .args([
+                "--user",
+                "--scope",
+                "--collect",
+                "--quiet",
+                "--expand-environment=no",
+                "--",
+            ])
+            .args(argv);
+        command
+    } else {
+        let mut command = Command::new(program);
+        if argv.len() > 1 {
+            command.args(&argv[1..]);
+        }
+        command
+    };
+
+    crate::gpu::inherit_session_environment(&mut proc);
+    proc.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    // Async-signal-safe double-fork: intermediate child exits immediately,
+    // grandchild becomes a session leader and proceeds to Rust's execvp while
+    // retaining std's O_CLOEXEC error pipe so exec failures propagate cleanly.
+    unsafe {
+        proc.pre_exec(|| {
+            match libc::fork() {
+                -1 => Err(std::io::Error::last_os_error()),
+                0 => {
+                    if libc::setsid() < 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                }
+                _ => libc::_exit(0),
+            }
+        });
+    }
+
+    let mut intermediate = proc.spawn().map_err(|e| e.to_string())?;
+    let _ = intermediate.wait();
+    Ok(())
+}
+
+/// Fire-and-forget shell launch outside the panel's cgroup.
 pub fn execute_detached(cmd: &str) {
     let cmd = cmd.trim();
     if cmd.is_empty() {
         return;
     }
-    let expanded = cmd.to_owned();
-    let argv: Vec<String> = vec![
-        "/usr/bin/systemd-run".into(),
-        "--user".into(),
-        "--scope".into(),
-        "--collect".into(),
-        "--quiet".into(),
-        "--expand-environment=no".into(),
-        "--".into(),
-        "/usr/bin/bash".into(),
-        "-c".into(),
-        expanded,
-    ];
-    let mut c = Command::new(&argv[0]);
-    crate::gpu::inherit_session_environment(&mut c);
-    if argv.len() > 1 {
-        c.args(&argv[1..]);
-    }
-    c.stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    // This launcher is deliberately independent of query-group shutdown.
-    c.process_group(0);
-    if let Ok(mut child) = c.spawn() {
-        let _ = std::thread::Builder::new()
-            .name("launcher-reaper".into())
-            .spawn(move || {
-                let _ = child.wait();
-            });
-    }
+    let home = std::env::var("HOME").unwrap_or_default();
+    let argv = crate::backend::controls::try_parse_direct_argv(cmd, &home)
+        .unwrap_or_else(|| vec!["/usr/bin/bash".into(), "-c".into(), cmd.to_owned()]);
+    let _ = spawn_detached(&argv);
 }
 
 /// Execute a shell string asynchronously in the background.
@@ -276,8 +332,13 @@ pub fn execute_shell_detached(cmd: &str) {
     execute_detached(cmd);
 }
 
-/// Run a shell string with timeout and optional output capture.
+/// Run a shell string with timeout and optional output capture, bypassing `bash -c`
+/// when the command is a simple argument vector with no shell syntax.
 pub fn run_shell(cmd: &str, timeout: Duration, capture: bool) -> Option<CmdOutput> {
+    let home = std::env::var("HOME").unwrap_or_default();
+    if let Some(argv) = crate::backend::controls::try_parse_direct_argv(cmd, &home) {
+        return run_command(&argv, timeout, capture);
+    }
     let argv = vec![
         "/usr/bin/bash".to_string(),
         "-c".to_string(),
@@ -825,5 +886,72 @@ mod tests {
             assert_eq!(output.as_ref().map(|o| o.code), expected);
         }
         assert_eq!(count(), before);
+    }
+
+    #[test]
+    fn spawn_detached_reports_missing_binary_and_leaves_no_zombies_or_threads() {
+        const CHILD: &str = "DUSKY_CENTER_DETACHED_FIXTURE";
+        if let Some(root) = std::env::var_os(CHILD) {
+            let root = std::path::PathBuf::from(root);
+            assert!(spawn_detached(&[]).is_err());
+            assert!(spawn_detached(&["/missing-dusky-detached-bin".into()]).is_err());
+            assert!(spawn_detached(&["definitely_missing_dusky_bin_9911".into()]).is_err());
+
+            let threads_before = std::fs::read_dir("/proc/self/task").unwrap().count();
+            let marker = root.join("ran");
+            spawn_detached(&[
+                "/usr/bin/bash".into(),
+                "-c".into(),
+                "printf '%s' ok > \"$1\"".into(),
+                "fixture".into(),
+                marker.to_string_lossy().into_owned(),
+            ])
+            .unwrap();
+
+            let deadline = std::time::Instant::now() + Duration::from_secs(2);
+            while std::fs::read_to_string(&marker).ok().as_deref() != Some("ok") {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "detached grandchild did not execute"
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            let threads_after = std::fs::read_dir("/proc/self/task").unwrap().count();
+            assert_eq!(
+                threads_after, threads_before,
+                "spawn_detached must not leak reaper threads"
+            );
+            // Intermediate child must already be reaped (no zombies waiting on this process).
+            let mut status = 0;
+            let reaped = unsafe { libc::waitpid(-1, &mut status, libc::WNOHANG) };
+            assert_eq!(reaped, -1);
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(libc::ECHILD)
+            );
+            return;
+        }
+
+        let root =
+            std::env::temp_dir().join(format!("dusky_center-detached-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let result = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "backend::cmd::tests::spawn_detached_reports_missing_binary_and_leaves_no_zombies_or_threads",
+            ])
+            .env(CHILD, &root)
+            .env_remove("DBUS_SESSION_BUS_ADDRESS")
+            .env("XDG_RUNTIME_DIR", &root)
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            result.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
     }
 }

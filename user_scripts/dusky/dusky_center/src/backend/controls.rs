@@ -1,10 +1,13 @@
 //! Queries and verified writes for TOML controls. Called on executor workers.
-use super::cmd::{atomic_write_text, run_command, run_shell};
+use super::cmd::{CmdOutput, atomic_write_text, run_command, run_shell, spawn_detached};
 use crate::config::{ActionConfig, ItemConfig, ValueConfig};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    sync::{
+        Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 
@@ -75,41 +78,97 @@ pub struct Snapshot {
     pub sliders: Vec<(String, f32)>,
     pub entries: Vec<(String, String)>,
     pub labels: Vec<(String, String)>,
+    pub file_texts: Vec<(String, Option<String>)>,
+}
+
+enum QueryTask {
+    Shell { command: String, timeout: Duration },
+    Systemctl { argv: Vec<String> },
+}
+
+fn run_query_task(task: &QueryTask) -> Option<CmdOutput> {
+    match task {
+        QueryTask::Shell { command, timeout } => run_shell(command, *timeout, true),
+        QueryTask::Systemctl { argv } => run_command(argv, Duration::from_secs(4), true),
+    }
+}
+
+fn execute_query_tasks(tasks: &[QueryTask]) -> Vec<Option<CmdOutput>> {
+    if tasks.is_empty() {
+        return Vec::new();
+    }
+    if tasks.len() == 1 {
+        return vec![run_query_task(&tasks[0])];
+    }
+    let worker_count = tasks.len().min(4);
+    let next = AtomicUsize::new(0);
+    let slots: Vec<Mutex<Option<CmdOutput>>> = (0..tasks.len()).map(|_| Mutex::new(None)).collect();
+    let run_loop = || loop {
+        let idx = next.fetch_add(1, Ordering::Relaxed);
+        if idx >= tasks.len() {
+            break;
+        }
+        *slots[idx].lock().unwrap() = run_query_task(&tasks[idx]);
+    };
+    std::thread::scope(|scope| {
+        for _ in 1..worker_count {
+            scope.spawn(run_loop);
+        }
+        run_loop();
+    });
+    slots
+        .into_iter()
+        .map(|slot| slot.into_inner().unwrap())
+        .collect()
 }
 
 pub fn query(items: &[ItemConfig]) -> Snapshot {
     let mut result = Snapshot::default();
+    let mut tasks: Vec<QueryTask> = Vec::new();
+    let mut shell_indices: HashMap<String, usize> = HashMap::new();
+    let mut seen_file_texts: HashSet<&str> = HashSet::new();
+
+    let mut enqueue_shell = |command: &str, timeout: Duration| {
+        if let Some(&idx) = shell_indices.get(command) {
+            if let QueryTask::Shell { timeout: existing, .. } = &mut tasks[idx]
+                && timeout > *existing
+            {
+                *existing = timeout;
+            }
+            return;
+        }
+        let idx = tasks.len();
+        shell_indices.insert(command.to_string(), idx);
+        tasks.push(QueryTask::Shell {
+            command: command.to_string(),
+            timeout,
+        });
+    };
+
+    // Pass 1: Read deduplicated button_text_file entries locally and collect all unique shell commands.
     for item in items {
         let p = &item.properties;
         let key = item_key(item);
-        if item.item_type == "label" {
-            result.labels.push((key.clone(), label_value(item.value.as_ref()).unwrap_or_else(|| "N/A".into())));
+        if !p.button_text_file.is_empty() && seen_file_texts.insert(p.button_text_file.as_str()) {
+            let text = std::fs::read_to_string(expand_arg(&p.button_text_file))
+                .ok()
+                .map(|raw| raw.trim().to_string());
+            result.file_texts.push((p.button_text_file.clone(), text));
         }
-        if matches!(item.item_type.as_str(), "entry" | "secret")
-            && let Some(raw) = scalar_value(item) {
-            result.entries.push((key.clone(), raw));
+        if item.item_type == "label"
+            && let Some(ValueConfig::Exec { command }) = item.value.as_ref()
+        {
+            enqueue_shell(command, Duration::from_secs(4));
+        }
+        if matches!(item.item_type.as_str(), "entry" | "secret") && !p.value_command.is_empty() {
+            enqueue_shell(&p.value_command, Duration::from_secs(4));
         }
         if item.item_type == "selection" {
-            let options = if p.options_command.is_empty() {
-                Some(p.options.clone())
-            } else {
-                run_shell(&p.options_command, Duration::from_secs(5), true)
-                    .filter(|out| out.status)
-                    .map(|out| out.stdout.lines().map(str::trim).filter(|s| !s.is_empty())
-                        .map(str::to_string).collect::<Vec<_>>())
-            };
-            if let Some(options) = options {
-                if !p.options_command.is_empty() {
-                    result.options.push((key.clone(), options.clone()));
-                }
-                if !p.value_command.is_empty() || !p.key.is_empty() {
-                    let value = scalar_value(item).and_then(|raw| {
-                        let mapped = p.options_map.iter().find(|(k, _)| k.eq_ignore_ascii_case(&raw))
-                            .map(|(_, v)| v.as_str()).unwrap_or(&raw);
-                        options.iter().find(|s| s.eq_ignore_ascii_case(mapped)).cloned()
-                    });
-                    result.selections.push((key.clone(), value));
-                }
+            if !p.options_command.is_empty() {
+                enqueue_shell(&p.options_command, Duration::from_secs(5));
+            }
+            if !p.value_command.is_empty() {
+                enqueue_shell(&p.value_command, Duration::from_secs(4));
             }
         }
         if matches!(item.item_type.as_str(), "slider" | "spin")
@@ -117,32 +176,17 @@ pub fn query(items: &[ItemConfig]) -> Snapshot {
                 key.as_str(),
                 "Volume" | "Microphone" | "Brightness" | "Night Light"
             )
-            && let Some(raw) = scalar_value(item)
-            && let Ok(value) = raw.parse::<f32>()
-            && value.is_finite()
+            && !p.value_command.is_empty()
         {
-            result.sliders.push((key.clone(), value));
+            enqueue_shell(&p.value_command, Duration::from_secs(4));
         }
-        if matches!(item.item_type.as_str(), "toggle" | "toggle_card") {
-            let value = if !p.state_command.is_empty() {
-                run_shell(&p.state_command, Duration::from_secs(4), true)
-                    .filter(|out| out.status)
-                    .and_then(|out| parse_bool(&out.stdout))
-            } else if !p.key.is_empty() {
-                match std::fs::read_to_string(settings_dir().join(&p.key)) {
-                    Ok(raw) => parse_bool(&raw),
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(false),
-                    Err(_) => None,
-                }
-            } else {
-                Some(false)
-            };
-            result
-                .toggles
-                .push((item_key(item), value.map(|v| v ^ p.key_inverse)));
+        if matches!(item.item_type.as_str(), "toggle" | "toggle_card") && !p.state_command.is_empty() {
+            enqueue_shell(&p.state_command, Duration::from_secs(4));
         }
     }
+
     // One query per scope, deduplicated; Id makes output independent of unit order.
+    let mut service_batches: Vec<(&'static str, Vec<String>, usize)> = Vec::new();
     for scope in ["system", "user"] {
         let mut units: Vec<String> = items
             .iter()
@@ -168,7 +212,103 @@ pub fn query(items: &[ItemConfig]) -> Snapshot {
             "--".into(),
         ]);
         argv.extend(units.clone());
-        if let Some(out) = run_command(&argv, Duration::from_secs(4), true) {
+        let task_idx = tasks.len();
+        tasks.push(QueryTask::Systemctl { argv });
+        service_batches.push((scope, units, task_idx));
+    }
+
+    // Pass 2: Execute all unique external commands concurrently (bounded to 4 threads).
+    let outputs = execute_query_tasks(&tasks);
+
+    let shell_output = |command: &str| -> Option<&CmdOutput> {
+        shell_indices
+            .get(command)
+            .and_then(|&idx| outputs[idx].as_ref())
+    };
+
+    // Pass 3: Assemble snapshot from completed outputs and local settings/procfs reads.
+    for item in items {
+        let p = &item.properties;
+        let key = item_key(item);
+        if item.item_type == "label" {
+            let value = label_value_with(item.value.as_ref(), &shell_output)
+                .unwrap_or_else(|| "N/A".into());
+            result.labels.push((key.clone(), value));
+        }
+        if matches!(item.item_type.as_str(), "entry" | "secret")
+            && let Some(raw) = scalar_value_with(item, &shell_output)
+        {
+            result.entries.push((key.clone(), raw));
+        }
+        if item.item_type == "selection" {
+            let options = if p.options_command.is_empty() {
+                Some(p.options.clone())
+            } else {
+                shell_output(&p.options_command)
+                    .filter(|out| out.status)
+                    .map(|out| {
+                        out.stdout
+                            .lines()
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                            .map(str::to_string)
+                            .collect::<Vec<_>>()
+                    })
+            };
+            if let Some(options) = options {
+                if !p.options_command.is_empty() {
+                    result.options.push((key.clone(), options.clone()));
+                }
+                if !p.value_command.is_empty() || !p.key.is_empty() {
+                    let value = scalar_value_with(item, &shell_output).and_then(|raw| {
+                        let mapped = p
+                            .options_map
+                            .iter()
+                            .find(|(k, _)| k.eq_ignore_ascii_case(&raw))
+                            .map(|(_, v)| v.as_str())
+                            .unwrap_or(&raw);
+                        options
+                            .iter()
+                            .find(|s| s.eq_ignore_ascii_case(mapped))
+                            .cloned()
+                    });
+                    result.selections.push((key.clone(), value));
+                }
+            }
+        }
+        if matches!(item.item_type.as_str(), "slider" | "spin")
+            && !matches!(
+                key.as_str(),
+                "Volume" | "Microphone" | "Brightness" | "Night Light"
+            )
+            && let Some(raw) = scalar_value_with(item, &shell_output)
+            && let Ok(value) = raw.parse::<f32>()
+            && value.is_finite()
+        {
+            result.sliders.push((key.clone(), value));
+        }
+        if matches!(item.item_type.as_str(), "toggle" | "toggle_card") {
+            let value = if !p.state_command.is_empty() {
+                shell_output(&p.state_command)
+                    .filter(|out| out.status)
+                    .and_then(|out| parse_bool(&out.stdout))
+            } else if !p.key.is_empty() {
+                match std::fs::read_to_string(settings_dir().join(&p.key)) {
+                    Ok(raw) => parse_bool(&raw),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(false),
+                    Err(_) => None,
+                }
+            } else {
+                Some(false)
+            };
+            result
+                .toggles
+                .push((item_key(item), value.map(|v| v ^ p.key_inverse)));
+        }
+    }
+
+    for (scope, units, task_idx) in service_batches {
+        if let Some(out) = outputs[task_idx].as_ref() {
             result.services.extend(parse_services(scope, &out.stdout));
         }
         for unit in units {
@@ -185,15 +325,22 @@ pub fn query(items: &[ItemConfig]) -> Snapshot {
     result
 }
 
-fn scalar_value(item: &ItemConfig) -> Option<String> {
+fn scalar_value_with<'a>(
+    item: &ItemConfig,
+    shell_output: &impl Fn(&str) -> Option<&'a CmdOutput>,
+) -> Option<String> {
     let p = &item.properties;
     if !p.value_command.is_empty() {
-        run_shell(&p.value_command, Duration::from_secs(4), true)
-            .filter(|out| out.status).map(|out| out.stdout.trim().to_string())
+        shell_output(&p.value_command)
+            .filter(|out| out.status)
+            .map(|out| out.stdout.trim().to_string())
     } else if !p.key.is_empty() {
-        std::fs::read_to_string(settings_dir().join(&p.key)).ok()
+        std::fs::read_to_string(settings_dir().join(&p.key))
+            .ok()
             .map(|raw| raw.trim().to_string())
-    } else { None }
+    } else {
+        None
+    }
 }
 
 /// Persist only after a finite action succeeds. Launches are confirmed by readback.
@@ -216,29 +363,72 @@ pub fn is_launch(action: &ActionConfig) -> bool {
         || matches!(action, ActionConfig::Exec { mode, .. } | ActionConfig::Argv { mode, .. } if mode == "launch")
 }
 
-fn label_value(value: Option<&ValueConfig>) -> Option<String> {
+/// Buttons/cards with `mode = "apply"` or non-terminal `requires_root` (when not `mode = "launch"`)
+/// run as bounded observed commands so errors surface and controls refresh on completion.
+pub fn is_observed_button_action(action: &ActionConfig) -> bool {
+    match action {
+        ActionConfig::Exec {
+            terminal,
+            requires_root,
+            mode,
+            ..
+        }
+        | ActionConfig::Argv {
+            terminal,
+            requires_root,
+            mode,
+            ..
+        } => mode == "apply" || (*requires_root && !*terminal && mode != "launch"),
+        ActionConfig::Redirect { .. } | ActionConfig::Reload => false,
+    }
+}
+
+fn label_value_with<'a>(
+    value: Option<&ValueConfig>,
+    shell_output: &impl Fn(&str) -> Option<&'a CmdOutput>,
+) -> Option<String> {
     match value? {
         ValueConfig::Static { text } => Some(text.clone()),
-        ValueConfig::Exec { command } => run_shell(command, Duration::from_secs(4), true)
-            .filter(|out| out.status).map(|out| out.stdout.trim().to_string()),
+        ValueConfig::Exec { command } => shell_output(command)
+            .filter(|out| out.status)
+            .map(|out| out.stdout.trim().to_string()),
         ValueConfig::File { path } => std::fs::read_to_string(expand_arg(path))
-            .ok().map(|raw| raw.trim().to_string()),
+            .ok()
+            .map(|raw| raw.trim().to_string()),
         ValueConfig::System { key } => match key.as_str() {
             "kernel_version" => std::fs::read_to_string("/proc/sys/kernel/osrelease")
-                .ok().map(|raw| raw.trim().to_string()),
-            "cpu_model" => std::fs::read_to_string("/proc/cpuinfo").ok()?
-                .lines().find_map(|line| {
+                .ok()
+                .map(|raw| raw.trim().to_string()),
+            "cpu_model" => std::fs::read_to_string("/proc/cpuinfo")
+                .ok()?
+                .lines()
+                .find_map(|line| {
                     let (name, value) = line.split_once(':')?;
-                    (name.trim() == "model name").then(|| value.trim().split(" @").next().unwrap_or_default().to_string())
+                    (name.trim() == "model name").then(|| {
+                        value
+                            .trim()
+                            .split(" @")
+                            .next()
+                            .unwrap_or_default()
+                            .to_string()
+                    })
                 }),
             "memory_total" | "memory_used" => {
                 let raw = std::fs::read_to_string("/proc/meminfo").ok()?;
-                let field = |name: &str| raw.lines().find_map(|line| {
-                    let (key, value) = line.split_once(':')?;
-                    (key == name).then(|| value.split_whitespace().next()?.parse::<u64>().ok()).flatten()
-                });
+                let field = |name: &str| {
+                    raw.lines().find_map(|line| {
+                        let (key, value) = line.split_once(':')?;
+                        (key == name)
+                            .then(|| value.split_whitespace().next()?.parse::<u64>().ok())
+                            .flatten()
+                    })
+                };
                 let total = field("MemTotal")?;
-                let kb = if key == "memory_used" { total.saturating_sub(field("MemAvailable")?) } else { total };
+                let kb = if key == "memory_used" {
+                    total.saturating_sub(field("MemAvailable")?)
+                } else {
+                    total
+                };
                 Some(format!("{:.1} GB", kb as f64 / 1_048_576.0))
             }
             _ => None,
@@ -307,6 +497,198 @@ fn expand_arg(raw: &str) -> String {
     }
 }
 
+/// Parse a simple command string directly into `argv` without invoking `bash -c`,
+/// following strict Bash quoting, tilde, `$HOME`/`${HOME}`, assignment, and builtin rules.
+/// Returns `None` whenever shell interpretation may be needed.
+pub(crate) fn try_parse_direct_argv(raw: &str, home: &str) -> Option<Vec<String>> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut in_token = false;
+    let mut rest = raw;
+
+    while !rest.is_empty() {
+        let c = rest.chars().next()?;
+        match c {
+            ' ' | '\t' => {
+                if in_token {
+                    args.push(std::mem::take(&mut current));
+                    in_token = false;
+                }
+                rest = &rest[c.len_utf8()..];
+            }
+            '\n' | '\r'
+            | '|' | '&' | ';' | '(' | ')' | '<' | '>' | '`' | '*' | '?' | '[' | ']' | '{' | '}'
+            | '#' | '\\' | '!' => return None,
+            '\'' => {
+                in_token = true;
+                rest = &rest[1..];
+                let end = rest.find('\'')?;
+                current.push_str(&rest[..end]);
+                rest = &rest[end + 1..];
+            }
+            '"' => {
+                in_token = true;
+                rest = &rest[1..];
+                let mut closed = false;
+                while !rest.is_empty() {
+                    let q = rest.chars().next()?;
+                    match q {
+                        '"' => {
+                            rest = &rest[1..];
+                            closed = true;
+                            break;
+                        }
+                        '\\' | '`' => return None,
+                        '$' => {
+                            let len = home_var_length(rest)?;
+                            if home.is_empty() {
+                                return None;
+                            }
+                            current.push_str(home);
+                            rest = &rest[len..];
+                        }
+                        _ => {
+                            current.push(q);
+                            rest = &rest[q.len_utf8()..];
+                        }
+                    }
+                }
+                if !closed {
+                    return None;
+                }
+            }
+            '$' => {
+                let len = home_var_length(rest)?;
+                if home.is_empty()
+                    || home
+                        .chars()
+                        .any(|ch| ch.is_whitespace() || matches!(ch, '*' | '?' | '['))
+                {
+                    return None;
+                }
+                current.push_str(home);
+                in_token = true;
+                rest = &rest[len..];
+            }
+            '~' => {
+                let after = &rest[1..];
+                let boundary = after
+                    .chars()
+                    .next()
+                    .is_none_or(|n| matches!(n, '/' | ' ' | '\t'));
+                if !in_token {
+                    if !boundary || home.is_empty() {
+                        return None;
+                    }
+                    current.push_str(home);
+                    in_token = true;
+                } else if current.ends_with('=') {
+                    return None;
+                } else {
+                    current.push('~');
+                }
+                rest = after;
+            }
+            _ => {
+                current.push(c);
+                in_token = true;
+                rest = &rest[c.len_utf8()..];
+            }
+        }
+    }
+
+    if in_token {
+        args.push(current);
+    }
+    let first = args.first()?;
+    if first.is_empty() {
+        return None;
+    }
+    if let Some((name, _)) = first.split_once('=')
+        && !name.is_empty()
+        && name
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
+        && name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    {
+        return None;
+    }
+    if matches!(
+        first.as_str(),
+        "exit"
+            | "exec"
+            | "cd"
+            | "export"
+            | "unset"
+            | "set"
+            | "source"
+            | "."
+            | "if"
+            | "then"
+            | "else"
+            | "elif"
+            | "fi"
+            | "for"
+            | "while"
+            | "until"
+            | "do"
+            | "done"
+            | "case"
+            | "esac"
+            | "read"
+            | "eval"
+            | "builtin"
+            | "command"
+            | "type"
+            | "alias"
+            | "unalias"
+            | "local"
+            | "return"
+            | "shift"
+            | "trap"
+            | "umask"
+            | "ulimit"
+            | "wait"
+            | "jobs"
+            | "bg"
+            | "fg"
+            | "kill"
+            | "echo"
+            | "printf"
+            | "test"
+            | "["
+            | "[["
+            | "true"
+            | "false"
+            | "hash"
+            | "pwd"
+            | "times"
+            | "readonly"
+            | "declare"
+            | "typeset"
+            | "let"
+    ) {
+        return None;
+    }
+    Some(args)
+}
+
+fn home_var_length(rest: &str) -> Option<usize> {
+    if rest.starts_with("${HOME}") {
+        Some(7)
+    } else if rest.starts_with("$HOME")
+        && rest[5..]
+            .chars()
+            .next()
+            .is_none_or(|c| !c.is_alphanumeric() && c != '_')
+    {
+        Some(5)
+    } else {
+        None
+    }
+}
+
 pub fn action_argv(action: &ActionConfig) -> Vec<String> {
     let (mut argv, terminal, root) = match action {
         ActionConfig::Exec {
@@ -320,14 +702,18 @@ pub fn action_argv(action: &ActionConfig) -> Vec<String> {
             let args = if argv.is_empty() {
                 // Expand the caller's HOME before pkexec changes the environment.
                 let home = std::env::var("HOME").unwrap_or_default();
-                let command = if *requires_root {
-                    expand_shell_home(command, &home)
+                if let Some(direct) = try_parse_direct_argv(command, &home) {
+                    direct
                 } else {
-                    // Leave ordinary shell variables to Bash. Only normalize
-                    // a leading executable path, as the GTK launcher did.
-                    normalize_shell_command(command, &home)
-                };
-                vec!["bash".into(), "-c".into(), command]
+                    let command = if *requires_root {
+                        expand_shell_home(command, &home)
+                    } else {
+                        // Leave ordinary shell variables to Bash. Only normalize
+                        // a leading executable path, as the GTK launcher did.
+                        normalize_shell_command(command, &home)
+                    };
+                    vec!["bash".into(), "-c".into(), command]
+                }
             } else {
                 if *expanded_argv { argv.clone() }
                 else { argv.iter().map(|a| expand_arg(a)).collect() }
@@ -489,27 +875,7 @@ pub fn launch(action: &ActionConfig) -> Result<(), String> {
     if args.is_empty() {
         return Ok(());
     }
-    let mut proc = Command::new("systemd-run");
-    crate::gpu::inherit_session_environment(&mut proc);
-    proc.args([
-        "--user",
-        "--scope",
-        "--collect",
-        "--quiet",
-        "--expand-environment=no",
-        "--",
-    ])
-    .args(args)
-    .stdin(Stdio::null())
-    .stdout(Stdio::null())
-    .stderr(Stdio::null());
-    use std::os::unix::process::CommandExt;
-    proc.process_group(0);
-    let mut child = proc.spawn().map_err(|e| e.to_string())?;
-    std::thread::spawn(move || {
-        let _ = child.wait();
-    });
-    Ok(())
+    spawn_detached(&args)
 }
 
 pub fn run_action(action: &ActionConfig) -> Result<(), String> {
@@ -661,11 +1027,179 @@ mod tests {
         assert_eq!(labels["Version"], "fixture version");
         assert_eq!(labels["Status"], "actual");
         assert_eq!(labels["Absent"], "N/A");
-        assert_eq!(label_value(Some(&ValueConfig::Static { text: "literal".into() })), Some("literal".into()));
+        let no_shell = |_: &str| None;
+        assert_eq!(
+            label_value_with(Some(&ValueConfig::Static { text: "literal".into() }), &no_shell),
+            Some("literal".into())
+        );
         for key in ["cpu_model", "kernel_version", "memory_total", "memory_used"] {
-            let value = label_value(Some(&ValueConfig::System { key: key.into() })).unwrap();
+            let value =
+                label_value_with(Some(&ValueConfig::System { key: key.into() }), &no_shell).unwrap();
             assert!(!value.is_empty(), "{key}");
         }
+    }
+
+    #[test]
+    fn direct_argv_parser_respects_bash_quoting_and_falls_back_on_shell_syntax() {
+        assert_eq!(
+            try_parse_direct_argv("wpctl set-volume @DEFAULT_AUDIO_SINK@ 50%", "/home/dusk"),
+            Some(vec![
+                "wpctl".into(),
+                "set-volume".into(),
+                "@DEFAULT_AUDIO_SINK@".into(),
+                "50%".into(),
+            ])
+        );
+        assert_eq!(
+            try_parse_direct_argv(
+                "~/scripts/tool.py \"$HOME/file\" '${HOME}/lit' '~/lit' \"~/lit\" ~ '' \"\"",
+                "/home/dusk",
+            ),
+            Some(vec![
+                "/home/dusk/scripts/tool.py".into(),
+                "/home/dusk/file".into(),
+                "${HOME}/lit".into(),
+                "~/lit".into(),
+                "~/lit".into(),
+                "/home/dusk".into(),
+                String::new(),
+                String::new(),
+            ])
+        );
+        // Double-quoted $HOME with spaces in HOME stays one argument; unquoted $HOME falls back.
+        assert_eq!(
+            try_parse_direct_argv("kitty \"$HOME/a\"", "/home/a b"),
+            Some(vec!["kitty".into(), "/home/a b/a".into()])
+        );
+        assert_eq!(try_parse_direct_argv("kitty $HOME/a", "/home/a b"), None);
+
+        for complex in [
+            "",
+            "   ",
+            "kitty \"$HOME_OTHER/a\"",
+            "kitty $HOME_OTHER/a",
+            "kitty ~root/file",
+            "FOO=1 kitty",
+            "kitty a | cat",
+            "kitty a && kitty b",
+            "kitty \"$(id)\"",
+            "kitty \"a\\\"b\"",
+            "kitty 'unclosed",
+            "printf '%s' ok",
+            "test -f /etc/hosts",
+            "exit 1",
+        ] {
+            assert_eq!(try_parse_direct_argv(complex, "/home/dusk"), None, "{complex}");
+        }
+    }
+
+    #[test]
+    fn parallel_query_deduplicates_commands_and_reports_deleted_button_text_files() {
+        let root = std::env::temp_dir().join(format!("dusky-par-query-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let count_file = root.join("calls");
+        let text_file = root.join("badge.txt");
+        let missing_file = root.join("missing.txt");
+        std::fs::write(&text_file, "3\n").unwrap();
+
+        let dup_cmd = format!(
+            "/usr/bin/bash -c 'printf x >> \"{}\"; /usr/bin/sleep 0.18; printf yes'",
+            count_file.display()
+        );
+        let items: Vec<ItemConfig> = vec![
+            toml::from_str(&format!(
+                "type='toggle'\n[properties]\ntitle='Dup1'\nstate_command='{}'",
+                dup_cmd.replace('\'', "''")
+            ))
+            .unwrap_or_else(|_| {
+                let mut i: ItemConfig = toml::from_str("type='toggle'\n[properties]\ntitle='Dup1'").unwrap();
+                i.properties.state_command = dup_cmd.clone();
+                i
+            }),
+            {
+                let mut i: ItemConfig = toml::from_str("type='toggle'\n[properties]\ntitle='Dup2'").unwrap();
+                i.properties.state_command = dup_cmd;
+                i
+            },
+            {
+                let mut i: ItemConfig = toml::from_str("type='label'\n[properties]\ntitle='Slow1'").unwrap();
+                i.value = Some(ValueConfig::Exec {
+                    command: "/usr/bin/sleep 0.18 && printf one".into(),
+                });
+                i
+            },
+            {
+                let mut i: ItemConfig = toml::from_str("type='label'\n[properties]\ntitle='Slow2'").unwrap();
+                i.value = Some(ValueConfig::Exec {
+                    command: "/usr/bin/sleep 0.18 && printf two".into(),
+                });
+                i
+            },
+            {
+                let mut i: ItemConfig = toml::from_str("type='label'\n[properties]\ntitle='Slow3'").unwrap();
+                i.value = Some(ValueConfig::Exec {
+                    command: "/usr/bin/sleep 0.18 && printf three".into(),
+                });
+                i
+            },
+            {
+                let mut i: ItemConfig = toml::from_str("type='grid_card'\n[properties]\ntitle='Card1'").unwrap();
+                i.properties.button_text_file = text_file.to_string_lossy().into_owned();
+                i
+            },
+            {
+                let mut i: ItemConfig = toml::from_str("type='button'\n[properties]\ntitle='BtnDup'").unwrap();
+                i.properties.button_text_file = text_file.to_string_lossy().into_owned();
+                i
+            },
+            {
+                let mut i: ItemConfig = toml::from_str("type='button'\n[properties]\ntitle='BtnMissing'").unwrap();
+                i.properties.button_text_file = missing_file.to_string_lossy().into_owned();
+                i
+            },
+        ];
+
+        let start = std::time::Instant::now();
+        let snap = query(&items);
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed < Duration::from_millis(550),
+            "4 unique 180 ms commands should run in parallel, took {elapsed:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&count_file).unwrap(),
+            "x",
+            "identical commands in one snapshot must execute once"
+        );
+        let toggles: HashMap<_, _> = snap.toggles.into_iter().collect();
+        assert_eq!(toggles["Dup1"], Some(true));
+        assert_eq!(toggles["Dup2"], Some(true));
+        let labels: HashMap<_, _> = snap.labels.into_iter().collect();
+        assert_eq!(labels["Slow1"], "one");
+        assert_eq!(labels["Slow2"], "two");
+        assert_eq!(labels["Slow3"], "three");
+        assert_eq!(snap.file_texts.len(), 2, "duplicate button_text_file paths must be deduplicated");
+        let files: HashMap<_, _> = snap.file_texts.into_iter().collect();
+        assert_eq!(files[&text_file.to_string_lossy().into_owned()].as_deref(), Some("3"));
+        assert_eq!(files[&missing_file.to_string_lossy().into_owned()], None);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn observed_button_action_classification() {
+        let normal: ActionConfig = toml::from_str("type='exec'\ncommand='kitty'").unwrap();
+        let apply: ActionConfig = toml::from_str("type='exec'\ncommand='true'\nmode='apply'").unwrap();
+        let root_apply: ActionConfig = toml::from_str("type='exec'\ncommand='true'\nrequires_root=true").unwrap();
+        let root_term: ActionConfig = toml::from_str("type='exec'\ncommand='true'\nrequires_root=true\nterminal=true").unwrap();
+        let root_launch: ActionConfig = toml::from_str("type='exec'\ncommand='true'\nrequires_root=true\nmode='launch'").unwrap();
+        assert!(!is_observed_button_action(&normal));
+        assert!(is_observed_button_action(&apply));
+        assert!(is_observed_button_action(&root_apply));
+        assert!(!is_observed_button_action(&root_term));
+        assert!(!is_observed_button_action(&root_launch));
     }
 
     #[test]

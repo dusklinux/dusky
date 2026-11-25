@@ -30,11 +30,11 @@ use crate::backend::controls::{self, ServiceStatus, Snapshot};
 use crate::backend::system as sys;
 use crate::backend::worker;
 use crate::config::{
-    ActionConfig, AppConfig, ChangeAction, ItemConfig, LoadedConfig, PageConfig, SectionConfig,
-    ToggleActionPair,
+    ActionConfig, AppConfig, ButtonProperty, ChangeAction, ItemConfig, ItemProperties,
+    LoadedConfig, PageConfig, SectionConfig, ToggleActionPair, ValueConfig,
 };
 use crate::icons::render_icon;
-use crate::theme::{AppTheme, mix, saturate};
+use crate::theme::{AppTheme, ThemeStamp, mix, saturate};
 
 pub type Element<'a, Message> = iced_core::Element<'a, Message, iced_core::Theme, crate::renderer::Renderer>;
 type DismissChannel = (
@@ -74,11 +74,22 @@ pub struct SearchLocation {
     path: Vec<usize>,
 }
 
-struct SearchHit<'a> {
-    item: &'a ItemConfig,
+#[derive(Debug, Clone)]
+struct CachedSearchHit {
     breadcrumb: String,
     location: SearchLocation,
     score: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SliderHint {
+    Generic,
+    NativeVolume,
+    NativeMicrophone,
+    NativeBrightness,
+    NativeSunset,
+    DefaultVolumeAction,
+    DefaultBrightnessAction,
 }
 
 // ---------------------------------------------------------------------------
@@ -143,6 +154,8 @@ pub enum Message {
     SelectionFinished { key: String, previous: Option<String>, result: Result<(), String> },
     DragWindow,
     Tick,
+    ThemeLoaded(Option<(AppTheme, ThemeStamp)>),
+    ActionFinished { observed: bool, result: Result<(), String> },
     SliderApplied { key: String, result: Result<(), String> },
     CoreLoaded { key: &'static str, previous: Option<f32>, value: Option<f32>, changed_at: Option<Instant>, sunset_active: Option<bool> },
     ReloadConfig,
@@ -161,10 +174,13 @@ pub struct CenterApp {
     pub config_path: PathBuf,
     pub config_override: Option<PathBuf>,
     pub theme: AppTheme,
+    pub theme_stamp: Option<ThemeStamp>,
+    pub theme_loading: bool,
     pub nav_stack: Vec<NavView>,
     pub sidebar_open: bool,
     pub search_open: bool,
     pub search_query: String,
+    search_cache: Option<(String, usize, Vec<CachedSearchHit>)>,
     pub loaded_pages: HashSet<usize>,
     pub toggle_states: HashMap<String, bool>,
     pub slider_values: HashMap<String, f32>,
@@ -172,13 +188,14 @@ pub struct CenterApp {
     pub dynamic_options: HashMap<String, Vec<String>>,
     pub service_states: HashMap<String, bool>,
     pub live_labels: HashMap<String, String>,
+    pub file_texts: HashMap<String, String>,
     pub hovered_item: Option<String>,
     search_highlight: Option<(Vec<usize>, Instant)>,
     pub active_slider: Option<String>,
     pub sunset_active: bool,
     pub core_loading: HashSet<String>,
     pub applying_sliders: HashSet<String>,
-    pub pending_sliders: HashMap<String, (f32, Option<ActionConfig>, Option<ItemConfig>)>,
+    pub pending_sliders: HashMap<String, (f32, Option<ActionConfig>, Option<ItemConfig>, SliderHint)>,
     pub deferred_sliders: HashMap<String, (f32, Option<ChangeAction>, Instant)>,
     // Readback grace is independent of each deferred edit's timer identity.
     pub slider_changed_at: HashMap<String, Instant>,
@@ -187,6 +204,7 @@ pub struct CenterApp {
     pub service_statuses: HashMap<String, ServiceStatus>,
     pub busy_controls: HashSet<String>,
     pub unavailable_controls: HashSet<String>,
+    pub active_actions: usize,
     pub control_generation: u64,
     pub controls_loading: Option<u64>,
     pub control_polled_at: HashMap<String, Instant>,
@@ -252,15 +270,19 @@ impl CenterApp {
             0
         };
 
+        let (theme, theme_stamp) = AppTheme::load_with_stamp();
         let mut app = Self {
             config,
             config_path: loaded.path,
             config_override,
-            theme: AppTheme::load(),
+            theme,
+            theme_stamp,
+            theme_loading: false,
             nav_stack: vec![NavView::Root(start_page)],
             sidebar_open: true,
             search_open: false,
             search_query: String::new(),
+            search_cache: None,
             loaded_pages: HashSet::new(),
             toggle_states: HashMap::new(),
             slider_values: HashMap::new(),
@@ -268,6 +290,7 @@ impl CenterApp {
             dynamic_options: HashMap::new(),
             service_states: HashMap::new(),
             live_labels: HashMap::new(),
+            file_texts: HashMap::new(),
             hovered_item: initial_hover,
             search_highlight: None,
             active_slider: None,
@@ -282,6 +305,7 @@ impl CenterApp {
             service_statuses: HashMap::new(),
             busy_controls: HashSet::new(),
             unavailable_controls: HashSet::new(),
+            active_actions: 0,
             control_generation: 0,
             controls_loading: None,
             control_polled_at: HashMap::new(),
@@ -367,6 +391,7 @@ impl CenterApp {
     }
 
     fn queue_slider(&mut self, key: String, value: f32, on_change: Option<ChangeAction>) -> Task<Message> {
+        let hint = classify_slider_action(&key, on_change.as_ref());
         let action = match on_change {
             Some(ChangeAction::Direct(action)) => {
                 let mut action = controls::with_value(&action, &value.to_string());
@@ -376,26 +401,64 @@ impl CenterApp {
                 }
                 Some(action)
             }
-            _ if key == "Night Light" => None,
+            _ if hint != SliderHint::Generic => None,
             _ if self.visible_items().iter().any(|item| controls::item_key(item) == key
                 && item.properties.persistence == "app" && !item.properties.key.is_empty()) => None,
             _ => return Task::none(),
         };
         let item = self.visible_items().into_iter().find(|item| controls::item_key(item) == key).cloned();
-        self.pending_sliders.insert(key.clone(), (value, action, item));
+        self.pending_sliders.insert(key.clone(), (value, action, item, hint));
         self.apply_pending_slider(key)
     }
 
     fn apply_pending_slider(&mut self, key: String) -> Task<Message> {
         if self.applying_sliders.contains(&key) { return Task::none(); }
-        let Some((value, action, item)) = self.pending_sliders.remove(&key) else { return Task::none(); };
+        let Some((value, action, item, hint)) = self.pending_sliders.remove(&key) else { return Task::none(); };
         self.applying_sliders.insert(key.clone());
-        let sunset = key == "Night Light";
-        worker::perform(move || {
-            if action.is_none() && sunset { sys::apply_sunset(value) }
-            else if let Some(item) = item { controls::set_scalar(&item, &value.to_string(), action.as_ref()) }
-            else if let Some(action) = action { controls::run_action(&action) }
-            else { Ok(()) }
+        worker::perform(move || match hint {
+            SliderHint::NativeSunset => sys::apply_sunset(value),
+            SliderHint::NativeVolume => sys::apply_volume(value),
+            SliderHint::NativeMicrophone => sys::apply_microphone_volume(value),
+            SliderHint::NativeBrightness => sys::apply_brightness(value),
+            SliderHint::DefaultVolumeAction => {
+                let Some(act) = action.as_ref() else {
+                    return sys::apply_volume(value);
+                };
+                controls::run_action(act)?;
+                if value.round() > 0.0 {
+                    sys::unmute_default_sink();
+                }
+                Ok(())
+            }
+            SliderHint::DefaultBrightnessAction => {
+                let Some(act) = action.as_ref() else {
+                    return sys::apply_brightness(value);
+                };
+                match controls::run_action(act) {
+                    Ok(()) => {
+                        if sys::has_ddc_brightness() {
+                            let _ = sys::apply_ddc_brightness(value);
+                        }
+                        Ok(())
+                    }
+                    Err(local_err) => {
+                        if sys::has_ddc_brightness() {
+                            sys::apply_ddc_brightness(value)
+                        } else {
+                            Err(local_err)
+                        }
+                    }
+                }
+            }
+            SliderHint::Generic => {
+                if let Some(item) = item {
+                    controls::set_scalar(&item, &value.to_string(), action.as_ref())
+                } else if let Some(action) = action {
+                    controls::run_action(&action)
+                } else {
+                    Ok(())
+                }
+            }
         }).map(move |result| Message::SliderApplied { key: key.clone(), result })
     }
 
@@ -444,7 +507,9 @@ impl CenterApp {
                 let started = Instant::now();
                 self.search_highlight = Some((location.path, started));
                 self.search_query.clear();
+                self.search_cache = None;
                 self.search_open = false;
+                self.status_notice = None;
                 self.control_generation += 1;
                 let reveal = iced_runtime::task::widget(LocateSearchTarget {
                     target: iced_core::widget::Id::new("search_target"), viewport: None, target_bounds: None,
@@ -472,6 +537,8 @@ impl CenterApp {
                     self.nav_stack = vec![NavView::Root(idx)];
                     self.search_highlight = None;
                     self.search_query.clear();
+                    self.search_cache = None;
+                    self.status_notice = None;
                     self.control_generation += 1;
                     return Task::batch([pending, self.refresh_visible()]);
                 }
@@ -495,12 +562,15 @@ impl CenterApp {
                     sections,
                 });
                 self.search_query.clear();
+                self.search_cache = None;
+                self.status_notice = None;
                 self.control_generation += 1;
                 Task::batch([pending, self.refresh_visible()])
             }
 
             Message::PopSubPage => {
                 self.search_highlight = None;
+                self.status_notice = None;
                 let pending = self.flush_deferred_sliders();
                 if self.nav_stack.len() > 1 {
                     self.nav_stack.pop();
@@ -520,6 +590,7 @@ impl CenterApp {
                     operation::focus("search_input")
                 } else {
                     self.search_query.clear();
+                    self.search_cache = None;
                     Task::none()
                 }
             }
@@ -527,11 +598,13 @@ impl CenterApp {
             Message::SearchChanged(q) => {
                 self.search_highlight = None;
                 self.search_query = q;
+                self.rebuild_search_cache();
                 Task::none()
             }
 
             Message::ClearSearch => {
                 self.search_query.clear();
+                self.search_cache = None;
                 self.search_open = false;
                 Task::none()
             }
@@ -540,18 +613,43 @@ impl CenterApp {
 
             Message::ExecuteAction(action) => {
                 if self.closing { return Task::none(); }
+                self.status_notice = None;
                 if let ActionConfig::Redirect { page } = &action {
                     if let Some(index) = self.config.pages.iter().position(|p| &p.id == page) {
                         return self.update(Message::SelectPage(index));
                     }
-                } else if let Err(error) = controls::launch(&action) {
+                    return Task::none();
+                }
+                self.action_error = None;
+                if controls::is_observed_button_action(&action) {
+                    self.active_actions += 1;
+                    self.control_generation += 1;
+                    worker::perform(move || controls::run_action(&action))
+                        .map(|result| Message::ActionFinished { observed: true, result })
+                } else {
+                    worker::perform(move || controls::launch(&action))
+                        .map(|result| Message::ActionFinished { observed: false, result })
+                }
+            }
+
+            Message::ActionFinished { observed, result } => {
+                if observed {
+                    self.active_actions = self.active_actions.saturating_sub(1);
+                    self.control_generation += 1;
+                }
+                if let Err(error) = result {
                     self.action_error = Some(error);
                 }
-                Task::none()
+                if observed {
+                    self.finish_or_refresh()
+                } else {
+                    Task::none()
+                }
             }
 
             Message::ToggleItem { key, is_enabled, on_toggle } => {
                 if self.closing || self.busy_controls.contains(&key) { return Task::none(); }
+                self.status_notice = None;
                 let previous = self.toggle_states.get(&key).copied().unwrap_or(false);
                 let item = self.visible_items().into_iter().find(|i| controls::item_key(i) == key).cloned();
                 let Some(item) = item else {
@@ -560,11 +658,14 @@ impl CenterApp {
                     self.control_generation += 1;
                     return Task::batch([pending, self.refresh_visible()]); // Local expander state.
                 };
-                self.toggle_states.insert(key.clone(), is_enabled);
+                let action = on_toggle.map(|pair| if is_enabled { pair.enabled } else { pair.disabled });
+                let launched = action.as_ref().is_some_and(controls::is_launch);
+                if !launched {
+                    self.toggle_states.insert(key.clone(), is_enabled);
+                }
                 self.busy_controls.insert(key.clone());
                 self.control_generation += 1;
                 self.action_error = None;
-                let action = on_toggle.map(|pair| if is_enabled { pair.enabled } else { pair.disabled });
                 worker::perform(move || {
                     controls::set_toggle(&item, is_enabled, action.as_ref())
                 }).map(move |result| Message::ToggleFinished { key: key.clone(), previous, result })
@@ -635,6 +736,13 @@ impl CenterApp {
                     for (key, value) in snapshot.sliders { self.sync_slider(&key, value); }
                 }
                 self.live_labels.extend(snapshot.labels);
+                for (path, text) in snapshot.file_texts {
+                    if let Some(value) = text {
+                        self.file_texts.insert(path, value);
+                    } else {
+                        self.file_texts.remove(&path);
+                    }
+                }
                 for (key, value) in snapshot.entries {
                     if !self.editing_entries.contains(&key) && !self.busy_controls.contains(&key) {
                         self.entry_values.insert(key, value);
@@ -651,6 +759,7 @@ impl CenterApp {
 
             Message::SubmitEntry { key, action } => {
                 if self.closing || self.busy_controls.contains(&key) { return Task::none(); }
+                self.status_notice = None;
                 let value = self.entry_values.get(&key).cloned().unwrap_or_default();
                 let action = action.map(|action| controls::with_value(&action, &value));
                 let Some(item) = self.visible_items().into_iter().find(|i| controls::item_key(i) == key).cloned() else { return Task::none(); };
@@ -677,6 +786,7 @@ impl CenterApp {
 
             Message::SliderChanged { key, value, on_change, debounce } => {
                 if self.closing { return Task::none(); }
+                self.status_notice = None;
                 self.active_slider = debounce.then(|| key.clone());
                 self.slider_values.insert(key.clone(), value);
                 self.slider_revision += 1;
@@ -724,6 +834,7 @@ impl CenterApp {
                 action,
             } => {
                 if self.closing || self.busy_controls.contains(&key) { return Task::none(); }
+                self.status_notice = None;
                 let Some(item) = self.visible_items().into_iter().find(|i| controls::item_key(i) == key).cloned() else { return Task::none(); };
                 let previous = self.selected_options.get(&key).cloned();
                 let launched = action.as_ref().is_some_and(controls::is_launch);
@@ -753,6 +864,7 @@ impl CenterApp {
             Message::ToggleService { unit, scope } => {
                 let key = controls::service_key(&scope, &unit);
                 if self.closing || self.busy_controls.contains(&key) { return Task::none(); }
+                self.status_notice = None;
                 let previous = self.service_states.get(&key).copied().unwrap_or(false);
                 self.service_states.insert(key.clone(), !previous);
                 self.busy_controls.insert(key.clone());
@@ -776,9 +888,24 @@ impl CenterApp {
                     self.status_notice = None;
                 }
 
-                // Dynamically sync theme palette with wallpaper
-                if let Some(theme) = AppTheme::load_generated() { self.theme = theme; }
-                Task::batch([self.refresh_core(), self.refresh_controls()])
+                let mut tasks = vec![self.refresh_core(), self.refresh_controls()];
+                if !self.theme_loading {
+                    self.theme_loading = true;
+                    let stamp = self.theme_stamp.clone();
+                    tasks.push(worker::perform(move || {
+                        Message::ThemeLoaded(AppTheme::load_if_changed(stamp.as_ref()))
+                    }));
+                }
+                Task::batch(tasks)
+            }
+
+            Message::ThemeLoaded(loaded) => {
+                self.theme_loading = false;
+                if let Some((theme, stamp)) = loaded {
+                    self.theme = theme;
+                    self.theme_stamp = Some(stamp);
+                }
+                Task::none()
             }
 
             Message::SliderApplied { key, result } => {
@@ -827,7 +954,10 @@ impl CenterApp {
 
             Message::ReloadConfig => {
                 if self.closing { return Task::none(); }
-                if let Some(theme) = AppTheme::load_generated() { self.theme = theme; }
+                if let Some((theme, stamp)) = AppTheme::load_if_changed(self.theme_stamp.as_ref()) {
+                    self.theme = theme;
+                    self.theme_stamp = Some(stamp);
+                }
                 let mut tasks = vec![];
                 match AppConfig::load_resolved(self.config_override.as_deref()) {
                     Ok(mut loaded) => {
@@ -925,12 +1055,14 @@ impl CenterApp {
 
                         self.dynamic_options.clear();
                         self.live_labels.clear();
+                        self.file_texts.clear();
                         self.unavailable_controls.clear();
                         self.control_polled_at.clear();
                         self.loaded_pages.clear();
                         self.hovered_item = None;
                         self.search_highlight = None;
                         self.active_slider = None;
+                        self.rebuild_search_cache();
 
                         self.lazy_load_page(self.active_page_idx());
                         for view in &self.nav_stack {
@@ -983,6 +1115,7 @@ impl CenterApp {
                 if key == Key::Named(Named::Escape) {
                     if !self.search_query.is_empty() {
                         self.search_query.clear();
+                        self.search_cache = None;
                         self.search_open = false;
                         return Task::none();
                     }
@@ -1055,8 +1188,24 @@ impl CenterApp {
         self.polled_generation = Some(generation);
         let now = Instant::now();
         let items = self.visible_items().into_iter().filter(|item| {
-            if !matches!(item.item_type.as_str(), "toggle" | "toggle_card" | "selection" |
-                "entry" | "secret" | "label" | "slider" | "spin" | "service" | "service_card") { return false; }
+            let has_file_text = !item.properties.button_text_file.is_empty();
+            if !has_file_text
+                && !matches!(
+                    item.item_type.as_str(),
+                    "toggle"
+                        | "toggle_card"
+                        | "selection"
+                        | "entry"
+                        | "secret"
+                        | "label"
+                        | "slider"
+                        | "spin"
+                        | "service"
+                        | "service_card"
+                )
+            {
+                return false;
+            }
             let key = if item.properties.service.is_empty() { controls::item_key(item) }
                 else { controls::service_key(&item.properties.scope, &item.properties.service) };
             if self.busy_controls.contains(&key) { return false; }
@@ -1064,7 +1213,7 @@ impl CenterApp {
                 return false;
             }
             let interval = item.properties.interval.unwrap_or(
-                if item.properties.key.is_empty() && matches!(item.item_type.as_str(), "entry" | "secret" | "label") { 0 } else { 3 });
+                if !has_file_text && item.properties.key.is_empty() && matches!(item.item_type.as_str(), "entry" | "secret" | "label") { 0 } else { 3 });
             let poll_key = format!("{}:{key}", item.item_type);
             force
                 || !self.control_polled_at.get(&poll_key).is_some_and(|last| {
@@ -1089,7 +1238,34 @@ impl CenterApp {
     }
 
     fn writes_finished(&self) -> bool {
-        self.applying_sliders.is_empty() && self.pending_sliders.is_empty() && self.busy_controls.is_empty()
+        self.applying_sliders.is_empty()
+            && self.pending_sliders.is_empty()
+            && self.busy_controls.is_empty()
+            && self.active_actions == 0
+    }
+
+    fn rebuild_search_cache(&mut self) {
+        if self.search_query.is_empty() {
+            self.search_cache = None;
+            return;
+        }
+        let (total, hits) = build_search_cache(&self.config, &self.search_query);
+        self.search_cache = Some((self.search_query.clone(), total, hits));
+    }
+
+    fn visible_controls_items<'a>(&self, section: &'a SectionConfig) -> Vec<&'a ItemConfig> {
+        section
+            .items
+            .iter()
+            .filter(|item| {
+                let key = if item.properties.key.is_empty() {
+                    &item.properties.title
+                } else {
+                    &item.properties.key
+                };
+                key != "Night Light" || self.sunset_active
+            })
+            .collect()
     }
 
     fn flush_deferred_sliders(&mut self) -> Task<Message> {
@@ -1574,21 +1750,37 @@ impl CenterApp {
 
     fn view_search_results<'a>(&'a self) -> Element<'a, Message> {
         let palette = self.theme;
-        let query = self.search_query.to_lowercase();
-        let hits = search_hits(&self.config, &query);
-        let total_hits = hits.len().min(50);
+        let fallback_cache;
+        let (total_all, hits): (usize, &[CachedSearchHit]) = match &self.search_cache {
+            Some((cached_q, total, cached_hits)) if cached_q == &self.search_query => {
+                (*total, cached_hits.as_slice())
+            }
+            _ => {
+                fallback_cache = build_search_cache(&self.config, &self.search_query);
+                (fallback_cache.0, fallback_cache.1.as_slice())
+            }
+        };
+
+        let resolved: Vec<(&ItemConfig, &CachedSearchHit)> = hits
+            .iter()
+            .filter_map(|hit| {
+                resolve_search_location(&self.config, &hit.location).map(|item| (item, hit))
+            })
+            .collect();
+        let hit_count = resolved.len();
         let mut results_box = column![].spacing(0);
-        let mut hit_count = 0;
-        for hit in hits.iter().take(50) {
-            hit_count += 1;
+        for (idx, (item, hit)) in resolved.into_iter().enumerate() {
             let item_view = self.view_item_row_rounded(
-                hit.item, &hit.breadcrumb, Some(hit.location.clone()), row_radius(hit_count - 1, total_hits),
+                item,
+                &hit.breadcrumb,
+                Some(hit.location.clone()),
+                row_radius(idx, hit_count),
             );
             results_box = results_box.push(item_view);
         }
         let header = container(
-            row![text(if hits.len() > hit_count {
-                format!("Showing {hit_count} of {} results for \"{}\"", hits.len(), self.search_query)
+            row![text(if total_all > hit_count {
+                format!("Showing {hit_count} of {total_all} results for \"{}\"", self.search_query)
             } else { format!("Found {hit_count} results for \"{}\"", self.search_query) })
                 .size(13)
                 .font(iced::Font {
@@ -1815,6 +2007,18 @@ impl CenterApp {
             return column![].into();
         }
 
+        let is_controls =
+            section.section_type == "controls" || section.properties.title == "Quick Controls";
+        let controls_items = if is_controls {
+            let visible = self.visible_controls_items(section);
+            if visible.is_empty() {
+                return column![].into();
+            }
+            Some(visible)
+        } else {
+            None
+        };
+
         // 2. Standard section with title and boxed-list container
         let mut sec_col = column![].spacing(8);
 
@@ -1836,8 +2040,8 @@ impl CenterApp {
         }
 
         // Slider groups use an explicit section type so titles remain editable.
-        if section.section_type == "controls" || section.properties.title == "Quick Controls" {
-            sec_col = sec_col.push(self.view_quick_controls_card(section));
+        if let Some(visible) = controls_items {
+            sec_col = sec_col.push(self.view_quick_controls_card(&visible));
             return sec_col.into();
         }
 
@@ -1895,21 +2099,24 @@ impl CenterApp {
         } else { !is_toggle || (self.toggle_states.contains_key(&key)
             && !self.busy_controls.contains(&key) && !self.unavailable_controls.contains(&key)) };
 
-        // Resolve title & button text mappings (e.g. Dusky "0" -> "Updated")
+        // Resolve title & button text mappings from worker-populated cache (zero UI-thread I/O)
         let mut display_title = item.properties.title.clone();
         let mut effective_style = item.properties.style.clone();
-        if !item.properties.button_text_file.is_empty() {
-            let expanded = expand_path(&item.properties.button_text_file);
-            if let Ok(content) = std::fs::read_to_string(expanded) {
-                let trimmed = content.trim();
-                if let Some(style) = item.properties.style_map.get(trimmed).or_else(|| item.properties.style_map.get("default")) {
-                    effective_style = style.clone();
-                }
-                if let Some(mapped) = item.properties.button_text_map.get(trimmed) {
-                    display_title = mapped.clone();
-                } else if let Some(def) = item.properties.button_text_map.get("default") {
-                    display_title = def.clone();
-                }
+        if !item.properties.button_text_file.is_empty()
+            && let Some(trimmed) = self.file_texts.get(&item.properties.button_text_file)
+        {
+            if let Some(style) = item
+                .properties
+                .style_map
+                .get(trimmed)
+                .or_else(|| item.properties.style_map.get("default"))
+            {
+                effective_style = style.clone();
+            }
+            if let Some(mapped) = item.properties.button_text_map.get(trimmed) {
+                display_title = mapped.clone();
+            } else if let Some(def) = item.properties.button_text_map.get("default") {
+                display_title = def.clone();
             }
         }
 
@@ -2095,27 +2302,15 @@ impl CenterApp {
     // TOML Controls Card (Audio and Display on Home)
     // ---------------------------------------------------------------------------
 
-    fn view_quick_controls_card<'a>(&'a self, section: &'a SectionConfig) -> Element<'a, Message> {
+    fn view_quick_controls_card<'a>(&'a self, visible_items: &[&'a ItemConfig]) -> Element<'a, Message> {
         let palette = self.theme;
         let mut controls_col = column![].spacing(0);
-        let visible_items: Vec<&ItemConfig> = section
-            .items
-            .iter()
-            .filter(|item| {
-                let key = if item.properties.key.is_empty() {
-                    &item.properties.title
-                } else {
-                    &item.properties.key
-                };
-                key != "Night Light" || self.sunset_active
-            })
-            .collect();
         let item_count = visible_items.len();
         if item_count == 0 {
             return column![].into();
         }
 
-        for (index, item) in visible_items.into_iter().enumerate() {
+        for (index, &item) in visible_items.iter().enumerate() {
             if !matches!(item.item_type.as_str(), "slider" | "spin") {
                 controls_col = controls_col.push(self.view_item_row_rounded(
                     item,
@@ -2717,18 +2912,21 @@ impl CenterApp {
                     let mut dyn_btn_text = String::new();
                     let mut dyn_style = String::new();
 
-                    if !item.properties.button_text_file.is_empty() {
-                        let expanded = expand_path(&item.properties.button_text_file);
-                        if let Ok(content) = std::fs::read_to_string(expanded) {
-                            let trimmed = content.trim();
-                            if let Some(mapped) = item.properties.button_text_map.get(trimmed) {
-                                dyn_btn_text = mapped.clone();
-                            } else if let Some(def) = item.properties.button_text_map.get("default") {
-                                dyn_btn_text = def.clone();
-                            }
-                            if let Some(s_mapped) = item.properties.style_map.get(trimmed).or_else(|| item.properties.style_map.get("default")) {
-                                dyn_style = s_mapped.clone();
-                            }
+                    if !item.properties.button_text_file.is_empty()
+                        && let Some(trimmed) = self.file_texts.get(&item.properties.button_text_file)
+                    {
+                        if let Some(mapped) = item.properties.button_text_map.get(trimmed) {
+                            dyn_btn_text = mapped.clone();
+                        } else if let Some(def) = item.properties.button_text_map.get("default") {
+                            dyn_btn_text = def.clone();
+                        }
+                        if let Some(s_mapped) = item
+                            .properties
+                            .style_map
+                            .get(trimmed)
+                            .or_else(|| item.properties.style_map.get("default"))
+                        {
+                            dyn_style = s_mapped.clone();
                         }
                     }
 
@@ -3030,9 +3228,52 @@ fn format_display_path(path: &std::path::Path) -> String {
     path.display().to_string()
 }
 
-fn search_hits<'a>(config: &'a AppConfig, query: &str) -> Vec<SearchHit<'a>> {
-    fn visit<'a>(items: &'a [ItemConfig], breadcrumb: &str, location: &SearchLocation,
-        path: &[usize], query: &str, hits: &mut Vec<SearchHit<'a>>) {
+fn classify_slider_action(key: &str, on_change: Option<&ChangeAction>) -> SliderHint {
+    match on_change {
+        None => match key {
+            "Volume" => SliderHint::NativeVolume,
+            "Microphone" => SliderHint::NativeMicrophone,
+            "Brightness" => SliderHint::NativeBrightness,
+            "Night Light" => SliderHint::NativeSunset,
+            _ => SliderHint::Generic,
+        },
+        Some(ChangeAction::Direct(ActionConfig::Exec {
+            command,
+            argv,
+            terminal: false,
+            requires_root: false,
+            ..
+        })) if argv.is_empty() => match (key, command.trim()) {
+            ("Brightness", "brightnessctl set {value}%") => SliderHint::DefaultBrightnessAction,
+            ("Volume", "wpctl set-volume @DEFAULT_AUDIO_SINK@ {value}%") => {
+                SliderHint::DefaultVolumeAction
+            }
+            _ => SliderHint::Generic,
+        },
+        _ => SliderHint::Generic,
+    }
+}
+
+fn resolve_search_location<'a>(
+    config: &'a AppConfig,
+    location: &SearchLocation,
+) -> Option<&'a ItemConfig> {
+    let mut sections = config.pages.get(location.page)?.layout.as_slice();
+    for nav_path in &location.navigation {
+        sections = navigation_at(sections, nav_path)?.layout.as_slice();
+    }
+    item_at(sections, &location.path)
+}
+
+fn build_search_cache(config: &AppConfig, raw_query: &str) -> (usize, Vec<CachedSearchHit>) {
+    fn visit(
+        items: &[ItemConfig],
+        breadcrumb: &str,
+        location: &SearchLocation,
+        path: &[usize],
+        query: &str,
+        hits: &mut Vec<CachedSearchHit>,
+    ) {
         for (index, item) in items.iter().enumerate() {
             let mut item_path = path.to_vec();
             item_path.push(index);
@@ -3040,7 +3281,11 @@ fn search_hits<'a>(config: &'a AppConfig, query: &str) -> Vec<SearchHit<'a>> {
             target.path = item_path.clone();
             let score = search_score(item, query);
             if score > 0 {
-                hits.push(SearchHit { item, breadcrumb: breadcrumb.into(), location: target.clone(), score });
+                hits.push(CachedSearchHit {
+                    breadcrumb: breadcrumb.into(),
+                    location: target.clone(),
+                    score,
+                });
             }
             let breadcrumb = format!("{breadcrumb} › {}", item.properties.title);
             if item.item_type == "navigation" {
@@ -3055,15 +3300,23 @@ fn search_hits<'a>(config: &'a AppConfig, query: &str) -> Vec<SearchHit<'a>> {
             visit(&item.items, &breadcrumb, &target, &item_path, query, hits);
         }
     }
-    let mut hits = vec![];
+    let query = raw_query.to_lowercase();
+    let mut hits = Vec::new();
     for (page, config) in config.pages.iter().enumerate() {
-        let location = SearchLocation { page, navigation: vec![], expanders: vec![], path: vec![] };
+        let location = SearchLocation {
+            page,
+            navigation: vec![],
+            expanders: vec![],
+            path: vec![],
+        };
         for (section, layout) in config.layout.iter().enumerate() {
-            visit(&layout.items, &config.title, &location, &[section], query, &mut hits);
+            visit(&layout.items, &config.title, &location, &[section], &query, &mut hits);
         }
     }
     hits.sort_by_key(|hit| std::cmp::Reverse(hit.score));
-    hits
+    let total = hits.len();
+    hits.truncate(50);
+    (total, hits)
 }
 
 fn search_score(item: &ItemConfig, query: &str) -> u32 {
@@ -3444,10 +3697,13 @@ fn collect_item_defaults(
         sliders.entry(key.clone()).or_insert(def);
     }
 
-    if matches!(item.item_type.as_str(), "toggle" | "toggle_card") && item.properties.state_command.is_empty() {
-        let value = std::fs::read_to_string(controls::settings_dir().join(&key)).ok()
-            .and_then(|raw| controls::parse_bool(&raw)).unwrap_or(false) ^ item.properties.key_inverse;
-        toggles.entry(key.clone()).or_insert(value);
+    // Pure in-memory toggles (no state_command and no backing setting file) start immediately;
+    // file-backed and command-backed toggles populate asynchronously via controls::query().
+    if matches!(item.item_type.as_str(), "toggle" | "toggle_card")
+        && item.properties.state_command.is_empty()
+        && item.properties.key.is_empty()
+    {
+        toggles.entry(key.clone()).or_insert(item.properties.key_inverse);
     }
 
     if !item.properties.service.is_empty() {
@@ -3765,40 +4021,224 @@ fn to_pretty_title(s: &str) -> String {
         .join(" ")
 }
 
-fn substitute_item_vars(item: &mut ItemConfig, vars: &HashMap<String, String>) {
-    // Walk the schema so nested layouts, buttons, services and value sources
-    // receive substitution too. Inserted names are never re-expanded.
-    fn visit(value: &mut serde_json::Value, vars: &[(String, &str)]) {
-        match value {
-            serde_json::Value::String(text) => {
-                let raw = std::mem::take(text);
-                let mut rest = raw.as_str();
-                while !rest.is_empty() {
-                    let replacement = vars.iter().find_map(|(token, value)|
-                        rest.starts_with(token).then_some((token.len(), *value)));
-                    if let Some((length, value)) = replacement {
-                        text.push_str(value);
-                        rest = &rest[length..];
-                    } else {
-                        let ch = rest.chars().next().unwrap();
-                        text.push(ch);
-                        rest = &rest[ch.len_utf8()..];
-                    }
-                }
-            }
-            serde_json::Value::Array(values) => {
-                for value in values { visit(value, vars); }
-            }
-            serde_json::Value::Object(fields) => {
-                for value in fields.values_mut() { visit(value, vars); }
-            }
-            _ => (),
+fn substitute_string(text: &mut String, tokens: &[(String, &str)]) {
+    if !text.contains('{') {
+        return;
+    }
+    let raw = std::mem::take(text);
+    let mut rest = raw.as_str();
+    while !rest.is_empty() {
+        let replacement = tokens
+            .iter()
+            .find_map(|(token, value)| rest.starts_with(token).then_some((token.len(), *value)));
+        if let Some((length, value)) = replacement {
+            text.push_str(value);
+            rest = &rest[length..];
+        } else {
+            let ch = rest.chars().next().unwrap();
+            text.push(ch);
+            rest = &rest[ch.len_utf8()..];
         }
     }
-    let mut value = serde_json::to_value(&*item).expect("configuration is serializable");
-    let tokens: Vec<_> = vars.iter().map(|(key, value)| (format!("{{{key}}}"), value.as_str())).collect();
-    visit(&mut value, &tokens);
-    *item = serde_json::from_value(value).expect("substitution preserves configuration types");
+}
+
+fn substitute_action(action: &mut ActionConfig, tokens: &[(String, &str)]) {
+    match action {
+        ActionConfig::Reload => (),
+        ActionConfig::Exec {
+            command,
+            argv,
+            expanded_argv: _,
+            terminal: _,
+            requires_root: _,
+            mode,
+            timeout: _,
+        } => {
+            substitute_string(command, tokens);
+            for arg in argv {
+                substitute_string(arg, tokens);
+            }
+            substitute_string(mode, tokens);
+        }
+        ActionConfig::Argv {
+            argv,
+            expanded_argv: _,
+            terminal: _,
+            requires_root: _,
+            mode,
+            timeout: _,
+        } => {
+            for arg in argv {
+                substitute_string(arg, tokens);
+            }
+            substitute_string(mode, tokens);
+        }
+        ActionConfig::Redirect { page } => substitute_string(page, tokens),
+    }
+}
+
+fn substitute_properties(props: &mut ItemProperties, tokens: &[(String, &str)]) {
+    let ItemProperties {
+        title,
+        description,
+        icon,
+        message,
+        key,
+        key_inverse: _,
+        save_as_int: _,
+        style,
+        button_text,
+        button_text_file,
+        badge_file,
+        button_text_map,
+        style_map,
+        options_map,
+        options,
+        min: _,
+        max: _,
+        step: _,
+        default: _,
+        state_command,
+        value_command,
+        options_command,
+        interval: _,
+        persistence,
+        path,
+        glob,
+        recursive: _,
+        sort,
+        service,
+        scope,
+        toast,
+        debounce: _,
+        compact: _,
+        center_title: _,
+        show_label: _,
+        buttons,
+    } = props;
+
+    for field in [
+        title,
+        description,
+        icon,
+        message,
+        key,
+        style,
+        button_text,
+        button_text_file,
+        badge_file,
+        state_command,
+        value_command,
+        options_command,
+        persistence,
+        path,
+        glob,
+        sort,
+        service,
+        scope,
+        toast,
+    ] {
+        substitute_string(field, tokens);
+    }
+    for map in [button_text_map, style_map, options_map] {
+        for value in map.values_mut() {
+            substitute_string(value, tokens);
+        }
+    }
+    for opt in options {
+        substitute_string(opt, tokens);
+    }
+    for ButtonProperty {
+        title,
+        icon,
+        style,
+        on_press,
+    } in buttons
+    {
+        substitute_string(title, tokens);
+        substitute_string(icon, tokens);
+        substitute_string(style, tokens);
+        if let Some(action) = on_press {
+            substitute_action(action, tokens);
+        }
+    }
+}
+
+fn substitute_section(section: &mut SectionConfig, tokens: &[(String, &str)]) {
+    let SectionConfig {
+        section_type,
+        properties,
+        items,
+    } = section;
+    substitute_string(section_type, tokens);
+    substitute_properties(properties, tokens);
+    for child in items {
+        substitute_item_with_tokens(child, tokens);
+    }
+}
+
+fn substitute_item_with_tokens(item: &mut ItemConfig, tokens: &[(String, &str)]) {
+    let ItemConfig {
+        item_type,
+        properties,
+        on_press,
+        on_toggle,
+        on_change,
+        on_action,
+        value,
+        items,
+        layout,
+        item_template,
+    } = item;
+
+    substitute_string(item_type, tokens);
+    substitute_properties(properties, tokens);
+    if let Some(action) = on_press {
+        substitute_action(action, tokens);
+    }
+    if let Some(ToggleActionPair { enabled, disabled }) = on_toggle {
+        substitute_action(enabled, tokens);
+        substitute_action(disabled, tokens);
+    }
+    if let Some(change) = on_change {
+        match change {
+            ChangeAction::Direct(action) => substitute_action(action, tokens),
+            ChangeAction::Map(map) => {
+                for action in map.values_mut() {
+                    substitute_action(action, tokens);
+                }
+            }
+        }
+    }
+    if let Some(action) = on_action {
+        substitute_action(action, tokens);
+    }
+    if let Some(val) = value {
+        match val {
+            ValueConfig::Exec { command } => substitute_string(command, tokens),
+            ValueConfig::File { path } => substitute_string(path, tokens),
+            ValueConfig::System { key } => substitute_string(key, tokens),
+            ValueConfig::Static { text } => substitute_string(text, tokens),
+        }
+    }
+    for child in items {
+        substitute_item_with_tokens(child, tokens);
+    }
+    for section in layout {
+        substitute_section(section, tokens);
+    }
+    if let Some(template) = item_template {
+        substitute_item_with_tokens(template, tokens);
+    }
+}
+
+fn substitute_item_vars(item: &mut ItemConfig, vars: &HashMap<String, String>) {
+    // Exhaustive typed walk across all config fields; inserted names are never re-expanded.
+    let tokens: Vec<_> = vars
+        .iter()
+        .map(|(key, value)| (format!("{{{key}}}"), value.as_str()))
+        .collect();
+    substitute_item_with_tokens(item, &tokens);
 }
 
 #[cfg(test)]
@@ -3940,15 +4380,21 @@ mod tests {
     #[test]
     fn search_reaches_nested_controls_and_opens_their_expanders() {
         let config = AppConfig::load_from_path(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("dusky_config.toml")).unwrap();
-        let hits = search_hits(&config, "Active Waybar");
-        assert_eq!(hits[0].item.properties.title, "Active Waybar");
+        let (_, hits) = build_search_cache(&config, "Active Waybar");
+        assert_eq!(
+            resolve_search_location(&config, &hits[0].location)
+                .unwrap()
+                .properties
+                .title,
+            "Active Waybar"
+        );
         assert!(!hits[0].location.navigation.is_empty());
         let location = hits[0].location.clone();
         let (mut app, _initial) = CenterApp::new(config, None, None);
         let _ = app.update(Message::OpenSearchResult(location));
         assert!(app.visible_items().iter().any(|item| item.properties.title == "Active Waybar"));
         let config: AppConfig = toml::from_str("[[pages]]\nid='fixture'\ntitle='Fixture'\n[[pages.layout]]\ntype='section'\n[[pages.layout.items]]\ntype='expander'\n[pages.layout.items.properties]\ntitle='Group'\n[[pages.layout.items.items]]\ntype='label'\n[pages.layout.items.items.properties]\ntitle='Nested Target'\n[pages.layout.items.items.value]\ntype='static'\ntext='ok'").unwrap();
-        let location = search_hits(&config, "target")[0].location.clone();
+        let location = build_search_cache(&config, "target").1[0].location.clone();
         let (mut app, _initial) = CenterApp::new(config, None, None);
         assert_eq!(app.visible_items().len(), 1);
         let _ = app.update(Message::OpenSearchResult(location));
@@ -3959,7 +4405,7 @@ mod tests {
     #[test]
     fn search_highlight_identifies_duplicate_rows_and_expires_independently_of_hover() {
         let config: AppConfig = toml::from_str("[[pages]]\nid='fixture'\ntitle='Fixture'\n[[pages.layout]]\ntype='section'\n[[pages.layout.items]]\ntype='label'\n[pages.layout.items.properties]\ntitle='Target'\n[[pages.layout.items]]\ntype='expander'\n[pages.layout.items.properties]\ntitle='Group'\n[[pages.layout.items.items]]\ntype='label'\n[pages.layout.items.items.properties]\ntitle='Target'").unwrap();
-        let location = search_hits(&config, "Target")[1].location.clone();
+        let location = build_search_cache(&config, "Target").1[1].location.clone();
         let (mut app, _initial) = CenterApp::new(config, None, None);
         let _ = app.update(Message::OpenSearchResult(location.clone()));
         let selected = &app.config.pages[0].layout[0].items[1].items[0];
@@ -4027,10 +4473,13 @@ mod tests {
             config_path: PathBuf::new(),
             config_override: None,
             theme: AppTheme::default(),
+            theme_stamp: None,
+            theme_loading: false,
             nav_stack: vec![],
             sidebar_open: true,
             search_open: false,
             search_query: String::new(),
+            search_cache: None,
             loaded_pages: HashSet::new(),
             toggle_states: HashMap::new(),
             slider_values: HashMap::from([("Microphone".into(), 80.0)]),
@@ -4038,6 +4487,7 @@ mod tests {
             dynamic_options: HashMap::new(),
             service_states: HashMap::new(),
             live_labels: HashMap::new(),
+            file_texts: HashMap::new(),
             hovered_item: None,
             search_highlight: None,
             active_slider: Some("Microphone".into()),
@@ -4052,6 +4502,7 @@ mod tests {
             service_statuses: HashMap::new(),
             busy_controls: HashSet::new(),
             unavailable_controls: HashSet::new(),
+            active_actions: 0,
             control_generation: 0,
             controls_loading: None,
             control_polled_at: HashMap::new(),
@@ -4080,10 +4531,17 @@ mod tests {
         let changed_at = Instant::now();
         app.deferred_sliders.insert("Microphone".into(), (80.0, None, changed_at));
         app.slider_changed_at.insert("Microphone".into(), changed_at);
-        let _ = app.update(Message::SliderSettled {
+        let settled = app.update(Message::SliderSettled {
             key: "Microphone".into(), value: 80.0, on_change: None, changed_at,
         });
+        assert_eq!(settled.units(), 1, "native Microphone slider must dispatch a write on settle");
         assert_eq!(app.active_slider, None);
+        assert!(app.applying_sliders.contains("Microphone"));
+        // Stale readbacks stay blocked while the native write is still in flight.
+        app.sync_slider("Microphone", 75.0);
+        assert_eq!(app.slider_values["Microphone"], 80.0);
+        let _ = app.update(Message::SliderApplied { key: "Microphone".into(), result: Ok(()) });
+        assert!(!app.applying_sliders.contains("Microphone"));
         app.slider_changed_at.insert("Microphone".into(), Instant::now() - Duration::from_secs(4));
         app.sync_slider("Microphone", 75.0);
         assert_eq!(app.slider_values["Microphone"], 75.0);
@@ -4354,7 +4812,7 @@ mod tests {
         let mut second = config.pages[0].layout[0].items[0].clone();
         second.layout[0].items[0].properties.title = "Second Unique".into();
         config.pages[0].layout[0].items.push(second);
-        let location = search_hits(&config, "Second Unique")[0].location.clone();
+        let location = build_search_cache(&config, "Second Unique").1[0].location.clone();
         let (mut app, _) = CenterApp::new(config, None, None);
         let _ = app.update(Message::OpenSearchResult(location));
         assert_eq!(app.visible_items()[0].properties.title, "Second Unique");
@@ -4546,14 +5004,17 @@ mod tests {
             std::fs::create_dir_all(&colors).unwrap();
             let palette = colors.join("dusky_center.json");
             std::fs::write(&palette, r##"{"bg":"#123456","fg":"#eeeeee","accent":"#aabbcc","secondary":"#778899","tertiary":"#8899aa"}"##).unwrap();
-            let _ = app.update(Message::Tick);
+            let tick = app.update(Message::Tick);
+            complete(&mut app, tick);
             let valid_theme = app.theme;
             assert_eq!(valid_theme.bg, Color::from_rgb8(0x12, 0x34, 0x56));
             std::fs::write(&palette, "{").unwrap();
-            let _ = app.update(Message::Tick);
+            let tick = app.update(Message::Tick);
+            complete(&mut app, tick);
             assert_eq!(app.theme, valid_theme);
             std::fs::remove_file(&palette).unwrap();
-            let _ = app.update(Message::Tick);
+            let tick = app.update(Message::Tick);
+            complete(&mut app, tick);
             assert_eq!(app.theme, valid_theme);
             let config_file = root.join("dusky/dusky_config.toml");
             std::fs::create_dir_all(config_file.parent().unwrap()).unwrap();
@@ -4987,5 +5448,220 @@ title = "First"
         assert!(matches!(app.nav_stack[0], NavView::Root(0)));
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn launch_mode_toggle_avoids_optimistic_flicker_and_observed_button_surfaces_failure() {
+        let config: AppConfig = toml::from_str(r#"
+[[pages]]
+id = "home"
+title = "Home"
+
+[[pages.layout]]
+type = "section"
+[pages.layout.properties]
+title = "Actions"
+
+[[pages.layout.items]]
+type = "toggle"
+[pages.layout.items.properties]
+title = "Launch Toggle"
+state_command = "printf no"
+[pages.layout.items.on_toggle.enabled]
+type = "exec"
+command = "true"
+mode = "launch"
+[pages.layout.items.on_toggle.disabled]
+type = "exec"
+command = "true"
+mode = "launch"
+
+[[pages.layout.items]]
+type = "button"
+[pages.layout.items.properties]
+title = "Observed Fail"
+[pages.layout.items.on_press]
+type = "exec"
+command = "printf boom >&2; exit 7"
+mode = "apply"
+"#).unwrap();
+        let (mut app, initial) = CenterApp::new(config, None, None);
+        complete(&mut app, initial);
+        assert_eq!(app.toggle_states.get("Launch Toggle"), Some(&false));
+
+        let pair = app.config.pages[0].layout[0].items[0].on_toggle.clone();
+        let toggle_task = app.update(Message::ToggleItem {
+            key: "Launch Toggle".into(),
+            is_enabled: true,
+            on_toggle: pair,
+        });
+        // Launch-mode toggle must NOT flip optimistically while the launcher runs.
+        assert_eq!(app.toggle_states.get("Launch Toggle"), Some(&false));
+        assert!(app.busy_controls.contains("Launch Toggle"));
+        complete(&mut app, toggle_task);
+        assert_eq!(app.toggle_states.get("Launch Toggle"), Some(&false));
+        assert!(!app.busy_controls.contains("Launch Toggle"));
+
+        // Observed apply button runs off-thread, tracks active_actions, and surfaces stderr.
+        let fail_action = app.config.pages[0].layout[0].items[1].on_press.clone().unwrap();
+        let btn_task = app.update(Message::ExecuteAction(fail_action));
+        assert_eq!(app.active_actions, 1);
+        assert!(!app.writes_finished());
+        complete(&mut app, btn_task);
+        assert_eq!(app.active_actions, 0);
+        assert!(app.writes_finished());
+        assert!(app.action_error.as_deref().is_some_and(|e| e.contains("boom")));
+
+        // Detached missing-binary button surfaces spawn error off-thread without blocking close.
+        let missing = ActionConfig::Argv {
+            argv: vec!["/definitely-missing-dusky-bin-42".into()],
+            expanded_argv: false,
+            terminal: false,
+            requires_root: false,
+            mode: String::new(),
+            timeout: None,
+        };
+        let launch_task = app.update(Message::ExecuteAction(missing));
+        assert_eq!(app.active_actions, 0);
+        assert!(app.writes_finished());
+        complete(&mut app, launch_task);
+        assert!(app.action_error.as_deref().is_some_and(|e| e.contains("Executable not found")));
+    }
+
+    #[test]
+    fn cached_search_button_text_file_cache_and_empty_controls_section_behave_cleanly() {
+        let root = std::env::temp_dir().join(format!("dusky-i2-ui-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let badge = root.join("behind");
+        std::fs::write(&badge, "0\n").unwrap();
+
+        let cfg_str = format!(r#"
+[[pages]]
+id = "home"
+title = "Home"
+
+[[pages.layout]]
+type = "grid_section"
+
+[[pages.layout.items]]
+type = "grid_card"
+[pages.layout.items.properties]
+title = "Dusky"
+button_text_file = "{}"
+button_text_map = {{ "0" = "Updated", "default" = "Available" }}
+
+[[pages.layout]]
+type = "controls"
+[pages.layout.properties]
+title = "Display"
+
+[[pages.layout.items]]
+type = "slider"
+[pages.layout.items.properties]
+title = "Night Light"
+"#, badge.display());
+        let config: AppConfig = toml::from_str(&cfg_str).unwrap();
+        let (mut app, initial) = CenterApp::new(config, None, None);
+
+        // Night Light is inactive -> Display controls section has 0 visible items.
+        assert!(app.visible_controls_items(&app.config.pages[0].layout[1]).is_empty());
+        let _ = app.view();
+
+        complete(&mut app, initial);
+        let badge_key = badge.to_string_lossy().into_owned();
+        assert_eq!(app.file_texts.get(&badge_key).map(String::as_str), Some("0"));
+
+        // Deleting the file clears the cached entry on the next poll.
+        std::fs::remove_file(&badge).unwrap();
+        app.control_generation += 1;
+        let refresh = app.refresh_controls();
+        complete(&mut app, refresh);
+        assert!(!app.file_texts.contains_key(&badge_key));
+
+        // Search cache populates on SearchChanged and clears on ClearSearch.
+        let _ = app.update(Message::SearchChanged("Dusky".into()));
+        assert!(app.search_cache.as_ref().is_some_and(|(q, total, hits)| q == "Dusky" && *total == 1 && hits.len() == 1));
+        let _ = app.view();
+        let _ = app.update(Message::ClearSearch);
+        assert!(app.search_cache.is_none());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn default_brightness_action_falls_back_to_ddc_when_local_backlight_fails() {
+        const CHILD: &str = "DUSKY_CENTER_DDC_FALLBACK_FIXTURE";
+        if let Some(root) = std::env::var_os(CHILD) {
+            let root = PathBuf::from(root);
+            let cache = sys::ddc_cache_file();
+            crate::backend::cmd::atomic_write_text(&cache, r#"[{"bus": 4, "max": 100}]"#);
+            let config: AppConfig = toml::from_str(r#"
+[[pages]]
+id = "home"
+title = "Home"
+[[pages.layout]]
+type = "controls"
+[[pages.layout.items]]
+type = "slider"
+[pages.layout.items.properties]
+title = "Brightness"
+min = 1.0
+max = 100.0
+[pages.layout.items.on_change]
+type = "exec"
+command = "brightnessctl set {value}%"
+"#).unwrap();
+            let (mut app, _) = CenterApp::new(config, None, None);
+            let action = app.config.pages[0].layout[0].items[0].on_change.clone();
+            let task = app.update(Message::SliderChanged {
+                key: "Brightness".into(),
+                value: 65.0,
+                on_change: action,
+                debounce: false,
+            });
+            complete(&mut app, task);
+            assert!(app.action_error.is_none(), "DDC fallback should succeed: {:?}", app.action_error);
+            assert_eq!(
+                std::fs::read_to_string(root.join("ddc-calls")).unwrap(),
+                "setvcp 10 65 --bus 4\n"
+            );
+            return;
+        }
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("dusky-ddc-fallback-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::os::unix::fs::symlink("/usr/bin/bash", bin.join("bash")).unwrap();
+        let brightnessctl = bin.join("brightnessctl");
+        std::fs::write(&brightnessctl, "#!/usr/bin/bash\nprintf 'No backlight' >&2\nexit 1\n").unwrap();
+        std::fs::set_permissions(&brightnessctl, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let ddcutil = bin.join("ddcutil");
+        std::fs::write(
+            &ddcutil,
+            "#!/usr/bin/bash\nprintf '%s\\n' \"$*\" >> \"$DUSKY_CENTER_DDC_FALLBACK_FIXTURE/ddc-calls\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&ddcutil, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "ui::tests::default_brightness_action_falls_back_to_ddc_when_local_backlight_fails",
+                "--nocapture",
+            ])
+            .env(CHILD, &root)
+            .env("XDG_RUNTIME_DIR", &root)
+            .env("PATH", &bin)
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            result.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
     }
 }

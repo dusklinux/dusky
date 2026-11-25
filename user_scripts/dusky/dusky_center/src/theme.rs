@@ -1,10 +1,34 @@
 //! Dynamic theme loader for Dusky Center.
 //!
 //! Loads dynamically generated colors from Matugen, blending with the active wallpaper.
-//! Falls back smoothly if Matugen hasn't generated colors yet.
+//! Uses stat-gated `ThemeStamp` checks to skip re-reading unchanged palette files on ticks
+//! and falls back smoothly if Matugen hasn't generated colors yet.
 
 use iced_core::Color;
-use std::{fs, path::PathBuf};
+use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+use std::{fs, env};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThemeStamp {
+    path: PathBuf,
+    ino: u64,
+    modified: Option<SystemTime>,
+    len: u64,
+}
+
+impl ThemeStamp {
+    fn read(path: &Path) -> Option<Self> {
+        let meta = fs::metadata(path).ok()?;
+        Some(Self {
+            path: path.to_path_buf(),
+            ino: meta.ino(),
+            modified: meta.modified().ok(),
+            len: meta.len(),
+        })
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AppTheme {
@@ -30,17 +54,17 @@ pub struct AppTheme {
 impl Default for AppTheme {
     fn default() -> Self {
         Self {
-            bg: Color::from_rgb8(12, 14, 19),          // #0c0e13
-            sidebar_bg: Color::from_rgb8(13, 16, 20),  // #0d1014
-            surface: Color::from_rgb8(13, 16, 20),     // #0d1014
-            card_bg: Color::from_rgb8(17, 19, 24),     // #111318
-            card_hover: Color::from_rgb8(21, 24, 30),  // #15181e
-            border: Color::from_rgb8(68, 71, 79),      // #44474f
-            fg: Color::from_rgb8(226, 226, 233),       // #e2e2e9
-            fg_muted: Color::from_rgb8(196, 198, 208), // #c4c6d0
-            accent: Color::from_rgb8(173, 198, 255),   // #adc6ff
+            bg: Color::from_rgb8(12, 14, 19),              // #0c0e13
+            sidebar_bg: Color::from_rgb8(13, 16, 20),      // #0d1014
+            surface: Color::from_rgb8(13, 16, 20),         // #0d1014
+            card_bg: Color::from_rgb8(17, 19, 24),         // #111318
+            card_hover: Color::from_rgb8(21, 24, 30),      // #15181e
+            border: Color::from_rgb8(68, 71, 79),          // #44474f
+            fg: Color::from_rgb8(226, 226, 233),           // #e2e2e9
+            fg_muted: Color::from_rgb8(196, 198, 208),     // #c4c6d0
+            accent: Color::from_rgb8(173, 198, 255),       // #adc6ff
             accent_hover: Color::from_rgb8(216, 226, 255), // #d8e2ff
-            accent_fg: Color::from_rgb8(16, 47, 96),   // #102f60
+            accent_fg: Color::from_rgb8(16, 47, 96),       // #102f60
             secondary: Color::from_rgb8(191, 198, 220),
             tertiary: Color::from_rgb8(222, 188, 223),
             profiles: [
@@ -48,7 +72,7 @@ impl Default for AppTheme {
                 Color::from_rgb8(138, 180, 250),
                 Color::from_rgb8(239, 140, 179),
             ],
-            danger: Color::from_rgb8(255, 180, 171),   // #ffb4ab
+            danger: Color::from_rgb8(255, 180, 171), // #ffb4ab
             danger_bg: Color::from_rgb8(147, 0, 10),
             danger_fg: Color::from_rgb8(255, 218, 214),
         }
@@ -108,11 +132,12 @@ impl AppTheme {
     }
 
     pub fn palette_path() -> PathBuf {
-        let base = std::env::var_os("XDG_CONFIG_HOME")
+        let base = env::var_os("XDG_CONFIG_HOME")
             .filter(|p| !p.is_empty())
             .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
             .unwrap_or_else(|| {
-                PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config")
+                PathBuf::from(env::var_os("HOME").unwrap_or_default()).join(".config")
             });
 
         // 1. Unified dusky palette
@@ -139,8 +164,32 @@ impl AppTheme {
         Self::load_generated().unwrap_or_default()
     }
 
+    pub fn load_with_stamp() -> (Self, Option<ThemeStamp>) {
+        match Self::load_if_changed(None) {
+            Some((theme, stamp)) => (theme, Some(stamp)),
+            None => (Self::default(), None),
+        }
+    }
+
     pub fn load_generated() -> Option<Self> {
         Self::parse(&fs::read_to_string(Self::palette_path()).ok()?)
+    }
+
+    /// Re-read and parse the active palette only if its path, inode, mtime, or size changed.
+    /// Returns `None` if unchanged or if the file is missing/malformed (preserving the prior stamp).
+    pub fn load_if_changed(last: Option<&ThemeStamp>) -> Option<(Self, ThemeStamp)> {
+        let path = Self::palette_path();
+        Self::load_path_if_changed(&path, last)
+    }
+
+    fn load_path_if_changed(path: &Path, last: Option<&ThemeStamp>) -> Option<(Self, ThemeStamp)> {
+        let stamp = ThemeStamp::read(path)?;
+        if last == Some(&stamp) {
+            return None;
+        }
+        let raw = fs::read_to_string(path).ok()?;
+        let theme = Self::parse(&raw)?;
+        Some((theme, stamp))
     }
 
     fn parse(raw: &str) -> Option<Self> {
@@ -180,9 +229,7 @@ impl AppTheme {
             )
         });
 
-        let border = color("border").unwrap_or_else(|| {
-            Color::from_rgba(1.0, 1.0, 1.0, 0.1)
-        });
+        let border = color("border").unwrap_or_else(|| Color::from_rgba(1.0, 1.0, 1.0, 0.1));
 
         let fg_muted = color("fg_muted").unwrap_or_else(|| {
             Color::from_rgb(
@@ -245,5 +292,45 @@ pub fn saturate(color: Color, factor: f32) -> Color {
         g: max - (max - color.g) * factor,
         b: max - (max - color.b) * factor,
         a: color.a,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn theme_stamp_skips_unchanged_detects_atomic_replace_and_retries_malformed() {
+        let root = std::env::temp_dir().join(format!("dusky-theme-stamp-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let palette = root.join("dusky.json");
+        let tmp = root.join("dusky.json.tmp");
+
+        let v1 = r##"{"bg":"#112233","fg":"#eeeeee","accent":"#aabbcc","secondary":"#778899","tertiary":"#8899aa"}"##;
+        let v2 = r##"{"bg":"#445566","fg":"#eeeeee","accent":"#aabbcc","secondary":"#778899","tertiary":"#8899aa"}"##;
+        assert_eq!(v1.len(), v2.len());
+
+        fs::write(&palette, v1).unwrap();
+        let (theme1, stamp1) = AppTheme::load_path_if_changed(&palette, None).unwrap();
+        assert_eq!(theme1.bg, Color::from_rgb8(0x11, 0x22, 0x33));
+
+        // Unchanged file skips parsing.
+        assert!(AppTheme::load_path_if_changed(&palette, Some(&stamp1)).is_none());
+
+        // Malformed intermediate write returns None and leaves prior stamp intact.
+        fs::write(&tmp, "{").unwrap();
+        fs::rename(&tmp, &palette).unwrap();
+        assert!(AppTheme::load_path_if_changed(&palette, Some(&stamp1)).is_none());
+
+        // Same-size atomic replacement with new inode is detected immediately.
+        fs::write(&tmp, v2).unwrap();
+        fs::rename(&tmp, &palette).unwrap();
+        let (theme2, stamp2) = AppTheme::load_path_if_changed(&palette, Some(&stamp1)).unwrap();
+        assert_eq!(theme2.bg, Color::from_rgb8(0x44, 0x55, 0x66));
+        assert_ne!(stamp1, stamp2);
+        assert!(AppTheme::load_path_if_changed(&palette, Some(&stamp2)).is_none());
+
+        let _ = fs::remove_dir_all(&root);
     }
 }

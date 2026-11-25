@@ -1,16 +1,17 @@
 //! Embedded and system-native vector icons on a 24 × 24 optical grid.
 //!
-//! Direct Freedesktop icon theme integration (Papirus-Dark, Papirus, Adwaita)
+//! Pre-scans existing Freedesktop icon theme directories once per process and
+//! serves cached SVG handles through a zero-allocation `RwLock` read fast path,
 //! with embedded zero-dependency fallback vector graphics.
-//! Rendered directly via Iced's Rust SVG renderer (wgpu).
 
 use iced_core::Color;
 use iced_widget::svg;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{OnceLock, RwLock};
 
-type Element<'a, Message> = iced_core::Element<'a, Message, iced_core::Theme, crate::renderer::Renderer>;
+type Element<'a, Message> =
+    iced_core::Element<'a, Message, iced_core::Theme, crate::renderer::Renderer>;
 
 fn is_embedded_control_icon(name: &str) -> bool {
     matches!(
@@ -25,7 +26,77 @@ fn is_embedded_control_icon(name: &str) -> bool {
     )
 }
 
-fn find_system_icon(name: &str) -> Option<PathBuf> {
+fn collect_icon_dirs(roots: &[PathBuf]) -> Vec<PathBuf> {
+    const THEMES: [&str; 4] = ["Papirus-Dark", "Papirus", "Adwaita", "hicolor"];
+    const SIZES: [&str; 3] = ["24x24", "22x22", "16x16"];
+    const CATEGORIES: [&str; 8] = [
+        "actions",
+        "apps",
+        "devices",
+        "categories",
+        "mimetypes",
+        "status",
+        "places",
+        "emblems",
+    ];
+
+    let mut dirs = Vec::new();
+    for theme in THEMES {
+        for root in roots {
+            let theme_dir = root.join(theme);
+            if !theme_dir.is_dir() {
+                continue;
+            }
+            for size in SIZES {
+                let sym = theme_dir.join(size).join("symbolic");
+                if !sym.is_dir() {
+                    continue;
+                }
+                for cat in CATEGORIES {
+                    let candidate = sym.join(cat);
+                    if candidate.is_dir() {
+                        dirs.push(candidate);
+                    }
+                }
+            }
+            let root_sym = theme_dir.join("symbolic");
+            if root_sym.is_dir() {
+                for cat in CATEGORIES {
+                    let candidate = root_sym.join(cat);
+                    if candidate.is_dir() {
+                        dirs.push(candidate);
+                    }
+                }
+                dirs.push(root_sym);
+            }
+        }
+    }
+    dirs
+}
+
+fn system_icon_dirs() -> &'static [PathBuf] {
+    static DIRS: OnceLock<Vec<PathBuf>> = OnceLock::new();
+    DIRS.get_or_init(|| {
+        let mut roots = Vec::with_capacity(2);
+        if let Some(xdg) = std::env::var_os("XDG_DATA_HOME")
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+        {
+            roots.push(xdg.join("icons"));
+        } else if let Some(home) = std::env::var_os("HOME")
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+        {
+            roots.push(home.join(".local/share/icons"));
+        }
+        roots.push(PathBuf::from("/usr/share/icons"));
+        collect_icon_dirs(&roots)
+    })
+}
+
+fn find_system_icon_in(name: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
     if name.is_empty() || name == "dot" {
         return None;
     }
@@ -45,54 +116,20 @@ fn find_system_icon(name: &str) -> Option<PathBuf> {
         }
     }
 
-    let cand_with_symbolic = if name.ends_with("-symbolic") {
-        name.to_string()
+    let (first, second) = if let Some(plain) = name.strip_suffix("-symbolic") {
+        (
+            format!("{name}.svg"),
+            (!plain.is_empty()).then(|| format!("{plain}.svg")),
+        )
     } else {
-        format!("{name}-symbolic")
+        (format!("{name}-symbolic.svg"), Some(format!("{name}.svg")))
     };
-    let cand_plain = name.trim_end_matches("-symbolic").to_string();
 
-    let candidates = [cand_with_symbolic.as_str(), cand_plain.as_str(), name];
-
-    // Priority order: Papirus-Dark, Papirus, Adwaita, hicolor
-    let themes = ["Papirus-Dark", "Papirus", "Adwaita", "hicolor"];
-    let sizes = ["24x24", "22x22", "16x16"];
-    let categories = [
-        "actions",
-        "apps",
-        "devices",
-        "categories",
-        "mimetypes",
-        "status",
-        "places",
-        "emblems",
-    ];
-
-    for cand in candidates {
-        for theme in themes {
-            for size in sizes {
-                for cat in categories {
-                    let p = PathBuf::from(format!(
-                        "/usr/share/icons/{theme}/{size}/symbolic/{cat}/{cand}.svg"
-                    ));
-                    if p.is_file() {
-                        return Some(p);
-                    }
-                }
-            }
-            // Root symbolic category (used in Adwaita)
-            for cat in categories {
-                let p = PathBuf::from(format!(
-                    "/usr/share/icons/{theme}/symbolic/{cat}/{cand}.svg"
-                ));
-                if p.is_file() {
-                    return Some(p);
-                }
-            }
-            // Direct symbolic (e.g. /usr/share/icons/{theme}/symbolic/{cand}.svg)
-            let p = PathBuf::from(format!("/usr/share/icons/{theme}/symbolic/{cand}.svg"));
-            if p.is_file() {
-                return Some(p);
+    for filename in std::iter::once(&first).chain(second.iter()) {
+        for dir in dirs {
+            let candidate = dir.join(filename);
+            if candidate.is_file() {
+                return Some(candidate);
             }
         }
     }
@@ -182,38 +219,46 @@ fn get_svg_path(name: &str) -> &'static str {
         "update" | "software-update-available-symbolic" => {
             "M12 4v12m-4-4l4 4 4-4M4 18h16"
         }
-        "chevron_right" => {
-            "M9 5l7 7-7 7"
-        }
-        "chevron_left" => {
-            "M15 19l-7-7 7-7"
-        }
-        "chevron_down" => {
-            "M6 9l6 6 6-6"
-        }
-        "check" => {
-            "M5 13l4 4L19 7"
-        }
+        "chevron_right" => "M9 5l7 7-7 7",
+        "chevron_left" => "M15 19l-7-7 7-7",
+        "chevron_down" => "M6 9l6 6 6-6",
+        "check" => "M5 13l4 4L19 7",
         "sidebar" | "split" | "view-sidebar-symbolic" => {
             "M4 4h16a2 2 0 012 2v12a2 2 0 01-2 2H4a2 2 0 01-2-2V6a2 2 0 012-2zm0 2v12h5V6H4zm7 0v12h9V6h-9z"
         }
-        "power-profile-balanced-symbolic" | "power-profile-performance-symbolic" | "power-profile-power-saver-symbolic" | "gauge" | "speedometer" => {
+        "power-profile-balanced-symbolic"
+        | "power-profile-performance-symbolic"
+        | "power-profile-power-saver-symbolic"
+        | "gauge"
+        | "speedometer" => {
             "M12 2a10 10 0 100 20 10 10 0 000-20zm0 18a8 8 0 110-16 8 8 0 010 16zm-1-9.5V8a1 1 0 112 0v2.5l2.12 2.12a1 1 0 01-1.41 1.41L11 11.41z"
         }
-        "media-record-symbolic" | "record" => {
-            "M12 18a6 6 0 100-12 6 6 0 000 12z"
-        }
+        "media-record-symbolic" | "record" => "M12 18a6 6 0 100-12 6 6 0 000 12z",
         "drive-removable-media-usb-symbolic" | "usb" => {
             "M7 7h10v3l-5 5-5-5V7zm5 8v5m-3 0h6"
         }
-        "utilities-system-monitor-symbolic" | "chart" => {
-            "M3 3v18h18M7 16l4-6 4 4 5-8"
-        }
-        "dot" => {
-            "M12 12m-3 0a3 3 0 106 0 3 3 0 10-6 0"
-        }
+        "utilities-system-monitor-symbolic" | "chart" => "M3 3v18h18M7 16l4-6 4 4 5-8",
+        "dot" => "M12 12m-3 0a3 3 0 106 0 3 3 0 10-6 0",
         _ => "M4 6a2 2 0 012-2h12a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V6zm4 6h8m-8-3h8m-8 6h5",
     }
+}
+
+fn embedded_handle(name: &str) -> svg::Handle {
+    let path_str = get_svg_path(name);
+    let svg_bytes = format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="{path_str}" fill="none" stroke="white" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>"#
+    );
+    svg::Handle::from_memory(svg_bytes.into_bytes())
+}
+
+fn resolve_icon_handle(name: &str) -> svg::Handle {
+    if is_embedded_control_icon(name) {
+        return embedded_handle(name);
+    }
+    if let Some(sys_path) = find_system_icon_in(name, system_icon_dirs()) {
+        return svg::Handle::from_path(sys_path);
+    }
+    embedded_handle(name)
 }
 
 pub fn render_icon<'a, Message: 'static>(
@@ -221,42 +266,57 @@ pub fn render_icon<'a, Message: 'static>(
     size: f32,
     color: Color,
 ) -> Element<'a, Message> {
-    static CACHE: OnceLock<std::sync::Mutex<HashMap<String, svg::Handle>>> = OnceLock::new();
-    let cache = CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+    static CACHE: OnceLock<RwLock<HashMap<Box<str>, svg::Handle>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| RwLock::new(HashMap::new()));
 
-    let mut lock = cache.lock().unwrap();
-
-    let handle = lock
-        .entry(name.to_string())
-        .or_insert_with(|| {
-            // 1. Controls strictly using embedded vectors
-            if is_embedded_control_icon(name) {
-                let path_str = get_svg_path(name);
-                let svg_bytes = format!(
-                    r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="{path_str}" fill="none" stroke="white" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>"#
-                );
-                return svg::Handle::from_memory(svg_bytes.into_bytes());
-            }
-
-            // 2. Discover system SVG icons (Papirus-Dark, Papirus, Adwaita, hicolor)
-            if let Some(sys_path) = find_system_icon(name) {
-                return svg::Handle::from_path(sys_path);
-            }
-
-            // 3. Fallback to embedded vector icon
-            let path_str = get_svg_path(name);
-            let svg_bytes = format!(
-                r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="{path_str}" fill="none" stroke="white" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>"#
-            );
-            svg::Handle::from_memory(svg_bytes.into_bytes())
-        })
-        .clone();
+    let handle = if let Some(existing) = cache.read().unwrap().get(name) {
+        existing.clone()
+    } else {
+        let created = resolve_icon_handle(name);
+        cache
+            .write()
+            .unwrap()
+            .entry(Box::from(name))
+            .or_insert(created)
+            .clone()
+    };
 
     svg(handle)
         .width(size)
         .height(size)
-        .style(move |_, _| svg::Style {
-            color: Some(color),
-        })
+        .style(move |_, _| svg::Style { color: Some(color) })
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn icon_dir_prescan_and_candidate_lookup_prioritize_symbolic_and_theme_order() {
+        let root = std::env::temp_dir().join(format!("dusky-icons-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let papirus_actions = root.join("Papirus-Dark/24x24/symbolic/actions");
+        let adwaita_apps = root.join("Adwaita/symbolic/apps");
+        std::fs::create_dir_all(&papirus_actions).unwrap();
+        std::fs::create_dir_all(&adwaita_apps).unwrap();
+
+        let preferred = papirus_actions.join("demo-symbolic.svg");
+        let fallback_plain = adwaita_apps.join("demo.svg");
+        let adwaita_only = adwaita_apps.join("only-plain.svg");
+        std::fs::write(&preferred, "<svg/>").unwrap();
+        std::fs::write(&fallback_plain, "<svg/>").unwrap();
+        std::fs::write(&adwaita_only, "<svg/>").unwrap();
+
+        let dirs = collect_icon_dirs(std::slice::from_ref(&root));
+        assert_eq!(dirs.len(), 3); // papirus actions, adwaita apps, adwaita symbolic root
+
+        assert_eq!(find_system_icon_in("demo", &dirs), Some(preferred.clone()));
+        assert_eq!(find_system_icon_in("demo-symbolic", &dirs), Some(preferred));
+        assert_eq!(find_system_icon_in("only-plain-symbolic", &dirs), Some(adwaita_only));
+        assert_eq!(find_system_icon_in("dot", &dirs), None);
+        assert_eq!(find_system_icon_in("absent-icon", &dirs), None);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

@@ -138,7 +138,7 @@ pub fn parse_float(s: &str) -> Option<f32> {
     s.trim().parse::<f32>().ok()
 }
 
-fn access_ok(path: &Path, mode: libc::c_int) -> bool {
+pub(crate) fn access_ok(path: &Path, mode: libc::c_int) -> bool {
     // OsStr bytes are not NUL-terminated; CString is required for access().
     let Some(s) = path.as_os_str().to_str() else {
         return false;
@@ -149,16 +149,42 @@ fn access_ok(path: &Path, mode: libc::c_int) -> bool {
     unsafe { libc::access(c.as_ptr(), mode) == 0 }
 }
 
-fn which(bin: &str) -> Option<String> {
-    std::env::var_os("PATH").and_then(|paths| {
-        std::env::split_paths(&paths).find_map(|dir| {
+pub(crate) fn which(bin: &str) -> Option<String> {
+    use std::collections::HashMap;
+    use std::ffi::OsString;
+    use std::sync::{OnceLock, RwLock};
+
+    type WhichCache = HashMap<Option<OsString>, HashMap<Box<str>, Option<String>>>;
+    static CACHE: OnceLock<RwLock<WhichCache>> = OnceLock::new();
+
+    let path_env = std::env::var_os("PATH");
+    let cache = CACHE.get_or_init(|| RwLock::new(HashMap::new()));
+    if let Some(hit) = cache
+        .read()
+        .unwrap()
+        .get(&path_env)
+        .and_then(|bins| bins.get(bin))
+    {
+        return hit.clone();
+    }
+
+    let found = path_env.as_ref().and_then(|paths| {
+        std::env::split_paths(paths).find_map(|dir| {
             let p = dir.join(bin);
             if p.is_file() && access_ok(&p, libc::X_OK) {
                 return Some(p.to_string_lossy().into_owned());
             }
             None
         })
-    })
+    });
+
+    cache
+        .write()
+        .unwrap()
+        .entry(path_env)
+        .or_default()
+        .insert(Box::from(bin), found.clone());
+    found
 }
 
 // ---------------------------------------------------------------------------
@@ -207,29 +233,53 @@ fn get_audio_volume(target: &str) -> Option<f32> {
     Some(clamp(v * 100.0, 0.0, 100.0))
 }
 
-pub fn apply_volume(value: f32) {
+pub fn unmute_default_sink() {
     let Some(wpctl) = which("wpctl") else { return };
+    let _ = run_command(
+        &[
+            wpctl,
+            "set-mute".into(),
+            "@DEFAULT_AUDIO_SINK@".into(),
+            "0".into(),
+        ],
+        Duration::from_millis(1200),
+        false,
+    );
+}
+
+pub fn apply_volume(value: f32) -> Result<(), String> {
+    let wpctl = which("wpctl").ok_or("wpctl not found")?;
     let vol = percent_int(value, 0);
-    let a = vec![
-        wpctl.clone(),
+    let argv = [
+        wpctl,
         "set-volume".into(),
         "@DEFAULT_AUDIO_SINK@".into(),
         format!("{vol}%"),
     ];
-    let ok = run_command(&a, Duration::from_millis(1200), false)
-        .map(|o| o.status)
-        .unwrap_or(false);
-    if ok && vol > 0 {
-        let _ = run_command(
-            &[
-                wpctl,
-                "set-mute".into(),
-                "@DEFAULT_AUDIO_SINK@".into(),
-                "0".into(),
-            ],
-            Duration::from_millis(1200),
-            false,
-        );
+    let ok = run_command(&argv, Duration::from_millis(1200), false)
+        .is_some_and(|o| o.status);
+    if !ok {
+        return Err("Could not set output volume through wpctl".into());
+    }
+    if vol > 0 {
+        unmute_default_sink();
+    }
+    Ok(())
+}
+
+pub fn apply_microphone_volume(value: f32) -> Result<(), String> {
+    let wpctl = which("wpctl").ok_or("wpctl not found")?;
+    let vol = percent_int(value, 0);
+    let argv = [
+        wpctl,
+        "set-volume".into(),
+        "@DEFAULT_AUDIO_SOURCE@".into(),
+        format!("{vol}%"),
+    ];
+    if run_command(&argv, Duration::from_millis(1200), false).is_some_and(|o| o.status) {
+        Ok(())
+    } else {
+        Err("Could not set microphone volume through wpctl".into())
     }
 }
 
@@ -371,9 +421,19 @@ pub fn get_brightness() -> Option<f32> {
     ddc_current_percent()
 }
 
-pub fn apply_brightness(value: f32) {
-    apply_local_brightness(value);
-    apply_ddc_brightness(value);
+pub fn apply_brightness(value: f32) -> Result<(), String> {
+    let local = has_local_brightness().then(|| apply_local_brightness(value));
+    let ddc = has_ddc_brightness().then(|| apply_ddc_brightness(value));
+    if matches!(local, Some(Ok(()))) || matches!(ddc, Some(Ok(()))) {
+        return Ok(());
+    }
+    if let Some(Err(error)) = local {
+        return Err(error);
+    }
+    if let Some(Err(error)) = ddc {
+        return Err(error);
+    }
+    Err("No brightness backend available".into())
 }
 
 fn apply_logind_brightness(device: &BacklightDevice, value: i32) -> bool {
@@ -403,7 +463,7 @@ fn apply_logind_brightness(device: &BacklightDevice, value: i32) -> bool {
     .is_some_and(|out| out.status)
 }
 
-pub fn apply_local_brightness(value: f32) {
+pub fn apply_local_brightness(value: f32) -> Result<(), String> {
     let target = percent_int(value, 1);
     // 1. direct sysfs write
     if let Some(dev) = sysfs_backlights()
@@ -413,14 +473,14 @@ pub fn apply_local_brightness(value: f32) {
         let raw = ((target as f64 / 100.0) * dev.max as f64).round() as i64;
         let raw = raw.clamp(1, dev.max);
         if std::fs::write(dev.path.join("brightness"), format!("{raw}\n")).is_ok() {
-            return;
+            return Ok(());
         }
     }
     // 2. logind controls read-only backlights without an extra GUI or daemon.
     if let Some(device) = preferred_backlight()
         && apply_logind_brightness(&device, target)
     {
-        return;
+        return Ok(());
     }
     // 3. brightnessctl
     if let Some(ctl) = which("brightnessctl") {
@@ -429,11 +489,20 @@ pub fn apply_local_brightness(value: f32) {
             args.push(format!("--device={}", dev.name));
         }
         args.extend(["--quiet".into(), "set".into(), format!("{target}%")]);
-        let _ = run_command(&args, Duration::from_millis(1200), false);
+        if run_command(&args, Duration::from_millis(1200), false).is_some_and(|o| o.status) {
+            return Ok(());
+        }
     }
+    Err("Could not set local backlight brightness".into())
 }
 
-// --- DDC (simplified parallel query, sequential set) ---
+// --- DDC (cached VCP max discovery, direct setvcp writes) ---
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DdcDisplay {
+    bus: i32,
+    max: Option<i32>,
+}
 
 fn parse_detect_buses(stdout: &str) -> Vec<i32> {
     let mut buses = std::collections::BTreeSet::new();
@@ -469,28 +538,57 @@ fn parse_getvcp(stdout: &str) -> Option<(i32, i32)> {
     None
 }
 
-fn ddc_buses() -> Vec<i32> {
+fn parse_ddc_cache(raw: &str) -> Vec<DdcDisplay> {
+    let Ok(serde_json::Value::Array(items)) = serde_json::from_str::<serde_json::Value>(raw) else {
+        return Vec::new();
+    };
+    let mut displays = Vec::with_capacity(items.len());
+    for item in items {
+        let (bus, max) = if let Some(obj) = item.as_object() {
+            let bus = obj.get("bus").and_then(|x| x.as_i64());
+            let max = obj
+                .get("max")
+                .and_then(|x| x.as_i64())
+                .filter(|&m| m > 0 && m <= i32::MAX as i64)
+                .map(|m| m as i32);
+            (bus, max)
+        } else {
+            (item.as_i64(), None)
+        };
+        if let Some(bus) = bus.filter(|&b| b >= 0 && b <= i32::MAX as i64) {
+            displays.push(DdcDisplay {
+                bus: bus as i32,
+                max,
+            });
+        }
+    }
+    displays
+}
+
+fn ddc_query_vcp10(ddc: &str, bus: i32) -> Option<(i32, i32)> {
+    let out = run_command(
+        &[
+            ddc.to_string(),
+            "getvcp".into(),
+            "10".into(),
+            "--terse".into(),
+            "--bus".into(),
+            bus.to_string(),
+        ],
+        Duration::from_secs(2),
+        true,
+    )?;
+    out.status.then(|| parse_getvcp(&out.stdout)).flatten()
+}
+
+fn ddc_displays() -> Vec<DdcDisplay> {
     let Some(ddc) = which("ddcutil") else {
         return Vec::new();
     };
-    // Prefer tmpfs cache.
     let cache = ddc_cache_file();
-    let mut buses = Vec::new();
-    if let Ok(txt) = std::fs::read_to_string(&cache)
-        && let Ok(v) = serde_json::from_str::<serde_json::Value>(&txt)
-        && let Some(arr) = v.as_array()
-    {
-        for item in arr {
-            let b = item
-                .get("bus")
-                .and_then(|x| x.as_i64())
-                .or_else(|| item.as_i64())
-                .unwrap_or(-1);
-            if b >= 0 {
-                buses.push(b as i32);
-            }
-        }
-    }
+    let cached = std::fs::read_to_string(&cache)
+        .map(|txt| parse_ddc_cache(&txt))
+        .unwrap_or_default();
     // Discovery is slow; reuse a successful cache for 45 seconds, including
     // empty scans, so dragging never runs detect for every new value.
     if cache
@@ -500,7 +598,7 @@ fn ddc_buses() -> Vec<i32> {
         .and_then(|t| t.elapsed().ok())
         .is_some_and(|age| age < Duration::from_secs(45))
     {
-        return buses;
+        return cached;
     }
     let out = run_command(
         &[ddc.clone(), "detect".into(), "--terse".into()],
@@ -510,87 +608,77 @@ fn ddc_buses() -> Vec<i32> {
     if let Some(out) = out
         && out.status
     {
-        let fresh = parse_detect_buses(&out.stdout);
-        {
-            let records: Vec<serde_json::Value> = fresh
-                .iter()
-                .map(|b| serde_json::json!({"bus": b, "max": 100}))
-                .collect();
-            let _ = atomic_write_text(
-                &cache,
-                &format!("{}\n", serde_json::to_string(&records).unwrap_or_default()),
-            );
-            return fresh;
-        }
+        let fresh: Vec<DdcDisplay> = parse_detect_buses(&out.stdout)
+            .into_iter()
+            .map(|bus| DdcDisplay {
+                bus,
+                max: ddc_query_vcp10(&ddc, bus).map(|(_, max)| max),
+            })
+            .collect();
+        let records: Vec<serde_json::Value> = fresh
+            .iter()
+            .map(|d| match d.max {
+                Some(max) => serde_json::json!({"bus": d.bus, "max": max}),
+                None => serde_json::json!({"bus": d.bus}),
+            })
+            .collect();
+        let _ = atomic_write_text(
+            &cache,
+            &format!("{}\n", serde_json::to_string(&records).unwrap_or_default()),
+        );
+        return fresh;
     }
-    buses
+    cached
 }
 
 pub fn ddc_current_percent() -> Option<f32> {
     let ddc = which("ddcutil")?;
-    for bus in ddc_buses() {
-        let out = run_command(
-            &[
-                ddc.clone(),
-                "getvcp".into(),
-                "10".into(),
-                "--terse".into(),
-                "--bus".into(),
-                bus.to_string(),
-            ],
-            Duration::from_secs(2),
-            true,
-        );
-        let Some(out) = out else {
-            continue;
-        };
-        if out.status
-            && let Some((cur, max)) = parse_getvcp(&out.stdout)
-        {
+    for display in ddc_displays() {
+        if let Some((cur, max)) = ddc_query_vcp10(&ddc, display.bus) {
             return Some(clamp(cur as f32 / max.max(1) as f32 * 100.0, 0.0, 100.0));
         }
     }
     None
 }
 
-pub fn apply_ddc_brightness(value: f32) {
-    let Some(ddc) = which("ddcutil") else { return };
+pub fn apply_ddc_brightness(value: f32) -> Result<(), String> {
+    let ddc = which("ddcutil").ok_or("ddcutil not found")?;
+    let displays = ddc_displays();
+    if displays.is_empty() {
+        return Err("No DDC displays detected".into());
+    }
     let pct = percent_int(value, 1);
-    for bus in ddc_buses() {
-        let Some(out) = run_command(
-            &[
-                ddc.clone(),
-                "getvcp".into(),
-                "10".into(),
-                "--terse".into(),
-                "--bus".into(),
-                bus.to_string(),
-            ],
-            Duration::from_secs(2),
-            true,
-        ) else {
-            continue;
-        };
-        if !out.status {
-            continue;
-        }
-        let Some((_, maximum)) = parse_getvcp(&out.stdout) else {
+    let mut applied = 0usize;
+    for display in displays {
+        let Some(maximum) = display
+            .max
+            .or_else(|| ddc_query_vcp10(&ddc, display.bus).map(|(_, max)| max))
+        else {
             continue;
         };
         let raw = ((pct as f64 / 100.0) * maximum as f64).round() as i32;
         let raw = raw.clamp(1, maximum);
-        let _ = run_command(
+        if run_command(
             &[
                 ddc.clone(),
                 "setvcp".into(),
                 "10".into(),
                 raw.to_string(),
                 "--bus".into(),
-                bus.to_string(),
+                display.bus.to_string(),
             ],
             Duration::from_millis(2200),
             false,
-        );
+        )
+        .is_some_and(|o| o.status)
+        {
+            applied += 1;
+        }
+    }
+    if applied > 0 {
+        Ok(())
+    } else {
+        Err("Could not apply DDC brightness".into())
     }
 }
 
@@ -1460,5 +1548,116 @@ mod tests {
     fn cpu_ram_no_panic() {
         let (c, r) = cpu_ram();
         assert!(!c.is_empty() && !r.is_empty());
+    }
+
+    #[test]
+    fn parse_ddc_cache_handles_typed_and_legacy_entries() {
+        let raw = r#"[3, {"bus": 5}, {"bus": 7, "max": 65535}, {"bus": 8, "max": 0}, {"bus": -1}]"#;
+        assert_eq!(
+            parse_ddc_cache(raw),
+            vec![
+                DdcDisplay { bus: 3, max: None },
+                DdcDisplay { bus: 5, max: None },
+                DdcDisplay { bus: 7, max: Some(65535) },
+                DdcDisplay { bus: 8, max: None },
+            ]
+        );
+        assert!(parse_ddc_cache("not json").is_empty());
+    }
+
+    #[test]
+    fn which_cache_hits_and_tracks_path_changes() {
+        const CHILD: &str = "DUSKY_CENTER_WHICH_FIXTURE";
+        if let Some(root) = std::env::var_os(CHILD) {
+            let root = PathBuf::from(root);
+            let bin_a = root.join("bin_a");
+            let bin_b = root.join("bin_b");
+            let tool_a = bin_a.join("dusky_fixture_tool");
+            let tool_b = bin_b.join("dusky_fixture_tool");
+            unsafe { std::env::set_var("PATH", &bin_a) };
+            assert_eq!(which("dusky_fixture_tool"), Some(tool_a.to_string_lossy().into_owned()));
+            // Removing the file still returns the cached path for the unchanged PATH.
+            std::fs::remove_file(&tool_a).unwrap();
+            assert_eq!(which("dusky_fixture_tool"), Some(tool_a.to_string_lossy().into_owned()));
+            // Changing PATH invalidates the lookup cleanly.
+            unsafe { std::env::set_var("PATH", &bin_b) };
+            assert_eq!(which("dusky_fixture_tool"), Some(tool_b.to_string_lossy().into_owned()));
+            return;
+        }
+        use std::os::unix::fs::PermissionsExt;
+        let root = runtime_dir().join(format!("which-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for dir in ["bin_a", "bin_b"] {
+            let bin_dir = root.join(dir);
+            std::fs::create_dir_all(&bin_dir).unwrap();
+            let tool = bin_dir.join("dusky_fixture_tool");
+            std::fs::write(&tool, "#!/usr/bin/bash\nexit 0\n").unwrap();
+            std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "backend::system::tests::which_cache_hits_and_tracks_path_changes",
+            ])
+            .env(CHILD, &root)
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn apply_ddc_brightness_reuses_cached_max_and_queries_missing_max() {
+        const CHILD: &str = "DUSKY_CENTER_DDC_FIXTURE";
+        if let Some(root) = std::env::var_os(CHILD) {
+            let root = PathBuf::from(root);
+            let cache = ddc_cache_file();
+            atomic_write_text(&cache, r#"[{"bus": 3, "max": 200}, {"bus": 5}]"#);
+            apply_ddc_brightness(50.0).unwrap();
+            let log = std::fs::read_to_string(root.join("calls")).unwrap();
+            assert_eq!(
+                log,
+                "setvcp 10 100 --bus 3\ngetvcp 10 --terse --bus 5\nsetvcp 10 50 --bus 5\n"
+            );
+            return;
+        }
+        use std::os::unix::fs::PermissionsExt;
+        let root = runtime_dir().join(format!("ddc-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let ddcutil = bin.join("ddcutil");
+        std::fs::write(
+            &ddcutil,
+            concat!(
+                "#!/usr/bin/bash\n",
+                "printf '%s\\n' \"$*\" >> \"$DUSKY_CENTER_DDC_FIXTURE/calls\"\n",
+                "if [[ $1 == getvcp ]]; then printf 'VCP 10 C 40 100\\n'; fi\n",
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&ddcutil, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "backend::system::tests::apply_ddc_brightness_reuses_cached_max_and_queries_missing_max",
+            ])
+            .env(CHILD, &root)
+            .env("XDG_RUNTIME_DIR", &root)
+            .env("PATH", &bin)
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }
