@@ -1,0 +1,56 @@
+pkgname=dusky_casts
+pkgver=0.3.0
+pkgrel=1
+pkgdesc='Dusky Casts Wayland podcast and local audio player'
+arch=('x86_64')
+license=('MPL-2.0')
+depends=(
+  'glibc'
+  'libgcc'
+  'sqlite'
+  'mpv'
+  'wayland'
+  'libxkbcommon'
+  'vulkan-icd-loader'
+  'mesa'
+  'libglvnd'
+  'ttf-atkinson-hyperlegible'
+)
+makedepends=('cargo' 'python' 'protobuf' 'pkgconf' 'sqlite')
+options=('!debug' '!strip')
+
+build() {
+  cp -aL -- "$DUSKY_PACKAGE_SOURCE" "$srcdir/project"
+  python "$DUSKY_BUILD_RUST" "$srcdir/project" "$srcdir/binary-output/dusky_casts"
+}
+
+package() {
+  install -Dm755 "$srcdir/binary-output/dusky_casts" \
+    "$pkgdir/usr/bin/dusky_casts"
+  install -Dm644 "$srcdir/project/data/dusky_casts.desktop" \
+    "$pkgdir/usr/share/applications/dusky_casts.desktop"
+  install -Dm644 "$srcdir/project/data/dusky_casts.svg" \
+    "$pkgdir/usr/share/icons/hicolor/scalable/apps/dusky_casts.svg"
+  if [[ -f "$srcdir/project/LICENSE.md" ]]; then
+    install -Dm644 "$srcdir/project/LICENSE.md" \
+      "$pkgdir/usr/share/licenses/dusky_casts/LICENSE.md"
+  fi
+  install -dm755 "$pkgdir/usr/share/dusky_casts"
+  python - "$srcdir/project" "$DUSKY_BUILD_RUST" > "$pkgdir/usr/share/dusky_casts/source.sha256" <<'PY'
+import sys
+from pathlib import Path
+
+project = Path(sys.argv[1])
+sys.path.insert(0, str(Path(sys.argv[2]).resolve().parent))
+from build_rust import shared
+print(
+    shared.source_digest(
+        project,
+        recipe="casts-native-v1-frozen-tmpfs",
+        include_fonts=False,
+        extra_dirs=("proto", "assets", "data"),
+    )
+)
+PY
+  chmod 0644 "$pkgdir/usr/share/dusky_casts/source.sha256"
+}

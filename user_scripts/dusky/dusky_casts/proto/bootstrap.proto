@@ -1,0 +1,59 @@
+// Full-account snapshots used by the phone's initial sync. These are distinct
+// from SyncUserPlaylist: several fields have different tags and wrapper types.
+syntax = "proto3";
+package bootstrap;
+import "sync.proto";
+
+message EmptyRequest {}
+message UuidRequest {
+  string v = 1;
+  string m = 2;
+  string uuid = 3;
+  bool include_bookmarks = 4;
+}
+message SyncEpisodesResponse {
+  repeated EpisodeSyncResponse episodes = 1;
+}
+message EpisodeSyncResponse {
+  string uuid = 1;
+  int32 playing_status = 2;
+  int32 played_up_to = 3;
+  bool is_deleted = 4;
+  bool starred = 5;
+  int32 duration = 6;
+  // Bookmarks and deselected chapters are outside the desktop feature set.
+}
+message UserPlaylistListRequest {
+  string v = 1;
+  string m = 2;
+  bool exclude_deleted = 3;
+}
+message UserPlaylistListResponse { repeated PlaylistSyncResponse playlists = 1; }
+message PlaylistSyncResponse {
+  string uuid = 1;
+  dusksync.BoolValue is_deleted = 2;
+  string title = 3;
+  dusksync.Int32Value audio_video = 4;
+  dusksync.BoolValue not_downloaded = 5;
+  dusksync.BoolValue downloaded = 6;
+  dusksync.BoolValue downloading = 7;
+  dusksync.BoolValue finished = 8;
+  dusksync.BoolValue partially_played = 9;
+  dusksync.BoolValue unplayed = 10;
+  dusksync.BoolValue starred = 11;
+  dusksync.BoolValue manual = 12;
+  dusksync.Int32Value sort_position = 13;
+  dusksync.Int32Value sort_type = 14;
+  dusksync.Int32Value icon_id = 15;
+  dusksync.BoolValue all_podcasts = 16;
+  dusksync.Int32Value filter_hours = 17;
+  string podcast_uuids = 18;
+  string episode_uuids = 19;
+  string original_uuid = 20;
+  dusksync.BoolValue filter_duration = 21;
+  dusksync.Int32Value longer_than = 22;
+  dusksync.Int32Value shorter_than = 23;
+  repeated string episode_order = 24;
+  repeated dusksync.SyncPlaylistEpisode episodes = 25;
+  dusksync.BoolValue show_archived = 26;
+}

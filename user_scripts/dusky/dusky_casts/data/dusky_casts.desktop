@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Dusky Casts
+GenericName=Podcast Player
+Comment=Podcast library and local audio player built with Rust, Iced and mpv
+Exec=dusky_casts
+Icon=dusky_casts
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+Keywords=podcast;audio;mpv;pocketcasts;dusky_casts;
+StartupNotify=true
+StartupWMClass=dusky_casts

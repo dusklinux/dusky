@@ -1,0 +1,138 @@
+syntax = "proto3";
+
+package api;
+
+message Timestamp { int64 seconds = 1; int32 nanos = 2; }
+message StringValue { string value = 1; }
+message Int32Value { int32 value = 1; }
+message Int64Value { int64 value = 1; }
+message BoolValue { bool value = 1; }
+message UInt32Value { uint32 value = 1; }
+message FloatValue { float value = 1; }
+message DoubleValue { double value = 1; }
+
+message UserLoginRequest {
+  string email = 1;
+  string password = 2;
+  string scope = 3;
+  string dt = 4;
+  string device = 5;
+  string v = 6;
+  string m = 7;
+  string av = 8;
+  string f = 9;
+  string l = 10;
+  string c = 11;
+}
+
+message UserLoginResponse {
+  string token = 1;
+  string uuid = 2;
+  string email = 3;
+}
+
+message UserPodcastListRequest {
+  string v = 1;
+  string m = 2;
+}
+
+message UserPodcastListResponse {
+  repeated UserPodcastResponse podcasts = 1;
+  repeated PodcastFolder folders = 2;
+}
+
+message UserLastSyncAtResponse {
+  string last_sync_at = 1;
+  int64 last_sync_at_ms = 2;
+}
+
+message UserPodcastResponse {
+  string uuid = 1;
+  int32 episodes_sort_order = 2;
+  int32 auto_start_from = 3;
+  string title = 4;
+  string author = 5;
+  string description_p = 6;
+  string url = 7;
+  Timestamp last_episode_published = 8;
+  bool unplayed = 9;
+  string last_episode_uuid = 10;
+  int32 last_episode_playing_status = 11;
+  bool last_episode_archived = 12;
+  int32 auto_skip_last = 13;
+  StringValue folder_uuid = 14;
+  Int32Value sort_position = 15;
+  Timestamp date_added = 16;
+  PodcastSettings settings = 17;
+  string description_html = 18;
+  BoolValue is_private = 19;
+  string slug = 20;
+  BoolValue explicit = 21;
+  bool web_feed = 22;
+}
+
+message PodcastFolder {
+  string folder_uuid = 1;
+  string name = 2;
+  int32 color = 3;
+  int32 sort_position = 4;
+  int32 podcasts_sort_type = 5;
+  Timestamp date_added = 6;
+}
+
+message PodcastSettings {
+  BoolSetting notification = 1;
+  BoolSetting add_to_up_next = 2;
+  Int32Setting add_to_up_next_position = 3;
+  BoolSetting auto_archive = 4;
+  BoolSetting playback_effects = 5;
+  DoubleSetting playback_speed = 6;
+  Int32Setting trim_silence = 7;
+  BoolSetting volume_boost = 8;
+  Int32Setting auto_start_from = 9;
+  Int32Setting auto_skip_last = 10;
+  Int32Setting episodes_sort_order = 11;
+  Int32Setting auto_archive_played = 12;
+  Int32Setting auto_archive_inactive = 13;
+  Int32Setting auto_archive_episode_limit = 14;
+  Int32Setting episode_grouping = 15;
+  BoolSetting show_archived = 16;
+}
+
+message BoolSetting {
+  BoolValue value = 1;
+  BoolValue changed = 2;
+  Timestamp modified_at = 3;
+}
+
+message Int32Setting {
+  Int32Value value = 1;
+  BoolValue changed = 2;
+  Timestamp modified_at = 3;
+}
+
+message DoubleSetting {
+  DoubleValue value = 1;
+  BoolValue changed = 2;
+  Timestamp modified_at = 3;
+}
+
+
+// RetrieveStatsTask.swift: device_id excludes this device from the summary.
+message StatsRequest {
+  string device_id = 1;
+  int32 time_silence_removal = 2;
+  int32 time_skipping = 3;
+  int32 time_intro_skipping = 4;
+  int32 time_variable_speed = 5;
+  int32 time_listened = 6;
+  int32 device_type = 7;
+}
+message StatsResponse {
+  int64 time_silence_removal = 1;
+  int64 time_skipping = 2;
+  int64 time_intro_skipping = 3;
+  int64 time_variable_speed = 4;
+  int64 time_listened = 5;
+  Timestamp times_started_at = 6;
+}

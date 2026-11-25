@@ -28,6 +28,7 @@ PACKAGE_MODULES: dict[str, tuple[str, Path]] = {
     "dusky_center": ("153_dusky_center_setup", DUSKY_DIR / "dusky_center"),
     "dusky_overview": ("153_dusky_overview_setup", DUSKY_DIR / "dusky_overview"),
     "dusky_network": ("154_dusky_network_meter_setup", DUSKY_DIR / "dusky_network"),
+    "dusky_casts": ("154_dusky_casts_setup", DUSKY_DIR / "dusky_casts"),
 }
 
 

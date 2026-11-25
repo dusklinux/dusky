@@ -38,15 +38,16 @@ def source_digest(
     recipe: str,
     include_fonts: bool = True,
     extra_files: Sequence[Path] = (),
+    extra_dirs: Sequence[str] = (),
 ) -> str:
     """Compute a deterministic, path-independent SHA-256 digest across sandbox and home checkouts."""
     project_root = project.resolve()
-    entries: list[tuple[str, Path]] = []
+    entries_by_key: dict[str, Path] = {}
 
     for name in ("Cargo.toml", "Cargo.lock"):
         candidate = project_root / name
         if candidate.is_file():
-            entries.append((f"project/{name}", candidate))
+            entries_by_key[f"project/{name}"] = candidate
 
     for relative in (
         "build.rs",
@@ -57,25 +58,40 @@ def source_digest(
     ):
         candidate = project_root / relative
         if candidate.is_file():
-            entries.append((f"project/{relative}", candidate))
+            entries_by_key[f"project/{relative}"] = candidate
 
     src = project_root / "src"
     if src.is_dir():
         for path in sorted(p for p in src.rglob("*") if p.is_file()):
-            entries.append((f"project/{path.relative_to(project_root).as_posix()}", path))
+            entries_by_key[f"project/{path.relative_to(project_root).as_posix()}"] = path
+
+    for rel_dir in extra_dirs:
+        rel_path = Path(rel_dir)
+        if rel_path.is_absolute() or ".." in rel_path.parts or not rel_path.parts:
+            raise ValueError(f"extra_dirs entry must be a safe relative path inside project: {rel_dir!r}")
+        directory = (project_root / rel_path).resolve()
+        if not directory.is_relative_to(project_root):
+            raise ValueError(f"extra_dirs entry escapes project root: {rel_dir!r}")
+        if directory.is_dir():
+            for path in sorted(p for p in directory.rglob("*") if p.is_file()):
+                entries_by_key[f"project/{path.relative_to(project_root).as_posix()}"] = path
 
     if include_fonts:
         shared_root = rust_shared_root().resolve()
         for path in font_source_files():
             resolved = path.resolve()
-            entries.append((f"shared/{resolved.relative_to(shared_root).as_posix()}", resolved))
+            entries_by_key[f"shared/{resolved.relative_to(shared_root).as_posix()}"] = resolved
 
     parent_root = project.parent.resolve()
     for path in extra_files:
-        logical_target = (parent_root / path.relative_to(project.parent)).resolve()
-        entries.append((f"sibling/{logical_target.relative_to(parent_root).as_posix()}", path.resolve()))
+        resolved = path.resolve()
+        if resolved.is_relative_to(project_root):
+            entries_by_key[f"project/{resolved.relative_to(project_root).as_posix()}"] = resolved
+        else:
+            logical_target = (parent_root / path.relative_to(project.parent)).resolve()
+            entries_by_key[f"sibling/{logical_target.relative_to(parent_root).as_posix()}"] = resolved
 
-    entries.sort(key=lambda item: item[0].encode("utf-8"))
+    entries = sorted(entries_by_key.items(), key=lambda item: item[0].encode("utf-8"))
 
     digest = hashlib.sha256()
     digest.update(recipe.encode("utf-8"))

@@ -4,6 +4,7 @@
 # Comment out any entry with '#' to disable compiling and shipping that package.
 
 packages = [
+    "dusky_casts",
     "dusky_center",
     "dusky_network",
     "dusky_overview",
