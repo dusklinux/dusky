@@ -26,6 +26,7 @@ readonly PATH_BLOCK_END="# <<< opencode-setup PATH <<<"
 # Runtime State & Trap Cleanup
 # ------------------------------------------------------------------------------
 RESET_STATE=0
+SKIP_INSTALL=0
 PINNED_VERSION=""
 VERIFICATION_ACTIVE=0
 declare -a TMP_FILES=()
@@ -53,6 +54,7 @@ artifacts, and deploys a native V2 opencode.json for LM Studio and Inkling.
 
 Options:
   --version <ver>   Pin a specific OpenCode V2 version (e.g., 2.4.1). Default: latest V2.
+  --skip-install    Skip binary download/upgrade (offline config & PATH convergence only).
   --reset-state     Also wipe service.json, OpenCode SQLite DB/data dir, and cache dir
                     so they regenerate cleanly on next launch (useful on dirty migrations).
   -h, --help        Show this help message and exit.
@@ -64,6 +66,10 @@ parse_args() {
         case "$1" in
             --reset-state)
                 RESET_STATE=1
+                shift
+                ;;
+            --skip-install)
+                SKIP_INSTALL=1
                 shift
                 ;;
             --version)
@@ -162,6 +168,12 @@ atomic_write_if_changed() {
         log "Backed up existing file to: $backup_file"
     fi
 
+    if [[ -f "$target" ]]; then
+        chmod --reference="$target" -- "$tmp_file"
+    else
+        chmod 0644 -- "$tmp_file"
+    fi
+
     mv -f -- "$tmp_file" "$target"
     log "Wrote: $target"
 }
@@ -195,6 +207,12 @@ case ":\$PATH:" in
 esac
 ${PATH_BLOCK_END}
 EOF
+
+    if [[ -f "$rc_file" ]]; then
+        chmod --reference="$rc_file" -- "$tmp_file"
+    else
+        chmod 0644 -- "$tmp_file"
+    fi
 
     mv -f -- "$tmp_file" "$rc_file"
     log "Appended guarded PATH block to: $rc_file"
@@ -246,7 +264,7 @@ phase_conflict_guard() {
 
     for pkg in opencode opencode-bin opencode-beta; do
         if pacman -Q "$pkg" >/dev/null 2>&1; then
-            conflicts+=("pacman package '$pkg' installed -> remove with: sudo pacman -Rns$pkg")
+            conflicts+=("pacman package '$pkg' installed -> remove with: sudo pacman -Rns $pkg")
         fi
     done
 
@@ -306,7 +324,13 @@ phase_arch_helpers() {
         return 0
     fi
 
-    log "Installing missing Arch helpers via full rolling sync: ${missing_pkgs[*]}"
+    local missing_list
+    missing_list="$(IFS=' '; printf '%s' "${missing_pkgs[*]}")"
+
+    command -v sudo >/dev/null 2>&1 \
+        || die "sudo not found; install missing Arch helpers manually: pacman -Syu --needed $missing_list"
+
+    log "Installing missing Arch helpers via full rolling sync: $missing_list"
     sudo pacman -Syu --needed --noconfirm "${missing_pkgs[@]}"
 }
 
@@ -320,14 +344,20 @@ phase_quiesce_and_purge() {
 
     local -a legacy_paths=(
         "$HOME/.opencode/bin/opencode2"
-        "$OPENCODE_CONFIG_DIR_CANONICAL/package.json"
-        "$OPENCODE_CONFIG_DIR_CANONICAL/package-lock.json"
-        "$OPENCODE_CONFIG_DIR_CANONICAL/bun.lock"
-        "$OPENCODE_CONFIG_DIR_CANONICAL/bun.lockb"
-        "$OPENCODE_CONFIG_DIR_CANONICAL/node_modules"
         "$OPENCODE_CONFIG_DIR_CANONICAL/identity.json"
         "$OPENCODE_CONFIG_DIR_CANONICAL/unlimited-identity.json"
     )
+
+    local pkg_json="$OPENCODE_CONFIG_DIR_CANONICAL/package.json"
+    if (( RESET_STATE == 1 )) || { [[ -f "$pkg_json" ]] && grep -Fq '"@opencode-ai/plugin"' "$pkg_json"; }; then
+        legacy_paths+=(
+            "$pkg_json"
+            "$OPENCODE_CONFIG_DIR_CANONICAL/package-lock.json"
+            "$OPENCODE_CONFIG_DIR_CANONICAL/bun.lock"
+            "$OPENCODE_CONFIG_DIR_CANONICAL/bun.lockb"
+            "$OPENCODE_CONFIG_DIR_CANONICAL/node_modules"
+        )
+    fi
 
     local p
     for p in "${legacy_paths[@]}"; do
@@ -381,16 +411,32 @@ phase_quiesce_and_purge() {
 phase_install_v2() {
     log "Phase 5/8: Installing OpenCode V2 via official installer ($OPENCODE_INSTALL_URL)..."
 
-    local -a installer_args=(--no-modify-path)
-    if [[ -n "$PINNED_VERSION" ]]; then
-        installer_args+=(--version "$PINNED_VERSION")
-        log "Pinning OpenCode V2 version: $PINNED_VERSION"
+    local do_download=1
+    if (( SKIP_INSTALL == 1 )); then
+        do_download=0
+        log "--skip-install specified: reusing existing OpenCode V2 binary."
+    elif [[ -n "$PINNED_VERSION" && -x "$OPENCODE_HOME_BIN" ]]; then
+        local current_ver normalized_pin
+        current_ver="$("$OPENCODE_HOME_BIN" --version 2>&1 || true)"
+        normalized_pin="${PINNED_VERSION#v}"
+        if [[ "$current_ver" =~ (^|[^0-9])v?"$normalized_pin"($|[^0-9A-Za-z._-]) ]]; then
+            do_download=0
+            log "Pinned version $normalized_pin already installed ($current_ver); skipping download."
+        fi
     fi
 
-    # Intentionally do NOT set OPENCODE_INSTALL_DIR or XDG_BIN_DIR so the V2 installer
-    # uses its native $HOME/.opencode/bin/opencode target and preserves `opencode upgrade`.
-    curl -fsSL "$OPENCODE_INSTALL_URL" \
-        | env -u OPENCODE_INSTALL_DIR -u XDG_BIN_DIR bash -s -- "${installer_args[@]}"
+    if (( do_download == 1 )); then
+        local -a installer_args=(--no-modify-path)
+        if [[ -n "$PINNED_VERSION" ]]; then
+            installer_args+=(--version "$PINNED_VERSION")
+            log "Pinning OpenCode V2 version: $PINNED_VERSION"
+        fi
+
+        # Intentionally do NOT set OPENCODE_INSTALL_DIR or XDG_BIN_DIR so the V2 installer
+        # uses its native $HOME/.opencode/bin/opencode target and preserves `opencode upgrade`.
+        curl -fsSL "$OPENCODE_INSTALL_URL" \
+            | env -u OPENCODE_INSTALL_DIR -u XDG_BIN_DIR bash -s -- "${installer_args[@]}"
+    fi
 
     [[ -x "$OPENCODE_HOME_BIN" ]] \
         || die "Expected OpenCode V2 binary not found or not executable at: $OPENCODE_HOME_BIN"
@@ -413,7 +459,7 @@ phase_wire_path() {
 
     local env_d_file="$OPENCODE_ENV_D_DIR/50-opencode-path.conf"
     local env_d_content
-    env_d_content="$(printf '# Managed by opencode_setup/setup.sh\nPATH=${HOME}/.local/bin:${PATH}\n')"
+    local env_d_content=$'# Managed by opencode_setup/setup.sh\nPATH=${HOME}/.local/bin:${PATH}\n'
     atomic_write_if_changed "$env_d_file" "$env_d_content" 0
 
     if command -v bash >/dev/null 2>&1 && { [[ -f "$HOME/.bashrc" ]] || [[ "${SHELL:-}" == */bash ]]; }; then
@@ -428,7 +474,7 @@ phase_wire_path() {
     if command -v fish >/dev/null 2>&1; then
         local fish_conf="$XDG_CONFIG_HOME/fish/conf.d/50-opencode-path.fish"
         local fish_content
-        fish_content="$(printf '# Managed by opencode_setup/setup.sh\nfish_add_path -g "$HOME/.local/bin"\n')"
+        local fish_content=$'# Managed by opencode_setup/setup.sh\nfish_add_path -g "$HOME/.local/bin"\n'
         atomic_write_if_changed "$fish_conf" "$fish_content" 0
     fi
 }
@@ -556,17 +602,24 @@ phase_verify() {
         || die "Unexpected version from 'opencode --version': $version_out"
     log "Verified version: $version_out"
 
+    if [[ -f "$OPENCODE_CONFIG_DIR_CANONICAL/opencode.jsonc" ]]; then
+        warn "Found $OPENCODE_CONFIG_DIR_CANONICAL/opencode.jsonc; OpenCode loads .jsonc at higher priority than opencode.json."
+    fi
+
     VERIFICATION_ACTIVE=1
     local debug_cfg
-    debug_cfg="$(opencode debug config 2>&1)" \
+    debug_cfg="$(cd "$HOME" && OPENCODE_DISABLE_PROJECT_CONFIG=1 opencode debug config 2>&1)" \
         || die "'opencode debug config' failed:\n$debug_cfg"
 
-    # Assert neither provider nor custom model was silently dropped by V2 schema normalization.
+    # Assert both providers, custom models, and auto-allow permissions survived V2 schema normalization.
     local -a expected_tokens=(
         '"lmstudio"'
         '"nanbeige4.1-3b"'
         '"glm-4.7-flash"'
         '"inkling"'
+        '"Inkling 2 Mini"'
+        '"shell"'
+        '"edit"'
         "$INKLING_BASE_URL"
         "$LMSTUDIO_BASE_URL"
     )
@@ -574,7 +627,7 @@ phase_verify() {
     for token in "${expected_tokens[@]}"; do
         if ! grep -Fq -- "$token" <<< "$debug_cfg"; then
             printf '%s\n' "$debug_cfg" >&2
-            die "Normalized 'opencode debug config' is missing expected token: $token (provider may have been silently dropped)"
+            die "Normalized 'opencode debug config' is missing expected token: $token (config entry may have been silently dropped)"
         fi
     done
 
@@ -583,8 +636,20 @@ phase_verify() {
     stop_opencode_service
     VERIFICATION_ACTIVE=0
 
-    log "Verified normalized providers (lmstudio + inkling) and stopped temporary daemon."
-    log "Done. Open a new terminal (or re-login for environment.d) and run 'opencode'."
+    log "Verified normalized providers (lmstudio + inkling), permissions, and stopped temporary daemon."
+    cat <<EOF
+
+[opencode-setup] Setup complete.
+[opencode-setup] NOTE: Local model backends are NOT auto-started by this script.
+[opencode-setup] Before using a local provider in OpenCode, start its backend manually:
+  1. Inkling provider (${INKLING_BASE_URL}, model: ${INKLING_MODEL_ID}):
+       Run 'inkling-server' in a terminal (or your preferred launcher).
+  2. LM Studio provider (${LMSTUDIO_BASE_URL}, models: nanbeige4.1-3b, glm-4.7-flash):
+       Launch LM Studio, load your model, and start its local server on 127.0.0.1:1234.
+  3. Launch OpenCode:
+       Open a new terminal (or re-login for environment.d / Hyprland launchers),
+       run 'opencode', and select your model with /models.
+EOF
 }
 
 main() {
