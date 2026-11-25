@@ -16,14 +16,9 @@ LAUNCHER="${INKLING_LAUNCHER:-/usr/local/bin/inkling-server}"
 REPO_URL="${INKLING_REPO_URL:-https://github.com/ggml-org/llama.cpp.git}"
 
 # === Cleanup Trap State ===
-SUDO_KEEPALIVE_PID=""
 TMP_LAUNCHER=""
 
 cleanup() {
-  if [[ -n "$SUDO_KEEPALIVE_PID" ]]; then
-    kill "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
-    wait "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
-  fi
   if [[ -n "$TMP_LAUNCHER" && -f "$TMP_LAUNCHER" ]]; then
     rm -f "$TMP_LAUNCHER"
   fi
@@ -109,99 +104,7 @@ fi
 # === 2. Capture GPU Compute Capability Before Rolling Upgrade ===
 CUDA_ARCHS="${INKLING_CUDA_ARCHS:-$(detect_cuda_archs)}"
 
-# === 3. Upfront Sudo Validation & Keepalive ===
-sudo -v
-(
-  trap 'kill $(jobs -p) 2>/dev/null || true; exit 0' TERM INT
-  while kill -0 "$$" 2>/dev/null; do
-    sleep 50 &
-    wait $! || exit 0
-    sudo -n true || exit 0
-  done
-) </dev/null >/dev/null 2>&1 &
-SUDO_KEEPALIVE_PID=$!
-
-# === 4. Atomic Arch Rolling Upgrade & Build Dependencies ===
-sudo pacman -Syu --needed --noconfirm base-devel clang openmp cmake git ninja cuda
-
-# === 5. Safely Source Arch CUDA Environment ===
-if [[ -r /etc/profile.d/cuda.sh ]]; then
-  set +euo pipefail
-  _defined_append_path=0
-  if ! declare -F append_path >/dev/null 2>&1; then
-    _defined_append_path=1
-    append_path() {
-      case ":$PATH:" in
-        *:"$1":*) ;;
-        *) PATH="${PATH:+$PATH:}$1" ;;
-      esac
-    }
-  fi
-  # shellcheck disable=SC1091
-  source /etc/profile.d/cuda.sh
-  if [[ $_defined_append_path -eq 1 ]]; then
-    unset -f append_path
-  fi
-  unset _defined_append_path
-  set -euo pipefail
-fi
-
-if command -v nvcc >/dev/null 2>&1; then
-  NVCC_BIN="$(command -v nvcc)"
-elif [[ -x /opt/cuda/bin/nvcc ]]; then
-  NVCC_BIN="/opt/cuda/bin/nvcc"
-else
-  echo "ERROR: nvcc not found after installing cuda." >&2
-  exit 1
-fi
-
-CUDA_HOST_CXX="${NVCC_CCBIN:-/usr/bin/g++}"
-if [[ "$CUDA_HOST_CXX" != */* ]]; then
-  CUDA_HOST_CXX="$(command -v "$CUDA_HOST_CXX" || true)"
-fi
-if [[ -z "$CUDA_HOST_CXX" || ! -x "$CUDA_HOST_CXX" ]]; then
-  echo "ERROR: Resolved CUDA host compiler is not executable: ${CUDA_HOST_CXX:-empty}" >&2
-  exit 1
-fi
-export CUDAHOSTCXX="$CUDA_HOST_CXX"
-
-if [[ -z "$CUDA_ARCHS" ]]; then
-  CUDA_ARCHS="$(detect_cuda_archs)"
-fi
-if [[ -z "$CUDA_ARCHS" ]]; then
-  echo "ERROR: Unable to detect an NVIDIA GPU compute capability via nvidia-smi." >&2
-  echo "       Ensure the NVIDIA kernel driver is installed and loaded (reboot if newly installed/upgraded), or set INKLING_CUDA_ARCHS." >&2
-  exit 1
-fi
-
-# === 6. Self-Healing Shallow Sync of Mainline llama.cpp ===
-sync_repo
-
-# === 7. Clean Native Build (Clang + OpenMP + CUDA, No Compiler Caches) ===
-export CCACHE_DISABLE=1
-rm -rf "${SRC_DIR}/build"
-
-cmake -S "$SRC_DIR" -B "${SRC_DIR}/build" -G Ninja \
-  -DCMAKE_C_COMPILER=/usr/bin/clang \
-  -DCMAKE_CXX_COMPILER=/usr/bin/clang++ \
-  -DCMAKE_CUDA_COMPILER="$NVCC_BIN" \
-  -DCMAKE_CUDA_HOST_COMPILER="$CUDA_HOST_CXX" \
-  -DCMAKE_C_COMPILER_LAUNCHER="" \
-  -DCMAKE_CXX_COMPILER_LAUNCHER="" \
-  -DCMAKE_CUDA_COMPILER_LAUNCHER="" \
-  -DGGML_CUDA=ON \
-  -DCMAKE_CUDA_ARCHITECTURES="$CUDA_ARCHS" \
-  -DGGML_NATIVE=ON \
-  -DGGML_OPENMP=ON \
-  -DLLAMA_BUILD_TESTS=OFF \
-  -DLLAMA_BUILD_EXAMPLES=OFF \
-  -DLLAMA_BUILD_TOOLS=ON \
-  -DLLAMA_BUILD_SERVER=ON \
-  -DCMAKE_BUILD_TYPE=Release
-
-cmake --build "${SRC_DIR}/build" -j "$(nproc)" --target llama-server llama-bench
-
-# === 8. Install Portable System Launcher Atomically ===
+# === 3. Stage Portable System Launcher ===
 TMP_LAUNCHER="$(mktemp)"
 cat <<'LAUNCHER_EOF' > "$TMP_LAUNCHER"
 #!/usr/bin/env bash
@@ -388,10 +291,93 @@ ARGS+=(
 exec "$SERVER_BIN" "${ARGS[@]}" "$@"
 LAUNCHER_EOF
 
-sudo install -d -m 0755 "$(dirname "$LAUNCHER")"
-sudo install -m 0755 -o root -g root "$TMP_LAUNCHER" "$LAUNCHER"
+# === 4. Single Privileged Phase: Arch Rolling Upgrade & Atomic Launcher Install ===
+sudo sh -eu -c '
+  pacman -Syu --needed --noconfirm base-devel clang openmp cmake git ninja cuda
+  install -d -m 0755 "$1"
+  install -m 0755 -o root -g root "$2" "$3"
+' _ "$(dirname "$LAUNCHER")" "$TMP_LAUNCHER" "$LAUNCHER"
+rm -f "$TMP_LAUNCHER"
+TMP_LAUNCHER=""
 
-# === 9. Post-Build Linkage & Guarded CUDA Device Verification ===
+# === 5. Safely Source Arch CUDA Environment ===
+if [[ -r /etc/profile.d/cuda.sh ]]; then
+  set +euo pipefail
+  _defined_append_path=0
+  if ! declare -F append_path >/dev/null 2>&1; then
+    _defined_append_path=1
+    append_path() {
+      case ":$PATH:" in
+        *:"$1":*) ;;
+        *) PATH="${PATH:+$PATH:}$1" ;;
+      esac
+    }
+  fi
+  # shellcheck disable=SC1091
+  source /etc/profile.d/cuda.sh
+  if [[ $_defined_append_path -eq 1 ]]; then
+    unset -f append_path
+  fi
+  unset _defined_append_path
+  set -euo pipefail
+fi
+
+if command -v nvcc >/dev/null 2>&1; then
+  NVCC_BIN="$(command -v nvcc)"
+elif [[ -x /opt/cuda/bin/nvcc ]]; then
+  NVCC_BIN="/opt/cuda/bin/nvcc"
+else
+  echo "ERROR: nvcc not found after installing cuda." >&2
+  exit 1
+fi
+
+CUDA_HOST_CXX="${NVCC_CCBIN:-/usr/bin/g++}"
+if [[ "$CUDA_HOST_CXX" != */* ]]; then
+  CUDA_HOST_CXX="$(command -v "$CUDA_HOST_CXX" || true)"
+fi
+if [[ -z "$CUDA_HOST_CXX" || ! -x "$CUDA_HOST_CXX" ]]; then
+  echo "ERROR: Resolved CUDA host compiler is not executable: ${CUDA_HOST_CXX:-empty}" >&2
+  exit 1
+fi
+export CUDAHOSTCXX="$CUDA_HOST_CXX"
+
+if [[ -z "$CUDA_ARCHS" ]]; then
+  CUDA_ARCHS="$(detect_cuda_archs)"
+fi
+if [[ -z "$CUDA_ARCHS" ]]; then
+  echo "ERROR: Unable to detect an NVIDIA GPU compute capability via nvidia-smi." >&2
+  echo "       Ensure the NVIDIA kernel driver is installed and loaded (reboot if newly installed/upgraded), or set INKLING_CUDA_ARCHS." >&2
+  exit 1
+fi
+
+# === 6. Self-Healing Shallow Sync of Mainline llama.cpp ===
+sync_repo
+
+# === 7. Clean Native Build (Clang + OpenMP + CUDA, No Compiler Caches) ===
+export CCACHE_DISABLE=1
+rm -rf "${SRC_DIR}/build"
+
+cmake -S "$SRC_DIR" -B "${SRC_DIR}/build" -G Ninja \
+  -DCMAKE_C_COMPILER=/usr/bin/clang \
+  -DCMAKE_CXX_COMPILER=/usr/bin/clang++ \
+  -DCMAKE_CUDA_COMPILER="$NVCC_BIN" \
+  -DCMAKE_CUDA_HOST_COMPILER="$CUDA_HOST_CXX" \
+  -DCMAKE_C_COMPILER_LAUNCHER="" \
+  -DCMAKE_CXX_COMPILER_LAUNCHER="" \
+  -DCMAKE_CUDA_COMPILER_LAUNCHER="" \
+  -DGGML_CUDA=ON \
+  -DCMAKE_CUDA_ARCHITECTURES="$CUDA_ARCHS" \
+  -DGGML_NATIVE=ON \
+  -DGGML_OPENMP=ON \
+  -DLLAMA_BUILD_TESTS=OFF \
+  -DLLAMA_BUILD_EXAMPLES=OFF \
+  -DLLAMA_BUILD_TOOLS=ON \
+  -DLLAMA_BUILD_SERVER=ON \
+  -DCMAKE_BUILD_TYPE=Release
+
+cmake --build "${SRC_DIR}/build" -j "$(nproc)" --target llama-server llama-bench
+
+# === 8. Post-Build Linkage & Guarded CUDA Device Verification ===
 SERVER_BIN="${SRC_DIR}/build/bin/llama-server"
 BENCH_BIN="${SRC_DIR}/build/bin/llama-bench"
 
