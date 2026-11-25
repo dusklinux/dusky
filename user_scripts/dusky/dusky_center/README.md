@@ -31,11 +31,11 @@ limits jobs using available memory and the process CPU affinity. Native binaries
 use the existing optimized release profile; CPU tuning does not imply a measured
 application speedup.
 
-Editable defaults are seeded at `$XDG_CONFIG_HOME/dusky/dusky_config.toml`
-(normally `~/.config/dusky/dusky_config.toml`) and beside the local binary.
-Existing TOML files are preserved. Defaults are published only after a complete
-copy and only if the destination remains absent. Configuration edits do not
-trigger a binary rebuild. Change the canonical XDG file after setup.
+Editable defaults are seeded once at `$XDG_CONFIG_HOME/dusky/dusky_config.toml`
+(normally `~/.config/dusky/dusky_config.toml`). Existing TOML files are
+preserved. Defaults are published only after a complete copy and only if the
+destination remains absent. Configuration edits do not trigger a binary rebuild.
+Change the canonical XDG file after setup.
 
 The ISO recipe lives at
 `user_scripts/arch_iso_scripts/offline_iso/iso_maker/python/dusky_packages_compile/dusky_center`.
@@ -64,15 +64,21 @@ No full ISO installation or power-loss recovery test was performed.
 
 ## Configuration and colors
 
-TOML is resolved in this order:
+Pass `--config <PATH>` (or `-c <PATH>`) to load and reload a specific TOML file
+strictly without fallbacks. Otherwise, TOML is resolved in this order:
 
-1. `dusky_config.toml` in the current working directory.
-2. `$HOME/user_scripts/dusky/dusky_center/dusky_config.toml`.
-3. `$XDG_CONFIG_HOME/dusky/dusky_config.toml` (normally `~/.config/dusky/`).
+1. `$XDG_CONFIG_HOME/dusky/dusky_config.toml` (falling back to `$HOME/.config/dusky/dusky_config.toml` when `XDG_CONFIG_HOME` is unset or relative).
+2. `$HOME/user_scripts/dusky/dusky_center/dusky_config.toml` (source checkout fallback).
+3. `/usr/share/dusky_center/dusky_config.toml` (packaged defaults).
 4. `dusky_config.toml` beside the running executable.
-5. `/usr/share/dusky_center/dusky_config.toml` (packaged defaults).
 
-Ctrl+R reloads configuration and colors. Ctrl+F opens search. All 18 pages are
+The first present entry (including a broken symlink) is committed; malformed or
+unreadable canonical files fail fast rather than silently falling through.
+
+Ctrl+R (or `type = "reload"`) reloads configuration and colors in place, resets
+stale control state while preserving open expanders and in-flight writes, keeps
+the active page/subpage when still present, and shows the reloaded file path.
+Ctrl+F opens search. All 18 pages are
 parsed from TOML; supported widgets are rendered by `src/ui.rs`. See
 [PERFORMANCE_REVIEW.md](PERFORMANCE_REVIEW.md) for the startup/runtime review and
 verification limits. Parsing a property does not mean its behavior has been implemented.

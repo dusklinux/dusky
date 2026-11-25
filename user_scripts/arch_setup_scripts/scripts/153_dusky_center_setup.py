@@ -11,6 +11,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import tomllib
 from importlib import import_module
@@ -344,24 +345,36 @@ def native_manifest(binary: Path, manifest_path: Path) -> dict | None:
     return None
 
 
-def install_defaults(project: Path, install_dir: Path) -> None:
-    """Seed editable TOML without replacing any existing configuration."""
+def install_defaults(project: Path) -> None:
+    """Seed the canonical editable TOML without replacing any existing configuration."""
     source = project / "dusky_config.toml"
     if not source.is_file():
         source = SYSTEM_DEFAULTS
-    config_dir = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "dusky"
+    xdg_raw = os.environ.get("XDG_CONFIG_HOME", "").strip()
+    xdg_base = Path(xdg_raw) if xdg_raw and Path(xdg_raw).is_absolute() else Path.home() / ".config"
+    config_dir = xdg_base / "dusky"
     config_dir.mkdir(parents=True, exist_ok=True)
-    for destination in (config_dir / "dusky_config.toml", install_dir / "dusky_config.toml"):
-        if source.is_file() and not destination.exists():
-            temporary = destination.with_name(f".{destination.name}.{os.getpid()}.tmp")
-            try:
-                shutil.copyfile(source, temporary)
-                # Publish a complete file only if nobody has created it meanwhile.
-                os.link(temporary, destination)
-            except FileExistsError:
-                pass
-            finally:
-                temporary.unlink(missing_ok=True)
+    destination = config_dir / "dusky_config.toml"
+    if source.is_file() and not destination.exists(follow_symlinks=False):
+        fd, tmp_name = tempfile.mkstemp(
+            dir=config_dir,
+            prefix=f".{destination.name}.",
+            suffix=".tmp",
+        )
+        temporary = Path(tmp_name)
+        try:
+            with os.fdopen(fd, "wb") as dst:
+                with source.open("rb") as src:
+                    shutil.copyfileobj(src, dst)
+                dst.flush()
+                os.fsync(dst.fileno())
+            temporary.chmod(0o644)
+            # Publish a complete file only if nobody has created it meanwhile.
+            os.link(temporary, destination)
+        except FileExistsError:
+            pass
+        finally:
+            temporary.unlink(missing_ok=True)
 
 
 def packaged_source_matches(project: Path) -> bool:
@@ -408,7 +421,7 @@ def setup(project: Path, install_dir: Path, force: bool) -> int:
     if not selected:
         log("ERR", "No native or packaged Dusky Center binary is available")
         return 1
-    install_defaults(project, install_dir)
+    install_defaults(project)
     launcher = Path.home() / ".local/bin/dusky_center"
     launcher.parent.mkdir(parents=True, exist_ok=True)
     if not link_system_binary(binary, launcher):

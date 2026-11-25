@@ -4,8 +4,15 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+#[derive(Debug, Clone)]
+pub struct LoadedConfig {
+    pub config: AppConfig,
+    pub path: PathBuf,
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AppConfig {
@@ -25,6 +32,9 @@ impl AppConfig {
 
     pub fn validate(&self) -> Result<(), String> {
         use std::collections::HashSet;
+        if self.pages.is_empty() {
+            return Err("Configuration requires at least one page".into());
+        }
         let mut ids = HashSet::new();
         for page in &self.pages {
             if page.id.trim().is_empty() || page.title.trim().is_empty() {
@@ -91,47 +101,98 @@ impl AppConfig {
         Ok(())
     }
 
-    /// Resolve editable configuration at runtime, including relocated installations.
+    /// Resolve configuration using an explicit `--config` path or the canonical fallback chain.
+    pub fn load_resolved(override_path: Option<&Path>) -> Result<LoadedConfig, String> {
+        let xdg_config_home = std::env::var_os("XDG_CONFIG_HOME");
+        let home = std::env::var_os("HOME");
+        let exe_path = std::env::current_exe().ok();
+        let exe_dir = exe_path.as_deref().and_then(Path::parent);
+        let candidates = candidate_paths(
+            xdg_config_home.as_deref(),
+            home.as_deref(),
+            exe_dir,
+        );
+        Self::load_resolved_with(override_path, &candidates)
+    }
+
+    /// Resolve editable configuration at runtime using the canonical search chain.
     pub fn load() -> Result<Self, String> {
-        let mut candidates = vec![
-            PathBuf::from("dusky_config.toml"),
-        ];
-        if let Some(home) = std::env::var_os("HOME").filter(|home| !home.is_empty()) {
-            candidates.push(PathBuf::from(home)
-                .join("user_scripts/dusky/dusky_center/dusky_config.toml"));
-        }
-        candidates.push(dirs_fallback().join("dusky_config.toml"));
-        if let Ok(executable) = std::env::current_exe()
-            && let Some(parent) = executable.parent()
-        {
-            candidates.push(parent.join("dusky_config.toml"));
+        Self::load_resolved(None).map(|loaded| loaded.config)
+    }
+
+    fn load_resolved_with(
+        override_path: Option<&Path>,
+        candidates: &[PathBuf],
+    ) -> Result<LoadedConfig, String> {
+        if let Some(path) = override_path {
+            let config = Self::load_from_path(path)?;
+            return Ok(LoadedConfig {
+                config,
+                path: path.to_path_buf(),
+            });
         }
 
-        candidates.push(PathBuf::from("/usr/share/dusky_center/dusky_config.toml"));
-
-        for candidate in &candidates {
-            if candidate.is_file() {
-                return Self::load_from_path(candidate);
+        for candidate in candidates {
+            // Commit to the first present entry (including broken symlinks) so a broken
+            // or malformed canonical config fails fast instead of silently loading a fallback.
+            if fs::symlink_metadata(candidate).is_ok() {
+                let config = Self::load_from_path(candidate)?;
+                return Ok(LoadedConfig {
+                    config,
+                    path: candidate.clone(),
+                });
             }
         }
 
         Err(format!(
-            "Could not find dusky_config.toml in any search location: {:?}",
-            candidates
+            "Could not find dusky_config.toml in any search location: {candidates:?}"
         ))
     }
 }
 
-fn dirs_fallback() -> PathBuf {
-    if let Ok(config_home) = std::env::var("XDG_CONFIG_HOME")
-        && !config_home.is_empty()
-    {
-        return PathBuf::from(config_home).join("dusky");
+fn absolute_env_path(value: Option<&OsStr>) -> Option<PathBuf> {
+    let raw = value.filter(|v| !v.is_empty())?;
+    let path = PathBuf::from(raw);
+    path.is_absolute().then_some(path)
+}
+
+fn push_unique(paths: &mut Vec<PathBuf>, candidate: PathBuf) {
+    if !paths.contains(&candidate) {
+        paths.push(candidate);
     }
-    if let Ok(home) = std::env::var("HOME") {
-        return PathBuf::from(home).join(".config/dusky");
+}
+
+fn candidate_paths(
+    xdg_config_home: Option<&OsStr>,
+    home: Option<&OsStr>,
+    exe_dir: Option<&Path>,
+) -> Vec<PathBuf> {
+    let mut candidates = Vec::with_capacity(4);
+    let abs_home = absolute_env_path(home);
+
+    if let Some(xdg) = absolute_env_path(xdg_config_home) {
+        push_unique(&mut candidates, xdg.join("dusky/dusky_config.toml"));
+    } else if let Some(ref home_dir) = abs_home {
+        push_unique(&mut candidates, home_dir.join(".config/dusky/dusky_config.toml"));
     }
-    PathBuf::from("/tmp")
+
+    if let Some(ref home_dir) = abs_home {
+        push_unique(
+            &mut candidates,
+            home_dir.join("user_scripts/dusky/dusky_center/dusky_config.toml"),
+        );
+    }
+
+    push_unique(
+        &mut candidates,
+        PathBuf::from("/usr/share/dusky_center/dusky_config.toml"),
+    );
+
+    if let Some(dir) = exe_dir.filter(|p| p.is_absolute()) {
+        push_unique(&mut candidates, dir.join("dusky_config.toml"));
+    }
+
+    candidates
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -363,8 +424,103 @@ mod tests {
             let config: AppConfig = toml::from_str(&format!("[[pages]]\nid='home'\ntitle='Home'\n[[pages.layout]]\ntype='section'\n{tail}")).unwrap();
             assert!(config.validate().unwrap_err().contains(expected));
         }
+        let empty = AppConfig { pages: vec![] };
+        assert!(empty.validate().unwrap_err().contains("at least one page"));
+
         let config = AppConfig::load_from_path(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("dusky_config.toml")).unwrap();
         config.validate().unwrap();
+    }
+
+    #[test]
+    fn candidate_paths_follow_canonical_order_and_ignore_relative_env() {
+        let standard = candidate_paths(
+            Some(OsStr::new("/xdg/cfg")),
+            Some(OsStr::new("/home/tester")),
+            Some(Path::new("/opt/dusky/bin")),
+        );
+        assert_eq!(
+            standard,
+            vec![
+                PathBuf::from("/xdg/cfg/dusky/dusky_config.toml"),
+                PathBuf::from("/home/tester/user_scripts/dusky/dusky_center/dusky_config.toml"),
+                PathBuf::from("/usr/share/dusky_center/dusky_config.toml"),
+                PathBuf::from("/opt/dusky/bin/dusky_config.toml"),
+            ]
+        );
+        assert!(!standard.contains(&PathBuf::from("dusky_config.toml")));
+
+        let relative_xdg = candidate_paths(
+            Some(OsStr::new("relative/config")),
+            Some(OsStr::new("/home/tester")),
+            Some(Path::new("/usr/share/dusky_center")),
+        );
+        assert_eq!(
+            relative_xdg,
+            vec![
+                PathBuf::from("/home/tester/.config/dusky/dusky_config.toml"),
+                PathBuf::from("/home/tester/user_scripts/dusky/dusky_center/dusky_config.toml"),
+                PathBuf::from("/usr/share/dusky_center/dusky_config.toml"),
+            ]
+        );
+
+        let relative_home = candidate_paths(None, Some(OsStr::new("relative/home")), None);
+        assert_eq!(
+            relative_home,
+            vec![PathBuf::from("/usr/share/dusky_center/dusky_config.toml")]
+        );
+    }
+
+    #[test]
+    fn load_resolved_prioritizes_override_and_xdg_and_fails_fast_on_broken_canonical() {
+        let root = std::env::temp_dir().join(format!("dusky-config-res-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let xdg = root.join("xdg/dusky/dusky_config.toml");
+        let repo = root.join("repo/dusky_config.toml");
+        let custom = root.join("custom.toml");
+        fs::create_dir_all(xdg.parent().unwrap()).unwrap();
+        fs::create_dir_all(repo.parent().unwrap()).unwrap();
+
+        fs::write(&repo, "[[pages]]\nid='repo'\ntitle='Repo'\n").unwrap();
+        fs::write(&custom, "[[pages]]\nid='custom'\ntitle='Custom'\n").unwrap();
+
+        let candidates = vec![xdg.clone(), repo.clone()];
+
+        // Falls back to repo when XDG is absent.
+        let from_repo = AppConfig::load_resolved_with(None, &candidates).unwrap();
+        assert_eq!(from_repo.path, repo);
+        assert_eq!(from_repo.config.pages[0].id, "repo");
+
+        // XDG takes precedence over repo when present.
+        fs::write(&xdg, "[[pages]]\nid='xdg'\ntitle='XDG'\n").unwrap();
+        let from_xdg = AppConfig::load_resolved_with(None, &candidates).unwrap();
+        assert_eq!(from_xdg.path, xdg);
+        assert_eq!(from_xdg.config.pages[0].id, "xdg");
+
+        // Explicit --config overrides XDG and fails fast when missing.
+        let from_custom = AppConfig::load_resolved_with(Some(&custom), &candidates).unwrap();
+        assert_eq!(from_custom.path, custom);
+        assert_eq!(from_custom.config.pages[0].id, "custom");
+        let missing = root.join("missing.toml");
+        assert!(AppConfig::load_resolved_with(Some(&missing), &candidates).is_err());
+
+        // Malformed XDG fails fast instead of silently falling through to repo.
+        fs::write(&xdg, "pages = [").unwrap();
+        assert!(
+            AppConfig::load_resolved_with(None, &candidates)
+                .unwrap_err()
+                .contains(&xdg.display().to_string())
+        );
+
+        // Broken symlink at XDG fails fast instead of silently falling through to repo.
+        fs::remove_file(&xdg).unwrap();
+        std::os::unix::fs::symlink(root.join("dangling.toml"), &xdg).unwrap();
+        assert!(
+            AppConfig::load_resolved_with(None, &candidates)
+                .unwrap_err()
+                .contains(&xdg.display().to_string())
+        );
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

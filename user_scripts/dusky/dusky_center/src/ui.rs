@@ -30,15 +30,19 @@ use crate::backend::controls::{self, ServiceStatus, Snapshot};
 use crate::backend::system as sys;
 use crate::backend::worker;
 use crate::config::{
-    ActionConfig, AppConfig, ChangeAction, ItemConfig, PageConfig, SectionConfig, ToggleActionPair,
+    ActionConfig, AppConfig, ChangeAction, ItemConfig, LoadedConfig, PageConfig, SectionConfig,
+    ToggleActionPair,
 };
 use crate::icons::render_icon;
 use crate::theme::{AppTheme, mix, saturate};
 
 pub type Element<'a, Message> = iced_core::Element<'a, Message, iced_core::Theme, crate::renderer::Renderer>;
+type DismissChannel = (
+    iced_futures::futures::channel::mpsc::UnboundedSender<()>,
+    std::sync::Mutex<Option<iced_futures::futures::channel::mpsc::UnboundedReceiver<()>>>,
+);
 
 const CORE_CONTROLS: [&str; 4] = ["Volume", "Microphone", "Night Light", "Brightness"];
-const PROFILE_OPTIONS: [&str; 3] = ["Balanced", "Performance", "Power Saver"];
 const GROUP_BACKGROUND_MIX: f32 = 0.35;
 const HOVER_HIGHLIGHT_MIX: f32 = 0.12;
 const ICON_HOVER_HIGHLIGHT_MIX: f32 = 0.1;
@@ -57,6 +61,7 @@ pub enum NavView {
     SubPage {
         parent_page: usize,
         title: String,
+        occurrence: usize,
         sections: Vec<SectionConfig>,
     },
 }
@@ -88,6 +93,7 @@ pub enum Message {
     SearchHighlightTick,
     PushSubPage {
         title: String,
+        occurrence: usize,
         sections: Vec<SectionConfig>,
     },
     PopSubPage,
@@ -119,7 +125,6 @@ pub enum Message {
         on_change: Option<ChangeAction>,
         debounce: bool,
     },
-    ProfileSelected(String),
     SelectOption {
         key: String,
         option: String,
@@ -153,6 +158,8 @@ pub enum Message {
 
 pub struct CenterApp {
     pub config: AppConfig,
+    pub config_path: PathBuf,
+    pub config_override: Option<PathBuf>,
     pub theme: AppTheme,
     pub nav_stack: Vec<NavView>,
     pub sidebar_open: bool,
@@ -165,7 +172,6 @@ pub struct CenterApp {
     pub dynamic_options: HashMap<String, Vec<String>>,
     pub service_states: HashMap<String, bool>,
     pub live_labels: HashMap<String, String>,
-    pub active_profile: String,
     pub hovered_item: Option<String>,
     search_highlight: Option<(Vec<usize>, Instant)>,
     pub active_slider: Option<String>,
@@ -186,6 +192,7 @@ pub struct CenterApp {
     pub control_polled_at: HashMap<String, Instant>,
     pub polled_generation: Option<u64>,
     pub action_error: Option<String>,
+    pub status_notice: Option<(String, Instant)>,
     pub entry_values: HashMap<String, String>,
     pub editing_entries: HashSet<String>,
 }
@@ -193,20 +200,42 @@ pub struct CenterApp {
 impl CenterApp {
     /// Build state and defer queries until the returned task runs.
     pub fn new(config: AppConfig, initial_page: Option<String>, initial_hover: Option<String>) -> (Self, Task<Message>) {
-        Self::initialize(config, initial_page, initial_hover, false)
+        Self::new_loaded(LoadedConfig { config, path: PathBuf::new() }, None, initial_page, initial_hover)
+    }
+
+    /// Build state from a resolved configuration without eager worker submission.
+    pub fn new_loaded(
+        loaded: LoadedConfig,
+        config_override: Option<PathBuf>,
+        initial_page: Option<String>,
+        initial_hover: Option<String>,
+    ) -> (Self, Task<Message>) {
+        Self::initialize(loaded, config_override, initial_page, initial_hover, false)
     }
 
     /// Start read-only queries before Iced initializes the compositor.
     pub fn boot(config: AppConfig, initial_page: Option<String>, initial_hover: Option<String>) -> (Self, Task<Message>) {
-        Self::initialize(config, initial_page, initial_hover, true)
+        Self::boot_loaded(LoadedConfig { config, path: PathBuf::new() }, None, initial_page, initial_hover)
+    }
+
+    /// Start read-only queries from a resolved configuration before compositor setup.
+    pub fn boot_loaded(
+        loaded: LoadedConfig,
+        config_override: Option<PathBuf>,
+        initial_page: Option<String>,
+        initial_hover: Option<String>,
+    ) -> (Self, Task<Message>) {
+        Self::initialize(loaded, config_override, initial_page, initial_hover, true)
     }
 
     fn initialize(
-        mut config: AppConfig,
+        loaded: LoadedConfig,
+        config_override: Option<PathBuf>,
         initial_page: Option<String>,
         initial_hover: Option<String>,
         eager: bool,
     ) -> (Self, Task<Message>) {
+        let mut config = loaded.config;
         expand_app_config_generators(&mut config);
         crate::renderer::trace_phase("generators-ready");
         let start_page = if let Some(ref target) = initial_page {
@@ -225,6 +254,8 @@ impl CenterApp {
 
         let mut app = Self {
             config,
+            config_path: loaded.path,
+            config_override,
             theme: AppTheme::load(),
             nav_stack: vec![NavView::Root(start_page)],
             sidebar_open: true,
@@ -237,7 +268,6 @@ impl CenterApp {
             dynamic_options: HashMap::new(),
             service_states: HashMap::new(),
             live_labels: HashMap::new(),
-            active_profile: "Balanced".to_string(),
             hovered_item: initial_hover,
             search_highlight: None,
             active_slider: None,
@@ -257,6 +287,7 @@ impl CenterApp {
             control_polled_at: HashMap::new(),
             polled_generation: None,
             action_error: None,
+            status_notice: None,
             entry_values: HashMap::new(),
             editing_entries: HashSet::new(),
         };
@@ -390,18 +421,24 @@ impl CenterApp {
                 self.lazy_load_page(location.page);
                 self.nav_stack = vec![NavView::Root(location.page)];
                 for path in location.navigation {
-                    let sections = match self.nav_stack.last() {
-                        Some(NavView::SubPage { sections, .. }) => sections.as_slice(),
-                        _ => self.config.pages.get(location.page).map(|p| p.layout.as_slice()).unwrap_or(&[]),
+                    let next = {
+                        let sections = match self.nav_stack.last() {
+                            Some(NavView::SubPage { sections, .. }) => sections.as_slice(),
+                            _ => self.config.pages.get(location.page).map(|p| p.layout.as_slice()).unwrap_or(&[]),
+                        };
+                        navigation_at(sections, &path).map(|item| {
+                            let occurrence = navigation_occurrence(sections, item);
+                            (item.properties.title.clone(), occurrence, item.layout.clone())
+                        })
                     };
-                    let Some((title, sections)) = navigation_at(sections, &path).map(|item| (item.properties.title.clone(), item.layout.clone())) else { break; };
+                    let Some((title, occurrence, sections)) = next else { break; };
                     for section in &sections {
                         for item in &section.items {
                             collect_item_defaults(item, &mut self.slider_values, &mut self.toggle_states,
                                 &mut self.service_states, &mut self.selected_options);
                         }
                     }
-                    self.nav_stack.push(NavView::SubPage { parent_page: location.page, title, sections });
+                    self.nav_stack.push(NavView::SubPage { parent_page: location.page, title, occurrence, sections });
                 }
                 for key in location.expanders { self.toggle_states.insert(key, true); }
                 let started = Instant::now();
@@ -441,7 +478,7 @@ impl CenterApp {
                 Task::none()
             }
 
-            Message::PushSubPage { title, sections } => {
+            Message::PushSubPage { title, occurrence, sections } => {
                 self.search_highlight = None;
                 let pending = self.flush_deferred_sliders();
                 let parent = self.active_page_idx();
@@ -454,6 +491,7 @@ impl CenterApp {
                 self.nav_stack.push(NavView::SubPage {
                     parent_page: parent,
                     title,
+                    occurrence,
                     sections,
                 });
                 self.search_query.clear();
@@ -555,7 +593,13 @@ impl CenterApp {
             Message::ControlsLoaded { generation, slider_revision, snapshot } => {
                 crate::renderer::trace_phase("controls-ready");
                 if self.controls_loading == Some(generation) { self.controls_loading = None; }
-                if self.control_generation != generation { return self.refresh_controls(); }
+                if self.control_generation != generation {
+                    return if self.polled_generation != Some(self.control_generation) {
+                        self.refresh_controls()
+                    } else {
+                        Task::none()
+                    };
+                }
                 for (key, value) in snapshot.toggles {
                     if self.busy_controls.contains(&key) { continue; }
                     if let Some(value) = value {
@@ -573,12 +617,10 @@ impl CenterApp {
                 for (key, value) in snapshot.selections {
                     if self.busy_controls.contains(&key) { continue; }
                     if let Some(value) = value {
-                        if key == "Active Profile" { self.active_profile = value.clone(); }
                         self.selected_options.insert(key.clone(), value);
                         self.unavailable_controls.remove(&key);
                     } else {
                         self.selected_options.remove(&key);
-                        if key == "Active Profile" { self.active_profile.clear(); }
                         self.unavailable_controls.insert(key);
                     }
                 }
@@ -676,16 +718,6 @@ impl CenterApp {
                 Task::none()
             }
 
-            Message::ProfileSelected(profile) => {
-                let action = self.visible_items().into_iter().find(|item| controls::item_key(item) == "Active Profile")
-                    .and_then(|item| match &item.on_change {
-                        Some(ChangeAction::Map(map)) => map.get(&profile).cloned(),
-                        Some(ChangeAction::Direct(action)) => Some(action.clone()),
-                        None => None,
-                    });
-                self.update(Message::SelectOption { key: "Active Profile".into(), option: profile, action })
-            }
-
             Message::SelectOption {
                 key,
                 option,
@@ -697,7 +729,6 @@ impl CenterApp {
                 let launched = action.as_ref().is_some_and(controls::is_launch);
                 if !launched {
                     self.selected_options.insert(key.clone(), option.clone());
-                    if key == "Active Profile" { self.active_profile = option.clone(); }
                 }
                 self.busy_controls.insert(key.clone());
                 self.control_generation += 1;
@@ -711,7 +742,6 @@ impl CenterApp {
             Message::SelectionFinished { key, previous, result } => {
                 self.busy_controls.remove(&key);
                 if let Err(error) = result {
-                    if key == "Active Profile" { self.active_profile = previous.clone().unwrap_or_default(); }
                     if let Some(value) = previous { self.selected_options.insert(key.clone(), value); }
                     else { self.selected_options.remove(&key); }
                     self.action_error = Some(format!("{key}: {error}"));
@@ -737,6 +767,14 @@ impl CenterApp {
 
             Message::Tick => {
                 if self.closing { return Task::none(); }
+
+                if self
+                    .status_notice
+                    .as_ref()
+                    .is_some_and(|(_, created)| created.elapsed() >= Duration::from_secs(2))
+                {
+                    self.status_notice = None;
+                }
 
                 // Dynamically sync theme palette with wallpaper
                 if let Some(theme) = AppTheme::load_generated() { self.theme = theme; }
@@ -791,23 +829,147 @@ impl CenterApp {
                 if self.closing { return Task::none(); }
                 if let Some(theme) = AppTheme::load_generated() { self.theme = theme; }
                 let mut tasks = vec![];
-                match AppConfig::load() {
-                    Ok(mut cfg) => {
+                match AppConfig::load_resolved(self.config_override.as_deref()) {
+                    Ok(mut loaded) => {
                         let page_id = self.config.pages.get(self.active_page_idx()).map(|page| page.id.clone());
-                        let deferred = std::mem::take(&mut self.deferred_sliders);
-                        tasks.extend(deferred.into_iter().map(|(key, (value, action, _))| self.queue_slider(key, value, action)));
-                        expand_app_config_generators(&mut cfg);
-                        let index = page_id.and_then(|id| cfg.pages.iter().position(|page| page.id == id)).unwrap_or(0);
-                        self.search_highlight = None;
-                        self.config = cfg;
+                        let subpage_crumbs: Vec<(String, usize)> = self
+                            .nav_stack
+                            .iter()
+                            .filter_map(|view| match view {
+                                NavView::SubPage { title, occurrence, .. } => {
+                                    Some((title.clone(), *occurrence))
+                                }
+                                NavView::Root(_) => None,
+                            })
+                            .collect();
+
+                        // Flush deferred slider edits using old item metadata before swapping config.
+                        tasks.push(self.flush_deferred_sliders());
+
+                        expand_app_config_generators(&mut loaded.config);
+
+                        let (index, mut fell_back) = match page_id
+                            .as_deref()
+                            .and_then(|id| loaded.config.pages.iter().position(|page| page.id == id))
+                        {
+                            Some(idx) => (idx, false),
+                            None => (0, page_id.is_some()),
+                        };
+
+                        let mut new_nav_stack = if loaded.config.pages.is_empty() {
+                            vec![]
+                        } else {
+                            vec![NavView::Root(index)]
+                        };
+
+                        if !fell_back && !new_nav_stack.is_empty() {
+                            for (title, occurrence) in subpage_crumbs {
+                                let next = {
+                                    let current_sections = match new_nav_stack.last() {
+                                        Some(NavView::SubPage { sections, .. }) => sections.as_slice(),
+                                        _ => loaded
+                                            .config
+                                            .pages
+                                            .get(index)
+                                            .map(|p| p.layout.as_slice())
+                                            .unwrap_or(&[]),
+                                    };
+                                    find_navigation_subpage(current_sections, &title, occurrence).map(
+                                        |nav_item| NavView::SubPage {
+                                            parent_page: index,
+                                            title: nav_item.properties.title.clone(),
+                                            occurrence,
+                                            sections: nav_item.layout.clone(),
+                                        },
+                                    )
+                                };
+                                if let Some(view) = next {
+                                    new_nav_stack.push(view);
+                                } else {
+                                    fell_back = true;
+                                    break;
+                                }
+                            }
+                        }
+
+                        self.config = loaded.config;
+                        self.config_path = loaded.path;
+                        self.nav_stack = new_nav_stack;
+
+                        let slider_bounds = collect_slider_bounds(&self.config);
+                        self.slider_values.retain(|key, value| {
+                            let keep = self.applying_sliders.contains(key)
+                                || self.pending_sliders.contains_key(key)
+                                || self.core_loading.contains(key)
+                                || CORE_CONTROLS.contains(&key.as_str());
+                            if keep
+                                && let Some(&(min, max)) = slider_bounds.get(key)
+                            {
+                                *value = value.clamp(min, max);
+                            }
+                            keep
+                        });
+                        self.toggle_states.retain(|key, _| {
+                            key.starts_with("expander:") || self.busy_controls.contains(key)
+                        });
+                        self.selected_options
+                            .retain(|key, _| self.busy_controls.contains(key));
+                        self.service_states
+                            .retain(|key, _| self.busy_controls.contains(key));
+                        self.service_statuses
+                            .retain(|key, _| self.busy_controls.contains(key));
+                        self.entry_values
+                            .retain(|key, _| self.busy_controls.contains(key));
+                        self.editing_entries
+                            .retain(|key| self.busy_controls.contains(key));
+
                         self.dynamic_options.clear();
+                        self.live_labels.clear();
+                        self.unavailable_controls.clear();
+                        self.control_polled_at.clear();
                         self.loaded_pages.clear();
-                        self.nav_stack = vec![NavView::Root(index)];
+                        self.hovered_item = None;
+                        self.search_highlight = None;
+                        self.active_slider = None;
+
                         self.lazy_load_page(self.active_page_idx());
+                        for view in &self.nav_stack {
+                            if let NavView::SubPage { sections, .. } = view {
+                                for section in sections {
+                                    for item in &section.items {
+                                        collect_item_defaults(
+                                            item,
+                                            &mut self.slider_values,
+                                            &mut self.toggle_states,
+                                            &mut self.service_states,
+                                            &mut self.selected_options,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+
                         self.control_generation += 1;
+                        self.slider_revision += 1;
+                        self.controls_loading = None;
+                        self.polled_generation = None;
                         self.action_error = None;
+                        self.status_notice = Some((
+                            format!("Reloaded {}", format_display_path(&self.config_path)),
+                            Instant::now(),
+                        ));
+
+                        if fell_back {
+                            tasks.push(operation::scroll_to(
+                                "page_content",
+                                operation::AbsoluteOffset { x: 0.0, y: 0.0 },
+                            ));
+                        }
                     }
-                    Err(error) => { self.action_error = Some(format!("Reload: {error}")); }
+                    Err(error) => {
+                        self.status_notice = None;
+                        self.action_error = Some(format!("Reload: {error}"));
+                    }
                 }
                 tasks.push(self.refresh_visible());
                 Task::batch(tasks)
@@ -847,11 +1009,26 @@ impl CenterApp {
         }
     }
 
-    fn visible_items(&self) -> Vec<&ItemConfig> {
-        let sections = match self.nav_stack.last() {
+    fn current_sections(&self) -> &[SectionConfig] {
+        match self.nav_stack.last() {
             Some(NavView::SubPage { sections, .. }) => sections.as_slice(),
-            _ => self.config.pages.get(self.active_page_idx()).map(|p| p.layout.as_slice()).unwrap_or(&[]),
-        };
+            Some(NavView::Root(index)) => self
+                .config
+                .pages
+                .get(*index)
+                .map(|p| p.layout.as_slice())
+                .unwrap_or(&[]),
+            None => self
+                .config
+                .pages
+                .get(self.active_page_idx())
+                .map(|p| p.layout.as_slice())
+                .unwrap_or(&[]),
+        }
+    }
+
+    fn visible_items(&self) -> Vec<&ItemConfig> {
+        let sections = self.current_sections();
         fn collect<'a>(items: &'a [ItemConfig], states: &HashMap<String, bool>, output: &mut Vec<&'a ItemConfig>) {
             for item in items {
                 output.push(item);
@@ -889,9 +1066,10 @@ impl CenterApp {
             let interval = item.properties.interval.unwrap_or(
                 if item.properties.key.is_empty() && matches!(item.item_type.as_str(), "entry" | "secret" | "label") { 0 } else { 3 });
             let poll_key = format!("{}:{key}", item.item_type);
-            if !force && self.control_polled_at.get(&poll_key).is_some_and(|last|
-                interval == 0 || now.duration_since(*last) < Duration::from_secs(interval)) { return false; }
-            true
+            force
+                || !self.control_polled_at.get(&poll_key).is_some_and(|last| {
+                    interval == 0 || now.duration_since(*last) < Duration::from_secs(interval)
+                })
         }).cloned().collect::<Vec<_>>();
         for item in &items {
             let key = if item.properties.service.is_empty() { controls::item_key(item) }
@@ -961,12 +1139,7 @@ impl CenterApp {
 
     fn is_search_target(&self, item: &ItemConfig) -> bool {
         let Some((path, _)) = &self.search_highlight else { return false; };
-        let sections = match self.nav_stack.last() {
-            Some(NavView::SubPage { sections, .. }) => sections.as_slice(),
-            Some(NavView::Root(index)) => self.config.pages[*index].layout.as_slice(),
-            None => return false,
-        };
-        item_at(sections, path).is_some_and(|target| std::ptr::eq(target, item))
+        item_at(self.current_sections(), path).is_some_and(|target| std::ptr::eq(target, item))
     }
 
     fn control_id(&self, item: &ItemConfig) -> iced_core::widget::Id {
@@ -988,8 +1161,8 @@ impl CenterApp {
         })
     }
 
-    fn dismiss_channel() -> &'static (iced_futures::futures::channel::mpsc::UnboundedSender<()>, std::sync::Mutex<Option<iced_futures::futures::channel::mpsc::UnboundedReceiver<()>>>) {
-        static CHANNEL: std::sync::OnceLock<(iced_futures::futures::channel::mpsc::UnboundedSender<()>, std::sync::Mutex<Option<iced_futures::futures::channel::mpsc::UnboundedReceiver<()>>>)> = std::sync::OnceLock::new();
+    fn dismiss_channel() -> &'static DismissChannel {
+        static CHANNEL: std::sync::OnceLock<DismissChannel> = std::sync::OnceLock::new();
         CHANNEL.get_or_init(|| {
             let (tx, rx) = iced_futures::futures::channel::mpsc::unbounded();
             (tx, std::sync::Mutex::new(Some(rx)))
@@ -1261,6 +1434,9 @@ impl CenterApp {
         let mut main_col = column![mouse_area(main_header).on_press(Message::DragWindow)];
         if let Some(error) = &self.action_error {
             main_col = main_col.push(container(text(error).size(12).color(palette.danger))
+                .padding([6, 18]).width(Length::Fill));
+        } else if let Some((notice, _)) = &self.status_notice {
+            main_col = main_col.push(container(text(notice).size(12).color(palette.accent))
                 .padding([6, 18]).width(Length::Fill));
         }
 
@@ -1659,12 +1835,6 @@ impl CenterApp {
                 .color(mix(palette.bg, palette.fg, 0.46)));
         }
 
-        // Special handling for Power Management (with PickList dropdown)
-        if section.properties.title == "Power Management" {
-            sec_col = sec_col.push(self.view_power_management_card(section));
-            return sec_col.into();
-        }
-
         // Slider groups use an explicit section type so titles remain editable.
         if section.section_type == "controls" || section.properties.title == "Quick Controls" {
             sec_col = sec_col.push(self.view_quick_controls_card(section));
@@ -1922,146 +2092,40 @@ impl CenterApp {
     }
 
     // ---------------------------------------------------------------------------
-    // Power Management Card (Icon Badge + Interactive PickList Dropdown)
-    // ---------------------------------------------------------------------------
-
-    fn view_power_management_card<'a>(&'a self, section: &'a SectionConfig) -> Element<'a, Message> {
-        let palette = self.theme;
-        let is_hovered = self.hovered_item.as_deref() == Some("Active Profile");
-
-        let (icon_badge_bg, icon_badge_border, icon_color) = if is_hovered {
-            (
-                mix(mix(palette.card_bg, palette.accent, 0.08), mix(palette.card_hover, palette.accent, 0.12), ICON_HOVER_HIGHLIGHT_MIX),
-                Color { a: ICON_HOVER_HIGHLIGHT_MIX, ..mix(palette.card_bg, palette.accent, 0.18) },
-                palette.accent,
-            )
-        } else {
-            (
-                mix(palette.card_bg, palette.accent, 0.08),
-                Color::TRANSPARENT,
-                palette.accent,
-            )
-        };
-
-        // Left Icon Badge Box
-        let icon_badge = container(render_icon("power-profile-balanced-symbolic", 20.0, icon_color))
-            .width(36)
-            .height(36)
-            .align_x(Horizontal::Center)
-            .align_y(Vertical::Center)
-            .style(move |_| container::Style {
-                background: Some(icon_badge_bg.into()),
-                border: Border {
-                    color: icon_badge_border,
-                    width: 1.0,
-                    radius: 10.0.into(),
-                },
-                ..Default::default()
-            });
-
-        let text_info = column![
-            text("Active Profile")
-                .size(13)
-                .font(iced::Font {
-                    weight: Weight::Normal,
-                    ..iced::Font::with_name("Atkinson Hyperlegible")
-                })
-                .color(palette.fg),
-            text("Select performance mode")
-                .size(12)
-                .color(mix(palette.card_bg, palette.fg, if is_hovered { 0.46 + (0.55 - 0.46) * HOVER_HIGHLIGHT_MIX } else { 0.46 })),
-        ]
-        .spacing(2)
-        .width(Length::Fill);
-
-        // Interactive PickList Dropdown
-        let dropdown = pick_list(
-            &PROFILE_OPTIONS[..],
-            (!self.active_profile.is_empty()).then_some(self.active_profile.as_str()),
-            |selected| Message::ProfileSelected(selected.to_string()),
-        )
-        .placeholder("Unknown")
-        .padding([6, 12])
-        .text_size(12)
-        .style(move |_, status| pick_list::Style {
-            text_color: palette.fg,
-            placeholder_color: palette.fg_muted,
-            handle_color: palette.accent,
-            background: if matches!(
-                status,
-                pick_list::Status::Hovered | pick_list::Status::Opened { .. }
-            ) {
-                palette.card_hover.into()
-            } else {
-                palette.surface.into()
-            },
-            border: Border {
-                color: Color::from_rgba(palette.border.r, palette.border.g, palette.border.b, 0.30),
-                width: 1.0,
-                radius: 8.0.into(),
-            },
-        })
-        .menu_style(move |_| menu::Style {
-            background: palette.card_bg.into(),
-            border: Border {
-                color: Color::from_rgba(palette.border.r, palette.border.g, palette.border.b, 0.30),
-                width: 1.0,
-                radius: 8.0.into(),
-            },
-            selected_background: palette.accent.into(),
-            selected_text_color: palette.accent_fg,
-            text_color: palette.fg,
-            shadow: iced::Shadow::default(),
-        });
-
-        let row_content = row![icon_badge, text_info, dropdown]
-            .spacing(14)
-            .align_y(Vertical::Center);
-
-        let highlight = section.items.first().map_or(0.0, |item| self.search_highlight_strength(item));
-        let card_container = container(row_content)
-            .id(section.items.first().map_or_else(|| iced_core::widget::Id::new("control"), |item| self.control_id(item)))
-            .padding([12, 16])
-            .width(Length::Fill)
-            .style(move |_| search_highlight_style(container::Style {
-                background: Some(module_background(palette, is_hovered).into()),
-                border: Border {
-                    color: if is_hovered {
-                        Color { a: 0.20, ..palette.accent }
-                    } else {
-                        Color::TRANSPARENT
-                    },
-                    width: if is_hovered { 1.0 } else { 0.0 },
-                    radius: 14.0.into(),
-                },
-                shadow: iced::Shadow {
-                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
-                    offset: iced::Vector::new(0.0, 2.0),
-                    blur_radius: 8.0,
-                },
-                ..Default::default()
-            }, palette, highlight));
-
-        mouse_area(card_container)
-            .on_enter(Message::ItemEntered("Active Profile".to_string()))
-            .on_exit(Message::ItemExited("Active Profile".to_string()))
-            .into()
-    }
-
-    // ---------------------------------------------------------------------------
     // TOML Controls Card (Audio and Display on Home)
     // ---------------------------------------------------------------------------
 
     fn view_quick_controls_card<'a>(&'a self, section: &'a SectionConfig) -> Element<'a, Message> {
         let palette = self.theme;
         let mut controls_col = column![].spacing(0);
-        let visible_items = section.items.iter().filter(|item| {
-            let key = if item.properties.key.is_empty() { &item.properties.title } else { &item.properties.key };
-            key != "Night Light" || self.sunset_active
-        });
-        let item_count = visible_items.clone().count();
+        let visible_items: Vec<&ItemConfig> = section
+            .items
+            .iter()
+            .filter(|item| {
+                let key = if item.properties.key.is_empty() {
+                    &item.properties.title
+                } else {
+                    &item.properties.key
+                };
+                key != "Night Light" || self.sunset_active
+            })
+            .collect();
+        let item_count = visible_items.len();
+        if item_count == 0 {
+            return column![].into();
+        }
 
-        for (index, item) in visible_items.enumerate() {
+        for (index, item) in visible_items.into_iter().enumerate() {
+            if !matches!(item.item_type.as_str(), "slider" | "spin") {
+                controls_col = controls_col.push(self.view_item_row_rounded(
+                    item,
+                    "",
+                    None,
+                    row_radius(index, item_count),
+                ));
+                continue;
+            }
+
             let key = if !item.properties.key.is_empty() {
                 item.properties.key.clone()
             } else {
@@ -2563,7 +2627,7 @@ impl CenterApp {
                             palette.surface.into()
                         },
                         border: Border {
-                            color: palette.border,
+                            color: Color::from_rgba(palette.border.r, palette.border.g, palette.border.b, 0.30),
                             width: 1.0,
                             radius: 8.0.into(),
                         },
@@ -2571,7 +2635,7 @@ impl CenterApp {
                     .menu_style(move |_| menu::Style {
                         background: palette.card_bg.into(),
                         border: Border {
-                            color: palette.border,
+                            color: Color::from_rgba(palette.border.r, palette.border.g, palette.border.b, 0.30),
                             width: 1.0,
                             radius: 8.0.into(),
                         },
@@ -2747,9 +2811,11 @@ impl CenterApp {
         } else if item.item_type == "navigation" {
             let sub_sections = item.layout.clone();
             let sub_title = title.clone();
+            let occurrence = navigation_occurrence(self.current_sections(), item);
             area = area
                 .on_press(Message::PushSubPage {
                     title: sub_title,
+                    occurrence,
                     sections: sub_sections,
                 })
                 .interaction(mouse::Interaction::Pointer);
@@ -2870,6 +2936,98 @@ fn item_at<'a>(sections: &'a [SectionConfig], path: &[usize]) -> Option<&'a Item
 
 fn navigation_at<'a>(sections: &'a [SectionConfig], path: &[usize]) -> Option<&'a ItemConfig> {
     item_at(sections, path).filter(|item| item.item_type == "navigation")
+}
+
+fn navigation_occurrence(sections: &[SectionConfig], target: &ItemConfig) -> usize {
+    fn visit(items: &[ItemConfig], target: &ItemConfig, seen: &mut usize) -> bool {
+        for item in items {
+            if std::ptr::eq(item, target) {
+                return true;
+            }
+            if item.item_type == "navigation" && item.properties.title == target.properties.title {
+                *seen += 1;
+            }
+            if visit(&item.items, target, seen) {
+                return true;
+            }
+        }
+        false
+    }
+    let mut seen = 0;
+    for section in sections {
+        if visit(&section.items, target, &mut seen) {
+            return seen;
+        }
+    }
+    0
+}
+
+fn find_navigation_subpage<'a>(
+    sections: &'a [SectionConfig],
+    title: &str,
+    occurrence: usize,
+) -> Option<&'a ItemConfig> {
+    fn visit<'a>(
+        items: &'a [ItemConfig],
+        title: &str,
+        seen: &mut usize,
+        occurrence: usize,
+    ) -> Option<&'a ItemConfig> {
+        for item in items {
+            if item.item_type == "navigation" && item.properties.title == title {
+                if *seen == occurrence {
+                    return Some(item);
+                }
+                *seen += 1;
+            }
+            if let Some(found) = visit(&item.items, title, seen, occurrence) {
+                return Some(found);
+            }
+        }
+        None
+    }
+    let mut seen = 0;
+    for section in sections {
+        if let Some(found) = visit(&section.items, title, &mut seen, occurrence) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn collect_slider_bounds(config: &AppConfig) -> HashMap<String, (f32, f32)> {
+    fn visit(items: &[ItemConfig], bounds: &mut HashMap<String, (f32, f32)>) {
+        for item in items {
+            if matches!(item.item_type.as_str(), "slider" | "spin") {
+                let min = item.properties.min.unwrap_or(0.0) as f32;
+                let max = item.properties.max.unwrap_or(100.0) as f32;
+                bounds.insert(controls::item_key(item), (min, max));
+            }
+            visit(&item.items, bounds);
+            for section in &item.layout {
+                visit(&section.items, bounds);
+            }
+        }
+    }
+    let mut bounds = HashMap::new();
+    for page in &config.pages {
+        for section in &page.layout {
+            visit(&section.items, &mut bounds);
+        }
+    }
+    bounds
+}
+
+fn format_display_path(path: &std::path::Path) -> String {
+    if let Some(home) = std::env::var_os("HOME").filter(|h| !h.is_empty()) {
+        let home_path = PathBuf::from(home);
+        if home_path.is_absolute()
+            && let Ok(rel) = path.strip_prefix(&home_path)
+        {
+            return format!("~/{}", rel.display());
+        }
+    }
+    path.display().to_string()
 }
 
 fn search_hits<'a>(config: &'a AppConfig, query: &str) -> Vec<SearchHit<'a>> {
@@ -3025,6 +3183,7 @@ fn slider_tint(palette: AppTheme, key: &str) -> Color {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_modern_slider<'a>(
     palette: AppTheme,
     tint: Color,
@@ -3770,7 +3929,7 @@ mod tests {
         }
         assert!(views.len() >= 27);
         for (title, sections) in views {
-            let _ = app.update(Message::PushSubPage { title, sections });
+            let _ = app.update(Message::PushSubPage { title, occurrence: 0, sections });
             let _ = app.view();
             let _ = app.update(Message::PopSubPage);
         }
@@ -3865,6 +4024,8 @@ mod tests {
         // No hardware queries or action launches: exercise the actual update loop.
         let mut app = CenterApp {
             config: AppConfig { pages: vec![] },
+            config_path: PathBuf::new(),
+            config_override: None,
             theme: AppTheme::default(),
             nav_stack: vec![],
             sidebar_open: true,
@@ -3877,7 +4038,6 @@ mod tests {
             dynamic_options: HashMap::new(),
             service_states: HashMap::new(),
             live_labels: HashMap::new(),
-            active_profile: String::new(),
             hovered_item: None,
             search_highlight: None,
             active_slider: Some("Microphone".into()),
@@ -3897,6 +4057,7 @@ mod tests {
             control_polled_at: HashMap::new(),
             polled_generation: None,
             action_error: None,
+            status_notice: None,
             entry_values: HashMap::new(),
             editing_entries: HashSet::new(),
         };
@@ -4394,22 +4555,27 @@ mod tests {
             std::fs::remove_file(&palette).unwrap();
             let _ = app.update(Message::Tick);
             assert_eq!(app.theme, valid_theme);
+            let config_file = root.join("dusky/dusky_config.toml");
+            std::fs::create_dir_all(config_file.parent().unwrap()).unwrap();
             app.dynamic_options.insert("Choice".into(), vec!["Old dynamic".into()]);
-            std::fs::write(root.join("dusky_config.toml"), "pages = [").unwrap();
+            std::fs::write(&config_file, "pages = [").unwrap();
             let _ = app.update(Message::ReloadConfig);
             assert!(app.action_error.as_ref().unwrap().starts_with("Reload:"));
+            assert!(app.status_notice.is_none());
             assert_eq!(app.config.pages[0].id, "home");
             assert_eq!(app.dynamic_options["Choice"], ["Old dynamic"]);
             assert_eq!(app.theme, valid_theme);
-            std::fs::write(root.join("dusky_config.toml"), "[[pages]]\nid='fixture'\ntitle='Fixture'\n").unwrap();
+            std::fs::write(&config_file, "[[pages]]\nid='fixture'\ntitle='Fixture'\n").unwrap();
             let _ = app.update(Message::ExecuteAction(ActionConfig::Reload));
             assert_eq!(app.config.pages[0].id, "fixture");
+            assert_eq!(app.config_path, config_file);
+            assert!(app.status_notice.is_some());
             assert!(app.dynamic_options.is_empty(), "successful reload must discard old option sources");
             assert!(app.action_error.is_none());
-            std::fs::write(root.join("dusky_config.toml"), "[[pages]]\nid='first'\ntitle='First'\n[[pages]]\nid='second'\ntitle='Second'\n").unwrap();
+            std::fs::write(&config_file, "[[pages]]\nid='first'\ntitle='First'\n[[pages]]\nid='second'\ntitle='Second'\n").unwrap();
             let _ = app.update(Message::ReloadConfig);
             let _ = app.update(Message::SelectPage(1));
-            std::fs::write(root.join("dusky_config.toml"), "[[pages]]\nid='second'\ntitle='Second'\n[[pages]]\nid='first'\ntitle='First'\n").unwrap();
+            std::fs::write(&config_file, "[[pages]]\nid='second'\ntitle='Second'\n[[pages]]\nid='first'\ntitle='First'\n").unwrap();
             let _ = app.update(Message::ReloadConfig);
             assert_eq!(app.active_page_idx(), 0, "reload must preserve the page id when pages are reordered");
             std::fs::write(root.join("bin/hyprctl"), "#!/usr/bin/bash\nexit 1\n").unwrap();
@@ -4561,5 +4727,265 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn reload_with_config_override_resets_stale_state_preserves_inflight_and_handles_mixed_controls() {
+        let root = std::env::temp_dir().join(format!("dusky-reload-state-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let cfg_path = root.join("custom.toml");
+
+        let v1 = r#"
+[[pages]]
+id = "home"
+title = "Home"
+
+[[pages.layout]]
+type = "section"
+[pages.layout.properties]
+title = "Power Management"
+
+[[pages.layout.items]]
+type = "selection"
+[pages.layout.items.properties]
+title = "Active Profile"
+options = ["Balanced", "Performance"]
+
+[[pages.layout]]
+type = "controls"
+[pages.layout.properties]
+title = "Audio"
+
+[[pages.layout.items]]
+type = "slider"
+[pages.layout.items.properties]
+title = "Volume"
+min = 0.0
+max = 100.0
+default = 50.0
+
+[[pages.layout.items]]
+type = "slider"
+[pages.layout.items.properties]
+title = "Generic Gain"
+min = 0.0
+max = 100.0
+default = 20.0
+
+[[pages.layout.items]]
+type = "label"
+[pages.layout.items.properties]
+title = "Status"
+[pages.layout.items.value]
+type = "static"
+text = "v1"
+"#;
+        std::fs::write(&cfg_path, v1).unwrap();
+        let loaded = AppConfig::load_resolved(Some(&cfg_path)).unwrap();
+        let (mut app, _initial) = CenterApp::new_loaded(loaded, Some(cfg_path.clone()), None, None);
+
+        // Seed stale state alongside protected in-flight / expander / core state.
+        app.slider_values.insert("Volume".into(), 95.0);
+        app.slider_values.insert("Generic Gain".into(), 88.0);
+        app.slider_values.insert("InFlightSlider".into(), 42.0);
+        app.applying_sliders.insert("InFlightSlider".into());
+        app.toggle_states.insert("expander:Group".into(), true);
+        app.toggle_states.insert("BusyToggle".into(), true);
+        app.toggle_states.insert("StaleToggle".into(), true);
+        app.busy_controls.insert("BusyToggle".into());
+        app.selected_options.insert("Active Profile".into(), "Performance".into());
+        app.live_labels.insert("Status".into(), "v1".into());
+        app.unavailable_controls.insert("StaleToggle".into());
+        app.control_polled_at.insert("label:Status".into(), Instant::now());
+        app.hovered_item = Some("StaleToggle".into());
+        // Simulate an in-flight pre-reload poll that must not block the reload refresh.
+        let old_gen = app.control_generation;
+        app.controls_loading = Some(old_gen);
+        app.polled_generation = Some(old_gen);
+
+        let v2 = r#"
+[[pages]]
+id = "home"
+title = "Home"
+
+[[pages.layout]]
+type = "section"
+[pages.layout.properties]
+title = "Power Management"
+
+[[pages.layout.items]]
+type = "selection"
+[pages.layout.items.properties]
+title = "Active Profile"
+options = ["Eco", "Turbo"]
+
+[[pages.layout.items]]
+type = "label"
+[pages.layout.items.properties]
+title = "Added Power Row"
+[pages.layout.items.value]
+type = "static"
+text = "present"
+
+[[pages.layout]]
+type = "controls"
+[pages.layout.properties]
+title = "Audio"
+
+[[pages.layout.items]]
+type = "slider"
+[pages.layout.items.properties]
+title = "Volume"
+min = 0.0
+max = 80.0
+default = 40.0
+
+[[pages.layout.items]]
+type = "slider"
+[pages.layout.items.properties]
+title = "Generic Gain"
+min = 0.0
+max = 100.0
+default = 35.0
+
+[[pages.layout.items]]
+type = "label"
+[pages.layout.items.properties]
+title = "Status"
+[pages.layout.items.value]
+type = "static"
+text = "v2"
+"#;
+        std::fs::write(&cfg_path, v2).unwrap();
+
+        let reload_task = app.update(Message::ReloadConfig);
+        assert!(reload_task.units() > 0, "reload must dispatch fresh queries even when a prior poll was in flight");
+        assert_eq!(app.config_path, cfg_path);
+        assert!(app.action_error.is_none());
+        assert!(app.status_notice.as_ref().is_some_and(|(msg, _)| msg.starts_with("Reloaded ")));
+
+        // Protected state survives; Volume is clamped to its new max (80.0).
+        assert_eq!(app.slider_values["Volume"], 80.0);
+        assert_eq!(app.slider_values["InFlightSlider"], 42.0);
+        assert_eq!(app.slider_values["Generic Gain"], 35.0);
+        assert_eq!(app.toggle_states.get("expander:Group"), Some(&true));
+        assert_eq!(app.toggle_states.get("BusyToggle"), Some(&true));
+        assert!(!app.toggle_states.contains_key("StaleToggle"));
+        assert!(!app.unavailable_controls.contains("StaleToggle"));
+        assert!(app.hovered_item.is_none());
+        assert_eq!(app.selected_options.get("Active Profile").map(String::as_str), Some("Eco"));
+
+        // Late out-of-order reply from old generation must not schedule a redundant poll.
+        let stale_reply = app.update(Message::ControlsLoaded {
+            generation: old_gen,
+            slider_revision: 0,
+            snapshot: Snapshot {
+                labels: vec![("Status".into(), "stale".into())],
+                ..Default::default()
+            },
+        });
+        assert_eq!(stale_reply.units(), 0);
+
+        // Complete reload queries and confirm both added Power Management row and updated label render cleanly.
+        complete(&mut app, reload_task);
+        assert_eq!(app.live_labels.get("Status").map(String::as_str), Some("v2"));
+        assert_eq!(app.live_labels.get("Added Power Row").map(String::as_str), Some("present"));
+        let _ = app.view();
+
+        // Notice auto-clears on Tick after 2 seconds.
+        app.status_notice.as_mut().unwrap().1 = Instant::now() - Duration::from_secs(3);
+        let _ = app.update(Message::Tick);
+        assert!(app.status_notice.is_none());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn reload_restores_nested_duplicate_subpages_and_falls_back_when_removed() {
+        let root = std::env::temp_dir().join(format!("dusky-reload-nav-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let cfg_path = root.join("nav.toml");
+
+        let v1 = r#"
+[[pages]]
+id = "net"
+title = "Network"
+
+[[pages.layout]]
+type = "section"
+[pages.layout.properties]
+title = "Group"
+
+[[pages.layout.items]]
+type = "navigation"
+[pages.layout.items.properties]
+title = "Same"
+[[pages.layout.items.layout]]
+type = "section"
+[[pages.layout.items.layout.items]]
+type = "label"
+[pages.layout.items.layout.items.properties]
+title = "First"
+
+[[pages.layout.items]]
+type = "navigation"
+[pages.layout.items.properties]
+title = "Same"
+[[pages.layout.items.layout]]
+type = "section"
+[[pages.layout.items.layout.items]]
+type = "label"
+[pages.layout.items.layout.items.properties]
+title = "Second v1"
+"#;
+        std::fs::write(&cfg_path, v1).unwrap();
+        let loaded = AppConfig::load_resolved(Some(&cfg_path)).unwrap();
+        let (mut app, _) = CenterApp::new_loaded(loaded, Some(cfg_path.clone()), None, None);
+
+        let second_sections = app.config.pages[0].layout[0].items[1].layout.clone();
+        let _ = app.update(Message::PushSubPage {
+            title: "Same".into(),
+            occurrence: 1,
+            sections: second_sections,
+        });
+        assert_eq!(app.visible_items()[0].properties.title, "Second v1");
+
+        // Reload with an edited item inside the second "Same" subpage.
+        let v2 = v1.replace("Second v1", "Second v2");
+        std::fs::write(&cfg_path, v2).unwrap();
+        let _ = app.update(Message::ReloadConfig);
+        assert_eq!(app.nav_stack.len(), 2);
+        assert_eq!(app.visible_items()[0].properties.title, "Second v2");
+
+        // Remove the second "Same" subpage; reload must fall back cleanly to the root page.
+        let v3 = r#"
+[[pages]]
+id = "net"
+title = "Network"
+
+[[pages.layout]]
+type = "section"
+[pages.layout.properties]
+title = "Group"
+
+[[pages.layout.items]]
+type = "navigation"
+[pages.layout.items.properties]
+title = "Same"
+[[pages.layout.items.layout]]
+type = "section"
+[[pages.layout.items.layout.items]]
+type = "label"
+[pages.layout.items.layout.items.properties]
+title = "First"
+"#;
+        std::fs::write(&cfg_path, v3).unwrap();
+        let _ = app.update(Message::ReloadConfig);
+        assert_eq!(app.nav_stack.len(), 1);
+        assert!(matches!(app.nav_stack[0], NavView::Root(0)));
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

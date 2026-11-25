@@ -19,7 +19,7 @@ use config::AppConfig;
 use std::env;
 use std::io::Write;
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use ui::CenterApp;
 
@@ -44,11 +44,92 @@ impl iced_futures::Executor for BackgroundExecutor {
     }
 }
 
+#[derive(Debug, PartialEq)]
+struct CliOptions {
+    config_path: Option<PathBuf>,
+    initial_page: Option<String>,
+    initial_hover: Option<String>,
+    win_width: f32,
+    win_height: f32,
+}
+
+#[derive(Debug, PartialEq)]
+enum CliAction {
+    Help,
+    Version,
+    Run(CliOptions),
+}
+
+fn resolve_cli_config_path(raw: &str, cwd: &Path) -> PathBuf {
+    let path = Path::new(raw);
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        cwd.join(path)
+    }
+}
+
+fn parse_args<I>(args: I, cwd: &Path) -> Result<CliAction, String>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut options = CliOptions {
+        config_path: None,
+        initial_page: None,
+        initial_hover: None,
+        win_width: 670.0,
+        win_height: 720.0,
+    };
+    let mut args_iter = args.into_iter();
+    while let Some(arg) = args_iter.next() {
+        match arg.as_str() {
+            "--help" | "-h" => return Ok(CliAction::Help),
+            "--version" | "-v" | "-V" => return Ok(CliAction::Version),
+            "--config" | "-c" => {
+                let raw = args_iter
+                    .next()
+                    .filter(|value| !value.trim().is_empty())
+                    .ok_or_else(|| "Option --config requires a nonempty path".to_string())?;
+                options.config_path = Some(resolve_cli_config_path(&raw, cwd));
+            }
+            "--page" | "-p" => {
+                options.initial_page = args_iter.next();
+            }
+            "--hover" => {
+                options.initial_hover = args_iter.next();
+            }
+            "--width" | "-w" => {
+                if let Some(w_str) = args_iter.next()
+                    && let Ok(w) = w_str.parse::<f32>()
+                    && w.is_finite()
+                    && w > 0.0
+                {
+                    options.win_width = w;
+                }
+            }
+            "--height" => {
+                if let Some(h_str) = args_iter.next()
+                    && let Ok(h) = h_str.parse::<f32>()
+                    && h.is_finite()
+                    && h > 0.0
+                {
+                    options.win_height = h;
+                }
+            }
+            unknown => {
+                return Err(format!("Unknown option: {unknown}; use --help for usage"));
+            }
+        }
+    }
+    Ok(CliAction::Run(options))
+}
+
 fn print_help() {
     println!("Dusky Center (Rust)");
     println!("Usage: dusky_center [OPTIONS]\n");
     println!("Options:");
     println!("  --version, -v        Show version and exit");
+    println!("  --config, -c <PATH>  Load configuration from PATH");
     println!("  --page, -p <PG>      Open directly to page PG (e.g. audio, system)");
     println!("  --width, -w <WIDTH>  Set initial window width");
     println!("  --height <HEIGHT>    Set initial window height");
@@ -104,49 +185,22 @@ fn spawn_ipc_watcher(listener: UnixListener) {
 
 fn main() -> iced::Result {
     renderer::trace_startup();
-    let mut initial_page = None;
-    let mut initial_hover = None;
-    let mut win_width = 670.0_f32;
-    let mut win_height = 720.0_f32;
-    let mut args_iter = env::args().skip(1);
-    while let Some(arg) = args_iter.next() {
-        match arg.as_str() {
-            "--help" | "-h" => {
-                print_help();
-                return Ok(());
-            }
-            "--version" | "-v" | "-V" => {
-                println!("dusky_center {}", env!("CARGO_PKG_VERSION"));
-                return Ok(());
-            }
-            "--page" | "-p" => {
-                initial_page = args_iter.next();
-            }
-            "--hover" => {
-                initial_hover = args_iter.next();
-            }
-            "--width" | "-w" => {
-                if let Some(w_str) = args_iter.next()
-                    && let Ok(w) = w_str.parse::<f32>()
-                    && w.is_finite() && w > 0.0
-                {
-                    win_width = w;
-                }
-            }
-            "--height" => {
-                if let Some(h_str) = args_iter.next()
-                    && let Ok(h) = h_str.parse::<f32>()
-                    && h.is_finite() && h > 0.0
-                {
-                    win_height = h;
-                }
-            }
-            unknown => {
-                eprintln!("Unknown option: {unknown}; use --help for usage");
-                std::process::exit(2);
-            }
+    let cwd = env::current_dir().unwrap_or_default();
+    let options = match parse_args(env::args().skip(1), &cwd) {
+        Ok(CliAction::Help) => {
+            print_help();
+            return Ok(());
         }
-    }
+        Ok(CliAction::Version) => {
+            println!("dusky_center {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        Ok(CliAction::Run(options)) => options,
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(2);
+        }
+    };
 
     // Single-instance zero-latency toggle: if already running, signal it to dismiss and exit immediately.
     let sock_path = instance_socket_path();
@@ -180,8 +234,8 @@ fn main() -> iced::Result {
     gpu::optimize_environment();
     fonts::initialize();
 
-    let app_config = match AppConfig::load() {
-        Ok(cfg) => cfg,
+    let loaded_config = match AppConfig::load_resolved(options.config_path.as_deref()) {
+        Ok(loaded) => loaded,
         Err(err) => {
             eprintln!("Failed to load configuration: {err}");
             std::process::exit(1);
@@ -191,7 +245,7 @@ fn main() -> iced::Result {
     renderer::trace_phase("config-ready");
 
     let window_settings = iced::window::Settings {
-        size: iced::Size::new(win_width, win_height),
+        size: iced::Size::new(options.win_width, options.win_height),
         min_size: Some(iced::Size::new(500.0, 420.0)),
         resizable: true,
         decorations: false,
@@ -203,10 +257,18 @@ fn main() -> iced::Result {
         ..Default::default()
     };
 
-    let initial_page_c = initial_page.clone();
-    let initial_hover_c = initial_hover.clone();
+    let config_override = options.config_path.clone();
+    let initial_page_c = options.initial_page.clone();
+    let initial_hover_c = options.initial_hover.clone();
     let result = iced::application(
-        move || CenterApp::boot(app_config.clone(), initial_page_c.clone(), initial_hover_c.clone()),
+        move || {
+            CenterApp::boot_loaded(
+                loaded_config.clone(),
+                config_override.clone(),
+                initial_page_c.clone(),
+                initial_hover_c.clone(),
+            )
+        },
         CenterApp::update,
         CenterApp::view,
     )
@@ -239,4 +301,60 @@ fn theme(app: &CenterApp) -> iced_core::Theme {
         warning: palette.tertiary,
         danger: palette.danger,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cli_parses_config_override_and_anchors_relative_paths() {
+        let cwd = Path::new("/work/dir");
+        let parsed = parse_args(
+            [
+                "-c".into(),
+                "custom/dusky_config.toml".into(),
+                "--page".into(),
+                "audio".into(),
+                "-w".into(),
+                "800".into(),
+                "--height".into(),
+                "900".into(),
+            ],
+            cwd,
+        )
+        .unwrap();
+        assert_eq!(
+            parsed,
+            CliAction::Run(CliOptions {
+                config_path: Some(PathBuf::from("/work/dir/custom/dusky_config.toml")),
+                initial_page: Some("audio".into()),
+                initial_hover: None,
+                win_width: 800.0,
+                win_height: 900.0,
+            })
+        );
+
+        let absolute = parse_args(["--config".into(), "/etc/dusky.toml".into()], cwd).unwrap();
+        assert_eq!(
+            absolute,
+            CliAction::Run(CliOptions {
+                config_path: Some(PathBuf::from("/etc/dusky.toml")),
+                initial_page: None,
+                initial_hover: None,
+                win_width: 670.0,
+                win_height: 720.0,
+            })
+        );
+    }
+
+    #[test]
+    fn cli_rejects_missing_or_empty_config_and_unknown_flags() {
+        let cwd = Path::new("/work");
+        assert!(parse_args(["--config".into()], cwd).is_err());
+        assert!(parse_args(["-c".into(), "   ".into()], cwd).is_err());
+        assert!(parse_args(["--bogus".into()], cwd).is_err());
+        assert_eq!(parse_args(["--help".into()], cwd).unwrap(), CliAction::Help);
+        assert_eq!(parse_args(["-v".into()], cwd).unwrap(), CliAction::Version);
+    }
 }
