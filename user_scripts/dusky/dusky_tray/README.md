@@ -28,8 +28,9 @@ and binary SHA256 values, version, target, and CPU identity. Unchanged builds
 are reused; changed sources (even without a version bump), or a different CPU,
 trigger compilation. All three setup profiles run this after Dusky Papers.
 
-Native compiler output and temporary files live on executable `/tmp` or
-`/dev/shm` tmpfs and are removed afterward. There is no disk build fallback.
+Native compiler output and temporary files prefer executable `/tmp` or
+`/dev/shm` tmpfs (with a single disk retry under `/var/tmp` or user cache if
+RAM is exhausted) and are removed afterward.
 Dependencies are checked offline first; missing crates may be fetched with a
 bounded timeout unless `CARGO_NET_OFFLINE=true`. Compilation is frozen/offline.
 The smoke-tested binary atomically replaces the old executable, followed by
@@ -45,8 +46,9 @@ The separate ISO recipe lives at
 The factory discovers it automatically. It builds a generic x86-64 pacman
 package with `target-cpu=x86-64` and generic C/C++ flags, regardless of the
 builder's CPU. Compiler output stays on `/tmp` tmpfs; the package contains the
-executable and defaults. Installed systems prefer native compilation even when
-the generic package matches their sources.
+executable and defaults. Setup reuses a verified native build for the current
+CPU or a source-matched generic ISO package without recompiling; pass
+`--force-rebuild` to compile natively regardless.
 
 Check modes use `/tmp/dusky_tray-target-$UID`, verify tmpfs and reject output
 inside the project. Ordinary Cargo commands run from this project default to
@@ -62,6 +64,11 @@ The notification timestamp daemon runs independently.
 ## Appearance and controls
 
 - A truly centered clock, with weather and power aligned with its first line.
+  Hovering the clock opens a fixed 6-row Sunday-first calendar tooltip with
+  soft red weekend columns, highlighting today (with luminance-aware contrast)
+  and the current ISO week; scrolling up/down over the clock steps through
+  previous/next months without scrolling the panel and resets when the cursor
+  leaves.
 - A consistent 24 × 24 vector icon grid, embedded in Rust. No Nerd Font or GTK
   icon theme lookup is required for controls.
 - The GTK panel's compact 320 px width and 12 px insets, with dark translucent
@@ -92,11 +99,13 @@ The notification timestamp daemon runs independently.
   linearly from 40% saturation at 0 to 140% at 100.
   Saturation is capped at the color gamut; the minimum has no colored rail fill.
   Hue and maximum-channel brightness stay fixed. White handles remain visible
-  without hovering, with 3 px clearance at both ends. Volume zero shows a
-  crossed-out speaker; brightness at its safe minimum (1) shows a dim sun.
+  without hovering, with 3 px clearance at both ends. Volume zero or a
+  WirePlumber `[MUTED]` sink shows a crossed-out speaker with muted tint
+  (dragging above zero unmutes); brightness at its safe minimum (1) shows a dim sun.
   The night-light scale is
-  0–100 without a percent sign: 0 disables the filter; 100 is warmest (1000 K).
-  The three rails share the same width and a compact three-digit value column.
+  0–100 without a percent sign: 0 disables the filter; 100 is warmest (1000 K),
+  communicating directly with Hyprsunset's `.hyprsunset.sock` socket.
+  The three rails share the same width and a compact 26 px three-digit value column.
   The clock, date, weather, and power button have a subtle fixed glow. Gaussian
   masks give text and icons a continuous falloff without displaced glyph copies.
   The renderer caches shaped text masks and filtered SVGs; each halo needs one
@@ -106,11 +115,13 @@ The notification timestamp daemon runs independently.
   Click the volume icon for pavucontrol; right-click selects playback output in Rofi.
   At most one apply operation and one latest pending value exist per slider; older
   drag positions are discarded. Stale polling results cannot roll back a drag.
-- Notification timestamps use the original GTK timestamp daemon, copied unchanged
-  to `service/notification_time_service/`. It tracks first-observed times in
-  `$XDG_RUNTIME_DIR/dusky_notif_times.json` every two seconds and preserves them
-  across daemon restarts. Times appear beside individual notifications, including
-  expanded groups. To install it independently of the old GTK directory:
+- Notification timestamps use `service/notification_time_service/dusky_notif_time.py`,
+  an event-driven background service that monitors `org.freedesktop.Notifications`
+  and `fr.emersion.Mako` over `busctl --user monitor` (with 150 ms burst
+  debouncing and a 60-second safety sweep, falling back to polling if needed) and
+  writes compact JSON atomically to `$XDG_RUNTIME_DIR/dusky_notif_times.json`.
+  Times appear beside individual notifications, including expanded groups. To
+  install it independently:
 
   ```sh
   install -Dm644 service/notification_time_service/dusky_notif_time.service \
@@ -119,14 +130,23 @@ The notification timestamp daemon runs independently.
   systemctl --user enable --now dusky_notif_time.service
   ```
 
-- Notification hover covers the whole rounded card, including its independent
-  close button, which adds a red hover background. A filled triangle indicates
-  expansion, with approximately 30% less space to the close action. Groups expand independently. DND, item dismissal, group dismissal,
-  and clear-all use Mako. Historical items resolve desktop entries and use
-  `gio launch`; active items invoke their Mako action.
+- Grouped notifications render as subtle frosted headers with a disclosure
+  triangle, borderless inline count pill, and (when collapsed) a single
+  truncated summary preview line. Expanding a group joins the header flush
+  above a full-width recessed accordion drawer with inset row dividers and
+  omits the redundant repeated app header so child cards keep full panel text
+  width. Notification hover covers each card/row, including its independent
+  close button with a red hover background.
+  DND, item dismissal, group dismissal, and clear-all use Mako: dismissal
+  blacklists IDs synchronously in a deduplicated batch and only invokes
+  `makoctl dismiss` for active notifications; clear-all blacklists all raw Mako
+  active and history IDs beyond the 50-item UI cap. Historical items resolve
+  desktop entries and launch detached via `gio launch`; active items invoke
+  their Mako action before closing the panel.
 - One scroll area is capped to 85% of the output height. Its viewport reaches
-  the top and bottom panel edges; vertical content padding scrolls with the list,
-  while the 12 px side insets remain fixed. No bottom overlay obscures content.
+  the top and bottom panel edges; vertical content padding (including 44 px at
+  the bottom to clear the subtle bottom scroll fade when notifications are
+  present) scrolls with the list, while the 12 px side insets remain fixed.
   Escape has keyboard focus immediately after opening.
 - Power saver's tooltip uses two lines: `Power saver` and `RMB: Powertop auto-tune`.
 - The power button uses muted red (`#812824`) regardless of the wallpaper accent.
@@ -160,11 +180,16 @@ opacity = 0.85 # scales panel rendering; 0.0 = invisible, 1.0 = opaque
 blur = true   # enables this panel's Hyprland window blur
 ```
 
-Both settings reload within two seconds while the panel is open. Tooltips
-always have opaque backgrounds and are drawn outside the panel-opacity wrapper.
+Both settings (shipped default `0.88`, fallback `0.85` when omitted) reload
+within two seconds while the panel is open, using stat-cached checks so
+unchanged ticks perform no file reads or parsing. Tooltips appear after a
+500 ms hover delay, always have opaque backgrounds, and are drawn outside the
+panel-opacity wrapper.
 When Hyprland's global blur is off, the panel renders fully opaque. Turning
 blur on restores the configured opacity within the same two-second refresh.
-The app reads the actual compositor option over its request socket, independently
+The app reads Hyprland state (`monitors`, `animations:enabled`,
+`decoration:blur:enabled`) and dispatches window resize/move/blur rules
+directly over Hyprland's `.socket.sock`, independently
 of the quick-control layout and the shared Visuals indicator. Failed reads retain
 the last observed state; the panel starts opaque until the first successful read.
 For an installed binary, create `$XDG_CONFIG_HOME/dusky/tray/appearance.toml`
@@ -211,13 +236,22 @@ every two seconds; a missing/partially written file cannot replace a valid palet
 It no longer mixes a GTK surface file with a separately generated TUI accent.
 Template generation and filters were exercised with installed Matugen 4.2.0.
 
-Weather reads the existing Dusky weather cache and does not start a Python
-weather updater. Clicking it opens the existing `wthr` terminal forecast using
-`foot --app-id=dusky_tui --hold`; the report remains visible when the query ends.
+Weather reads `$XDG_CONFIG_HOME/dusky/settings/waybar_weather` (v2 format).
+When the cache is missing or older than `weather.py`'s 3540-second freshness
+window (and outside its 45-second failure backoff and lock), the tray launches
+`~/user_scripts/waybar/weather.py` detached via `systemd-run`—preserving any
+cached `request_key` coordinates or unit overrides—so weather stays fresh even
+when Waybar is off, without delaying panel startup. Stale cached entries show
+an `Updating` or `Offline` age banner in the tooltip. Clicking weather opens
+the existing `wthr` terminal forecast using `foot --app-id=dusky_tui --hold`;
+the report remains visible when the query ends.
 Network rates come directly from physical Linux interfaces,
 including virtio devices, avoiding duplicate VPN/bridge accounting and a
 Waybar network daemon dependency. The first rate sample is zero; subsequent
-samples use elapsed time. Update counts use the existing package cache plus
+samples use elapsed `CLOCK_BOOTTIME` (as do CPU usage and RAPL deltas,
+rebasing cleanly across suspends). Wi-Fi connection status and `hypridle`
+status are read directly from sysfs (`phy80211`/`wireless`) and `/proc` without
+spawning `nmcli` or `pgrep`. Update counts use the existing package cache plus
 `dusky_update_behind_commit`.
 The update badge shows only a positive total of confirmed counts; zero or
 unavailable counts produce no badge. Unavailable categories remain marked
@@ -225,10 +259,11 @@ unavailable counts produce no badge. Unavailable categories remain marked
 `update_checker.sh` checks Dusky commits. The existing `update_checker.timer`
 refreshes both when enabled; the tray only reads their caches.
 
-Clock, weather, power, memory/CPU, radio-manager, volume, update, and audio-studio launchers close
-the panel as they hand off to the configured application. Idle and visual
-left-click controls remain open for immediate feedback; their TUI/shader launchers close the panel. Those external configured
-applications can still use Python or GTK; the panel itself does not.
+Clock, weather, power, memory/CPU, radio-manager, volume, update (left and
+right click), and audio-studio launchers close the panel as they hand off to
+the configured application. Idle and visual left-click controls remain open for
+immediate feedback; their TUI/shader launchers close the panel. Those external
+configured applications can still use Python or GTK; the panel itself does not.
 
 ## Configuration and runtime
 
@@ -252,15 +287,19 @@ The logind fallback uses its automatic session object, so it works without
 `XDG_SESSION_ID` and avoids a separate session lookup. Panel clipping passes
 the visible viewport to children, avoiding drawing below the panel height; the
 tray retains its existing backlight ranking and DDC support. External
-DDC brightness discovery is cached for 45 seconds; brightness is scaled using
-that monitor's actual VCP maximum. The running Hyprsunset temperature is queried
-on open rather than trusting a stale panel-only cache.
+DDC brightness checks `/sys/class/drm` external connectors first (skipping
+`ddcutil` completely when no external monitor is connected), caches discovered
+`(bus, max)` pairs alongside connected external connectors for 45 seconds
+(invalidating immediately on hotplug), and scales brightness directly using
+each monitor's cached VCP maximum. The running Hyprsunset state is queried and
+updated directly over `.hyprsunset.sock`.
 
 ## Dependencies and verification
 
-The installed environment was checked: Rust 1.99, Bash 5.3.20, systemd 262,
-Hyprland-git 0.56, WirePlumber 0.5.18, and Hyprsunset 0.4. These checks describe
-the development machine, not the final unshipped ISO package manifest.
+The installed environment was checked: Rust 1.100, Python 3.15, Bash 5.3.20,
+systemd 262, Hyprland 0.57, WirePlumber 0.5.19, Hyprsunset 0.4, Mako 1.11, and
+Matugen 4.2. These checks describe the development machine, not the final
+unshipped ISO package manifest.
 
 Iced widget 0.14.2 and Iced core/renderer 0.14 are current stable releases.
 The regular-window runner is `iced_winit` 0.14.1, with only its Wayland

@@ -4,7 +4,10 @@
 //! (tmpfs: `$XDG_RUNTIME_DIR`, `/dev/shm`, or `/tmp`) so the SSD never sees
 //! cache churn. Reads may touch `/proc`, `/sys`, and SSD config files.
 
-use crate::backend::cmd::{CmdOutput, atomic_write_text, run_command};
+use crate::backend::cmd::{
+    CmdOutput, atomic_write_tmpfs_text, run_command, spawn_detached_service,
+};
+use crate::config::{FileStamp, xdg_config_dir};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -91,20 +94,44 @@ pub fn mako_blacklist_file() -> PathBuf {
     shared_runtime_dir().join("mako_rofi_blacklist")
 }
 
+fn hyprland_socket_path() -> Option<&'static Path> {
+    static PATH: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| {
+        let signature = std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE")?;
+        Some(
+            shared_runtime_dir()
+                .join("hypr")
+                .join(signature)
+                .join(".socket.sock"),
+        )
+    })
+    .as_deref()
+}
+
+fn hyprland_ipc(request: &str) -> Option<String> {
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixStream;
+
+    let socket = hyprland_socket_path()?;
+    let mut stream = UnixStream::connect(socket).ok()?;
+    let timeout = Some(Duration::from_millis(800));
+    stream.set_read_timeout(timeout).ok()?;
+    stream.set_write_timeout(timeout).ok()?;
+    stream.write_all(request.as_bytes()).ok()?;
+    let mut response = String::new();
+    stream.read_to_string(&mut response).ok()?;
+    Some(response)
+}
+
 /// Lock this window's preference so config reloads cannot discard it or let
 /// workspace rules override it. Global blur.enabled still controls rendering.
 /// Call only after the panel has mapped (its first successful fit).
 pub fn configure_panel_blur(enabled: bool) {
     let rule = format!(
-        "hl.dispatch(hl.dsp.window.set_prop({{window=\"class:^dusky_tray$\",prop=\"no_blur\",value=\"{}\",lock=true}}))",
+        "eval hl.dispatch(hl.dsp.window.set_prop({{window=\"class:^dusky_tray$\",prop=\"no_blur\",value=\"{}\",lock=true}}))",
         !enabled
     );
-    let reply = run_command(
-        &["hyprctl".into(), "eval".into(), rule],
-        Duration::from_millis(800),
-        true,
-    );
-    if !reply.is_some_and(|reply| reply.status && reply.stdout.trim() == "ok") {
+    if !hyprland_ipc(&rule).is_some_and(|reply| reply.trim() == "ok") {
         eprintln!("Could not apply the Hyprland tray blur preference");
     }
 }
@@ -113,23 +140,7 @@ pub fn configure_panel_blur(enabled: bool) {
 /// indicator (which can stay true for shadows or other enabled effects).
 /// Use Hyprland's request socket to avoid spawning a process every refresh.
 pub fn global_blur_enabled() -> Option<bool> {
-    use std::io::{Read, Write};
-    use std::os::unix::net::UnixStream;
-
-    let signature = std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE")?;
-    let socket = shared_runtime_dir()
-        .join("hypr")
-        .join(signature)
-        .join(".socket.sock");
-    let mut stream = UnixStream::connect(socket).ok()?;
-    let timeout = Some(Duration::from_millis(800));
-    stream.set_read_timeout(timeout).ok()?;
-    stream.set_write_timeout(timeout).ok()?;
-    stream
-        .write_all(b"j/getoption decoration:blur:enabled")
-        .ok()?;
-    let mut response = String::new();
-    stream.read_to_string(&mut response).ok()?;
+    let response = hyprland_ipc("j/getoption decoration:blur:enabled")?;
     serde_json::from_str::<serde_json::Value>(&response)
         .ok()?
         .get("bool")?
@@ -153,12 +164,8 @@ impl PanelMonitor {
     }
 }
 pub fn panel_monitor() -> Option<PanelMonitor> {
-    let result = run_command(
-        &["hyprctl".into(), "-j".into(), "monitors".into()],
-        Duration::from_millis(800),
-        true,
-    )?;
-    let monitors: serde_json::Value = serde_json::from_str(&result.stdout).ok()?;
+    let response = hyprland_ipc("j/monitors")?;
+    let monitors: serde_json::Value = serde_json::from_str(&response).ok()?;
     let monitor = monitors
         .as_array()?
         .iter()
@@ -177,18 +184,13 @@ pub fn panel_monitor() -> Option<PanelMonitor> {
 }
 pub fn fit_panel(monitor: PanelMonitor, size: iced_core::Size) -> bool {
     let actions = format!(
-        "hl.dispatch(hl.dsp.window.resize({{window=\"class:^dusky_tray$\",x={},y={},relative=false}})); hl.dispatch(hl.dsp.window.move({{window=\"class:^dusky_tray$\",x={},y={},relative=false}}))",
+        "eval hl.dispatch(hl.dsp.window.resize({{window=\"class:^dusky_tray$\",x={},y={},relative=false}})); hl.dispatch(hl.dsp.window.move({{window=\"class:^dusky_tray$\",x={},y={},relative=false}}))",
         size.width,
         size.height,
         monitor.x + monitor.size.width - size.width - 20.0,
         monitor.y + monitor.size.height - size.height - 20.0
     );
-    let result = run_command(
-        &["hyprctl".into(), "eval".into(), actions],
-        Duration::from_millis(800),
-        true,
-    );
-    let success = result.is_some_and(|result| result.status && result.stdout.trim() == "ok");
+    let success = hyprland_ipc(&actions).is_some_and(|reply| reply.trim() == "ok");
     if !success {
         eprintln!("Could not resize/position the tray window");
     }
@@ -234,8 +236,16 @@ fn access_ok(path: &Path, mode: libc::c_int) -> bool {
     unsafe { libc::access(c.as_ptr(), mode) == 0 }
 }
 
-fn which(bin: &str) -> Option<String> {
-    std::env::var_os("PATH").and_then(|paths| {
+fn which(bin: &'static str) -> Option<String> {
+    static CACHE: std::sync::Mutex<
+        Option<std::collections::HashMap<&'static str, Option<String>>>,
+    > = std::sync::Mutex::new(None);
+    let mut guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    let cache = guard.get_or_insert_with(std::collections::HashMap::new);
+    if let Some(found) = cache.get(bin) {
+        return found.clone();
+    }
+    let resolved = std::env::var_os("PATH").and_then(|paths| {
         std::env::split_paths(&paths).find_map(|dir| {
             let p = dir.join(bin);
             if p.is_file() && access_ok(&p, libc::X_OK) {
@@ -243,18 +253,21 @@ fn which(bin: &str) -> Option<String> {
             }
             None
         })
-    })
+    });
+    cache.insert(bin, resolved.clone());
+    resolved
 }
 
 // ---------------------------------------------------------------------------
 // clock
 // ---------------------------------------------------------------------------
 
-pub fn current_time_date() -> (String, String) {
+pub fn current_time_date() -> (String, String, chrono::NaiveDate) {
     let now = chrono::Local::now();
     (
         now.format("%I:%M").to_string(),
         now.format("%A, %B %d").to_string(),
+        now.date_naive(),
     )
 }
 
@@ -262,7 +275,17 @@ pub fn current_time_date() -> (String, String) {
 // volume (wpctl)
 // ---------------------------------------------------------------------------
 
-pub fn get_volume() -> Option<f32> {
+fn parse_wpctl_volume(stdout: &str) -> Option<(f32, bool)> {
+    let parts: Vec<&str> = stdout.split_whitespace().collect();
+    if parts.len() < 2 {
+        return None;
+    }
+    let v = parse_float(parts[1])?;
+    let muted = parts[2..].contains(&"[MUTED]");
+    Some((clamp(v * 100.0, 0.0, 100.0), muted))
+}
+
+pub fn get_volume() -> Option<(f32, bool)> {
     let wpctl = which("wpctl")?;
     let out = run_command(
         &[wpctl, "get-volume".into(), "@DEFAULT_AUDIO_SINK@".into()],
@@ -272,12 +295,7 @@ pub fn get_volume() -> Option<f32> {
     if !out.status {
         return None;
     }
-    let parts: Vec<&str> = out.stdout.split_whitespace().collect();
-    if parts.len() < 2 {
-        return None;
-    }
-    let v = parse_float(parts[1])?;
-    Some(clamp(v * 100.0, 0.0, 100.0))
+    parse_wpctl_volume(&out.stdout)
 }
 
 pub fn apply_volume(value: f32) {
@@ -534,39 +552,148 @@ fn parse_getvcp(stdout: &str) -> Option<(i32, i32)> {
     None
 }
 
-fn ddc_buses() -> Vec<i32> {
-    let Some(ddc) = which("ddcutil") else {
-        return Vec::new();
-    };
-    // Prefer tmpfs cache.
-    let cache = ddc_cache_file();
-    let mut buses = Vec::new();
-    if let Ok(txt) = std::fs::read_to_string(&cache)
-        && let Ok(v) = serde_json::from_str::<serde_json::Value>(&txt)
-        && let Some(arr) = v.as_array()
-    {
-        for item in arr {
-            let b = item
-                .get("bus")
-                .and_then(|x| x.as_i64())
-                .or_else(|| item.as_i64())
-                .unwrap_or(-1);
-            if b >= 0 {
-                buses.push(b as i32);
-            }
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DdcDisplay {
+    bus: i32,
+    max: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DdcCacheData {
+    connectors: Vec<String>,
+    displays: Vec<DdcDisplay>,
+}
+
+fn is_internal_drm_connector(connector: &str) -> bool {
+    connector.starts_with("eDP-") || connector.starts_with("LVDS-") || connector.starts_with("DSI-")
+}
+
+fn connected_external_drm_connectors_in(drm_root: &Path) -> Option<Vec<String>> {
+    let entries = std::fs::read_dir(drm_root).ok()?;
+    let mut connected = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name_str) = name.to_str() else {
+            continue;
+        };
+        let Some(rest) = name_str.strip_prefix("card") else {
+            continue;
+        };
+        let Some((idx, connector)) = rest.split_once('-') else {
+            continue;
+        };
+        if idx.is_empty()
+            || !idx.bytes().all(|b| b.is_ascii_digit())
+            || is_internal_drm_connector(connector)
+        {
+            continue;
+        }
+        let Ok(status) = std::fs::read_to_string(entry.path().join("status")) else {
+            continue;
+        };
+        if status.trim() == "connected" {
+            connected.push(name_str.to_owned());
         }
     }
-    // Discovery is slow; reuse a successful cache for 45 seconds, including
-    // empty scans, so dragging never runs detect for every new value.
-    if cache
+    connected.sort_unstable();
+    Some(connected)
+}
+
+fn parse_ddc_cache(raw: &str) -> Option<DdcCacheData> {
+    let v: serde_json::Value = serde_json::from_str(raw).ok()?;
+    let connectors = v
+        .get("connectors")?
+        .as_array()?
+        .iter()
+        .filter_map(|c| c.as_str().map(str::to_owned))
+        .collect();
+    let displays = v
+        .get("displays")?
+        .as_array()?
+        .iter()
+        .filter_map(|item| {
+            let bus = item.get("bus")?.as_i64()?;
+            let max = item.get("max")?.as_i64().unwrap_or(100);
+            (bus >= 0 && max > 0).then_some(DdcDisplay {
+                bus: bus as i32,
+                max: max as i32,
+            })
+        })
+        .collect();
+    Some(DdcCacheData {
+        connectors,
+        displays,
+    })
+}
+
+fn serialize_ddc_cache(data: &DdcCacheData) -> String {
+    let displays: Vec<serde_json::Value> = data
+        .displays
+        .iter()
+        .map(|d| serde_json::json!({"bus": d.bus, "max": d.max}))
+        .collect();
+    let obj = serde_json::json!({
+        "connectors": data.connectors,
+        "displays": displays,
+    });
+    format!("{}\n", serde_json::to_string(&obj).unwrap_or_default())
+}
+
+fn ddc_cached_displays(
+    cache_path: &Path,
+    connectors: &[String],
+    ttl: Duration,
+) -> Option<Vec<DdcDisplay>> {
+    let fresh = cache_path
         .metadata()
         .ok()
         .and_then(|m| m.modified().ok())
         .and_then(|t| t.elapsed().ok())
-        .is_some_and(|age| age < Duration::from_secs(45))
-    {
-        return buses;
+        .is_some_and(|age| age < ttl);
+    if !fresh {
+        return None;
     }
+    let txt = std::fs::read_to_string(cache_path).ok()?;
+    let cached = parse_ddc_cache(&txt)?;
+    (cached.connectors == connectors).then_some(cached.displays)
+}
+
+fn ddc_read_vcp10(ddc: &str, bus: i32) -> Option<(i32, i32)> {
+    let out = run_command(
+        &[
+            ddc.to_owned(),
+            "getvcp".into(),
+            "10".into(),
+            "--terse".into(),
+            "--bus".into(),
+            bus.to_string(),
+        ],
+        Duration::from_secs(2),
+        true,
+    )?;
+    out.status.then(|| parse_getvcp(&out.stdout)).flatten()
+}
+
+fn ddc_displays_with_live_reading() -> (Vec<DdcDisplay>, Option<(i32, i32)>) {
+    let connectors = match connected_external_drm_connectors_in(Path::new("/sys/class/drm")) {
+        Some(c) if c.is_empty() => return (Vec::new(), None),
+        Some(c) => c,
+        None => Vec::new(),
+    };
+    let Some(ddc) = which("ddcutil") else {
+        return (Vec::new(), None);
+    };
+    let cache = ddc_cache_file();
+    if let Some(displays) = ddc_cached_displays(&cache, &connectors, Duration::from_secs(45)) {
+        return (displays, None);
+    }
+    let stale_displays = std::fs::read_to_string(&cache)
+        .ok()
+        .and_then(|txt| parse_ddc_cache(&txt))
+        .filter(|c| c.connectors == connectors)
+        .map(|c| c.displays)
+        .unwrap_or_default();
+
     let out = run_command(
         &[ddc.clone(), "detect".into(), "--terse".into()],
         Duration::from_secs(8),
@@ -575,43 +702,37 @@ fn ddc_buses() -> Vec<i32> {
     if let Some(out) = out
         && out.status
     {
-        let fresh = parse_detect_buses(&out.stdout);
-        {
-            let records: Vec<serde_json::Value> = fresh
-                .iter()
-                .map(|b| serde_json::json!({"bus": b, "max": 100}))
-                .collect();
-            let _ = atomic_write_text(
-                &cache,
-                &format!("{}\n", serde_json::to_string(&records).unwrap_or_default()),
-            );
-            return fresh;
+        let mut displays = Vec::new();
+        let mut live_reading = None;
+        for bus in parse_detect_buses(&out.stdout) {
+            let max = if let Some((cur, max)) = ddc_read_vcp10(&ddc, bus) {
+                if live_reading.is_none() {
+                    live_reading = Some((cur, max));
+                }
+                max
+            } else {
+                100
+            };
+            displays.push(DdcDisplay { bus, max });
         }
+        let data = DdcCacheData {
+            connectors,
+            displays: displays.clone(),
+        };
+        let _ = atomic_write_tmpfs_text(&cache, &serialize_ddc_cache(&data));
+        return (displays, live_reading);
     }
-    buses
+    (stale_displays, None)
 }
 
 pub fn ddc_current_percent() -> Option<f32> {
+    let (displays, live) = ddc_displays_with_live_reading();
+    if let Some((cur, max)) = live {
+        return Some(clamp(cur as f32 / max.max(1) as f32 * 100.0, 0.0, 100.0));
+    }
     let ddc = which("ddcutil")?;
-    for bus in ddc_buses() {
-        let out = run_command(
-            &[
-                ddc.clone(),
-                "getvcp".into(),
-                "10".into(),
-                "--terse".into(),
-                "--bus".into(),
-                bus.to_string(),
-            ],
-            Duration::from_secs(2),
-            true,
-        );
-        let Some(out) = out else {
-            continue;
-        };
-        if out.status
-            && let Some((cur, max)) = parse_getvcp(&out.stdout)
-        {
+    for display in displays {
+        if let Some((cur, max)) = ddc_read_vcp10(&ddc, display.bus) {
             return Some(clamp(cur as f32 / max.max(1) as f32 * 100.0, 0.0, 100.0));
         }
     }
@@ -619,29 +740,14 @@ pub fn ddc_current_percent() -> Option<f32> {
 }
 
 pub fn apply_ddc_brightness(value: f32) {
+    let (displays, _) = ddc_displays_with_live_reading();
+    if displays.is_empty() {
+        return;
+    }
     let Some(ddc) = which("ddcutil") else { return };
     let pct = percent_int(value, 1);
-    for bus in ddc_buses() {
-        let Some(out) = run_command(
-            &[
-                ddc.clone(),
-                "getvcp".into(),
-                "10".into(),
-                "--terse".into(),
-                "--bus".into(),
-                bus.to_string(),
-            ],
-            Duration::from_secs(2),
-            true,
-        ) else {
-            continue;
-        };
-        if !out.status {
-            continue;
-        }
-        let Some((_, maximum)) = parse_getvcp(&out.stdout) else {
-            continue;
-        };
+    for display in displays {
+        let maximum = display.max.max(1);
         let raw = ((pct as f64 / 100.0) * maximum as f64).round() as i32;
         let raw = raw.clamp(1, maximum);
         let _ = run_command(
@@ -651,7 +757,7 @@ pub fn apply_ddc_brightness(value: f32) {
                 "10".into(),
                 raw.to_string(),
                 "--bus".into(),
-                bus.to_string(),
+                display.bus.to_string(),
             ],
             Duration::from_millis(2200),
             false,
@@ -663,27 +769,61 @@ pub fn apply_ddc_brightness(value: f32) {
 // hyprsunset (night light)
 // ---------------------------------------------------------------------------
 
+fn hyprsunset_socket_path() -> Option<&'static Path> {
+    static PATH: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| {
+        let signature = std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE")?;
+        Some(
+            shared_runtime_dir()
+                .join("hypr")
+                .join(signature)
+                .join(".hyprsunset.sock"),
+        )
+    })
+    .as_deref()
+}
+
+fn hyprsunset_ipc_at(socket: &Path, request: &str) -> Option<String> {
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixStream;
+
+    let mut stream = UnixStream::connect(socket).ok()?;
+    let timeout = Some(Duration::from_millis(800));
+    stream.set_read_timeout(timeout).ok()?;
+    stream.set_write_timeout(timeout).ok()?;
+    stream.write_all(request.as_bytes()).ok()?;
+    let _ = stream.shutdown(std::net::Shutdown::Write);
+    let mut response = String::new();
+    stream.read_to_string(&mut response).ok()?;
+    Some(response)
+}
+
+fn hyprsunset_ipc(request: &str) -> Option<String> {
+    hyprsunset_ipc_at(hyprsunset_socket_path()?, request)
+}
+
 pub fn has_sunset() -> bool {
-    which("hyprctl").is_some()
-        && which("hyprsunset").is_some()
-        && std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some()
+    hyprsunset_socket_path().is_some() && which("hyprsunset").is_some()
 }
 
 pub fn is_sunset_service_enabled() -> bool {
-    let Some(sys) = which("systemctl") else {
-        return false;
-    };
-    let out = run_command(
-        &[
-            sys,
-            "--user".into(),
-            "is-enabled".into(),
-            "hyprsunset.service".into(),
-        ],
-        Duration::from_millis(500),
-        true,
-    );
-    out.map(|o| o.status).unwrap_or(false)
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        let Some(sys) = which("systemctl") else {
+            return false;
+        };
+        run_command(
+            &[
+                sys,
+                "--user".into(),
+                "is-enabled".into(),
+                "hyprsunset.service".into(),
+            ],
+            Duration::from_millis(500),
+            true,
+        )
+        .is_some_and(|o| o.status)
+    })
 }
 
 // Keep cache/IPC temperatures in kelvin; expose increasing warmth to the UI.
@@ -704,29 +844,18 @@ fn sunset_temperature(percent: f32) -> i32 {
 }
 
 pub fn get_sunset() -> Option<f32> {
-    if let Some(ctl) = which("hyprctl")
-        && let Some(out) = run_command(
-            &[ctl, "hyprsunset".into(), "identity".into(), "get".into()],
-            Duration::from_millis(800),
-            true,
-        )
-        && out.status
-        && out.stdout.trim() == "true"
-    {
-        return Some(0.0);
+    if let Some(identity) = hyprsunset_ipc("identity get") {
+        if identity.trim() == "true" {
+            return Some(0.0);
+        }
+        if let Some(temp) = hyprsunset_ipc("temperature")
+            && let Some(v) = parse_float(&temp)
+        {
+            return Some(sunset_percent(v));
+        }
     }
-    // Read the running backend so GTK changes and keybinds are reflected on
-    // first open, rather than presenting a stale Rust-only cache.
-    if let Some(ctl) = which("hyprctl")
-        && let Some(out) = run_command(
-            &[ctl, "hyprsunset".into(), "temperature".into()],
-            Duration::from_millis(800),
-            true,
-        )
-        && out.status
-        && let Some(v) = parse_float(&out.stdout)
-    {
-        return Some(sunset_percent(v));
+    if !has_sunset() || !is_sunset_service_enabled() {
+        return None;
     }
     if let Ok(txt) = std::fs::read_to_string(sunset_state_file())
         && let Some(v) = parse_float(&txt)
@@ -739,28 +868,17 @@ pub fn get_sunset() -> Option<f32> {
 pub fn apply_sunset(value: f32) {
     let target = sunset_temperature(value);
     let request = if target == SUNSET_NEUTRAL as i32 {
-        vec!["hyprsunset".into(), "identity".into()]
+        "identity".to_owned()
     } else {
-        vec![
-            "hyprsunset".into(),
-            "temperature".into(),
-            target.to_string(),
-        ]
+        format!("temperature {target}")
     };
-    if let Some(hyprctl) = which("hyprctl") {
-        let ok = run_command(
-            &[vec![hyprctl], request.clone()].concat(),
-            Duration::from_millis(800),
-            false,
-        )
-        .map(|o| o.status)
-        .unwrap_or(false);
-        if ok {
-            let _ = atomic_write_text(&sunset_state_file(), &format!("{target}\n"));
-            return;
-        }
+    let send =
+        |req: &str| hyprsunset_ipc(req).is_some_and(|reply| matches!(reply.trim(), "" | "ok"));
+    if send(&request) {
+        let _ = atomic_write_tmpfs_text(&sunset_state_file(), &format!("{target}\n"));
+        return;
     }
-    // Fallback: ensure service / process, then retry once.
+    // Fallback: ensure service is started, then retry once over the socket.
     if let Some(sys) = which("systemctl") {
         let _ = run_command(
             &[
@@ -773,17 +891,10 @@ pub fn apply_sunset(value: f32) {
             false,
         );
     }
-    if let (Some(hyprctl), Some(_)) = (which("hyprctl"), which("hyprsunset")) {
+    if has_sunset() {
         std::thread::sleep(Duration::from_millis(300));
-        let ok = run_command(
-            &[vec![hyprctl], request.clone()].concat(),
-            Duration::from_millis(800),
-            false,
-        )
-        .map(|o| o.status)
-        .unwrap_or(false);
-        if ok {
-            let _ = atomic_write_text(&sunset_state_file(), &format!("{target}\n"));
+        if send(&request) {
+            let _ = atomic_write_tmpfs_text(&sunset_state_file(), &format!("{target}\n"));
         }
     }
 }
@@ -806,8 +917,7 @@ pub fn get_power_profile() -> Option<String> {
             return Some(mapped.to_owned());
         }
     }
-    let home = std::env::var("HOME").unwrap_or_default();
-    let p = Path::new(&home).join(".config/dusky/settings/tlp_state");
+    let p = xdg_config_dir().join("dusky/settings/tlp_state");
     if let Ok(txt) = std::fs::read_to_string(p) {
         let s = txt.trim().to_lowercase();
         if ["balanced", "performance", "power-saver"].contains(&s.as_str()) {
@@ -875,30 +985,33 @@ fn read_busctl_bool(out: &Option<CmdOutput>) -> Option<bool> {
     }
 }
 
-fn parse_wifi_connected(status: &str) -> bool {
-    status.lines().any(|line| {
-        matches!(
-            line.split_once(':'),
-            Some(("wifi", "connected" | "connected (externally)"))
-        )
-    })
+fn wifi_connected_in(net_dir: &Path) -> Option<bool> {
+    let entries = std::fs::read_dir(net_dir).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.join("device").exists() {
+            continue;
+        }
+        if !path.join("phy80211").exists() && !path.join("wireless").exists() {
+            continue;
+        }
+        let Ok(kind) = std::fs::read_to_string(path.join("type")) else {
+            continue;
+        };
+        if kind.trim() != "1" {
+            continue;
+        }
+        if let Ok(state) = std::fs::read_to_string(path.join("operstate"))
+            && state.trim() == "up"
+        {
+            return Some(true);
+        }
+    }
+    Some(false)
 }
 
 pub fn wifi_connected() -> Option<bool> {
-    let nmcli = which("nmcli")?;
-    let out = run_command(
-        &[
-            nmcli,
-            "-t".into(),
-            "-f".into(),
-            "TYPE,STATE".into(),
-            "device".into(),
-            "status".into(),
-        ],
-        Duration::from_millis(800),
-        true,
-    )?;
-    out.status.then(|| parse_wifi_connected(&out.stdout))
+    wifi_connected_in(Path::new("/sys/class/net"))
 }
 
 pub fn get_wifi() -> Option<bool> {
@@ -1521,41 +1634,68 @@ fn parse_ram_state(meminfo: &str, zram_stat: Option<(u64, u64, u64)>) -> RamStat
     }
 }
 
+fn parse_proc_stat_cpu(txt: &str) -> Option<(u64, u64)> {
+    let line = txt.lines().next()?;
+    let nums: Vec<u64> = line
+        .split_whitespace()
+        .skip(1)
+        .take(8)
+        .filter_map(|x| x.parse().ok())
+        .collect();
+    if nums.len() < 8 {
+        return None;
+    }
+    let idle = nums[3] + nums[4];
+    let total: u64 = nums.iter().sum();
+    Some((idle, total))
+}
+
+fn parse_cpu_sample(raw: &str) -> Option<(u64, u64, Duration)> {
+    let mut it = raw.split_whitespace().filter_map(|x| x.parse::<u64>().ok());
+    let idle = it.next()?;
+    let total = it.next()?;
+    let at_ms = it.next()?;
+    Some((idle, total, Duration::from_millis(at_ms)))
+}
+
+fn compute_cpu_usage_text(
+    current: (u64, u64),
+    now: Option<Duration>,
+    previous: Option<(u64, u64, Duration)>,
+) -> String {
+    let (idle, total) = current;
+    if let (Some(now), Some((pi, pt, prev_at))) = (now, previous)
+        && let Some(elapsed) = now.checked_sub(prev_at)
+        && (Duration::from_millis(500)..=Duration::from_secs(5)).contains(&elapsed)
+        && idle >= pi
+        && total > pt
+    {
+        let di = idle - pi;
+        let dt = total - pt;
+        let usage = 100.0 * (1.0 - di as f64 / dt as f64);
+        return format!("{:.0}%", usage.clamp(0.0, 100.0));
+    }
+    "--".to_owned()
+}
+
 pub fn cpu_ram_state() -> (CpuState, RamState) {
     let mut cpu_text = "--".to_owned();
-    if let Ok(first) = std::fs::read_to_string("/proc/stat") {
-        // Store sample in tmpfs so deltas survive without SSD writes.
+    if let Ok(first) = std::fs::read_to_string("/proc/stat")
+        && let Some((idle, total)) = parse_proc_stat_cpu(&first)
+    {
+        // Store timestamped sample in tmpfs so deltas survive without SSD writes
+        // and rebase cleanly after suspend or long idle intervals.
         let sample_file = runtime_dir().join("cpu_sample.txt");
-        let parse = |txt: &str| -> Option<(u64, u64)> {
-            let line = txt.lines().next()?;
-            let nums: Vec<u64> = line
-                .split_whitespace()
-                .skip(1)
-                .take(8)
-                .filter_map(|x| x.parse().ok())
-                .collect();
-            if nums.len() < 8 {
-                return None;
-            }
-            let idle = nums[3] + nums[4];
-            let total: u64 = nums.iter().sum();
-            Some((idle, total))
-        };
-        if let Some((idle, total)) = parse(&first) {
-            if let Ok(prev_txt) = std::fs::read_to_string(&sample_file) {
-                let mut it = prev_txt
-                    .split_whitespace()
-                    .filter_map(|x| x.parse::<u64>().ok());
-                if let (Some(pi), Some(pt)) = (it.next(), it.next()) {
-                    let di = idle.saturating_sub(pi);
-                    let dt = total.saturating_sub(pt);
-                    if dt > 0 {
-                        let usage = 100.0 * (1.0 - di as f64 / dt as f64);
-                        cpu_text = format!("{:.0}%", usage.clamp(0.0, 100.0));
-                    }
-                }
-            }
-            let _ = atomic_write_text(&sample_file, &format!("{idle} {total}\n"));
+        let now = network_time();
+        let previous = std::fs::read_to_string(&sample_file)
+            .ok()
+            .and_then(|txt| parse_cpu_sample(&txt));
+        cpu_text = compute_cpu_usage_text((idle, total), now, previous);
+        if let Some(now) = now {
+            let _ = atomic_write_tmpfs_text(
+                &sample_file,
+                &format!("{idle} {total} {}\n", now.as_millis() as u64),
+            );
         }
     }
 
@@ -2207,8 +2347,6 @@ pub fn battery_state() -> BatteryState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WeatherState {
     pub temperature: String,
-    #[allow(dead_code)]
-    pub condition_glyph: Option<String>,
     pub condition: Option<String>,
     pub temp_max: Option<String>,
     pub temp_min: Option<String>,
@@ -2223,19 +2361,29 @@ impl WeatherState {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct WeatherFileStamp {
-    dev: u64,
-    ino: u64,
-    len: u64,
-    modified: Option<std::time::SystemTime>,
+#[derive(Debug, Clone, PartialEq)]
+struct WeatherRequestKey {
+    source: String,
+    unit_pref: String,
+    lat: Option<f64>,
+    lon: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+struct WeatherRecord {
+    state: WeatherState,
+    saved_at: Option<f64>,
+    request_key: Option<WeatherRequestKey>,
 }
 
 #[derive(Debug, Clone)]
 struct WeatherCache {
-    stamp: WeatherFileStamp,
-    state: Option<WeatherState>,
+    stamp: FileStamp,
+    record: Option<WeatherRecord>,
 }
+
+const WEATHER_TTL_SECS: f64 = 3540.0;
+const WEATHER_BACKOFF_SECS: f64 = 45.0;
 
 fn strip_pango(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
@@ -2312,31 +2460,20 @@ fn take_temp(tokens: &[&str], idx: usize) -> Option<(String, usize)> {
     None
 }
 
-fn extract_temp_and_glyph(raw: &str) -> (Option<String>, Option<String>) {
+fn extract_temp(raw: &str) -> Option<String> {
     let tokens: Vec<&str> = raw.split_whitespace().collect();
-    let mut temp = None;
     let mut plain_num = None;
-    let mut glyph = None;
 
-    if let Some(&first) = tokens.first()
-        && is_symbol_token(first)
-    {
-        glyph = Some(first.to_owned());
-    }
-
-    let mut i = 0;
-    while i < tokens.len() {
+    for (i, &tok) in tokens.iter().enumerate() {
         if let Some((t, _used)) = take_temp(&tokens, i) {
-            temp = Some(t);
-            break;
+            return Some(t);
         }
-        if plain_num.is_none() && is_signed_number(tokens[i]) {
-            plain_num = Some(tokens[i].to_owned());
+        if plain_num.is_none() && is_signed_number(tok) {
+            plain_num = Some(tok.to_owned());
         }
-        i += 1;
     }
 
-    (temp.or(plain_num), glyph)
+    plain_num
 }
 
 fn tokenize_metrics(line: &str) -> Vec<&str> {
@@ -2432,23 +2569,148 @@ fn parse_metrics_line(line: &str) -> (Option<String>, Option<String>, Option<Str
     (temp_max, temp_min, precip)
 }
 
-fn parse_weather_json(raw_json: &str) -> Option<WeatherState> {
-    let root: serde_json::Value = serde_json::from_str(raw_json).ok()?;
-    let is_v2 = root.get("version").and_then(|v| v.as_i64()) == Some(2);
-    let data = if is_v2 {
-        root.get("payload")?
-    } else {
-        &root
-    };
+fn parse_weather_request_key(raw: &serde_json::Value) -> Option<WeatherRequestKey> {
+    let source = raw.get("source")?.as_str()?;
+    let unit_pref = raw.get("unit_pref")?.as_str()?;
+    if !matches!(source, "manual" | "ip") || !matches!(unit_pref, "auto" | "celsius" | "fahrenheit")
+    {
+        return None;
+    }
+    if source == "manual" {
+        let lat = raw.get("lat")?.as_f64()?;
+        let lon = raw.get("lon")?.as_f64()?;
+        if !lat.is_finite()
+            || !lon.is_finite()
+            || !(-90.0..=90.0).contains(&lat)
+            || !(-180.0..=180.0).contains(&lon)
+        {
+            return None;
+        }
+        return Some(WeatherRequestKey {
+            source: source.to_owned(),
+            unit_pref: unit_pref.to_owned(),
+            lat: Some(if lat == 0.0 { 0.0 } else { lat }),
+            lon: Some(if lon == 0.0 { 0.0 } else { lon }),
+        });
+    }
+    Some(WeatherRequestKey {
+        source: source.to_owned(),
+        unit_pref: unit_pref.to_owned(),
+        lat: None,
+        lon: None,
+    })
+}
 
-    let (text_temp, text_glyph) = data
+fn weather_request_args(key: Option<&WeatherRequestKey>) -> Vec<String> {
+    let mut args = Vec::new();
+    let Some(key) = key else {
+        return args;
+    };
+    if key.source == "manual"
+        && let (Some(lat), Some(lon)) = (key.lat, key.lon)
+    {
+        args.push("--lat".to_owned());
+        args.push(lat.to_string());
+        args.push("--lon".to_owned());
+        args.push(lon.to_string());
+    }
+    match key.unit_pref.as_str() {
+        "celsius" => args.push("-c".to_owned()),
+        "fahrenheit" => args.push("-f".to_owned()),
+        _ => {}
+    }
+    args
+}
+
+fn format_weather_age(age_secs: f64) -> String {
+    let secs = if age_secs.is_finite() && age_secs > 0.0 {
+        age_secs as u64
+    } else {
+        0
+    };
+    if secs < 60 {
+        "<1m".into()
+    } else if secs < 3600 {
+        format!("{}m", secs / 60)
+    } else if secs < 86_400 {
+        let hours = secs / 3600;
+        let mins = (secs % 3600) / 60;
+        if mins > 0 {
+            format!("{hours}h {mins}m")
+        } else {
+            format!("{hours}h")
+        }
+    } else {
+        let days = secs / 86_400;
+        let hours = (secs % 86_400) / 3600;
+        if hours > 0 {
+            format!("{days}d {hours}h")
+        } else {
+            format!("{days}d")
+        }
+    }
+}
+
+fn is_weather_fresh(saved_at: Option<f64>, now_unix: f64) -> bool {
+    saved_at.is_some_and(|ts| {
+        let age = now_unix - ts;
+        (0.0..WEATHER_TTL_SECS).contains(&age)
+    })
+}
+
+fn weather_runtime_dir() -> PathBuf {
+    if let Some(xdg) = std::env::var_os("XDG_RUNTIME_DIR")
+        .filter(|p| !p.is_empty())
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+    {
+        return xdg;
+    }
+    std::env::temp_dir().join(format!("dusky-waybar-weather-{}", unsafe {
+        libc::getuid()
+    }))
+}
+
+fn is_weather_lock_held(lock_path: &Path) -> bool {
+    let Ok(file) = std::fs::File::open(lock_path) else {
+        return false;
+    };
+    matches!(file.try_lock(), Err(std::fs::TryLockError::WouldBlock))
+}
+
+fn is_weather_backoff_active(backoff_path: &Path, now_boot: Option<Duration>) -> bool {
+    let Some(now_boot) = now_boot else {
+        return false;
+    };
+    let Ok(raw) = std::fs::read_to_string(backoff_path) else {
+        return false;
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return false;
+    };
+    let Some(failed_at) = v.get("failed_at").and_then(|x| x.as_f64()) else {
+        return false;
+    };
+    if !failed_at.is_finite() {
+        return false;
+    }
+    let elapsed = now_boot.as_secs_f64() - failed_at;
+    (0.0..WEATHER_BACKOFF_SECS).contains(&elapsed)
+}
+
+fn parse_weather_record(raw_json: &str) -> Option<WeatherRecord> {
+    let root: serde_json::Value = serde_json::from_str(raw_json).ok()?;
+    if root.get("version").and_then(|v| v.as_i64()) != Some(2) {
+        return None;
+    }
+    let data = root.get("payload")?;
+
+    let text_temp = data
         .get("text")
         .and_then(|v| v.as_str())
-        .map(extract_temp_and_glyph)
-        .unwrap_or((None, None));
+        .and_then(extract_temp);
 
     let mut hero_temp = None;
-    let mut condition_glyph = None;
     let mut condition = None;
     let mut temp_max = None;
     let mut temp_min = None;
@@ -2498,7 +2760,6 @@ fn parse_weather_json(raw_json: &str) -> Option<WeatherState> {
                 let first = parts.next().unwrap_or("");
                 let rest = parts.next().map(str::trim).unwrap_or("");
                 if is_symbol_token(first) && !rest.is_empty() {
-                    condition_glyph = Some(first.to_owned());
                     condition = Some(rest.to_owned());
                 } else {
                     condition = Some(line.to_owned());
@@ -2526,9 +2787,9 @@ fn parse_weather_json(raw_json: &str) -> Option<WeatherState> {
         offline_note = Some("Offline — cached data".to_owned());
     }
 
-    let location = is_v2
-        .then(|| root.get("city").and_then(|v| v.as_str()))
-        .flatten()
+    let location = root
+        .get("city")
+        .and_then(|v| v.as_str())
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .or_else(|| {
@@ -2539,62 +2800,183 @@ fn parse_weather_json(raw_json: &str) -> Option<WeatherState> {
         })
         .map(str::to_owned);
 
-    Some(WeatherState {
-        temperature,
-        condition_glyph: condition_glyph.or(text_glyph),
-        condition,
-        temp_max,
-        temp_min,
-        precip_chance,
-        location,
-        offline_note,
+    let saved_at = root
+        .get("saved_at")
+        .and_then(|v| v.as_f64())
+        .filter(|v| v.is_finite());
+    let request_key = root.get("request_key").and_then(parse_weather_request_key);
+
+    Some(WeatherRecord {
+        state: WeatherState {
+            temperature,
+            condition,
+            temp_max,
+            temp_min,
+            precip_chance,
+            location,
+            offline_note,
+        },
+        saved_at,
+        request_key,
     })
 }
 
-fn weather_state_from_path(
+#[cfg(test)]
+fn parse_weather_json(raw_json: &str) -> Option<WeatherState> {
+    parse_weather_record(raw_json).map(|r| r.state)
+}
+
+fn weather_record_from_path(
     path: &Path,
     cache: &mut Option<WeatherCache>,
-) -> Option<WeatherState> {
-    use std::os::unix::fs::MetadataExt;
-
-    let Ok(meta) = std::fs::metadata(path) else {
+) -> Option<WeatherRecord> {
+    let Some(stamp) = FileStamp::from_file(path) else {
         *cache = None;
         return None;
-    };
-    let stamp = WeatherFileStamp {
-        dev: meta.dev(),
-        ino: meta.ino(),
-        len: meta.len(),
-        modified: meta.modified().ok(),
     };
     if let Some(cached) = cache.as_ref()
         && cached.stamp == stamp
     {
-        return cached.state.clone();
+        return cached.record.clone();
     }
-    let state = std::fs::read_to_string(path)
+    let mut record = std::fs::read_to_string(path)
         .ok()
-        .and_then(|raw| parse_weather_json(&raw));
+        .and_then(|raw| parse_weather_record(&raw));
+    if let Some(rec) = record.as_mut()
+        && rec.saved_at.is_none()
+    {
+        rec.saved_at = std::fs::metadata(path)
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs_f64());
+    }
     *cache = Some(WeatherCache {
         stamp,
-        state: state.clone(),
+        record: record.clone(),
     });
-    state
+    record
+}
+
+#[cfg(test)]
+fn weather_state_from_path(path: &Path, cache: &mut Option<WeatherCache>) -> Option<WeatherState> {
+    weather_record_from_path(path, cache).map(|r| r.state)
+}
+
+fn resolve_python3_with(from_path: Option<String>, local_override: &Path) -> String {
+    if let Some(ref found) = from_path
+        && found != "/usr/bin/python3"
+    {
+        return found.clone();
+    }
+    if local_override.is_file() && access_ok(local_override, libc::X_OK) {
+        return local_override.to_string_lossy().into_owned();
+    }
+    from_path.unwrap_or_else(|| "/usr/bin/python3".to_owned())
+}
+
+fn resolve_python3() -> String {
+    resolve_python3_with(which("python3"), Path::new("/usr/local/bin/python3"))
 }
 
 pub fn weather_state() -> Option<WeatherState> {
-    static PATH: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    static PATH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    static SCRIPT: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
     static CACHE: std::sync::Mutex<Option<WeatherCache>> = std::sync::Mutex::new(None);
+    static LAST_SPAWN: std::sync::Mutex<Option<Duration>> = std::sync::Mutex::new(None);
 
-    let path = PATH
-        .get_or_init(|| {
-            std::env::var_os("HOME")
-                .filter(|h| !h.is_empty())
-                .map(|h| PathBuf::from(h).join(".config/dusky/settings/waybar_weather"))
-        })
-        .as_ref()?;
-    let mut guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
-    weather_state_from_path(path, &mut guard)
+    let path = PATH.get_or_init(|| xdg_config_dir().join("dusky/settings/waybar_weather"));
+    let mut record = {
+        let mut guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        weather_record_from_path(path, &mut guard)
+    };
+
+    let now_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0);
+
+    let stale = match record.as_ref() {
+        Some(rec) => !is_weather_fresh(rec.saved_at, now_unix),
+        None => true,
+    };
+
+    if stale {
+        let now_boot = network_time();
+        let rt_dir = weather_runtime_dir();
+        let lock_held = is_weather_lock_held(&rt_dir.join("dusky-waybar-weather.lock"));
+        let backoff_active =
+            is_weather_backoff_active(&rt_dir.join("dusky-waybar-weather.backoff"), now_boot);
+
+        let script = SCRIPT
+            .get_or_init(|| {
+                std::env::var_os("HOME")
+                    .filter(|h| !h.is_empty())
+                    .map(|h| PathBuf::from(h).join("user_scripts/waybar/weather.py"))
+            })
+            .as_ref()
+            .filter(|p| p.is_file());
+
+        let mut spawn_guard = LAST_SPAWN.lock().unwrap_or_else(|e| e.into_inner());
+        let in_spawn_cooldown = match (*spawn_guard, now_boot) {
+            (Some(last), Some(now)) => {
+                now.saturating_sub(last) < Duration::from_secs(WEATHER_BACKOFF_SECS as u64)
+            }
+            _ => false,
+        };
+
+        let mut refreshing = lock_held || (in_spawn_cooldown && !backoff_active);
+        if !lock_held
+            && !backoff_active
+            && !in_spawn_cooldown
+            && let Some(script_path) = script
+        {
+            let mut argv = vec![
+                resolve_python3(),
+                script_path.to_string_lossy().into_owned(),
+            ];
+            argv.extend(weather_request_args(
+                record.as_ref().and_then(|r| r.request_key.as_ref()),
+            ));
+            let xdg_config = std::env::var("XDG_CONFIG_HOME")
+                .ok()
+                .filter(|v| !v.is_empty());
+            let xdg_runtime = std::env::var("XDG_RUNTIME_DIR")
+                .ok()
+                .filter(|v| !v.is_empty());
+            let mut extra_env: Vec<(&str, &str)> = Vec::new();
+            if let Some(ref v) = xdg_config {
+                extra_env.push(("XDG_CONFIG_HOME", v));
+            }
+            if let Some(ref v) = xdg_runtime {
+                extra_env.push(("XDG_RUNTIME_DIR", v));
+            }
+            if spawn_detached_service(&argv, &extra_env) {
+                *spawn_guard = now_boot;
+                refreshing = true;
+            }
+        }
+        drop(spawn_guard);
+
+        if let Some(rec) = record.as_mut()
+            && rec.state.offline_note.is_none()
+            && let Some(saved_at) = rec.saved_at
+        {
+            let age = now_unix - saved_at;
+            let age_str = if age >= 0.0 {
+                format!("cached {} ago", format_weather_age(age))
+            } else {
+                "cached data".to_owned()
+            };
+            if backoff_active || script.is_none() {
+                rec.state.offline_note = Some(format!("Offline — {age_str}"));
+            } else if refreshing {
+                rec.state.offline_note = Some(format!("Updating — {age_str}"));
+            }
+        }
+    }
+
+    record.map(|r| r.state)
 }
 
 #[derive(Debug, Clone, Default)]
@@ -2645,8 +3027,7 @@ fn parse_updates(cached: &str, behind: &str) -> UpdatesState {
 }
 
 pub fn updates_state() -> UpdatesState {
-    let home = std::env::var("HOME").unwrap_or_default();
-    let base = Path::new(&home).join(".config/dusky/settings");
+    let base = xdg_config_dir().join("dusky/settings");
     parse_updates(
         &std::fs::read_to_string(base.join("waybar_update_counter_h")).unwrap_or_default(),
         &std::fs::read_to_string(base.join("dusky_update_behind_commit")).unwrap_or_default(),
@@ -2654,51 +3035,61 @@ pub fn updates_state() -> UpdatesState {
 }
 
 pub fn animations_enabled() -> Option<bool> {
-    let out = run_command(
-        &[
-            "hyprctl".into(),
-            "getoption".into(),
-            "animations:enabled".into(),
-            "-j".into(),
-        ],
-        Duration::from_millis(800),
-        true,
-    )?;
-    if !out.status {
-        return None;
-    }
-    serde_json::from_str::<serde_json::Value>(&out.stdout)
+    let response = hyprland_ipc("j/getoption animations:enabled")?;
+    serde_json::from_str::<serde_json::Value>(&response)
         .ok()?
         .get("bool")?
         .as_bool()
 }
 
+fn is_process_running_in(proc_dir: &Path, uid: u32, target_comm: &str) -> Option<bool> {
+    use std::os::unix::fs::MetadataExt;
+
+    let entries = std::fs::read_dir(proc_dir).ok()?;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name_str) = name.to_str() else {
+            continue;
+        };
+        if name_str.is_empty() || !name_str.bytes().all(|b| b.is_ascii_digit()) {
+            continue;
+        }
+        let path = entry.path();
+        let Ok(meta) = std::fs::metadata(&path) else {
+            continue;
+        };
+        if meta.uid() != uid {
+            continue;
+        }
+        let Ok(comm) = std::fs::read_to_string(path.join("comm")) else {
+            continue;
+        };
+        if comm.trim_end_matches('\n') != target_comm {
+            continue;
+        }
+        if let Ok(stat) = std::fs::read_to_string(path.join("stat"))
+            && let Some((_, after_comm)) = stat.rsplit_once(')')
+            && after_comm.trim_start().starts_with('Z')
+        {
+            continue;
+        }
+        return Some(true);
+    }
+    Some(false)
+}
+
 pub fn is_idle_active() -> Option<bool> {
-    let pgrep = which("pgrep")?;
-    let out = run_command(
-        &[
-            pgrep,
-            "-u".into(),
-            unsafe { libc::getuid() }.to_string(),
-            "-x".into(),
-            "hypridle".into(),
-        ],
-        Duration::from_millis(800),
-        false,
-    )?;
-    Some(out.status)
+    let uid = unsafe { libc::getuid() };
+    is_process_running_in(Path::new("/proc"), uid, "hypridle")
 }
 
 pub fn is_blur_on() -> Option<bool> {
-    let home = std::env::var("HOME").unwrap_or_default();
-    let txt =
-        std::fs::read_to_string(format!("{home}/.config/dusky/settings/opacity_blur")).ok()?;
+    let txt = std::fs::read_to_string(xdg_config_dir().join("dusky/settings/opacity_blur")).ok()?;
     Some(txt.trim().eq_ignore_ascii_case("true"))
 }
 
 pub fn is_audio_active() -> bool {
-    let home = std::env::var("HOME").unwrap_or_default();
-    let pid_file = format!("{home}/.config/dusky/settings/dusky_studio/daemon.pid");
+    let pid_file = xdg_config_dir().join("dusky/settings/dusky_studio/daemon.pid");
     let Ok(txt) = std::fs::read_to_string(pid_file) else {
         return false;
     };
@@ -2804,14 +3195,48 @@ mod tests {
     }
 
     #[test]
-    fn wifi_connection_distinguishes_radio_enabled_from_connected() {
-        assert!(!parse_wifi_connected(
-            "ethernet:connected\nwifi:disconnected\nwifi-p2p:connected"
-        ));
-        assert!(!parse_wifi_connected("wifi:connecting (prepare)"));
-        assert!(parse_wifi_connected("wifi:disconnected\nwifi:connected"));
-        assert!(parse_wifi_connected("wifi:connected (externally)"));
-        assert!(!parse_wifi_connected(""));
+    fn wifi_sysfs_detects_phy80211_and_wireless() {
+        let root = runtime_dir().join(format!("wifi-sysfs-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        // Wired ethernet up (no phy80211/wireless) -> false
+        let eth0 = root.join("eth0");
+        std::fs::create_dir_all(eth0.join("device")).unwrap();
+        std::fs::write(eth0.join("type"), "1\n").unwrap();
+        std::fs::write(eth0.join("operstate"), "up\n").unwrap();
+        assert_eq!(wifi_connected_in(&root), Some(false));
+
+        // Modern WEXT-free driver (phy80211 only) down -> false
+        let wlan0 = root.join("wlan0");
+        std::fs::create_dir_all(wlan0.join("device")).unwrap();
+        std::fs::create_dir_all(wlan0.join("phy80211")).unwrap();
+        std::fs::write(wlan0.join("type"), "1\n").unwrap();
+        std::fs::write(wlan0.join("operstate"), "down\n").unwrap();
+        assert_eq!(wifi_connected_in(&root), Some(false));
+
+        // Non-ethernet wireless monitor interface (type 803) up -> ignored
+        let mon0 = root.join("mon0");
+        std::fs::create_dir_all(mon0.join("device")).unwrap();
+        std::fs::create_dir_all(mon0.join("phy80211")).unwrap();
+        std::fs::write(mon0.join("type"), "803\n").unwrap();
+        std::fs::write(mon0.join("operstate"), "up\n").unwrap();
+        assert_eq!(wifi_connected_in(&root), Some(false));
+
+        // wlan0 comes up -> true
+        std::fs::write(wlan0.join("operstate"), "up\n").unwrap();
+        assert_eq!(wifi_connected_in(&root), Some(true));
+
+        // Legacy wireless/ directory without phy80211 -> true
+        std::fs::write(wlan0.join("operstate"), "dormant\n").unwrap();
+        let wlan1 = root.join("wlan1");
+        std::fs::create_dir_all(wlan1.join("device")).unwrap();
+        std::fs::create_dir_all(wlan1.join("wireless")).unwrap();
+        std::fs::write(wlan1.join("type"), "1\n").unwrap();
+        std::fs::write(wlan1.join("operstate"), "up\n").unwrap();
+        assert_eq!(wifi_connected_in(&root), Some(true));
+
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -3189,10 +3614,7 @@ mod tests {
             detect_warp_status_in(&root, false),
             WarpStatus::NotInstalled
         );
-        assert_eq!(
-            detect_warp_status_in(&root, true),
-            WarpStatus::Disconnected
-        );
+        assert_eq!(detect_warp_status_in(&root, true), WarpStatus::Disconnected);
 
         let warp = root.join("CloudflareWARP");
         std::fs::create_dir_all(&warp).unwrap();
@@ -3213,18 +3635,12 @@ mod tests {
 
         // Operstate "down" -> Disconnected
         std::fs::write(warp.join("operstate"), "down\n").unwrap();
-        assert_eq!(
-            detect_warp_status_in(&root, true),
-            WarpStatus::Disconnected
-        );
+        assert_eq!(detect_warp_status_in(&root, true), WarpStatus::Disconnected);
 
         // Operstate "unknown" but IFF_UP cleared (0x1090) -> Disconnected
         std::fs::write(warp.join("operstate"), "unknown\n").unwrap();
         std::fs::write(warp.join("flags"), "0x1090\n").unwrap();
-        assert_eq!(
-            detect_warp_status_in(&root, true),
-            WarpStatus::Disconnected
-        );
+        assert_eq!(detect_warp_status_in(&root, true), WarpStatus::Disconnected);
 
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -3436,8 +3852,13 @@ mod tests {
         std::fs::write(tz0.join("temp"), "39000\n").unwrap();
 
         let mut tracker = CpuTempTracker::default();
-        let t_tz = cpu_temp_reading(&hwmon, &thermal, Some(Duration::from_secs(10)), &mut tracker)
-            .unwrap();
+        let t_tz = cpu_temp_reading(
+            &hwmon,
+            &thermal,
+            Some(Duration::from_secs(10)),
+            &mut tracker,
+        )
+        .unwrap();
         assert!((t_tz - 39.0).abs() < 1e-6);
 
         // Add k10temp with Tctl (temp1) and Tdie (temp2)
@@ -3450,29 +3871,47 @@ mod tests {
         std::fs::write(h2.join("temp2_input"), "54500\n").unwrap();
 
         // While cached path (tz0) remains valid, hot path uses it directly
-        let still_cached =
-            cpu_temp_reading(&hwmon, &thermal, Some(Duration::from_secs(11)), &mut tracker)
-                .unwrap();
+        let still_cached = cpu_temp_reading(
+            &hwmon,
+            &thermal,
+            Some(Duration::from_secs(11)),
+            &mut tracker,
+        )
+        .unwrap();
         assert!((still_cached - 39.0).abs() < 1e-6);
 
         // Removing cached sensor invalidates cache; cooldown (<5s) prevents immediate rescan
         std::fs::remove_file(tz0.join("temp")).unwrap();
         assert!(
-            cpu_temp_reading(&hwmon, &thermal, Some(Duration::from_secs(12)), &mut tracker)
-                .is_none()
+            cpu_temp_reading(
+                &hwmon,
+                &thermal,
+                Some(Duration::from_secs(12)),
+                &mut tracker
+            )
+            .is_none()
         );
 
         // After 5s cooldown, rediscovery finds k10temp Tdie (54.5°C)
-        let t_tdie =
-            cpu_temp_reading(&hwmon, &thermal, Some(Duration::from_secs(16)), &mut tracker)
-                .unwrap();
+        let t_tdie = cpu_temp_reading(
+            &hwmon,
+            &thermal,
+            Some(Duration::from_secs(16)),
+            &mut tracker,
+        )
+        .unwrap();
         assert!((t_tdie - 54.5).abs() < 1e-6);
 
         // Out-of-bounds sentinel reading invalidates cache cleanly
         std::fs::write(h2.join("temp2_input"), "-273000\n").unwrap();
         assert!(
-            cpu_temp_reading(&hwmon, &thermal, Some(Duration::from_secs(18)), &mut tracker)
-                .is_none()
+            cpu_temp_reading(
+                &hwmon,
+                &thermal,
+                Some(Duration::from_secs(18)),
+                &mut tracker
+            )
+            .is_none()
         );
 
         std::fs::remove_dir_all(root).unwrap();
@@ -3575,7 +4014,6 @@ mod tests {
         }"#;
         let state = parse_weather_json(json).unwrap();
         assert_eq!(state.temperature, "11°C");
-        assert_eq!(state.condition_glyph.as_deref(), Some(""));
         assert_eq!(state.condition.as_deref(), Some("Partly cloudy"));
         assert_eq!(state.temp_max.as_deref(), Some("12°C"));
         assert_eq!(state.temp_min.as_deref(), Some("-1°C"));
@@ -3586,20 +4024,25 @@ mod tests {
     }
 
     #[test]
-    fn weather_parses_offline_pango_note_and_class_fallback() {
+    fn weather_parses_offline_and_rejects_invalid() {
         let offline_v2 = r#"{
           "version": 2,
           "payload": {
-            "text": "   11°C",
-            "alt": "City",
-            "tooltip": "<span size='xx-large'>11°C</span>\n<big> Partly cloudy</big>\n 12°C   -1°C   45%\n\n<span color='#ff6b6b'>⚠ Offline — cached 18m ago</span>",
+            "text": "   72.5 °F",
+            "alt": "Seattle",
+            "tooltip": "<span size='xx-large'>72.5°F</span>\n<big>Rain &amp; Drizzle</big>\n 78°F   54°F   45%\n\n<span color='#ff6b6b'>⚠ Offline — cached 18m ago</span>",
             "class": "weather"
           },
-          "city": "City"
+          "city": "Seattle"
         }"#;
         let state = parse_weather_json(offline_v2).unwrap();
-        assert!(state.is_offline());
+        assert_eq!(state.temperature, "72.5°F");
+        assert_eq!(state.condition.as_deref(), Some("Rain & Drizzle"));
+        assert_eq!(state.temp_max.as_deref(), Some("78°F"));
+        assert_eq!(state.temp_min.as_deref(), Some("54°F"));
         assert_eq!(state.precip_chance.as_deref(), Some("45%"));
+        assert_eq!(state.location.as_deref(), Some("Seattle"));
+        assert!(state.is_offline());
         assert_eq!(
             state.offline_note.as_deref(),
             Some("Offline — cached 18m ago")
@@ -3618,33 +4061,16 @@ mod tests {
             fallback.offline_note.as_deref(),
             Some("Offline — cached data")
         );
-    }
 
-    #[test]
-    fn weather_parses_v1_imperial_entities_and_rejects_invalid() {
-        let v1_rich = r#"{
-          "text": "  72.5 °F",
-          "alt": "Seattle",
-          "tooltip": "<span size='xx-large'>72.5°F</span>\n<big>Rain &amp; Drizzle</big>\n 78°F   54°F   80%"
-        }"#;
-        let state = parse_weather_json(v1_rich).unwrap();
-        assert_eq!(state.temperature, "72.5°F");
-        assert_eq!(state.condition_glyph.as_deref(), Some(""));
-        assert_eq!(state.condition.as_deref(), Some("Rain & Drizzle"));
-        assert_eq!(state.temp_max.as_deref(), Some("78°F"));
-        assert_eq!(state.temp_min.as_deref(), Some("54°F"));
-        assert_eq!(state.precip_chance.as_deref(), Some("80%"));
-        assert_eq!(state.location.as_deref(), Some("Seattle"));
-        assert!(!state.is_offline());
-
-        let v1_text_only = r#"{"text": "   -3 °C"}"#;
-        let minimal = parse_weather_json(v1_text_only).unwrap();
-        assert_eq!(minimal.temperature, "-3°C");
-        assert_eq!(minimal.condition, None);
-        assert_eq!(minimal.temp_max, None);
-        assert_eq!(minimal.location, None);
-
-        for invalid in ["", "not json", "{}", r#"{"text":"   "}"#, r#"{"version":2}"#] {
+        for invalid in [
+            "",
+            "not json",
+            "{}",
+            r#"{"text":"11°C"}"#,
+            r#"{"version":1,"payload":{"text":"11°C"}}"#,
+            r#"{"version":2}"#,
+            r#"{"version":2,"payload":{"text":"   "}}"#,
+        ] {
             assert!(parse_weather_json(invalid).is_none(), "{invalid:?}");
         }
     }
@@ -3661,13 +4087,13 @@ mod tests {
         assert!(weather_state_from_path(&file, &mut cache).is_none());
         assert!(cache.is_none());
 
-        std::fs::write(&file, r#"{"text":"11°C"}"#).unwrap();
+        std::fs::write(&file, r#"{"version":2,"payload":{"text":"11°C"}}"#).unwrap();
         let first = weather_state_from_path(&file, &mut cache).unwrap();
         assert_eq!(first.temperature, "11°C");
         assert!(cache.is_some());
 
         // Atomic rename with identical length still changes inode and invalidates cache.
-        std::fs::write(&tmp, r#"{"text":"22°C"}"#).unwrap();
+        std::fs::write(&tmp, r#"{"version":2,"payload":{"text":"22°C"}}"#).unwrap();
         std::fs::rename(&tmp, &file).unwrap();
         let updated = weather_state_from_path(&file, &mut cache).unwrap();
         assert_eq!(updated.temperature, "22°C");
@@ -3677,5 +4103,213 @@ mod tests {
         assert!(cache.is_none());
 
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn weather_staleness_clock_skew_and_request_key_args() {
+        // Freshness respects exact [0, 3540) TTL and rejects future timestamps (clock skew).
+        assert!(is_weather_fresh(Some(1000.0), 1000.0));
+        assert!(is_weather_fresh(Some(1000.0), 4539.9));
+        assert!(!is_weather_fresh(Some(1000.0), 4540.0));
+        assert!(!is_weather_fresh(Some(1005.0), 1000.0));
+        assert!(!is_weather_fresh(None, 1000.0));
+
+        assert_eq!(format_weather_age(0.0), "<1m");
+        assert_eq!(format_weather_age(45.0), "<1m");
+        assert_eq!(format_weather_age(900.0), "15m");
+        assert_eq!(format_weather_age(3600.0), "1h");
+        assert_eq!(format_weather_age(5400.0), "1h 30m");
+        assert_eq!(format_weather_age(90_000.0), "1d 1h");
+
+        let manual = parse_weather_record(
+            r#"{
+              "version": 2,
+              "saved_at": 1700000000.0,
+              "request_key": {"source": "manual", "unit_pref": "fahrenheit", "lat": 47.6, "lon": -122.3},
+              "payload": {"text": "70°F"}
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            weather_request_args(manual.request_key.as_ref()),
+            vec!["--lat", "47.6", "--lon", "-122.3", "-f"]
+        );
+
+        let ip_celsius = parse_weather_record(
+            r#"{
+              "version": 2,
+              "request_key": {"source": "ip", "unit_pref": "celsius"},
+              "payload": {"text": "15°C"}
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            weather_request_args(ip_celsius.request_key.as_ref()),
+            vec!["-c"]
+        );
+        assert!(weather_request_args(None).is_empty());
+    }
+
+    #[test]
+    fn wpctl_volume_parses_level_and_muted_state() {
+        assert_eq!(parse_wpctl_volume("Volume: 0.50\n"), Some((50.0, false)));
+        assert_eq!(
+            parse_wpctl_volume("Volume: 0.73 [MUTED]\n"),
+            Some((73.0, true))
+        );
+        assert_eq!(
+            parse_wpctl_volume("Volume: 1.25 [MUTED]\n"),
+            Some((100.0, true))
+        );
+        assert_eq!(parse_wpctl_volume("Volume: 0.00"), Some((0.0, false)));
+        assert_eq!(parse_wpctl_volume("garbage"), None);
+    }
+
+    #[test]
+    fn ddc_connector_cache_skips_laptop_only_and_detects_hotplug() {
+        let root = runtime_dir().join(format!("ddc-conn-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let drm = root.join("drm");
+        let edp = drm.join("card0-eDP-1");
+        let hdmi = drm.join("card0-HDMI-A-1");
+        let dp = drm.join("card0-DP-1");
+        std::fs::create_dir_all(&edp).unwrap();
+        std::fs::create_dir_all(&hdmi).unwrap();
+        std::fs::create_dir_all(&dp).unwrap();
+        std::fs::write(edp.join("status"), "connected\n").unwrap();
+        std::fs::write(hdmi.join("status"), "disconnected\n").unwrap();
+        std::fs::write(dp.join("status"), "disconnected\n").unwrap();
+
+        // Laptop internal panel only -> zero external connectors.
+        assert_eq!(connected_external_drm_connectors_in(&drm), Some(vec![]));
+
+        // External DP monitor connected -> discovered and cached with real VCP max.
+        std::fs::write(dp.join("status"), "connected\n").unwrap();
+        let connectors = connected_external_drm_connectors_in(&drm).unwrap();
+        assert_eq!(connectors, vec!["card0-DP-1"]);
+
+        let cache_file = root.join("ddcutil_displays.json");
+        let saved = DdcCacheData {
+            connectors: connectors.clone(),
+            displays: vec![DdcDisplay { bus: 4, max: 100 }],
+        };
+        std::fs::write(&cache_file, serialize_ddc_cache(&saved)).unwrap();
+        assert_eq!(
+            ddc_cached_displays(&cache_file, &connectors, Duration::from_secs(45)),
+            Some(vec![DdcDisplay { bus: 4, max: 100 }])
+        );
+
+        // Hotplugging a second external monitor invalidates the cache immediately.
+        std::fs::write(hdmi.join("status"), "connected\n").unwrap();
+        let hotplugged = connected_external_drm_connectors_in(&drm).unwrap();
+        assert_eq!(hotplugged, vec!["card0-DP-1", "card0-HDMI-A-1"]);
+        assert_eq!(
+            ddc_cached_displays(&cache_file, &hotplugged, Duration::from_secs(45)),
+            None
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cpu_sample_rebases_after_suspend() {
+        assert_eq!(
+            compute_cpu_usage_text(
+                (150, 200),
+                Some(Duration::from_secs(12)),
+                Some((100, 100, Duration::from_secs(10)))
+            ),
+            "50%"
+        );
+        // Stale sample (>5s, e.g. suspend or tray closed for hours) rebases cleanly.
+        assert_eq!(
+            compute_cpu_usage_text(
+                (150, 200),
+                Some(Duration::from_secs(30)),
+                Some((100, 100, Duration::from_secs(10)))
+            ),
+            "--"
+        );
+        // Too-short sample (<500ms) rebases cleanly.
+        assert_eq!(
+            compute_cpu_usage_text(
+                (150, 200),
+                Some(Duration::from_millis(10_200)),
+                Some((100, 100, Duration::from_secs(10)))
+            ),
+            "--"
+        );
+        // Old 2-field format without timestamp fails parse and rebases cleanly.
+        assert_eq!(parse_cpu_sample("100 200\n"), None);
+        assert_eq!(
+            parse_cpu_sample("100 200 12345\n"),
+            Some((100, 200, Duration::from_millis(12_345)))
+        );
+    }
+
+    #[test]
+    fn hyprsunset_ipc_shuts_down_write_half_before_reading() {
+        use std::io::{Read, Write};
+        use std::os::unix::net::UnixListener;
+
+        let sock = runtime_dir().join(format!("hyprsunset-test-{}.sock", std::process::id()));
+        let _ = std::fs::remove_file(&sock);
+        let listener = UnixListener::bind(&sock).unwrap();
+
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut req = String::new();
+            // Blocks until the client closes its write half via Shutdown::Write.
+            stream.read_to_string(&mut req).unwrap();
+            assert_eq!(req, "temperature");
+            stream.write_all(b"2375").unwrap();
+        });
+
+        let started = std::time::Instant::now();
+        let reply = hyprsunset_ipc_at(&sock, "temperature");
+        let elapsed = started.elapsed();
+        server.join().unwrap();
+        let _ = std::fs::remove_file(&sock);
+
+        assert_eq!(reply.as_deref(), Some("2375"));
+        assert!(
+            elapsed < Duration::from_millis(250),
+            "IPC must not wait for 800ms read timeout (took {elapsed:?})"
+        );
+    }
+
+    #[test]
+    fn python3_resolver_prefers_local_override_over_usr_bin() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = runtime_dir().join(format!("py3-resolve-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let local = root.join("python3");
+        std::fs::write(&local, "#!/usr/bin/bash\n").unwrap();
+        std::fs::set_permissions(&local, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        // Explicit non-/usr/bin PATH match wins directly.
+        assert_eq!(
+            resolve_python3_with(Some("/opt/py/python3".into()), &local),
+            "/opt/py/python3"
+        );
+        // Minimal PATH resolving to /usr/bin/python3 still picks executable local override.
+        assert_eq!(
+            resolve_python3_with(Some("/usr/bin/python3".into()), &local),
+            local.to_string_lossy()
+        );
+        // Empty PATH still picks executable local override.
+        assert_eq!(resolve_python3_with(None, &local), local.to_string_lossy());
+
+        // Without a local override, falls back cleanly to /usr/bin/python3.
+        let missing = root.join("missing-python3");
+        assert_eq!(
+            resolve_python3_with(Some("/usr/bin/python3".into()), &missing),
+            "/usr/bin/python3"
+        );
+        assert_eq!(resolve_python3_with(None, &missing), "/usr/bin/python3");
+
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

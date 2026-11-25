@@ -4,10 +4,12 @@
 //! quick-toggle grid (5), power row (wifi+bt switches + TLP radios),
 //! sliders (volume / brightness / sunset), notifications.
 
+use chrono::{Datelike, Days, Months, NaiveDate};
 use iced_core::alignment::{Horizontal, Vertical};
 use iced_core::font::Weight;
 use iced_core::keyboard::Key;
 use iced_core::keyboard::key::Named;
+use iced_core::mouse::ScrollDelta;
 use iced_core::{Border, Color, Event, Font, Length};
 use iced_futures::Subscription;
 use iced_runtime::Task;
@@ -42,10 +44,18 @@ pub enum Message {
     BlurConfigured,
     GlobalBlurLoaded(Option<bool>),
     WeatherLoaded(Option<sys::WeatherState>),
-    MetricsLoaded((sys::CpuState, sys::RamState, sys::NetState, sys::BatteryState)),
+    MetricsLoaded(
+        (
+            sys::CpuState,
+            sys::RamState,
+            sys::NetState,
+            sys::BatteryState,
+        ),
+    ),
     TogglesLoaded(u64, ToggleSnapshot),
     RadioLoaded(u64, u64, (Option<bool>, Option<bool>)),
     PowerLoaded(u64, Option<String>),
+    VolumeLoaded(u64, Option<(f32, bool)>),
     SliderLoaded(SliderKind, u64, Option<f32>),
     NotifsLoaded(u64, (Vec<Notification>, Option<bool>)),
     NotifsRefreshed(u64, (Vec<Notification>, Option<bool>)),
@@ -64,6 +74,8 @@ pub enum Message {
     SliderApplied(SliderKind),
     PowerButton,
     ClockPressed,
+    CalendarScrolled(ScrollDelta),
+    CalendarHoverExited,
     WeatherPressed,
     WifiManager,
     BluetoothManager,
@@ -78,6 +90,8 @@ pub enum Message {
     NotifsCleared,
     NotifDismiss(i32),
     NotifInvoke(i32),
+    NotifInvoked(bool),
+    NotifActionDone,
     StackToggled(String),
     StackClosed(String),
     NotificationHovered(String),
@@ -147,6 +161,22 @@ impl RefreshKind {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CalendarCell {
+    day: u32,
+    in_month: bool,
+    is_today: bool,
+    is_weekend: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CalendarMonth {
+    title: String,
+    badge: String,
+    is_offset: bool,
+    cells: [CalendarCell; 42],
+}
+
 // ---------------------------------------------------------------------------
 // app state
 // ---------------------------------------------------------------------------
@@ -158,6 +188,9 @@ pub struct TrayApp {
     theme: AppTheme,
     time_text: String,
     date_text: String,
+    today: NaiveDate,
+    calendar_month_offset: i32,
+    calendar_scroll_accum: f32,
     weather: Option<sys::WeatherState>,
     cpu: sys::CpuState,
     ram: sys::RamState,
@@ -177,6 +210,7 @@ pub struct TrayApp {
     power_revision: u64,
     powertop_running: bool,
     volume: Option<f32>,
+    volume_muted: bool,
     brightness: Option<f32>,
     sunset: Option<f32>,
     sunset_available: bool,
@@ -218,7 +252,7 @@ impl TrayApp {
     }
 
     fn state(config: AppConfig) -> Self {
-        let (time_text, date_text) = sys::current_time_date();
+        let (time_text, date_text, today) = sys::current_time_date();
         Self {
             config,
             appearance: Appearance::load().unwrap_or_default(),
@@ -228,6 +262,9 @@ impl TrayApp {
             theme: AppTheme::load(),
             time_text,
             date_text,
+            today,
+            calendar_month_offset: 0,
+            calendar_scroll_accum: 0.0,
             weather: None,
             cpu: Default::default(),
             ram: Default::default(),
@@ -247,6 +284,7 @@ impl TrayApp {
             power_revision: 0,
             powertop_running: false,
             volume: None,
+            volume_muted: false,
             brightness: None,
             sunset: None,
             sunset_available: false,
@@ -355,14 +393,21 @@ impl TrayApp {
                 worker::start(sys::get_power_profile)
                     .map(move |state| Message::PowerLoaded(revision, state))
             }
+            RefreshKind::Slider(SliderKind::Volume) => {
+                let revision = self
+                    .slider_revision
+                    .get(&SliderKind::Volume)
+                    .copied()
+                    .unwrap_or(0);
+                worker::start(sys::get_volume)
+                    .map(move |value| Message::VolumeLoaded(revision, value))
+            }
             RefreshKind::Slider(kind) => {
                 let revision = self.slider_revision.get(&kind).copied().unwrap_or(0);
                 worker::start(move || match kind {
-                    SliderKind::Volume => sys::get_volume(),
                     SliderKind::Brightness => sys::get_brightness(),
-                    SliderKind::Sunset => (sys::has_sunset() && sys::is_sunset_service_enabled())
-                        .then(sys::get_sunset)
-                        .flatten(),
+                    SliderKind::Sunset => sys::get_sunset(),
+                    SliderKind::Volume => unreachable!(),
                 })
                 .map(move |value| Message::SliderLoaded(kind, revision, value))
             }
@@ -382,6 +427,7 @@ impl TrayApp {
             Message::TogglesLoaded(_, _) => Some(RefreshKind::Toggles),
             Message::RadioLoaded(_, _, _) => Some(RefreshKind::Radios),
             Message::PowerLoaded(_, _) => Some(RefreshKind::Power),
+            Message::VolumeLoaded(_, _) => Some(RefreshKind::Slider(SliderKind::Volume)),
             Message::SliderLoaded(kind, _, _) => Some(RefreshKind::Slider(*kind)),
             _ => None,
         };
@@ -427,7 +473,7 @@ impl TrayApp {
             Message::Tick => {
                 // Local time is cheap to read and must not wait for slow DDC
                 // discovery or occupied hardware-query workers.
-                (self.time_text, self.date_text) = sys::current_time_date();
+                (self.time_text, self.date_text, self.today) = sys::current_time_date();
                 let panel_fit = self.fit_panel();
                 let mut blur_change = Task::none();
                 if let Some(appearance) = Appearance::load() {
@@ -477,6 +523,32 @@ impl TrayApp {
                     self.power_profile = p;
                 }
             }
+            Message::VolumeLoaded(revision, value) => {
+                if revision
+                    == self
+                        .slider_revision
+                        .get(&SliderKind::Volume)
+                        .copied()
+                        .unwrap_or(0)
+                {
+                    let recent = self
+                        .slider_changed_at
+                        .get(&SliderKind::Volume)
+                        .is_some_and(|t| t.elapsed() < Duration::from_secs(3));
+                    if !recent && !self.slider_busy.contains(&SliderKind::Volume) {
+                        match value {
+                            Some((level, muted)) => {
+                                self.volume = Some(level);
+                                self.volume_muted = muted;
+                            }
+                            None => {
+                                self.volume = None;
+                                self.volume_muted = false;
+                            }
+                        }
+                    }
+                }
+            }
             Message::SliderLoaded(kind, revision, value) => {
                 if revision == self.slider_revision.get(&kind).copied().unwrap_or(0) {
                     let recent = self
@@ -508,25 +580,17 @@ impl TrayApp {
                 if dnd.is_some() && !self.dnd_pending && revision == self.dnd_revision {
                     self.dnd = dnd;
                 }
-                // Drop expansions for apps that vanished.
-                let apps: HashSet<String> = self
-                    .notifications
-                    .iter()
-                    .map(|n| {
-                        if n.app.is_empty() {
-                            "Unknown".to_owned()
-                        } else {
-                            n.app.clone()
-                        }
-                    })
-                    .collect();
-                self.expanded.retain(|a| apps.contains(a));
+                self.prune_expanded();
             }
             Message::SliderChanged(kind, value) => {
                 let value = match kind {
                     SliderKind::Volume => {
-                        self.volume = Some(sys::clamp(value, 0.0, 100.0));
-                        self.volume.unwrap()
+                        let clamped = sys::clamp(value, 0.0, 100.0);
+                        self.volume = Some(clamped);
+                        if clamped > 0.0 {
+                            self.volume_muted = false;
+                        }
+                        clamped
                     }
                     SliderKind::Brightness => {
                         self.brightness = Some(sys::clamp(value, 1.0, 100.0));
@@ -640,28 +704,17 @@ impl TrayApp {
                 }
             }
             Message::ToggleRight(id) => {
-                if let Some(t) = self.config.toggles.iter().find(|t| t.id == id) {
-                    let cmd = if id == "power-saver-fallback" {
-                        String::new()
-                    } else {
-                        t.on_right.clone()
-                    };
-                    if id == "audio" && cmd.is_empty() {
-                        self.toggle_revision += 1;
-                        // Fallback parity with Python --toggle when config lacks on_right.
-                        execute_detached(
-                            "python3 ~/user_scripts/audio/dusky_audio_studio/dusky_audio_studio.py --toggle",
-                        );
-                    } else if !cmd.is_empty() {
-                        self.toggle_revision += 1;
-                        execute_detached(&cmd);
-                        if matches!(id.as_str(), "idle" | "blur") {
-                            return iced_runtime::exit();
-                        }
+                if let Some(t) = self.config.toggles.iter().find(|t| t.id == id)
+                    && !t.on_right.is_empty()
+                {
+                    self.toggle_revision += 1;
+                    execute_detached(&t.on_right);
+                    if matches!(id.as_str(), "idle" | "blur" | "updates") {
+                        return iced_runtime::exit();
                     }
-                }
-                if id == "audio" {
-                    self.toggles.audio_active = !self.toggles.audio_active;
+                    if id == "audio" {
+                        self.toggles.audio_active = !self.toggles.audio_active;
+                    }
                 }
             }
             Message::PowerButton => {
@@ -669,8 +722,48 @@ impl TrayApp {
                 return iced_runtime::exit();
             }
             Message::ClockPressed => {
+                self.calendar_month_offset = 0;
+                self.calendar_scroll_accum = 0.0;
                 execute_detached("gnome-clocks");
                 return iced_runtime::exit();
+            }
+            Message::CalendarScrolled(delta) => {
+                let (x, y, is_lines) = match delta {
+                    ScrollDelta::Lines { x, y } => (x, y, true),
+                    ScrollDelta::Pixels { x, y } => (x, y, false),
+                };
+                if !x.is_finite() || !y.is_finite() || y.abs() <= f32::EPSILON || x.abs() > y.abs()
+                {
+                    return Task::none();
+                }
+                let normalized = if is_lines { y } else { y / 40.0 };
+                if self.calendar_scroll_accum.abs() > f32::EPSILON
+                    && self.calendar_scroll_accum.is_sign_positive()
+                        != normalized.is_sign_positive()
+                {
+                    self.calendar_scroll_accum = 0.0;
+                }
+                self.calendar_scroll_accum += normalized;
+                if self.calendar_scroll_accum.abs() >= 1.0 {
+                    // Scroll UP (y > 0) -> previous month; scroll DOWN (y < 0) -> next month.
+                    let step = if self.calendar_scroll_accum > 0.0 {
+                        -1
+                    } else {
+                        1
+                    };
+                    self.calendar_month_offset =
+                        (self.calendar_month_offset + step).clamp(-120, 120);
+                    if is_lines {
+                        self.calendar_scroll_accum = 0.0;
+                    } else {
+                        self.calendar_scroll_accum =
+                            self.calendar_scroll_accum.fract().clamp(-0.99, 0.99);
+                    }
+                }
+            }
+            Message::CalendarHoverExited => {
+                self.calendar_month_offset = 0;
+                self.calendar_scroll_accum = 0.0;
             }
             Message::WeatherPressed => {
                 execute_detached(
@@ -743,6 +836,7 @@ impl TrayApp {
                 self.dismissed
                     .extend(self.notifications.iter().map(|n| n.id));
                 self.notifications.clear();
+                self.expanded.clear();
                 return worker::perform(notify::clear_all).map(|_| Message::NotifsCleared);
             }
             Message::NotifsCleared => {
@@ -751,24 +845,36 @@ impl TrayApp {
                     .map(move |state| Message::NotifsLoaded(revision, state));
             }
             Message::NotifDismiss(id) => {
+                let was_active = self
+                    .notifications
+                    .iter()
+                    .find(|n| n.id == id)
+                    .is_some_and(|n| n.source == "active");
                 self.dismissed.insert(id);
                 self.notifications.retain(|n| n.id != id);
-                std::thread::Builder::new()
-                    .name("notif-dismiss".into())
-                    .spawn(move || notify::dismiss(id))
-                    .ok();
+                self.prune_expanded();
+                notify::append_blacklist_ids(&[id]);
+                if was_active {
+                    return worker::perform(move || notify::dismiss_mako_ids(&[id]))
+                        .map(|()| Message::NotifActionDone);
+                }
             }
             Message::NotifInvoke(id) => {
                 let notification = self.notifications.iter().find(|n| n.id == id).cloned();
                 self.dismissed.insert(id);
                 self.notifications.retain(|n| n.id != id);
+                self.prune_expanded();
+                notify::append_blacklist_ids(&[id]);
                 if let Some(n) = notification {
-                    std::thread::Builder::new()
-                        .name("notif-invoke".into())
-                        .spawn(move || notify::invoke(n))
-                        .ok();
+                    return worker::perform(move || notify::invoke(n)).map(Message::NotifInvoked);
                 }
             }
+            Message::NotifInvoked(launched) => {
+                if launched {
+                    return iced_runtime::exit();
+                }
+            }
+            Message::NotifActionDone => {}
             Message::NotificationHovered(key) => self.hovered_notification = Some(key),
             Message::NotificationLeft(key) => {
                 if self.hovered_notification.as_ref() == Some(&key) {
@@ -781,29 +887,28 @@ impl TrayApp {
                 }
             }
             Message::StackClosed(app) => {
-                let ids: Vec<i32> = self
-                    .notifications
-                    .iter()
-                    .filter(|n| {
-                        let a = if n.app.is_empty() { "Unknown" } else { &n.app };
-                        a == app
-                    })
-                    .map(|n| n.id)
-                    .collect();
+                let mut ids = Vec::new();
+                let mut active_ids = Vec::new();
+                for n in &self.notifications {
+                    let a = if n.app.is_empty() { "Unknown" } else { &n.app };
+                    if a == app {
+                        ids.push(n.id);
+                        if n.source == "active" {
+                            active_ids.push(n.id);
+                        }
+                    }
+                }
                 self.dismissed.extend(ids.iter().copied());
                 self.notifications.retain(|n| {
                     let a = if n.app.is_empty() { "Unknown" } else { &n.app };
                     a != app
                 });
                 self.expanded.remove(&app);
-                std::thread::Builder::new()
-                    .name("stack-close".into())
-                    .spawn(move || {
-                        for id in ids {
-                            notify::dismiss(id);
-                        }
-                    })
-                    .ok();
+                notify::append_blacklist_ids(&ids);
+                if !active_ids.is_empty() {
+                    return worker::perform(move || notify::dismiss_mako_ids(&active_ids))
+                        .map(|()| Message::NotifActionDone);
+                }
             }
             Message::BackdropPressed => return iced_runtime::exit(),
             Message::EventOccurred(Event::Keyboard(iced_core::keyboard::Event::KeyPressed {
@@ -832,6 +937,20 @@ impl TrayApp {
         self.panel_fit_busy = true;
         worker::perform(move || sys::fit_panel(monitor, size))
             .map(move |success| Message::PanelFitted(size, success))
+    }
+
+    fn prune_expanded(&mut self) {
+        let mut counts: HashMap<&str, usize> = HashMap::new();
+        for n in &self.notifications {
+            let app = if n.app.is_empty() {
+                "Unknown"
+            } else {
+                n.app.as_str()
+            };
+            *counts.entry(app).or_default() += 1;
+        }
+        self.expanded
+            .retain(|app| counts.get(app.as_str()).copied().unwrap_or(0) > 1);
     }
 
     fn finish_refresh(&mut self, kind: RefreshKind) {
@@ -1244,9 +1363,7 @@ impl TrayApp {
         if let Some(hi) = &w.temp_max {
             metric_items.push(
                 row![
-                    text("▲")
-                        .size(10)
-                        .color(saturate(theme.profiles[2], 0.85)),
+                    text("▲").size(10).color(saturate(theme.profiles[2], 0.85)),
                     text(hi.clone())
                         .size(12)
                         .font(Font::MONOSPACE)
@@ -1314,19 +1431,16 @@ impl TrayApp {
                 }
                 strip = strip.push(item);
             }
-            col = col.push(
-                container(strip)
-                    .padding([6, 10])
-                    .width(Length::Fill)
-                    .style(move |_| container::Style {
-                        background: Some(Self::surface(theme, 0.08).into()),
-                        border: Border {
-                            radius: 8.0.into(),
-                            ..Default::default()
-                        },
+            col = col.push(container(strip).padding([6, 10]).width(Length::Fill).style(
+                move |_| container::Style {
+                    background: Some(Self::surface(theme, 0.08).into()),
+                    border: Border {
+                        radius: 8.0.into(),
                         ..Default::default()
-                    }),
-            );
+                    },
+                    ..Default::default()
+                },
+            ));
         }
 
         // Tier 4: Conditional offline banner.
@@ -1390,6 +1504,238 @@ impl TrayApp {
         col.into()
     }
 
+    fn format_month_offset(offset: i32) -> String {
+        let sign = if offset < 0 { "−" } else { "+" };
+        let abs = offset.unsigned_abs();
+        if abs < 12 {
+            format!("{sign}{abs} mo")
+        } else {
+            let years = abs / 12;
+            let rem = abs % 12;
+            if rem == 0 {
+                format!("{sign}{years}y")
+            } else {
+                format!("{sign}{years}y {rem}m")
+            }
+        }
+    }
+
+    fn contrast_text_on(bg: Color, dark: Color) -> Color {
+        let luminance = 0.2126 * bg.r + 0.7152 * bg.g + 0.0722 * bg.b;
+        if luminance >= 0.40 {
+            dark
+        } else {
+            Color::WHITE
+        }
+    }
+
+    fn calendar_weekend_colors(theme: AppTheme) -> (Color, Color) {
+        let base = Self::mix(theme.danger, Color::from_rgb8(232, 96, 96), 0.35);
+        let header = Color { a: 0.90, ..base };
+        let day = Self::mix(base, theme.fg, 0.22);
+        (header, day)
+    }
+
+    fn build_calendar_month(today: NaiveDate, offset: i32) -> CalendarMonth {
+        let base_first =
+            NaiveDate::from_ymd_opt(today.year(), today.month(), 1).expect("valid first of month");
+        let target_first = if offset > 0 {
+            base_first
+                .checked_add_months(Months::new(offset as u32))
+                .unwrap_or(base_first)
+        } else if offset < 0 {
+            base_first
+                .checked_sub_months(Months::new(offset.unsigned_abs()))
+                .unwrap_or(base_first)
+        } else {
+            base_first
+        };
+        let leading = u64::from(target_first.weekday().num_days_from_sunday());
+        let grid_start = target_first
+            .checked_sub_days(Days::new(leading))
+            .unwrap_or(target_first);
+        let cells = std::array::from_fn(|idx| {
+            let date = grid_start
+                .checked_add_days(Days::new(idx as u64))
+                .unwrap_or(target_first);
+            let in_month =
+                date.year() == target_first.year() && date.month() == target_first.month();
+            let col = idx % 7;
+            CalendarCell {
+                day: date.day(),
+                in_month,
+                is_today: offset == 0 && in_month && date == today,
+                is_weekend: col == 0 || col == 6,
+            }
+        });
+        let badge = if offset == 0 {
+            format!("W{:02}", today.iso_week().week())
+        } else {
+            Self::format_month_offset(offset)
+        };
+        CalendarMonth {
+            title: target_first.format("%B %Y").to_string(),
+            badge,
+            is_offset: offset != 0,
+            cells,
+        }
+    }
+
+    fn render_calendar_tooltip(
+        today: NaiveDate,
+        offset: i32,
+        theme: AppTheme,
+    ) -> Element<'static, Message> {
+        let cal = Self::build_calendar_month(today, offset);
+        let badge_bg = if cal.is_offset {
+            Color {
+                a: 0.14,
+                ..theme.accent
+            }
+        } else {
+            Color {
+                a: 0.07,
+                ..theme.fg
+            }
+        };
+        let badge_fg = if cal.is_offset {
+            theme.accent
+        } else {
+            theme.muted
+        };
+        let badge = container(
+            text(cal.badge)
+                .size(10)
+                .font(Font {
+                    weight: Weight::Semibold,
+                    ..Font::DEFAULT
+                })
+                .color(badge_fg),
+        )
+        .padding([2, 7])
+        .style(move |_| container::Style {
+            background: Some(badge_bg.into()),
+            border: Border {
+                radius: 6.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        let header = row![
+            text(cal.title)
+                .size(14)
+                .font(Font {
+                    weight: Weight::Bold,
+                    ..Font::DEFAULT
+                })
+                .color(theme.fg),
+            Space::new().width(Length::Fill),
+            badge,
+        ]
+        .align_y(Vertical::Center)
+        .width(Length::Fill);
+
+        let (weekend_header, weekend_fg) = Self::calendar_weekend_colors(theme);
+        let mut weekdays = row![].spacing(2);
+        for (idx, label) in ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"]
+            .into_iter()
+            .enumerate()
+        {
+            let color = if idx == 0 || idx == 6 {
+                weekend_header
+            } else {
+                theme.muted
+            };
+            weekdays = weekdays.push(
+                container(
+                    text(label)
+                        .size(10)
+                        .font(Font {
+                            weight: Weight::Bold,
+                            ..Font::DEFAULT
+                        })
+                        .color(color),
+                )
+                .center_x(Length::Fixed(30.0)),
+            );
+        }
+
+        let today_fg = Self::contrast_text_on(theme.accent, theme.bg);
+        let outside_fg = Color {
+            a: 0.28,
+            ..theme.muted
+        };
+
+        let mut grid = column![].spacing(2);
+        for week in cal.cells.as_chunks::<7>().0 {
+            let mut week_row = row![].spacing(2);
+            for cell in week {
+                let (fg, font) = if cell.is_today {
+                    (
+                        today_fg,
+                        Font {
+                            weight: Weight::Bold,
+                            ..Font::MONOSPACE
+                        },
+                    )
+                } else if !cell.in_month {
+                    (outside_fg, Font::MONOSPACE)
+                } else if cell.is_weekend {
+                    (weekend_fg, Font::MONOSPACE)
+                } else {
+                    (theme.fg, Font::MONOSPACE)
+                };
+                let day_cell = container(text(cell.day.to_string()).size(11).font(font).color(fg))
+                    .center_x(Length::Fixed(30.0))
+                    .center_y(Length::Fixed(24.0));
+                let day_cell = if cell.is_today {
+                    day_cell.style(move |_| container::Style {
+                        background: Some(theme.accent.into()),
+                        border: Border {
+                            radius: 8.0.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    })
+                } else {
+                    day_cell
+                };
+                week_row = week_row.push(day_cell);
+            }
+            grid = grid.push(week_row);
+        }
+
+        let divider = container(Space::new())
+            .width(Length::Fill)
+            .height(Length::Fixed(1.0))
+            .style(move |_| container::Style {
+                background: Some(
+                    Color {
+                        a: 0.10,
+                        ..theme.fg
+                    }
+                    .into(),
+                ),
+                ..Default::default()
+            });
+
+        let footer = row![
+            Self::render_action_hint("LMB:", "Clocks", theme),
+            Space::new().width(Length::Fill),
+            Self::render_action_hint("Scroll:", "Month", theme),
+        ]
+        .align_y(Vertical::Center)
+        .width(Length::Fill);
+
+        column![header, weekdays, grid, divider, footer]
+            .spacing(7)
+            .width(Length::Fixed(222.0))
+            .into()
+    }
+
+    const TOOLTIP_DELAY: Duration = Duration::from_millis(500);
+
     fn hint_with<'a>(
         content: impl Into<Element<'a, Message>>,
         tip: Element<'a, Message>,
@@ -1400,6 +1746,7 @@ impl TrayApp {
         tooltip(content, tip, position)
             .gap(8.0)
             .padding(padding)
+            .delay(Self::TOOLTIP_DELAY)
             .snap_within_viewport(true)
             .style(move |_| {
                 let mut style = Self::card(theme, 10.0);
@@ -1553,7 +1900,7 @@ impl TrayApp {
                 };
                 style
             });
-        if kind != "net" || self.battery.present || self.net.warp.is_installed() {
+        if kind != "net" || self.battery.present {
             btn = btn.on_press(Message::MetricPressed(kind.into()));
         }
         let target: Element<'static, Message> = if kind == "net" && self.net.warp.is_installed() {
@@ -1705,13 +2052,18 @@ impl TrayApp {
         let clamped = sys::clamp(value, range.0, range.1);
         let span = (range.1 - range.0).max(f32::EPSILON);
         let ratio = ((clamped - range.0) / span).clamp(0.0, 1.0);
-        let label_tint = slider_icon_color(tint, value);
+        let is_muted_volume = kind == SliderKind::Volume && (value <= 0.0 || self.volume_muted);
+        let label_tint = if is_muted_volume {
+            theme.muted
+        } else {
+            slider_icon_color(tint, value)
+        };
         let rail_start = Self::mix(saturate(tint, 1.40), theme.bg, 0.40);
         let rail_mid = saturate(tint, 1.25);
         let rail_end = Self::mix(tint, Color::WHITE, 0.42);
         let knob_color = Self::mix(saturate(tint, 1.30), Color::WHITE, 0.08);
         let glyph = match kind {
-            SliderKind::Volume if value <= 0.0 => "volume-muted",
+            SliderKind::Volume if is_muted_volume => "volume-muted",
             SliderKind::Brightness if value <= range.0 => "brightness-low",
             _ => glyph,
         };
@@ -1791,24 +2143,22 @@ impl TrayApp {
         let knob_head = container(Space::new())
             .width(Length::Fixed(20.0))
             .height(Length::Fixed(20.0))
-            .style(move |_| {
-                container::Style {
-                    background: Some(knob_color.into()),
-                    border: Border {
-                        radius: 10.0.into(),
-                        color: Color {
-                            a: 0.32,
-                            ..Self::mix(knob_color, Color::WHITE, 0.45)
-                        },
-                        width: 1.0,
+            .style(move |_| container::Style {
+                background: Some(knob_color.into()),
+                border: Border {
+                    radius: 10.0.into(),
+                    color: Color {
+                        a: 0.32,
+                        ..Self::mix(knob_color, Color::WHITE, 0.45)
                     },
-                    shadow: iced_core::Shadow {
-                        color: Color::from_rgba(0.0, 0.0, 0.0, 0.75),
-                        offset: iced_core::Vector::new(-3.5, 0.5),
-                        blur_radius: 5.5,
-                    },
-                    ..Default::default()
-                }
+                    width: 1.0,
+                },
+                shadow: iced_core::Shadow {
+                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.75),
+                    offset: iced_core::Vector::new(-3.5, 0.5),
+                    blur_radius: 5.5,
+                },
+                ..Default::default()
             });
         let mut knob_row = row![]
             .width(Length::Fill)
@@ -1826,11 +2176,9 @@ impl TrayApp {
         if right_portion > 0 {
             knob_row = knob_row.push(Space::new().width(Length::FillPortion(right_portion)));
         }
-        let s = slider(
-            range.0..=range.1,
-            clamped,
-            move |v| Message::SliderChanged(kind, sys::snap_to_step(v, range.0, range.1, step)),
-        )
+        let s = slider(range.0..=range.1, clamped, move |v| {
+            Message::SliderChanged(kind, sys::snap_to_step(v, range.0, range.1, step))
+        })
         .step(step)
         .height(24)
         .style(move |_, _| slider::Style {
@@ -1880,8 +2228,12 @@ impl TrayApp {
         let val = text(format!("{value:.0}"))
             .size(12)
             .font(Font::MONOSPACE)
-            .color(slider_label_color(Self::mix(tint, theme.fg, 0.18), value))
-            .width(22)
+            .color(if is_muted_volume {
+                theme.muted
+            } else {
+                slider_label_color(Self::mix(tint, theme.fg, 0.18), value)
+            })
+            .width(26)
             .align_x(Horizontal::Right);
         let icon = Self::icon_label(glyph, 17.0, Some(label_tint));
         let icon = if kind == SliderKind::Volume {
@@ -1899,13 +2251,9 @@ impl TrayApp {
         } else {
             Self::hint(icon, name.into(), theme)
         };
-        container(
-            row![icon, s, val]
-                .spacing(10)
-                .align_y(Vertical::Center),
-        )
-        .padding([6, 10])
-        .into()
+        container(row![icon, s, val].spacing(10).align_y(Vertical::Center))
+            .padding([6, 10])
+            .into()
     }
 
     fn radio(&self, wifi: bool) -> Element<'static, Message> {
@@ -2013,7 +2361,11 @@ impl TrayApp {
         let icon_button = button(Self::icon_label(
             glyph,
             16.0,
-            Some(if on { saturate(theme.accent, 1.25) } else { theme.muted }),
+            Some(if on {
+                saturate(theme.accent, 1.25)
+            } else {
+                theme.muted
+            }),
         ))
         .padding(0)
         .on_press(if wifi {
@@ -2043,14 +2395,18 @@ impl TrayApp {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        iced_widget::responsive(move |size| self.view_at(size)).into()
+        let size = self
+            .panel_monitor
+            .map(|m| m.size)
+            .unwrap_or_else(|| iced_core::Size::new(1920.0, 1080.0));
+        self.view_at(size)
     }
 
     fn view_at(&self, size: iced_core::Size) -> Element<'_, Message> {
         let theme = self.theme;
-        // The clock occupies the whole header width. Side controls occupy a
-        // separate row over it; neither can push the clock off its true center.
-        let clock = button(
+        // Shrink-wrap the clock target in the center so hovering side margins
+        // never triggers the calendar or captures panel wheel scrolling.
+        let clock_button = button(
             column![
                 crate::appearance::glow(
                     text(self.time_text.clone())
@@ -2072,15 +2428,24 @@ impl TrayApp {
                 )
             ]
             .spacing(2)
-            .align_x(Horizontal::Center)
-            .width(Length::Fill),
+            .align_x(Horizontal::Center),
         )
-        .padding([0, 0])
+        .padding([0, 6])
         .on_press(Message::ClockPressed)
         .style(move |_, _| button::Style {
             text_color: theme.fg,
             ..Default::default()
         });
+        let clock = container(Self::hint_with(
+            mouse_area(clock_button)
+                .on_scroll(Message::CalendarScrolled)
+                .on_exit(Message::CalendarHoverExited),
+            Self::render_calendar_tooltip(self.today, self.calendar_month_offset, theme),
+            tooltip::Position::Bottom,
+            12.0,
+            theme,
+        ))
+        .center_x(Length::Fill);
         let weather: Element<'_, Message> = if self.config.layout.show_weather
             && let Some(w) = &self.weather
         {
@@ -2154,14 +2519,7 @@ impl TrayApp {
             let (first_value, first_color, first_ring, first_hint) = self.first_metric_display();
             controls = controls.push(
                 row![
-                    self.metric(
-                        "⇅",
-                        first_value,
-                        first_color,
-                        first_ring,
-                        "net",
-                        first_hint
-                    ),
+                    self.metric("⇅", first_value, first_color, first_ring, "net", first_hint),
                     self.metric(
                         "▤",
                         self.ram.text.clone(),
@@ -2332,7 +2690,8 @@ impl TrayApp {
                 }
                 s
             });
-            let clear = button(
+            let has_notifs = !self.notifications.is_empty();
+            let mut clear = button(
                 container(Self::icon_label(
                     icon_glyph("edit-clear-all-symbolic"),
                     15.0,
@@ -2342,8 +2701,19 @@ impl TrayApp {
                 .center_y(28),
             )
             .padding(0)
-            .on_press(Message::ClearNotifs)
-            .style(move |_, s| Self::flat(theme, s));
+            .style(move |_, s| {
+                let mut style = Self::flat(theme, s);
+                if !has_notifs {
+                    style.text_color = Color {
+                        a: 0.35,
+                        ..theme.muted
+                    };
+                }
+                style
+            });
+            if has_notifs {
+                clear = clear.on_press(Message::ClearNotifs);
+            }
             let head = row![
                 text("Notifications").size(14).color(theme.fg).font(Font {
                     weight: Weight::Bold,
@@ -2383,67 +2753,13 @@ impl TrayApp {
                     .center_x(Length::Fill),
                 );
             } else {
-                let mut list = column![].spacing(6);
+                let mut list = column![].spacing(8);
                 for (app, items) in notify::group_notifications(&self.notifications) {
                     if items.len() > 1 {
-                        let expanded = self.expanded.contains(&app);
-                        let expand = button(
-                            row![
-                                column![
-                                    text(app.to_uppercase()).size(11).color(theme.accent).font(
-                                        Font {
-                                            weight: Weight::Bold,
-                                            ..Font::DEFAULT
-                                        }
-                                    ),
-                                    text(format!("{} notifications", items.len()))
-                                        .size(11)
-                                        .color(theme.muted)
-                                ]
-                                .spacing(3)
-                                .width(Length::Fill),
-                                Self::icon_label(
-                                    icon_glyph(if expanded {
-                                        "pan-down-symbolic"
-                                    } else {
-                                        "pan-end-symbolic"
-                                    }),
-                                    14.0,
-                                    Some(theme.fg)
-                                )
-                            ]
-                            .spacing(8)
-                            .align_y(Vertical::Center),
-                        )
-                        .width(Length::Fill)
-                        .padding(iced_core::Padding {
-                            top: 10.0,
-                            right: 4.0,
-                            bottom: 10.0,
-                            left: 14.0,
-                        })
-                        .on_press(Message::StackToggled(app.clone()))
-                        .style(move |_, s| Self::notification_button(theme, s));
-                        let key = format!("stack:{app}");
-                        let close = Self::close_button(theme, Message::StackClosed(app));
-                        list = list.push(
-                            self.notification_card(
-                                row![
-                                    expand,
-                                    container(close).padding(iced_core::Padding {
-                                        right: 8.0,
-                                        ..Default::default()
-                                    })
-                                ]
-                                .align_y(Vertical::Center)
-                                .into(),
-                                key,
-                            ),
-                        );
-                        if expanded {
-                            for n in items {
-                                list = list.push(self.notif_row(theme, n));
-                            }
+                        if self.expanded.contains(app) {
+                            list = list.push(self.expanded_group_card(theme, app, &items));
+                        } else {
+                            list = list.push(self.collapsed_group_card(theme, app, &items));
                         }
                     } else {
                         for n in items {
@@ -2474,58 +2790,57 @@ impl TrayApp {
         .direction(scrollable::Direction::Vertical(
             scrollable::Scrollbar::new().width(0).scroller_width(0),
         ));
-        let body: Element<'_, Message> = if self.config.layout.show_notifications
-            && !self.notifications.is_empty()
-        {
-            let fade_target = Self::mix(panel_bg, Color::BLACK, 0.18);
-            let fade_strip = container(Space::new())
-                .width(Length::Fill)
-                .height(Length::Fixed(44.0))
-                .style(move |_| {
-                    let grad = iced_core::gradient::Linear::new(iced_core::Radians::PI)
-                        .add_stop(0.0, Color::TRANSPARENT)
-                        .add_stop(
-                            0.35,
-                            Color {
-                                a: bg_alpha * 0.35,
-                                ..Self::mix(panel_bg, Color::BLACK, 0.08)
-                            },
-                        )
-                        .add_stop(
-                            0.70,
-                            Color {
-                                a: bg_alpha * 0.75,
-                                ..Self::mix(panel_bg, Color::BLACK, 0.14)
-                            },
-                        )
-                        .add_stop(
-                            1.0,
-                            Color {
-                                a: bg_alpha * 0.95,
-                                ..fade_target
-                            },
-                        );
-                    container::Style {
-                        background: Some(grad.into()),
-                        border: Border {
-                            radius: iced_core::border::Radius {
-                                top_left: 0.0,
-                                top_right: 0.0,
-                                bottom_right: 20.0,
-                                bottom_left: 20.0,
+        let body: Element<'_, Message> =
+            if self.config.layout.show_notifications && !self.notifications.is_empty() {
+                let fade_target = Self::mix(panel_bg, Color::BLACK, 0.18);
+                let fade_strip = container(Space::new())
+                    .width(Length::Fill)
+                    .height(Length::Fixed(44.0))
+                    .style(move |_| {
+                        let grad = iced_core::gradient::Linear::new(iced_core::Radians::PI)
+                            .add_stop(0.0, Color::TRANSPARENT)
+                            .add_stop(
+                                0.35,
+                                Color {
+                                    a: bg_alpha * 0.35,
+                                    ..Self::mix(panel_bg, Color::BLACK, 0.08)
+                                },
+                            )
+                            .add_stop(
+                                0.70,
+                                Color {
+                                    a: bg_alpha * 0.75,
+                                    ..Self::mix(panel_bg, Color::BLACK, 0.14)
+                                },
+                            )
+                            .add_stop(
+                                1.0,
+                                Color {
+                                    a: bg_alpha * 0.95,
+                                    ..fade_target
+                                },
+                            );
+                        container::Style {
+                            background: Some(grad.into()),
+                            border: Border {
+                                radius: iced_core::border::Radius {
+                                    top_left: 0.0,
+                                    top_right: 0.0,
+                                    bottom_right: 20.0,
+                                    bottom_left: 20.0,
+                                },
+                                ..Default::default()
                             },
                             ..Default::default()
-                        },
-                        ..Default::default()
-                    }
-                });
-            let bottom_fade = container(fade_strip)
-                .width(Length::Fill)
-                .align_bottom(Length::Fill);
-            stack![container(scroller).padding([0, 12]), bottom_fade].into()
-        } else {
-            container(scroller).padding([0, 12]).into()
-        };
+                        }
+                    });
+                let bottom_fade = container(fade_strip)
+                    .width(Length::Fill)
+                    .align_bottom(Length::Fill);
+                stack![container(scroller).padding([0, 12]), bottom_fade].into()
+            } else {
+                container(scroller).padding([0, 12]).into()
+            };
         let limit = self.panel_monitor.map(|m| m.limit()).unwrap_or_else(|| {
             iced_core::Size::new(
                 320.0_f32.min((size.width - 40.0).max(1.0)),
@@ -2577,6 +2892,354 @@ impl TrayApp {
         }
     }
 
+    fn truncate_preview(input: &str, max_chars: usize) -> String {
+        let mut chars = input.chars();
+        let prefix: String = chars.by_ref().take(max_chars).collect();
+        if chars.next().is_some() {
+            format!("{}…", prefix.trim_end())
+        } else {
+            prefix
+        }
+    }
+
+    fn group_count_pill(
+        theme: AppTheme,
+        count: usize,
+        expanded: bool,
+    ) -> Element<'static, Message> {
+        let pill_bg = if expanded {
+            Color {
+                a: 0.14,
+                ..theme.accent
+            }
+        } else {
+            Color {
+                a: 0.08,
+                ..theme.fg
+            }
+        };
+        let pill_fg = if expanded { theme.accent } else { theme.fg };
+
+        container(
+            text(count.to_string())
+                .size(10)
+                .font(Font {
+                    weight: Weight::Bold,
+                    ..Font::DEFAULT
+                })
+                .color(pill_fg),
+        )
+        .padding([1, 6])
+        .style(move |_| container::Style {
+            background: Some(pill_bg.into()),
+            border: Border {
+                radius: 9.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .into()
+    }
+
+    fn collapsed_group_card(
+        &self,
+        theme: AppTheme,
+        app: &str,
+        items: &[&Notification],
+    ) -> Element<'static, Message> {
+        let key = format!("stack:{app}");
+        let hovered = self.hovered_notification.as_ref() == Some(&key);
+        let top_row = row![
+            Self::icon_label(icon_glyph("pan-end-symbolic"), 11.0, Some(theme.muted)),
+            text(app.to_uppercase())
+                .size(11)
+                .color(theme.accent)
+                .font(Font {
+                    weight: Weight::Bold,
+                    ..Font::DEFAULT
+                })
+                .width(Length::Fill),
+            Self::group_count_pill(theme, items.len(), false),
+        ]
+        .spacing(6)
+        .align_y(Vertical::Center);
+
+        let preview = items
+            .first()
+            .map(|n| Self::truncate_preview(&n.summary, 42))
+            .unwrap_or_default();
+        let body: Element<'static, Message> = if preview.is_empty() {
+            top_row.into()
+        } else {
+            column![top_row, text(preview).size(11).color(theme.muted)]
+                .spacing(4)
+                .into()
+        };
+
+        let expand = button(body)
+            .width(Length::Fill)
+            .padding(iced_core::Padding {
+                top: 9.0,
+                right: 4.0,
+                bottom: 9.0,
+                left: 12.0,
+            })
+            .on_press(Message::StackToggled(app.to_owned()))
+            .style(move |_, s| Self::notification_button(theme, s));
+
+        let close = Self::close_button(theme, Message::StackClosed(app.to_owned()));
+        let card_content = row![
+            expand,
+            container(close).padding(iced_core::Padding {
+                top: 6.0,
+                right: 8.0,
+                ..Default::default()
+            }),
+        ]
+        .align_y(Vertical::Top);
+
+        let base = Self::mix(theme.bg, theme.fg, 0.085);
+        mouse_area(container(card_content).style(move |_| {
+            container::Style {
+                background: Some(
+                    Color {
+                        a: if hovered { 0.60 } else { 0.54 },
+                        ..Self::mix(base, theme.accent, if hovered { 0.07 } else { 0.04 })
+                    }
+                    .into(),
+                ),
+                border: Border {
+                    radius: 12.0.into(),
+                    color: Color {
+                        a: if hovered { 0.13 } else { 0.08 },
+                        ..theme.fg
+                    },
+                    width: 1.0,
+                },
+                shadow: iced_core::Shadow {
+                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.32),
+                    offset: iced_core::Vector::new(0.0, 2.0),
+                    blur_radius: 8.0,
+                },
+                ..Default::default()
+            }
+        }))
+        .on_enter(Message::NotificationHovered(key.clone()))
+        .on_exit(Message::NotificationLeft(key))
+        .into()
+    }
+
+    fn expanded_group_card(
+        &self,
+        theme: AppTheme,
+        app: &str,
+        items: &[&Notification],
+    ) -> Element<'static, Message> {
+        let key = format!("stack:{app}");
+        let header_hovered = self.hovered_notification.as_ref() == Some(&key);
+        let top_row = row![
+            Self::icon_label(icon_glyph("pan-down-symbolic"), 11.0, Some(theme.accent)),
+            text(app.to_uppercase())
+                .size(11)
+                .color(theme.accent)
+                .font(Font {
+                    weight: Weight::Bold,
+                    ..Font::DEFAULT
+                })
+                .width(Length::Fill),
+            Self::group_count_pill(theme, items.len(), true),
+        ]
+        .spacing(6)
+        .align_y(Vertical::Center);
+
+        let expand = button(top_row)
+            .width(Length::Fill)
+            .padding(iced_core::Padding {
+                top: 9.0,
+                right: 4.0,
+                bottom: 9.0,
+                left: 12.0,
+            })
+            .on_press(Message::StackToggled(app.to_owned()))
+            .style(move |_, s| Self::notification_button(theme, s));
+
+        let close = Self::close_button(theme, Message::StackClosed(app.to_owned()));
+        let header_row = row![
+            expand,
+            container(close).padding(iced_core::Padding {
+                right: 8.0,
+                ..Default::default()
+            }),
+        ]
+        .align_y(Vertical::Center);
+
+        let base = Self::mix(theme.bg, theme.fg, 0.085);
+        let header = mouse_area(container(header_row).style(move |_| {
+            container::Style {
+                background: Some(
+                    Color {
+                        a: if header_hovered { 0.66 } else { 0.60 },
+                        ..Self::mix(base, theme.accent, if header_hovered { 0.10 } else { 0.07 })
+                    }
+                    .into(),
+                ),
+                border: Border {
+                    radius: iced_core::border::Radius {
+                        top_left: 11.0,
+                        top_right: 11.0,
+                        bottom_right: 0.0,
+                        bottom_left: 0.0,
+                    },
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        }))
+        .on_enter(Message::NotificationHovered(key.clone()))
+        .on_exit(Message::NotificationLeft(key));
+
+        let header_sep = container(Space::new())
+            .width(Length::Fill)
+            .height(Length::Fixed(1.0))
+            .style(move |_| container::Style {
+                background: Some(
+                    Color {
+                        a: 0.07,
+                        ..theme.fg
+                    }
+                    .into(),
+                ),
+                ..Default::default()
+            });
+
+        let drawer_bg = Color {
+            a: 0.38,
+            ..Self::mix(theme.bg, theme.fg, 0.03)
+        };
+        let mut accordion = column![header, header_sep];
+        let last_idx = items.len().saturating_sub(1);
+        for (idx, n) in items.iter().enumerate() {
+            if idx > 0 {
+                let row_sep = container(
+                    container(Space::new())
+                        .width(Length::Fill)
+                        .height(Length::Fixed(1.0))
+                        .style(move |_| container::Style {
+                            background: Some(
+                                Color {
+                                    a: 0.05,
+                                    ..theme.fg
+                                }
+                                .into(),
+                            ),
+                            ..Default::default()
+                        }),
+                )
+                .padding([0, 10])
+                .width(Length::Fill)
+                .style(move |_| container::Style {
+                    background: Some(drawer_bg.into()),
+                    ..Default::default()
+                });
+                accordion = accordion.push(row_sep);
+            }
+            accordion = accordion.push(self.accordion_child_row(theme, n, idx == last_idx));
+        }
+
+        container(accordion)
+            .padding(1)
+            .width(Length::Fill)
+            .style(move |_| container::Style {
+                border: Border {
+                    radius: 12.0.into(),
+                    color: Color {
+                        a: if header_hovered { 0.22 } else { 0.16 },
+                        ..theme.accent
+                    },
+                    width: 1.0,
+                },
+                shadow: iced_core::Shadow {
+                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.30),
+                    offset: iced_core::Vector::new(0.0, 2.0),
+                    blur_radius: 8.0,
+                },
+                ..Default::default()
+            })
+            .into()
+    }
+
+    fn accordion_child_row(
+        &self,
+        theme: AppTheme,
+        n: &Notification,
+        is_last: bool,
+    ) -> Element<'static, Message> {
+        let key = format!("item:{}", n.id);
+        let hovered = self.hovered_notification.as_ref() == Some(&key);
+        let mut lines = column![text(n.summary.clone()).size(12).color(theme.fg)].spacing(3);
+        if !n.body.is_empty() {
+            lines = lines.push(
+                text(n.body.chars().take(160).collect::<String>())
+                    .size(11)
+                    .color(theme.muted),
+            );
+        }
+        let open = button(lines)
+            .padding(iced_core::Padding {
+                top: 9.0,
+                right: 8.0,
+                bottom: 9.0,
+                left: 12.0,
+            })
+            .width(Length::Fill)
+            .on_press(Message::NotifInvoke(n.id))
+            .style(move |_, s| Self::notification_button(theme, s));
+        let mut actions = column![].spacing(3).align_x(Horizontal::Right);
+        if !n.time.is_empty() {
+            actions = actions.push(text(n.time.clone()).size(10).color(theme.muted));
+        }
+        actions = actions.push(Self::close_button(theme, Message::NotifDismiss(n.id)));
+        let content = row![
+            open,
+            container(actions).padding(iced_core::Padding {
+                top: 6.0,
+                right: 8.0,
+                ..Default::default()
+            })
+        ]
+        .align_y(Vertical::Top);
+
+        let radius = if is_last {
+            iced_core::border::Radius {
+                top_left: 0.0,
+                top_right: 0.0,
+                bottom_right: 11.0,
+                bottom_left: 11.0,
+            }
+        } else {
+            0.0.into()
+        };
+        mouse_area(container(content).style(move |_| {
+            container::Style {
+                background: Some(
+                    Color {
+                        a: if hovered { 0.48 } else { 0.38 },
+                        ..Self::mix(theme.bg, theme.fg, if hovered { 0.10 } else { 0.03 })
+                    }
+                    .into(),
+                ),
+                border: Border {
+                    radius,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        }))
+        .on_enter(Message::NotificationHovered(key.clone()))
+        .on_exit(Message::NotificationLeft(key))
+        .into()
+    }
+
     fn notification_card(
         &self,
         content: Element<'static, Message>,
@@ -2626,10 +3289,10 @@ impl TrayApp {
         .into()
     }
 
-    fn notif_row(&self, theme: AppTheme, n: Notification) -> Element<'static, Message> {
+    fn notif_row(&self, theme: AppTheme, n: &Notification) -> Element<'static, Message> {
         let mut lines = column![
             text(n.app.to_uppercase()).size(10).color(theme.accent),
-            text(n.summary).size(12).color(theme.fg)
+            text(n.summary.clone()).size(12).color(theme.fg),
         ]
         .spacing(3);
         if !n.body.is_empty() {
@@ -2646,7 +3309,7 @@ impl TrayApp {
             .style(move |_, s| Self::notification_button(theme, s));
         let mut actions = column![].spacing(3).align_x(Horizontal::Right);
         if !n.time.is_empty() {
-            actions = actions.push(text(n.time).size(10).color(theme.muted));
+            actions = actions.push(text(n.time.clone()).size(10).color(theme.muted));
         }
         actions = actions.push(Self::close_button(theme, Message::NotifDismiss(n.id)));
         self.notification_card(
@@ -2971,14 +3634,14 @@ mod tests {
     fn polling_does_not_roll_back_a_drag() {
         let mut app = app();
         let _ = app.update(Message::SliderChanged(SliderKind::Volume, 70.0));
-        let _ = app.update(Message::SliderLoaded(SliderKind::Volume, 0, Some(20.0)));
+        let _ = app.update(Message::VolumeLoaded(0, Some((20.0, false))));
         assert_eq!(app.volume, Some(70.0));
     }
     #[test]
     fn small_external_volume_changes_are_observed() {
         let mut app = app();
         app.volume = Some(70.0);
-        let _ = app.update(Message::SliderLoaded(SliderKind::Volume, 0, Some(69.0)));
+        let _ = app.update(Message::VolumeLoaded(0, Some((69.0, false))));
         assert_eq!(app.volume, Some(69.0));
     }
     #[test]
@@ -3062,7 +3725,7 @@ mod tests {
         }
         let _ = app.update(Message::SliderLoaded(SliderKind::Brightness, 0, Some(45.0)));
         let _ = app.update(Message::SliderLoaded(SliderKind::Sunset, 0, Some(30.0)));
-        let _ = app.update(Message::SliderLoaded(SliderKind::Volume, 0, Some(20.0)));
+        let _ = app.update(Message::VolumeLoaded(0, Some((20.0, false))));
         assert_eq!(app.volume, Some(100.0));
         assert_eq!(app.brightness, Some(45.0));
         assert_eq!(app.sunset, Some(30.0));
@@ -3309,12 +3972,7 @@ mod tests {
             "Upload: 12.0 MiB (session)\nDownload: 34.0 MiB (session)"
         );
 
-        let _ = app.update(Message::MetricsLoaded((
-            cpu,
-            ram,
-            net_no_warp,
-            discharging,
-        )));
+        let _ = app.update(Message::MetricsLoaded((cpu, ram, net_no_warp, discharging)));
         let (val, color, ring, hint) = app.first_metric_display();
         assert_eq!(val, "24.60W");
         assert_eq!(color, saturate(app.theme.profiles[2], 0.8));
@@ -3396,7 +4054,6 @@ mod tests {
 
         let full = sys::WeatherState {
             temperature: "11°C".into(),
-            condition_glyph: Some("".into()),
             condition: Some("Partly cloudy".into()),
             temp_max: Some("12°C".into()),
             temp_min: Some("-1°C".into()),
@@ -3411,7 +4068,6 @@ mod tests {
         };
         let minimal = sys::WeatherState {
             temperature: "72°F".into(),
-            condition_glyph: None,
             condition: None,
             temp_max: None,
             temp_min: None,
@@ -3429,5 +4085,286 @@ mod tests {
 
         let _ = app.update(Message::WeatherLoaded(None));
         assert!(app.weather.is_none());
+    }
+
+    #[test]
+    fn volume_muted_state_updates_and_clears_on_nonzero_drag() {
+        let mut app = app();
+        let _ = app.update(Message::VolumeLoaded(0, Some((55.0, true))));
+        assert_eq!(app.volume, Some(55.0));
+        assert!(app.volume_muted);
+
+        // Dragging to 0 does not unmute.
+        let _ = app.update(Message::SliderChanged(SliderKind::Volume, 0.0));
+        assert_eq!(app.volume, Some(0.0));
+        assert!(app.volume_muted);
+
+        // Dragging above 0 optimistically clears mute.
+        let _ = app.update(Message::SliderChanged(SliderKind::Volume, 35.0));
+        assert_eq!(app.volume, Some(35.0));
+        assert!(!app.volume_muted);
+
+        // Unavailable volume resets muted flag.
+        app.slider_busy.clear();
+        app.slider_changed_at.clear();
+        let _ = app.update(Message::VolumeLoaded(2, None));
+        assert_eq!(app.volume, None);
+        assert!(!app.volume_muted);
+    }
+
+    #[test]
+    fn notification_actions_and_grouped_rendering_work_cleanly() {
+        const CHILD: &str = "DUSKY_TRAY_TEST_NOTIF_UI";
+        if std::env::var_os(CHILD).is_none() {
+            let temp =
+                crate::backend::runtime_dir().join(format!("notif-ui-test-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&temp);
+            std::fs::create_dir_all(&temp).unwrap();
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "ui::tests::notification_actions_and_grouped_rendering_work_cleanly",
+                ])
+                .env(CHILD, "1")
+                .env("XDG_RUNTIME_DIR", &temp)
+                .output()
+                .unwrap();
+            let _ = std::fs::remove_dir_all(&temp);
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+
+        let mut app = window_app();
+        let n = |id: i32, app_name: &str, source: &str| Notification {
+            id,
+            app: app_name.into(),
+            summary: format!("Summary {id}"),
+            body: "Body text".into(),
+            source: source.into(),
+            desktop_entry: String::new(),
+            time: "1:05 PM".into(),
+        };
+        app.notifications = vec![
+            n(12, "hypr-rotate", "history"),
+            n(11, "hypr-rotate", "history"),
+            n(10, "kitty", "history"),
+            n(9, "kitty", "history"),
+            n(8, "Signal", "active"),
+        ];
+
+        // Collapsed and expanded full-width accordion views build cleanly.
+        drop(app.view());
+        let _ = app.update(Message::StackToggled("hypr-rotate".into()));
+        let _ = app.update(Message::StackToggled("kitty".into()));
+        assert!(app.expanded.contains("hypr-rotate"));
+        assert!(app.expanded.contains("kitty"));
+        drop(app.view());
+
+        // Dismissing an expanded 2-item group down to 1 item prunes its expanded state.
+        let dismiss_task = app.update(Message::NotifDismiss(12));
+        assert!(iced_runtime::task::into_stream(dismiss_task).is_none());
+        assert!(!app.expanded.contains("hypr-rotate"));
+        assert!(app.expanded.contains("kitty"));
+        drop(app.view());
+
+        // Closing a history-only stack blacklists synchronously and spawns no makoctl task.
+        let task = app.update(Message::StackClosed("kitty".into()));
+        assert!(iced_runtime::task::into_stream(task).is_none());
+        assert!(!app.expanded.contains("kitty"));
+        assert_eq!(app.notifications.len(), 2);
+        assert!(app.dismissed.contains(&10) && app.dismissed.contains(&9));
+
+        // Invoking an item schedules async invoke; NotifInvoked(false) keeps panel open,
+        // NotifInvoked(true) emits exit task.
+        let invoke_task = app.update(Message::NotifInvoke(8));
+        assert!(iced_runtime::task::into_stream(invoke_task).is_some());
+        assert_eq!(app.notifications.len(), 1);
+        assert!(
+            iced_runtime::task::into_stream(app.update(Message::NotifInvoked(false))).is_none()
+        );
+        assert!(iced_runtime::task::into_stream(app.update(Message::NotifInvoked(true))).is_some());
+
+        // ClearNotifs clears expanded state too.
+        app.expanded.insert("kitty".into());
+        let clear_task = app.update(Message::ClearNotifs);
+        assert!(iced_runtime::task::into_stream(clear_task).is_some());
+        assert!(app.expanded.is_empty());
+    }
+
+    #[test]
+    fn updates_right_click_triggers_exit_task() {
+        let mut app = app();
+        let toggle = app
+            .config
+            .toggles
+            .iter_mut()
+            .find(|t| t.id == "updates")
+            .unwrap();
+        toggle.on_right = "true".into();
+        let task = app.update(Message::ToggleRight("updates".into()));
+        assert!(iced_runtime::task::into_stream(task).is_some());
+    }
+
+    #[test]
+    fn calendar_grid_handles_leap_years_year_rollover_and_six_row_invariant() {
+        let theme = AppTheme::load();
+
+        // Current month: Nov 2026 starts on Sunday (0 leading days), Nov 25 is W48.
+        let nov_25 = NaiveDate::from_ymd_opt(2026, 11, 25).unwrap();
+        let cal = TrayApp::build_calendar_month(nov_25, 0);
+        assert_eq!(cal.title, "November 2026");
+        assert_eq!(cal.badge, "W48");
+        assert!(!cal.is_offset);
+        assert_eq!(cal.cells.len(), 42);
+        assert_eq!(cal.cells[0].day, 1);
+        assert!(cal.cells[0].in_month);
+        assert!(cal.cells[0].is_weekend);
+        assert_eq!(cal.cells.iter().filter(|c| c.in_month).count(), 30);
+        assert_eq!(cal.cells.iter().filter(|c| c.is_today).count(), 1);
+        assert!(cal.cells[24].is_today && cal.cells[24].day == 25);
+        assert!(!cal.cells[30].in_month && cal.cells[30].day == 1);
+
+        // Day-31 anchor + leap-year Feb 2024 vs non-leap Feb 2026.
+        let jan_31_2024 = NaiveDate::from_ymd_opt(2024, 1, 31).unwrap();
+        let feb_2024 = TrayApp::build_calendar_month(jan_31_2024, 1);
+        assert_eq!(feb_2024.title, "February 2024");
+        assert_eq!(feb_2024.badge, "+1 mo");
+        assert!(feb_2024.is_offset);
+        assert_eq!(feb_2024.cells.iter().filter(|c| c.in_month).count(), 29);
+        assert_eq!(feb_2024.cells.iter().filter(|c| c.is_today).count(), 0);
+
+        let jan_31_2026 = NaiveDate::from_ymd_opt(2026, 1, 31).unwrap();
+        let feb_2026 = TrayApp::build_calendar_month(jan_31_2026, 1);
+        assert_eq!(feb_2026.title, "February 2026");
+        assert_eq!(feb_2026.cells.iter().filter(|c| c.in_month).count(), 28);
+
+        // Dec <-> Jan year rollover.
+        let dec_2026 = NaiveDate::from_ymd_opt(2026, 12, 15).unwrap();
+        assert_eq!(
+            TrayApp::build_calendar_month(dec_2026, 1).title,
+            "January 2027"
+        );
+        let jan_2026 = NaiveDate::from_ymd_opt(2026, 1, 15).unwrap();
+        assert_eq!(
+            TrayApp::build_calendar_month(jan_2026, -1).title,
+            "December 2025"
+        );
+
+        // Relative offset badge formatting.
+        assert_eq!(TrayApp::format_month_offset(-1), "−1 mo");
+        assert_eq!(TrayApp::format_month_offset(3), "+3 mo");
+        assert_eq!(TrayApp::format_month_offset(-12), "−1y");
+        assert_eq!(TrayApp::format_month_offset(14), "+1y 2m");
+
+        // Luminance-aware today contrast across light and dark accents.
+        let dark_bg = Color::from_rgb8(12, 14, 19);
+        assert_eq!(
+            TrayApp::contrast_text_on(Color::from_rgb8(154, 180, 255), dark_bg),
+            dark_bg
+        );
+        assert_eq!(
+            TrayApp::contrast_text_on(Color::from_rgb8(30, 58, 138), dark_bg),
+            Color::WHITE
+        );
+
+        // Weekend coral-red tint stays red-dominant and distinct from muted weekdays.
+        let (weekend_header, weekend_day) = TrayApp::calendar_weekend_colors(theme);
+        assert!((weekend_header.a - 0.90).abs() < 1e-6);
+        assert!(weekend_header.r > weekend_header.g && weekend_header.r > weekend_header.b);
+        assert_eq!(weekend_day.a, 1.0);
+        assert!(weekend_day.r > weekend_day.g && weekend_day.r > weekend_day.b);
+
+        // Weekend "today" still marks both flags so today-pill precedence applies.
+        let sun_22 = NaiveDate::from_ymd_opt(2026, 11, 22).unwrap();
+        let sun_cal = TrayApp::build_calendar_month(sun_22, 0);
+        assert!(sun_cal.cells[21].is_today && sun_cal.cells[21].is_weekend);
+
+        // Widget tree builds cleanly for current, weekend-today, and offset months.
+        drop(TrayApp::render_calendar_tooltip(nov_25, 0, theme));
+        drop(TrayApp::render_calendar_tooltip(sun_22, 0, theme));
+        drop(TrayApp::render_calendar_tooltip(nov_25, -2, theme));
+    }
+
+    #[test]
+    fn calendar_scroll_switches_months_accumulates_pixels_clamps_and_resets() {
+        let mut app = app();
+
+        // Discrete lines: UP (y > 0) -> previous month (-1); DOWN (y < 0) -> next month (+1).
+        let _ = app.update(Message::CalendarScrolled(ScrollDelta::Lines {
+            x: 0.0,
+            y: 1.0,
+        }));
+        assert_eq!(app.calendar_month_offset, -1);
+        let _ = app.update(Message::CalendarScrolled(ScrollDelta::Lines {
+            x: 0.0,
+            y: -1.0,
+        }));
+        assert_eq!(app.calendar_month_offset, 0);
+
+        // Horizontal-dominant gestures and non-finite deltas are ignored.
+        let _ = app.update(Message::CalendarScrolled(ScrollDelta::Lines {
+            x: 5.0,
+            y: 1.0,
+        }));
+        let _ = app.update(Message::CalendarScrolled(ScrollDelta::Pixels {
+            x: 0.0,
+            y: f32::NAN,
+        }));
+        assert_eq!(app.calendar_month_offset, 0);
+
+        // Smooth touchpad pixel accumulation (40 px per month) + instant direction reversal.
+        let _ = app.update(Message::CalendarScrolled(ScrollDelta::Pixels {
+            x: 0.0,
+            y: -25.0,
+        }));
+        assert_eq!(app.calendar_month_offset, 0);
+        let _ = app.update(Message::CalendarScrolled(ScrollDelta::Pixels {
+            x: 0.0,
+            y: -25.0,
+        }));
+        assert_eq!(app.calendar_month_offset, 1);
+
+        // Reversing direction clears leftover negative residue immediately.
+        let _ = app.update(Message::CalendarScrolled(ScrollDelta::Pixels {
+            x: 0.0,
+            y: 25.0,
+        }));
+        assert_eq!(app.calendar_month_offset, 1);
+        let _ = app.update(Message::CalendarScrolled(ScrollDelta::Pixels {
+            x: 0.0,
+            y: 25.0,
+        }));
+        assert_eq!(app.calendar_month_offset, 0);
+
+        // Single fast flick caps to one month step per event.
+        let _ = app.update(Message::CalendarScrolled(ScrollDelta::Pixels {
+            x: 0.0,
+            y: 500.0,
+        }));
+        assert_eq!(app.calendar_month_offset, -1);
+
+        // Clamped to ±120 months.
+        app.calendar_month_offset = 120;
+        let _ = app.update(Message::CalendarScrolled(ScrollDelta::Lines {
+            x: 0.0,
+            y: -1.0,
+        }));
+        assert_eq!(app.calendar_month_offset, 120);
+        app.calendar_month_offset = -120;
+        let _ = app.update(Message::CalendarScrolled(ScrollDelta::Lines {
+            x: 0.0,
+            y: 1.0,
+        }));
+        assert_eq!(app.calendar_month_offset, -120);
+
+        // Leaving clock hover resets offset and pixel accumulator.
+        app.calendar_scroll_accum = 0.75;
+        let _ = app.update(Message::CalendarHoverExited);
+        assert_eq!(app.calendar_month_offset, 0);
+        assert_eq!(app.calendar_scroll_accum, 0.0);
     }
 }

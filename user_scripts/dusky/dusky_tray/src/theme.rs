@@ -47,21 +47,22 @@ pub fn hex_to_color(hex: &str) -> Option<Color> {
     ))
 }
 
-/// Increase HSV saturation linearly with the value while preserving hue,
-/// maximum channel brightness, and alpha. At 100: 1.4 × the palette saturation.
-pub fn slider_label_color(color: Color, value: f32) -> Color {
+fn slider_value_color(color: Color, value: f32) -> Color {
     saturate(
         color,
         0.4 + crate::backend::system::clamp(value, 0.0, 100.0) / 100.0,
     )
 }
 
+/// Increase HSV saturation linearly with the value while preserving hue,
+/// maximum channel brightness, and alpha. At 100: 1.4 × the palette saturation.
+pub fn slider_label_color(color: Color, value: f32) -> Color {
+    slider_value_color(color, value)
+}
+
 /// Keep the low end subdued, with a softer 140% peak for slider icons.
 pub fn slider_icon_color(color: Color, value: f32) -> Color {
-    saturate(
-        color,
-        0.4 + crate::backend::system::clamp(value, 0.0, 100.0) / 100.0,
-    )
+    slider_value_color(color, value)
 }
 
 /// Scale HSV saturation without changing hue, brightness, or alpha.
@@ -112,22 +113,16 @@ impl AppTheme {
         }
     }
 
-    pub fn palette_path() -> PathBuf {
-        let base = std::env::var_os("XDG_CONFIG_HOME")
-            .filter(|p| !p.is_empty())
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config")
-            });
-        let dusky_path = base.join("matugen/generated/dusky.json");
-        if dusky_path.is_file() {
-            return dusky_path;
-        }
-        let rust_path = base.join("matugen/generated/dusky_rust.json");
-        if rust_path.is_file() {
-            return rust_path;
-        }
-        base.join("matugen/generated/dusky_tray.json")
+    fn palette_candidates() -> &'static [PathBuf; 3] {
+        static CANDIDATES: std::sync::OnceLock<[PathBuf; 3]> = std::sync::OnceLock::new();
+        CANDIDATES.get_or_init(|| {
+            let base = crate::config::xdg_config_dir().join("matugen/generated");
+            [
+                base.join("dusky.json"),
+                base.join("dusky_rust.json"),
+                base.join("dusky_tray.json"),
+            ]
+        })
     }
 
     pub fn load() -> Self {
@@ -136,7 +131,29 @@ impl AppTheme {
 
     // Invalid or partially written palettes must not replace a valid theme.
     pub fn load_generated() -> Option<Self> {
-        Self::parse(&fs::read_to_string(Self::palette_path()).ok()?)
+        static CACHE: std::sync::Mutex<
+            Option<(usize, crate::config::FileStamp, Option<AppTheme>)>,
+        > = std::sync::Mutex::new(None);
+        let candidates = Self::palette_candidates();
+        let active = candidates.iter().enumerate().find_map(|(idx, path)| {
+            crate::config::FileStamp::from_file(path).map(|stamp| (idx, path, stamp))
+        });
+        let Some((idx, path, stamp)) = active else {
+            *CACHE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            return None;
+        };
+        let mut guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((cached_idx, cached_stamp, cached_theme)) = *guard
+            && cached_idx == idx
+            && cached_stamp == stamp
+        {
+            return cached_theme;
+        }
+        let parsed = fs::read_to_string(path)
+            .ok()
+            .and_then(|raw| Self::parse(&raw));
+        *guard = Some((idx, stamp, parsed));
+        parsed
     }
 
     fn parse(raw: &str) -> Option<Self> {

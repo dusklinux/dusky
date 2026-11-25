@@ -4,15 +4,15 @@
 import argparse
 import fcntl
 import hashlib
-import json
+lazy import json
 import os
 import platform
-import shutil
+lazy import shutil
 import signal
 import subprocess
 import sys
-import time
-import tomllib
+lazy import time
+lazy import tomllib
 from importlib import import_module
 from pathlib import Path
 
@@ -363,9 +363,10 @@ def install_defaults(project: Path, install_dir: Path) -> None:
             shutil.copyfile(source, destination)
 
 
-def packaged_source_matches(project: Path) -> bool:
+def packaged_source_matches(project: Path, *, expected_digest: str | None = None) -> bool:
     try:
-        return SYSTEM_SOURCE_DIGEST.read_text(encoding="utf-8").strip() == source_digest(project)
+        digest = expected_digest if expected_digest is not None else source_digest(project)
+        return SYSTEM_SOURCE_DIGEST.read_text(encoding="utf-8").strip() == digest
     except (OSError, ValueError):
         return False
 
@@ -374,16 +375,26 @@ def setup(project: Path, install_dir: Path, force: bool) -> int:
     binary = install_dir / "dusky_tray"
     manifest_path = install_dir / "binary_manifest.json"
     version = get_project_version(project) if (project / "Cargo.toml").is_file() else None
+    digest: str | None = None
+    if version:
+        try:
+            digest = source_digest(project)
+        except (OSError, ValueError):
+            digest = None
     old_manifest = native_manifest(binary, manifest_path)
-    current = bool(version and old_manifest
+    current = bool(version and digest and old_manifest
                    and old_manifest.get("version") == version
-                   and old_manifest.get("source_sha256") == source_digest(project)
+                   and old_manifest.get("source_sha256") == digest
                    and binary_version(binary) == version)
     selected = current and not force
     if selected:
         log("OK", f"Using verified native build for this CPU (v{version})")
     elif not force and binary_runs(SYSTEM_BINARY) and (
-        version is None or (binary_version(SYSTEM_BINARY) == version and packaged_source_matches(project))
+        version is None or (
+            digest is not None
+            and binary_version(SYSTEM_BINARY) == version
+            and packaged_source_matches(project, expected_digest=digest)
+        )
     ):
         selected = link_system_binary(SYSTEM_BINARY, binary)
         if selected:

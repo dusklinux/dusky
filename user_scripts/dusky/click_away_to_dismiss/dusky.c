@@ -275,6 +275,11 @@ static bool start_grab_locked(struct wl_surface *wl_surface) {
     } else {
         hyprland_focus_grab_v1_destroy(active_grab);
         active_grab = NULL;
+        if (grab_manager) {
+            hyprland_focus_grab_manager_v1_destroy(grab_manager);
+            grab_manager = NULL;
+        }
+        wl_display_flush(global_display);
         wl_event_queue_destroy(custom_queue);
         custom_queue = NULL;
         close(shutdown_efd);
@@ -367,6 +372,10 @@ void destroy_wayland_grab() {
     if (grab_manager) {
         hyprland_focus_grab_manager_v1_destroy(grab_manager);
         grab_manager = NULL;
+    }
+
+    if (global_display) {
+        wl_display_flush(global_display);
     }
 
     if (custom_queue) {

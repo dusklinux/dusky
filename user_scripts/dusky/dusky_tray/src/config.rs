@@ -6,7 +6,43 @@
 //! All *runtime* caches live on tmpfs via [`crate::backend::runtime_dir`].
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+/// Return `XDG_CONFIG_HOME` when set, non-empty, and absolute; otherwise `$HOME/.config`.
+pub fn xdg_config_dir() -> PathBuf {
+    if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|p| !p.is_empty())
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+    {
+        return xdg;
+    }
+    PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config")
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FileStamp {
+    dev: u64,
+    ino: u64,
+    len: u64,
+    modified: Option<std::time::SystemTime>,
+}
+
+impl FileStamp {
+    pub(crate) fn from_file(path: &Path) -> Option<Self> {
+        use std::os::unix::fs::MetadataExt;
+        let meta = fs::metadata(path).ok()?;
+        if !meta.is_file() {
+            return None;
+        }
+        Some(Self {
+            dev: meta.dev(),
+            ino: meta.ino(),
+            len: meta.len(),
+            modified: meta.modified().ok(),
+        })
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Layout {
@@ -63,14 +99,8 @@ impl Default for Appearance {
 }
 
 impl Appearance {
-    pub fn path() -> PathBuf {
-        let xdg = std::env::var_os("XDG_CONFIG_HOME")
-            .filter(|p| !p.is_empty())
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config")
-            })
-            .join("dusky/tray/appearance.toml");
+    fn resolve_path() -> PathBuf {
+        let xdg = xdg_config_dir().join("dusky/tray/appearance.toml");
         if xdg.is_file() {
             return xdg;
         }
@@ -97,8 +127,30 @@ impl Appearance {
         if packaged.is_file() { packaged } else { xdg }
     }
 
+    fn cached_path() -> &'static Path {
+        static PATH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+        PATH.get_or_init(Self::resolve_path).as_path()
+    }
+
     pub fn load() -> Option<Self> {
-        Self::parse(&fs::read_to_string(Self::path()).ok()?)
+        static CACHE: std::sync::Mutex<Option<(FileStamp, Option<Appearance>)>> =
+            std::sync::Mutex::new(None);
+        let path = Self::cached_path();
+        let Some(stamp) = FileStamp::from_file(path) else {
+            *CACHE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            return None;
+        };
+        let mut guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((cached_stamp, cached_value)) = *guard
+            && cached_stamp == stamp
+        {
+            return cached_value;
+        }
+        let parsed = fs::read_to_string(path)
+            .ok()
+            .and_then(|raw| Self::parse(&raw));
+        *guard = Some((stamp, parsed));
+        parsed
     }
 
     fn parse(raw: &str) -> Option<Self> {
@@ -148,15 +200,7 @@ pub struct AppConfig {
 
 impl AppConfig {
     pub fn paths() -> (PathBuf, PathBuf) {
-        let home = std::env::var_os("HOME")
-            .filter(|v| !v.is_empty())
-            .map(PathBuf::from)
-            .expect("HOME must be set in the user session");
-        let dir = std::env::var_os("XDG_CONFIG_HOME")
-            .filter(|p| !p.is_empty())
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home.join(".config"))
-            .join("dusky/tray");
+        let dir = xdg_config_dir().join("dusky/tray");
         let file = dir.join("config.toml");
         (dir, file)
     }
@@ -214,8 +258,8 @@ on_right = "python3 ~/user_scripts/audio/dusky_audio_studio/dusky_audio_studio.p
 
     pub fn load() -> Self {
         let (dir, file) = Self::paths();
-        let _ = fs::create_dir_all(&dir);
         if !file.exists() {
+            let _ = fs::create_dir_all(&dir);
             let _ = fs::write(&file, Self::default_toml());
         }
         let raw = fs::read_to_string(&file).unwrap_or_else(|_| Self::default_toml().to_owned());

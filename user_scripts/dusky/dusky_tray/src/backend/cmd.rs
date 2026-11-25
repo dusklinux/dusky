@@ -191,59 +191,84 @@ unsafe fn libc_killpg(pid: u32) {
     }
 }
 
-/// Fire-and-forget launch outside the panel's cgroup.
-///
-/// Uses `systemd-run --user --scope` when available (same as Python's
-/// `execute_cmd(detached=True)`), otherwise falls back to `bash -c` with
-/// `setsid`-style detachment.
-pub fn execute_detached(cmd: &str) {
-    let cmd = cmd.trim();
-    if cmd.is_empty() {
-        return;
-    }
-    let expanded = cmd.to_owned();
-    let argv: Vec<String> = vec![
-        "/usr/bin/systemd-run".into(),
-        "--user".into(),
-        "--scope".into(),
-        "--collect".into(),
-        "--quiet".into(),
-        "--expand-environment=no".into(),
-        "--".into(),
-        "/usr/bin/bash".into(),
-        "-c".into(),
-        expanded,
-    ];
-    if argv.is_empty() {
-        return;
-    }
-    let mut c = Command::new(&argv[0]);
-    if argv.len() > 1 {
-        c.args(&argv[1..]);
-    }
+/// Fire-and-forget argv launch outside the panel's cgroup via `systemd-run`.
+fn spawn_reaped(mut c: Command) -> bool {
     c.stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    #[allow(unused_mut)]
-    let mut c = c;
-    // Detach: new session so the child outlives the panel refresh workers.
-    c.process_group(0);
+        .stderr(Stdio::null())
+        // Detach into a separate process group so the child outlives the panel.
+        .process_group(0);
     if let Ok(mut child) = c.spawn() {
         let _ = std::thread::Builder::new()
             .name("launcher-reaper".into())
             .spawn(move || {
                 let _ = child.wait();
             });
+        true
+    } else {
+        false
     }
 }
 
-/// Atomic text write (tmpfile + rename + fsync), mirroring Python.
-pub fn atomic_write_text(path: &std::path::Path, text: &str) -> bool {
+/// Fire-and-forget argv launch outside the panel's cgroup via `systemd-run`.
+pub fn spawn_detached_argv(argv: &[String]) -> bool {
+    if argv.is_empty() {
+        return false;
+    }
+    let mut c = Command::new("/usr/bin/systemd-run");
+    c.args([
+        "--user",
+        "--scope",
+        "--collect",
+        "--quiet",
+        "--expand-environment=no",
+        "--",
+    ])
+    .args(argv);
+    spawn_reaped(c)
+}
+
+/// Fire-and-forget transient systemd user service (`--no-block`), fully
+/// decoupled from the panel's process tree/session with stderr in the journal.
+pub fn spawn_detached_service(argv: &[String], extra_env: &[(&str, &str)]) -> bool {
+    if argv.is_empty() {
+        return false;
+    }
+    let mut c = Command::new("/usr/bin/systemd-run");
+    c.args([
+        "--user",
+        "--collect",
+        "--quiet",
+        "--no-block",
+        "--expand-environment=no",
+        "--property=StandardOutput=null",
+        "--property=StandardError=journal",
+    ]);
+    for (k, v) in extra_env {
+        c.arg(format!("--setenv={k}={v}"));
+    }
+    c.arg("--").args(argv);
+    spawn_reaped(c)
+}
+
+/// Fire-and-forget shell command launch outside the panel's cgroup.
+pub fn execute_detached(cmd: &str) {
+    let cmd = cmd.trim();
+    if cmd.is_empty() {
+        return;
+    }
+    let _ = spawn_detached_argv(&["/usr/bin/bash".into(), "-c".into(), cmd.to_owned()]);
+}
+
+/// Atomic text write on tmpfs (tmpfile + rename, skipping redundant fsync).
+pub fn atomic_write_tmpfs_text(path: &std::path::Path, text: &str) -> bool {
+    use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
+
     let Some(parent) = path.parent() else {
         return false;
     };
-    if std::fs::create_dir_all(parent).is_err() {
+    if !parent.is_dir() && std::fs::create_dir_all(parent).is_err() {
         return false;
     }
     let tmp = parent.join(format!(
@@ -255,7 +280,7 @@ pub fn atomic_write_text(path: &std::path::Path, text: &str) -> bool {
             SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         }
     ));
-    let Ok(file) = std::fs::OpenOptions::new()
+    let Ok(mut file) = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .mode(0o600)
@@ -263,13 +288,7 @@ pub fn atomic_write_text(path: &std::path::Path, text: &str) -> bool {
     else {
         return false;
     };
-    use std::io::Write;
-    let mut file = file;
     if file.write_all(text.as_bytes()).is_err() {
-        let _ = std::fs::remove_file(&tmp);
-        return false;
-    }
-    if file.sync_all().is_err() {
         let _ = std::fs::remove_file(&tmp);
         return false;
     }

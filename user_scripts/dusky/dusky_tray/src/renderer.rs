@@ -54,15 +54,24 @@ impl GlowCache {
         }) {
             return (handle.clone(), *bounds);
         }
-        // Rasterize the already shaped text using Iced's exact fonts. Group
-        // equal-alpha pixels into paths, then let resvg cache a true Gaussian
-        // blur. Color and intensity do not change the underlying mask.
+        // Rasterize the already shaped text using Iced's exact fonts. Merge
+        // contiguous horizontal runs of equal-alpha pixels into paths, then
+        // let resvg cache a true Gaussian blur. Color and intensity do not
+        // change the underlying mask.
         use std::fmt::Write as _;
+        fn flush_run(paths: &mut std::collections::BTreeMap<u8, String>, run: (i32, i32, i32, u8)) {
+            let (rx, ry, rlen, ralpha) = run;
+            let _ = write!(
+                paths.entry(ralpha).or_default(),
+                "M{rx} {ry}h{rlen}v1h-{rlen}z"
+            );
+        }
         let mut paths = std::collections::BTreeMap::<u8, String>::new();
         let mut min_x = 0;
         let mut min_y = 0;
         let mut max_x = 1;
         let mut max_y = 1;
+        let mut active_run: Option<(i32, i32, i32, u8)> = None;
         paragraph.buffer().draw(
             graphics::text::font_system()
                 .write()
@@ -71,16 +80,31 @@ impl GlowCache {
             &mut self.glyphs,
             graphics::text::cosmic_text::Color::rgb(255, 255, 255),
             |x, y, _, _, color| {
-                if color.a() == 0 {
+                let alpha = color.a();
+                if alpha == 0 {
                     return;
                 }
                 min_x = min_x.min(x);
                 min_y = min_y.min(y);
                 max_x = max_x.max(x + 1);
                 max_y = max_y.max(y + 1);
-                let _ = write!(paths.entry(color.a()).or_default(), "M{x} {y}h1v1h-1z");
+                if let Some((rx, ry, rlen, ralpha)) = active_run
+                    && y == ry
+                    && alpha == ralpha
+                    && x == rx + rlen
+                {
+                    active_run = Some((rx, ry, rlen + 1, ralpha));
+                } else {
+                    if let Some(prev) = active_run {
+                        flush_run(&mut paths, prev);
+                    }
+                    active_run = Some((x, y, 1, alpha));
+                }
             },
         );
+        if let Some(last) = active_run {
+            flush_run(&mut paths, last);
+        }
         let bounds = Rectangle {
             x: (min_x - 8) as f32,
             y: (min_y - 8) as f32,
