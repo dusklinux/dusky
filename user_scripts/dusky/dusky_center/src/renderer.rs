@@ -423,4 +423,75 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    #[ignore = "requires a working Vulkan or Wayland EGL adapter"]
+    fn motion_wrappers_render_mid_animation_at_fractional_scale() {
+        use iced_core::{Layout, Theme, layout, mouse, widget::Tree};
+        use iced_core::{Renderer as _, renderer::Headless as _};
+        let mut renderer = iced_futures::futures::executor::block_on(Renderer::new(
+            Font::with_name("Atkinson Hyperlegible"),
+            Pixels(16.0),
+            None,
+        ))
+        .expect("a GPU adapter is required");
+        let config = crate::config::AppConfig::load_from_path(
+            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("dusky_config.toml"),
+        )
+        .unwrap();
+        let (mut app, _initial) = crate::ui::CenterApp::new(config, None, None);
+
+        // Trigger simultaneous subpage push, sidebar collapse, and search bar reveal.
+        let sub_sections = app.config.pages[1]
+            .layout
+            .iter()
+            .flat_map(|s| &s.items)
+            .find(|i| i.item_type == "navigation")
+            .expect("system page has a navigation subpage")
+            .layout
+            .clone();
+        let _ = app.update(crate::ui::Message::PushSubPage {
+            title: "Mid-Flight Subpage".into(),
+            occurrence: 0,
+            sections: sub_sections,
+        });
+        let _ = app.update(crate::ui::Message::ToggleSidebar);
+        let _ = app.update(crate::ui::Message::ToggleSearch);
+        let mid = app.animation_now + std::time::Duration::from_millis(70);
+        let _ = app.update(crate::ui::Message::AnimationFrame(mid));
+        assert!(app.has_active_animations());
+
+        let viewport = Rectangle::with_size(Size::new(670.0, 720.0));
+        for scale in [1.0_f32, 1.6, 2.0] {
+            let mut content = app.view();
+            let mut tree = Tree::new(&content);
+            let node = content.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(viewport.size(), viewport.size()),
+            );
+            renderer.reset(viewport);
+            content.as_widget().draw(
+                &tree,
+                &mut renderer,
+                &Theme::Dark,
+                &renderer::Style::default(),
+                Layout::new(&node),
+                mouse::Cursor::Unavailable,
+                &viewport,
+            );
+            let size = Size::new((670.0 * scale).ceil() as u32, (720.0 * scale).ceil() as u32);
+            let pixels = renderer.screenshot(size, scale, app.theme.bg);
+            assert_eq!(pixels.len(), size.width as usize * size.height as usize * 4);
+            let background = &pixels[..4];
+            assert!(
+                pixels
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .any(|pixel| pixel != background),
+                "mid-animation wrappers must render visible content at scale {scale}"
+            );
+        }
+    }
 }

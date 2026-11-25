@@ -26,6 +26,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use crate::appearance::{self, FloatTransition, NavDirection, NavTransition};
 use crate::backend::controls::{self, ServiceStatus, Snapshot};
 use crate::backend::system as sys;
 use crate::backend::worker;
@@ -43,6 +44,9 @@ type DismissChannel = (
 );
 
 const CORE_CONTROLS: [&str; 4] = ["Volume", "Microphone", "Night Light", "Brightness"];
+const SIDEBAR_ANIM_DURATION: Duration = Duration::from_millis(170);
+const SEARCH_ANIM_DURATION: Duration = Duration::from_millis(140);
+const EXPANDER_ANIM_DURATION: Duration = Duration::from_millis(170);
 const GROUP_BACKGROUND_MIX: f32 = 0.35;
 const HOVER_HIGHLIGHT_MIX: f32 = 0.12;
 const ICON_HOVER_HIGHLIGHT_MIX: f32 = 0.1;
@@ -101,7 +105,7 @@ pub enum Message {
     SelectPage(usize),
     OpenSearchResult(SearchLocation),
     SearchPositioned { started: Instant, offset: Option<f32> },
-    SearchHighlightTick,
+    AnimationFrame(Instant),
     PushSubPage {
         title: String,
         occurrence: usize,
@@ -213,6 +217,11 @@ pub struct CenterApp {
     pub status_notice: Option<(String, Instant)>,
     pub entry_values: HashMap<String, String>,
     pub editing_entries: HashSet<String>,
+    pub animation_now: Instant,
+    pub nav_transition: Option<NavTransition>,
+    pub sidebar_anim: FloatTransition,
+    pub search_anim: FloatTransition,
+    pub expander_anims: HashMap<String, FloatTransition>,
 }
 
 impl CenterApp {
@@ -271,6 +280,7 @@ impl CenterApp {
         };
 
         let (theme, theme_stamp) = AppTheme::load_with_stamp();
+        let boot_now = Instant::now();
         let mut app = Self {
             config,
             config_path: loaded.path,
@@ -314,6 +324,11 @@ impl CenterApp {
             status_notice: None,
             entry_values: HashMap::new(),
             editing_entries: HashSet::new(),
+            animation_now: boot_now,
+            nav_transition: None,
+            sidebar_anim: FloatTransition::settled(1.0, boot_now),
+            search_anim: FloatTransition::settled(0.0, boot_now),
+            expander_anims: HashMap::new(),
         };
 
         // LAZY LOADING: Only initialize active page on cold start!
@@ -480,6 +495,9 @@ impl CenterApp {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::OpenSearchResult(location) => {
+                let prev_page = self.active_page_idx();
+                let was_subpage = self.nav_stack.len() > 1;
+                let target_has_subpage = !location.navigation.is_empty();
                 let pending = self.flush_deferred_sliders();
                 self.lazy_load_page(location.page);
                 self.nav_stack = vec![NavView::Root(location.page)];
@@ -505,15 +523,29 @@ impl CenterApp {
                 }
                 for key in location.expanders { self.toggle_states.insert(key, true); }
                 let started = Instant::now();
-                self.search_highlight = Some((location.path, started));
+                self.animation_now = self.animation_now.max(started);
+                // Snap search bar and expanders so LocateSearchTarget measures exact resting bounds.
+                self.search_anim.snap(0.0, self.animation_now);
+                self.expander_anims.clear();
+                if target_has_subpage {
+                    self.nav_transition = Some(NavTransition::start(NavDirection::Push, self.animation_now));
+                } else if location.page > prev_page {
+                    self.nav_transition = Some(NavTransition::start(NavDirection::PageDown, self.animation_now));
+                } else if location.page < prev_page {
+                    self.nav_transition = Some(NavTransition::start(NavDirection::PageUp, self.animation_now));
+                } else if was_subpage {
+                    self.nav_transition = Some(NavTransition::start(NavDirection::Pop, self.animation_now));
+                }
+                self.search_highlight = Some((location.path, self.animation_now));
                 self.search_query.clear();
                 self.search_cache = None;
                 self.search_open = false;
                 self.status_notice = None;
                 self.control_generation += 1;
+                let highlight_started = self.animation_now;
                 let reveal = iced_runtime::task::widget(LocateSearchTarget {
                     target: iced_core::widget::Id::new("search_target"), viewport: None, target_bounds: None,
-                }).map(move |offset| Message::SearchPositioned { started, offset });
+                }).map(move |offset| Message::SearchPositioned { started: highlight_started, offset });
                 Task::batch([pending, self.refresh_visible(), reveal])
             }
             Message::SearchPositioned { started, offset } => {
@@ -524,14 +556,28 @@ impl CenterApp {
                 }
                 Task::none()
             }
-            Message::SearchHighlightTick => {
-                if self.search_highlight.as_ref().is_some_and(|(_, time)| time.elapsed() >= Duration::from_millis(1200)) {
+            Message::AnimationFrame(now) => {
+                self.animation_now = self.animation_now.max(now);
+                let frame_now = self.animation_now;
+                if self
+                    .nav_transition
+                    .as_ref()
+                    .is_some_and(|anim| !anim.is_active(frame_now))
+                {
+                    self.nav_transition = None;
+                }
+                self.expander_anims.retain(|_, anim| anim.is_active(frame_now));
+                if self.search_highlight.as_ref().is_some_and(|(_, started)| {
+                    frame_now.saturating_duration_since(*started) >= Duration::from_millis(1200)
+                }) {
                     self.search_highlight = None;
                 }
                 Task::none()
             }
             Message::SelectPage(idx) => {
                 if idx < self.config.pages.len() {
+                    let prev_page = self.active_page_idx();
+                    let was_subpage = self.nav_stack.len() > 1;
                     let pending = self.flush_deferred_sliders();
                     self.lazy_load_page(idx);
                     self.nav_stack = vec![NavView::Root(idx)];
@@ -539,6 +585,14 @@ impl CenterApp {
                     self.search_query.clear();
                     self.search_cache = None;
                     self.status_notice = None;
+                    self.expander_anims.clear();
+                    if idx > prev_page {
+                        self.start_nav_transition(NavDirection::PageDown);
+                    } else if idx < prev_page {
+                        self.start_nav_transition(NavDirection::PageUp);
+                    } else if was_subpage {
+                        self.start_nav_transition(NavDirection::Pop);
+                    }
                     self.control_generation += 1;
                     return Task::batch([pending, self.refresh_visible()]);
                 }
@@ -564,6 +618,8 @@ impl CenterApp {
                 self.search_query.clear();
                 self.search_cache = None;
                 self.status_notice = None;
+                self.expander_anims.clear();
+                self.start_nav_transition(NavDirection::Push);
                 self.control_generation += 1;
                 Task::batch([pending, self.refresh_visible()])
             }
@@ -574,6 +630,8 @@ impl CenterApp {
                 let pending = self.flush_deferred_sliders();
                 if self.nav_stack.len() > 1 {
                     self.nav_stack.pop();
+                    self.expander_anims.clear();
+                    self.start_nav_transition(NavDirection::Pop);
                 }
                 self.control_generation += 1;
                 Task::batch([pending, self.refresh_visible()])
@@ -581,11 +639,23 @@ impl CenterApp {
 
             Message::ToggleSidebar => {
                 self.sidebar_open = !self.sidebar_open;
+                let now = self.tick_animation_clock();
+                self.sidebar_anim.retarget(
+                    if self.sidebar_open { 1.0 } else { 0.0 },
+                    now,
+                    SIDEBAR_ANIM_DURATION,
+                );
                 Task::none()
             }
 
             Message::ToggleSearch => {
                 self.search_open = !self.search_open;
+                let now = self.tick_animation_clock();
+                self.search_anim.retarget(
+                    if self.search_open { 1.0 } else { 0.0 },
+                    now,
+                    SEARCH_ANIM_DURATION,
+                );
                 if self.search_open {
                     operation::focus("search_input")
                 } else {
@@ -606,6 +676,8 @@ impl CenterApp {
                 self.search_query.clear();
                 self.search_cache = None;
                 self.search_open = false;
+                let now = self.tick_animation_clock();
+                self.search_anim.retarget(0.0, now, SEARCH_ANIM_DURATION);
                 Task::none()
             }
 
@@ -654,6 +726,19 @@ impl CenterApp {
                 let item = self.visible_items().into_iter().find(|i| controls::item_key(i) == key).cloned();
                 let Some(item) = item else {
                     let pending = self.flush_deferred_sliders();
+                    let now = self.tick_animation_clock();
+                    let current = self
+                        .expander_anims
+                        .get(&key)
+                        .map(|anim| anim.value(now))
+                        .unwrap_or(if previous { 1.0 } else { 0.0 });
+                    let mut anim = FloatTransition::settled(current, now);
+                    anim.retarget(
+                        if is_enabled { 1.0 } else { 0.0 },
+                        now,
+                        EXPANDER_ANIM_DURATION,
+                    );
+                    self.expander_anims.insert(key.clone(), anim);
                     self.toggle_states.insert(key.clone(), is_enabled);
                     self.control_generation += 1;
                     return Task::batch([pending, self.refresh_visible()]); // Local expander state.
@@ -1062,6 +1147,7 @@ impl CenterApp {
                         self.hovered_item = None;
                         self.search_highlight = None;
                         self.active_slider = None;
+                        self.expander_anims.clear();
                         self.rebuild_search_cache();
 
                         self.lazy_load_page(self.active_page_idx());
@@ -1092,10 +1178,13 @@ impl CenterApp {
                         ));
 
                         if fell_back {
+                            self.start_nav_transition(NavDirection::Pop);
                             tasks.push(operation::scroll_to(
                                 "page_content",
                                 operation::AbsoluteOffset { x: 0.0, y: 0.0 },
                             ));
+                        } else {
+                            self.nav_transition = None;
                         }
                     }
                     Err(error) => {
@@ -1113,11 +1202,8 @@ impl CenterApp {
                 ..
             })) => {
                 if key == Key::Named(Named::Escape) {
-                    if !self.search_query.is_empty() {
-                        self.search_query.clear();
-                        self.search_cache = None;
-                        self.search_open = false;
-                        return Task::none();
+                    if self.search_open || !self.search_query.is_empty() {
+                        return self.update(Message::ClearSearch);
                     }
                     if self.nav_stack.len() > 1 {
                         return self.update(Message::PopSubPage);
@@ -1133,6 +1219,8 @@ impl CenterApp {
                     && matches!(key, Key::Character(ref c) if c == "f" || c == "F")
                 {
                     self.search_open = true;
+                    let now = self.tick_animation_clock();
+                    self.search_anim.retarget(1.0, now, SEARCH_ANIM_DURATION);
                     return operation::focus("search_input");
                 }
                 Task::none()
@@ -1283,6 +1371,28 @@ impl CenterApp {
         let _ = Self::dismiss_channel().0.unbounded_send(());
     }
 
+    fn tick_animation_clock(&mut self) -> Instant {
+        let now = self.animation_now.max(Instant::now());
+        self.animation_now = now;
+        now
+    }
+
+    fn start_nav_transition(&mut self, direction: NavDirection) {
+        let now = self.tick_animation_clock();
+        self.nav_transition = Some(NavTransition::start(direction, now));
+    }
+
+    pub fn has_active_animations(&self) -> bool {
+        let now = self.animation_now;
+        self.nav_transition
+            .as_ref()
+            .is_some_and(|anim| anim.is_active(now))
+            || self.sidebar_anim.is_active(now)
+            || self.search_anim.is_active(now)
+            || self.expander_anims.values().any(|anim| anim.is_active(now))
+            || self.search_highlight.is_some()
+    }
+
     pub fn subscription(&self) -> Subscription<Message> {
         let events = iced::event::listen_with(|event, status, _| match (&status, &event) {
             (
@@ -1295,22 +1405,17 @@ impl CenterApp {
             (iced::event::Status::Ignored, _) => Some(Message::EventOccurred(event)),
             _ => None,
         });
-        let highlight = if self.search_highlight.is_some() {
-            Subscription::run(Self::highlight_ticks)
-        } else { Subscription::none() };
+        let frames = if self.has_active_animations() {
+            iced::window::frames().map(Message::AnimationFrame)
+        } else {
+            Subscription::none()
+        };
         Subscription::batch([
             events,
             Subscription::run(Self::ticks),
-            highlight,
+            frames,
             Subscription::run(Self::dismiss_events),
         ])
-    }
-
-    fn highlight_ticks() -> impl iced_futures::futures::Stream<Item = Message> {
-        iced_futures::futures::stream::unfold((), |()| async {
-            futures_timer::Delay::new(Duration::from_millis(33)).await;
-            Some((Message::SearchHighlightTick, ()))
-        })
     }
 
     fn is_search_target(&self, item: &ItemConfig) -> bool {
@@ -1326,7 +1431,11 @@ impl CenterApp {
         if !self.is_search_target(item) { return 0.0; }
         self.search_highlight.as_ref().map_or(0.0, |(_, started)| {
             // Hold gently, then fade out over the final 350 ms.
-            ((1.2 - started.elapsed().as_secs_f32()) / 0.35).clamp(0.0, 1.0)
+            let elapsed = self
+                .animation_now
+                .saturating_duration_since(*started)
+                .as_secs_f32();
+            ((1.2 - elapsed) / 0.35).clamp(0.0, 1.0)
         })
     }
 
@@ -1365,31 +1474,32 @@ impl CenterApp {
 
     pub fn view<'a>(&'a self) -> Element<'a, Message> {
         let palette = self.theme;
+        let sidebar_factor = self.sidebar_anim.value(self.animation_now);
+        let sidebar_interactive = self.sidebar_anim.target() > 0.0;
+        let divider_width = if sidebar_factor > 0.01 { 1 } else { 0 };
+        let divider_alpha = 0.25 * sidebar_factor;
 
         row![
-            if self.sidebar_open {
-                self.view_sidebar()
-            } else {
-                container(Space::new().width(0).height(Length::Fill)).into()
-            },
-            if self.sidebar_open {
-                container(Space::new().width(1).height(Length::Fill)).style(move |_| {
-                    container::Style {
-                        background: Some(
-                            Color::from_rgba(
-                                palette.border.r,
-                                palette.border.g,
-                                palette.border.b,
-                                0.25,
-                            )
-                            .into(),
-                        ),
-                        ..Default::default()
-                    }
-                })
-            } else {
-                container(Space::new().width(0).height(0))
-            },
+            appearance::reveal_width(
+                self.view_sidebar(),
+                sidebar_factor,
+                sidebar_factor,
+                sidebar_interactive,
+            ),
+            container(Space::new().width(divider_width).height(Length::Fill)).style(move |_| {
+                container::Style {
+                    background: Some(
+                        Color::from_rgba(
+                            palette.border.r,
+                            palette.border.g,
+                            palette.border.b,
+                            divider_alpha,
+                        )
+                        .into(),
+                    ),
+                    ..Default::default()
+                }
+            }),
             self.view_main_column(),
         ]
         .width(Length::Fill)
@@ -1607,103 +1717,116 @@ impl CenterApp {
         .align_y(Vertical::Center)
         .padding([8, 18]);
 
-        let mut main_col = column![mouse_area(main_header).on_press(Message::DragWindow)];
-        if let Some(error) = &self.action_error {
-            main_col = main_col.push(container(text(error).size(12).color(palette.danger))
-                .padding([6, 18]).width(Length::Fill));
+        // Fixed 4-slot layout preserves widget Tree identity (Scrollable offset + TextInput focus)
+        // across banner updates, search reveals, and navigation transitions.
+        let banner: Element<'a, Message> = if let Some(error) = &self.action_error {
+            container(text(error).size(12).color(palette.danger))
+                .padding([6, 18])
+                .width(Length::Fill)
+                .into()
         } else if let Some((notice, _)) = &self.status_notice {
-            main_col = main_col.push(container(text(notice).size(12).color(palette.accent))
-                .padding([6, 18]).width(Length::Fill));
-        }
+            container(text(notice).size(12).color(palette.accent))
+                .padding([6, 18])
+                .width(Length::Fill)
+                .into()
+        } else {
+            container(Space::new().width(0).height(0)).into()
+        };
 
-        // Search bar with auto-focus support and elegant capsule styling
-        if self.search_open || !self.search_query.is_empty() {
-            let search_icon = render_icon(
-                "search",
-                15.0,
-                if self.search_query.is_empty() {
-                    palette.fg_muted
-                } else {
-                    palette.accent
-                },
-            );
-
-            let search_input = text_input("Search controls, services, tools...", &self.search_query)
-                .id("search_input")
-                .on_input(Message::SearchChanged)
-                .padding([6, 6])
-                .size(13)
-                .style(move |_, _| text_input::Style {
-                    background: Color::TRANSPARENT.into(),
-                    border: Border::default(),
-                    icon: palette.fg_muted,
-                    placeholder: palette.fg_muted,
-                    value: palette.fg,
-                    selection: palette.accent,
-                });
-
-            let clear_btn = if !self.search_query.is_empty() {
-                button(render_icon("close", 13.0, palette.fg_muted))
-                    .on_press(Message::ClearSearch)
-                    .padding([4, 6])
-                    .style(move |_, status| button::Style {
-                        background: Some(
-                            if status == button::Status::Hovered {
-                                palette.card_hover.into()
-                            } else {
-                                Color::TRANSPARENT.into()
-                            },
-                        ),
-                        border: Border {
-                            radius: 6.0.into(),
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    })
+        let search_icon = render_icon(
+            "search",
+            15.0,
+            if self.search_query.is_empty() {
+                palette.fg_muted
             } else {
-                button(Space::new().width(0))
-                    .padding([0, 0])
-                    .style(|_, _| button::Style::default())
-            };
+                palette.accent
+            },
+        );
 
-            let inner_row = row![
-                search_icon,
-                search_input.width(Length::Fill),
-                clear_btn,
-            ]
-            .spacing(10)
-            .align_y(Vertical::Center)
-            .padding([4, 12]);
-
-            let search_bar = container(
-                container(inner_row)
-                    .style(move |_| container::Style {
-                        background: Some(palette.card_bg.into()),
-                        border: Border {
-                            color: if self.search_query.is_empty() {
-                                palette.border
-                            } else {
-                                palette.accent
-                            },
-                            width: 1.0,
-                            radius: 10.0.into(),
-                        },
-                        ..Default::default()
-                    })
-                    .width(Length::Fill)
-                    .max_width(560.0),
-            )
-            .width(Length::Fill)
-            .align_x(Horizontal::Center)
-            .padding(Padding {
-                top: 0.0,
-                right: 18.0,
-                bottom: 12.0,
-                left: 18.0,
+        let search_input = text_input("Search controls, services, tools...", &self.search_query)
+            .id("search_input")
+            .on_input(Message::SearchChanged)
+            .padding([6, 6])
+            .size(13)
+            .style(move |_, _| text_input::Style {
+                background: Color::TRANSPARENT.into(),
+                border: Border::default(),
+                icon: palette.fg_muted,
+                placeholder: palette.fg_muted,
+                value: palette.fg,
+                selection: palette.accent,
             });
 
-            main_col = main_col.push(search_bar);
-        }
+        let clear_btn = if !self.search_query.is_empty() {
+            button(render_icon("close", 13.0, palette.fg_muted))
+                .on_press(Message::ClearSearch)
+                .padding([4, 6])
+                .style(move |_, status| button::Style {
+                    background: Some(if status == button::Status::Hovered {
+                        palette.card_hover.into()
+                    } else {
+                        Color::TRANSPARENT.into()
+                    }),
+                    border: Border {
+                        radius: 6.0.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                })
+        } else {
+            button(Space::new().width(0))
+                .padding([0, 0])
+                .style(|_, _| button::Style::default())
+        };
+
+        let inner_row = row![
+            search_icon,
+            search_input.width(Length::Fill),
+            clear_btn,
+        ]
+        .spacing(10)
+        .align_y(Vertical::Center)
+        .padding([4, 12]);
+
+        let search_bar = container(
+            container(inner_row)
+                .style(move |_| container::Style {
+                    background: Some(palette.card_bg.into()),
+                    border: Border {
+                        color: if self.search_query.is_empty() {
+                            palette.border
+                        } else {
+                            palette.accent
+                        },
+                        width: 1.0,
+                        radius: 10.0.into(),
+                    },
+                    ..Default::default()
+                })
+                .width(Length::Fill)
+                .max_width(560.0),
+        )
+        .width(Length::Fill)
+        .align_x(Horizontal::Center)
+        .padding(Padding {
+            top: 0.0,
+            right: 18.0,
+            bottom: 12.0,
+            left: 18.0,
+        });
+
+        let search_factor = if !self.search_query.is_empty() {
+            1.0
+        } else {
+            self.search_anim.value(self.animation_now)
+        };
+        let search_interactive = self.search_anim.target() > 0.0 || !self.search_query.is_empty();
+        let search_slot = appearance::reveal_height(
+            search_bar.into(),
+            search_factor,
+            search_factor,
+            search_interactive,
+        );
 
         let content = if !self.search_query.is_empty() {
             self.view_search_results()
@@ -1723,7 +1846,22 @@ impl CenterApp {
             }
         };
 
-        main_col = main_col.push(content);
+        let (nav_offset, nav_opacity) = if !self.search_query.is_empty() {
+            (iced::Vector::ZERO, 1.0)
+        } else {
+            self.nav_transition
+                .as_ref()
+                .map_or((iced::Vector::ZERO, 1.0), |anim| {
+                    anim.sample(self.animation_now)
+                })
+        };
+
+        let main_col = column![
+            mouse_area(main_header).on_press(Message::DragWindow),
+            banner,
+            search_slot,
+            appearance::slide_fade(content, nav_offset, nav_opacity),
+        ];
 
         container(main_col.width(Length::Fill).height(Length::Fill))
             .style(move |_| container::Style {
@@ -2225,14 +2363,16 @@ impl CenterApp {
         )
         .padding(0)
         .style(move |_, status| {
+            let active_state = matches!(status, button::Status::Hovered | button::Status::Pressed);
+            let is_pressed = status == button::Status::Pressed;
             let (bg, b_color) = if is_enabled {
-                if status == button::Status::Hovered {
+                if active_state {
                     (active_hover_bg, active_hover_bg)
                 } else {
                     (active_bg, active_bg)
                 }
             } else if is_destructive {
-                if status == button::Status::Hovered {
+                if active_state {
                     (
                         Color::from_rgb(
                             palette.card_hover.r + (palette.danger.r - palette.card_hover.r) * 0.04,
@@ -2245,7 +2385,7 @@ impl CenterApp {
                     (card_bg, border_color)
                 }
             } else if is_suggested {
-                if status == button::Status::Hovered {
+                if active_state {
                     (
                         Color::from_rgb(
                             palette.card_hover.r + (palette.accent.r - palette.card_hover.r) * 0.04,
@@ -2257,7 +2397,7 @@ impl CenterApp {
                 } else {
                     (card_bg, border_color)
                 }
-            } else if status == button::Status::Hovered {
+            } else if active_state {
                 (
                     palette.card_hover,
                     Color::from_rgba(palette.accent.r, palette.accent.g, palette.accent.b, 0.35),
@@ -2270,12 +2410,19 @@ impl CenterApp {
                 else { mix(palette.bg, card_bg, TILE_BACKGROUND_MIX) };
             let bg = if is_enabled { bg }
                 else { mix(palette.bg, bg, TILE_BACKGROUND_MIX) };
-            let (bg, b_color) = if status == button::Status::Hovered {
+            let (mut bg, b_color) = if active_state {
                 let strength = if is_enabled { ENABLED_TILE_HOVER_HIGHLIGHT_MIX }
                     else { TILE_HOVER_HIGHLIGHT_MIX };
                 (blend_hover(idle_bg, bg, strength), blend_hover(border_color, b_color, strength))
             } else { (bg, b_color) };
-            let shadow = if status == button::Status::Hovered {
+            if is_pressed {
+                bg = if is_enabled {
+                    mix(bg, Color::BLACK, 0.08)
+                } else {
+                    mix(bg, palette.accent, 0.04)
+                };
+            }
+            let shadow = if active_state {
                 // Add the same hover glow above each state's idle glow.
                 let alpha = TILE_GLOW_ALPHA * 1.2 + if is_enabled { TILE_GLOW_ALPHA } else { 0.0 };
                 iced::Shadow { color: Color { a: alpha, ..glow.color }, ..glow }
@@ -3056,8 +3203,17 @@ impl CenterApp {
 
         let expander_key = format!("expander:{}", key);
         let is_expanded = self.toggle_states.get(&expander_key).copied().unwrap_or(false);
+        let exp_factor = self
+            .expander_anims
+            .get(&expander_key)
+            .map(|anim| anim.value(self.animation_now))
+            .unwrap_or(if is_expanded { 1.0 } else { 0.0 });
 
-        if from_page.is_none() && item.item_type == "expander" && is_expanded && !item.items.is_empty() {
+        if from_page.is_none()
+            && item.item_type == "expander"
+            && (is_expanded || exp_factor > 0.0)
+            && !item.items.is_empty()
+        {
             let mut sub_col = column![].spacing(0);
             for sub_item in &item.items {
                 sub_col = sub_col.push(
@@ -3069,7 +3225,9 @@ impl CenterApp {
                     }),
                 );
             }
-            column![area, sub_col].into()
+            let revealed =
+                appearance::reveal_height(sub_col.into(), exp_factor, exp_factor, is_expanded);
+            column![area, revealed].into()
         } else {
             area.into()
         }
@@ -4415,11 +4573,11 @@ mod tests {
         let _ = app.update(Message::ItemEntered("Other".into()));
         let _ = app.update(Message::ItemExited("Other".into()));
         assert!(app.search_highlight.is_some());
-        app.search_highlight.as_mut().unwrap().1 = Instant::now() - Duration::from_millis(1100);
+        let started = app.search_highlight.as_ref().unwrap().1;
+        let _ = app.update(Message::AnimationFrame(started + Duration::from_millis(1100)));
         let strength = app.search_highlight_strength(&app.config.pages[0].layout[0].items[1].items[0]);
         assert!(strength > 0.0 && strength < 0.4);
-        app.search_highlight.as_mut().unwrap().1 = Instant::now() - Duration::from_millis(1300);
-        let _ = app.update(Message::SearchHighlightTick);
+        let _ = app.update(Message::AnimationFrame(started + Duration::from_millis(1300)));
         assert!(app.search_highlight.is_none());
         let _ = app.update(Message::OpenSearchResult(location));
         let started = app.search_highlight.as_ref().unwrap().1;
@@ -4511,6 +4669,11 @@ mod tests {
             status_notice: None,
             entry_values: HashMap::new(),
             editing_entries: HashSet::new(),
+            animation_now: Instant::now(),
+            nav_transition: None,
+            sidebar_anim: FloatTransition::settled(1.0, Instant::now()),
+            search_anim: FloatTransition::settled(0.0, Instant::now()),
+            expander_anims: HashMap::new(),
         };
         app.sync_slider("Microphone", 50.0);
         assert_eq!(app.slider_values["Microphone"], 80.0);
@@ -5663,5 +5826,158 @@ command = "brightnessctl set {value}%"
             String::from_utf8_lossy(&result.stdout),
             String::from_utf8_lossy(&result.stderr)
         );
+    }
+
+    #[test]
+    fn transitions_activate_on_navigation_and_settle_to_zero_idle_animations() {
+        let config: AppConfig = toml::from_str(r#"
+[[pages]]
+id = "first"
+title = "First"
+[[pages.layout]]
+type = "section"
+[pages.layout.properties]
+title = "Main"
+[[pages.layout.items]]
+type = "navigation"
+[pages.layout.items.properties]
+title = "Sub"
+[[pages.layout.items.layout]]
+type = "section"
+[[pages.layout.items.layout.items]]
+type = "expander"
+[pages.layout.items.layout.items.properties]
+title = "Details"
+[[pages.layout.items.layout.items.items]]
+type = "label"
+[pages.layout.items.layout.items.items.properties]
+title = "Inner"
+[pages.layout.items.layout.items.items.value]
+type = "static"
+text = "ok"
+
+[[pages]]
+id = "second"
+title = "Second"
+"#).unwrap();
+        let (mut app, _) = CenterApp::new(config, None, None);
+        assert!(!app.has_active_animations(), "cold boot must start with zero active animations");
+
+        // PushSubPage starts Push glide.
+        let sub_sections = app.config.pages[0].layout[0].items[0].layout.clone();
+        let _ = app.update(Message::PushSubPage {
+            title: "Sub".into(),
+            occurrence: 0,
+            sections: sub_sections,
+        });
+        assert!(app.has_active_animations());
+        assert_eq!(app.nav_transition.unwrap().direction, NavDirection::Push);
+
+        // Expander open animates and retargets cleanly; settles to idle.
+        let _ = app.update(Message::ToggleItem {
+            key: "expander:Details".into(),
+            is_enabled: true,
+            on_toggle: None,
+        });
+        assert!(app.expander_anims.contains_key("expander:Details"));
+        let _ = app.view();
+
+        let after_settle = app.animation_now + Duration::from_millis(250);
+        let _ = app.update(Message::AnimationFrame(after_settle));
+        assert!(!app.has_active_animations(), "all animations must stop after settling");
+        assert!(app.nav_transition.is_none());
+        assert!(app.expander_anims.is_empty());
+
+        // PopSubPage starts Pop glide and clears expander_anims.
+        let _ = app.update(Message::ToggleItem {
+            key: "expander:Details".into(),
+            is_enabled: false,
+            on_toggle: None,
+        });
+        assert!(!app.expander_anims.is_empty());
+        let _ = app.update(Message::PopSubPage);
+        assert_eq!(app.nav_transition.unwrap().direction, NavDirection::Pop);
+        assert!(app.expander_anims.is_empty());
+
+        // Root page switch uses directional PageDown / PageUp.
+        let _ = app.update(Message::SelectPage(1));
+        assert_eq!(app.nav_transition.unwrap().direction, NavDirection::PageDown);
+        let _ = app.update(Message::SelectPage(0));
+        assert_eq!(app.nav_transition.unwrap().direction, NavDirection::PageUp);
+
+        // Sidebar and search bar animate smoothly and settle cleanly.
+        let _ = app.update(Message::ToggleSidebar);
+        let _ = app.update(Message::ToggleSearch);
+        assert!(app.has_active_animations());
+        let _ = app.view();
+        let later = app.animation_now + Duration::from_millis(300);
+        let _ = app.update(Message::AnimationFrame(later));
+        assert!(!app.has_active_animations());
+        assert_eq!(app.sidebar_anim.value(later), 0.0);
+        assert_eq!(app.search_anim.value(later), 1.0);
+
+        // OpenSearchResult snaps search bar closed and ancestor expanders open while sliding.
+        let loc = build_search_cache(&app.config, "Inner").1[0].location.clone();
+        let _ = app.update(Message::OpenSearchResult(loc));
+        assert_eq!(app.search_anim.value(app.animation_now), 0.0);
+        assert!(!app.search_anim.is_active(app.animation_now));
+        assert!(app.expander_anims.is_empty());
+        assert_eq!(app.toggle_states.get("expander:Details"), Some(&true));
+        assert_eq!(app.nav_transition.unwrap().direction, NavDirection::Push);
+        assert!(app.has_active_animations());
+
+        let finish = app.animation_now + Duration::from_millis(1300);
+        let _ = app.update(Message::AnimationFrame(finish));
+        assert!(!app.has_active_animations());
+    }
+
+    #[test]
+    fn reload_stays_calm_in_place_and_pops_only_on_subpage_fallback() {
+        let root = std::env::temp_dir().join(format!("dusky-reload-anim-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let cfg_path = root.join("anim.toml");
+
+        let with_sub = r#"
+[[pages]]
+id = "p"
+title = "Page"
+[[pages.layout]]
+type = "section"
+[[pages.layout.items]]
+type = "navigation"
+[pages.layout.items.properties]
+title = "Child"
+[[pages.layout.items.layout]]
+type = "section"
+[[pages.layout.items.layout.items]]
+type = "label"
+[pages.layout.items.layout.items.properties]
+title = "Row"
+"#;
+        std::fs::write(&cfg_path, with_sub).unwrap();
+        let loaded = AppConfig::load_resolved(Some(&cfg_path)).unwrap();
+        let (mut app, _) = CenterApp::new_loaded(loaded, Some(cfg_path.clone()), None, None);
+
+        let sub_sections = app.config.pages[0].layout[0].items[0].layout.clone();
+        let _ = app.update(Message::PushSubPage {
+            title: "Child".into(),
+            occurrence: 0,
+            sections: sub_sections,
+        });
+        let settle = app.animation_now + Duration::from_millis(300);
+        let _ = app.update(Message::AnimationFrame(settle));
+        assert!(app.nav_transition.is_none());
+
+        // In-place reload keeps view calm.
+        let _ = app.update(Message::ReloadConfig);
+        assert!(app.nav_transition.is_none());
+
+        // Removing the active subpage triggers a gentle Pop fallback transition.
+        std::fs::write(&cfg_path, "[[pages]]\nid = 'p'\ntitle = 'Page'\n").unwrap();
+        let _ = app.update(Message::ReloadConfig);
+        assert_eq!(app.nav_transition.unwrap().direction, NavDirection::Pop);
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
