@@ -36,12 +36,12 @@ active; forced termination with SIGKILL cannot execute cleanup.
 
 ## Release packaging
 
-The audited source version is **6.2.3**, with paint-cache schema 8. Existing
+The audited source version is **6.2.4**, with paint-cache schema 8. Existing
 schema-7 paint entries are invalidated on upgrade. The preserved signed
 `xpi/dusky_sites.xpi` is **6.2.1** and does not include these JavaScript fixes.
 
 Submit `dusky_sites-unsigned.zip` to Mozilla for an unlisted signature, then
-replace `xpi/dusky_sites.xpi` with the returned signed 6.2.3 package. Re-run the
+replace `xpi/dusky_sites.xpi` with the returned signed 6.2.4 package. Re-run the
 main Firefox theme setup and its source/file audit after replacing it. Normal
 setup can update the native host and styles using the existing signed release;
 it reports that local JavaScript changes still await signing. It prefers a

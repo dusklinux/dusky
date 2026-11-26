@@ -103,7 +103,7 @@ fallback style elements in the mutation observer, before paint. Deferring this
 repair to another animation frame could briefly expose the white page canvas
 when returning to a themed page such as Discord. Palette revisions still use
 the existing frame scheduler; repeated page mutations retain the repair limit.
-Local source changes in `extension/` (currently 6.2.3) require rebuilding and
+Local source changes in `extension/` (currently 6.2.4) require rebuilding and
 re-signing the XPI before Firefox will load them.
 
 The Matugen palette template must remain document-scoped. Regenerate its output

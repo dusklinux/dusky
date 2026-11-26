@@ -1,5 +1,5 @@
 /* =============================================================================
- * Dusky Sites — Background Engine v6.2.3
+ * Dusky Sites — Background Engine v6.2.4
  * Firefox 161+ · MV3 event page · wire v3 (delta) native host · no UI
  *
  * HOT PATH — one matugen tick = one ~4 KB MATUGEN_UPDATE frame
@@ -336,6 +336,17 @@
 
     let bootP = null;
     const ready = () => (bootP ??= boot().catch((e) => fail('boot failed', e)));
+    let initSync = null, resolveInitSync = null, initSyncTm = 0;
+
+    function armInitSync() {
+        if (S.theme || initSync) return;
+        initSync = new Promise((resolve) => { resolveInitSync = resolve; });
+        initSyncTm = setTimeout(endInitSync, 1500);
+    }
+    function endInitSync() {
+        if (initSyncTm) { clearTimeout(initSyncTm); initSyncTm = 0; }
+        if (resolveInitSync) { const done = resolveInitSync; resolveInitSync = null; initSync = null; done(); }
+    }
 
     async function boot() {
         let [local, sess] = await Promise.all([
@@ -482,6 +493,9 @@
 
         if (S.enabled) {
             connect();
+            if (S.cfg.webThemeEnabled && S.theme) {
+                broadcastActive(false);
+            }
         }
 
         browser.action.setTitle({
@@ -579,6 +593,7 @@
         const gen = ++S.gen;
         const live = () => S.gen === gen && S.port === port;
         S.port = port; S.ready = false; S.connectedAt = S.rxAt = mono();
+        armInitSync();
         port.onMessage.addListener((m) => { if (live()) onHostMessage(m); });
         port.onDisconnect.addListener(() => { if (live()) onHostDisconnect(port); });
 
@@ -602,6 +617,7 @@
         if (S.port === port) {
             S.port = null; S.ready = false; S.gen++;
             clearT('ping'); clearT('hs');
+            endInitSync();
             for (const e of rpc.values()) e.reject(new Error('port closed'));
             rpc.clear(); chunks.clear();
         }
@@ -883,6 +899,7 @@
 
     function onPaletteUpdate(d) {
         const ch = adopt(d, true);
+        endInitSync();
         if (!ch) { log('frame carried no change'); return; }
         if (ch.colors && S.cfg.browserThemeEnabled) queueTheme();
         // Rule/disabled-site transitions invalidate every cached host, including
@@ -1800,7 +1817,10 @@
     browser.runtime.onMessage.addListener((req, sender) => {
         if (!req || typeof req.type !== 'string' || sender.id !== browser.runtime.id) return false;
         switch (req.type) {
-            case 'GET_THEME_DATA': return ready().then(() => themeDataFor(sender, req));
+            case 'GET_THEME_DATA':
+                return ready()
+                    .then(() => (!S.theme && S.enabled && initSync ? initSync : null))
+                    .then(() => themeDataFor(sender, req));
             case 'GET_STATUS': return ready().then(status);
             case 'FORCE_REFRESH':
                 return ready().then(() => {
@@ -1815,12 +1835,13 @@
     function themeDataFor(sender, req) {
         stats.contentPulls++;
         if (!S.enabled || !S.cfg.webThemeEnabled) return { data: null };
-        // Resolve against the TOP document so third-party frames inherit the embedding page's rules.
-        const url = sender.tab?.url ?? sender.url;
+        // Top frames use sender.url directly because sender.tab.url can lag at document_start;
+        // subframes resolve against the embedding top document so they inherit its rules.
+        const top = !!sender.tab && sender.frameId === 0;
+        const url = top ? (sender.url || sender.tab.url) : (sender.tab?.url || sender.url);
         if (!isInjectable(url)) return { data: null };
         const host = hostOf(url);
         const res = resolve(host);
-        const top = !!sender.tab && sender.frameId === 0;
         if (!res) {
             if (top) {
                 noteTabSig(sender.tab.id, 'x');
@@ -1889,6 +1910,7 @@
     browser.tabs.onUpdated.addListener((tabId, change, tab) => {
         ready().then(() => {
             if (change.discarded) { dropTab(tabId); return; }
+            if (change.status === 'loading') { lastSig.delete(tabId); return; }
             if (change.status !== 'complete' || !S.theme || !hasWebWork()) return;
             if (tab.active || !S.cfg.ecoMode) pushTab(tabId, tab.url, false);
         });
@@ -1966,6 +1988,13 @@
         'onSuspend',
         () => {
             teardown(S.port);
+        }
+    );
+    on(
+        browser.runtime,
+        'onSuspendCanceled',
+        () => {
+            ready().then(() => { if (S.enabled && !S.port) connect(); });
         }
     );
 

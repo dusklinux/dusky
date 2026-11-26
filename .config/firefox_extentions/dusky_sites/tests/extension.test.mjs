@@ -347,3 +347,39 @@ test('ensureRules keeps adopted sheet last and pagehide cancels timers without p
     c.listeners.get('pagehide')({ persisted: true });
     assert.equal(c.timers.size, 0);
 });
+
+test('themeDataFor prefers sender.url over lagging sender.tab.url for top-level frames', () => {
+    const b = background();
+    const res = b.themeDataFor(
+        { id: 'test', url: 'https://example.com/repo', tab: { id: 7, url: 'about:newtab' }, frameId: 0 },
+        {}
+    );
+    assert.ok(res.data?.rules?.css.includes('color:red'));
+    const sub = b.themeDataFor(
+        { id: 'test', url: 'https://thirdparty.invalid/embed', tab: { id: 7, url: 'https://example.com/repo' }, frameId: 2 },
+        {}
+    );
+    assert.ok(sub.data?.rules?.css.includes('color:red'));
+});
+
+test('ensureRules promotes fallback style element above dynamically appended page styles', () => {
+    const c = content();
+    const head = c.document.head;
+    let appended = 0;
+    head.appendChild = function (el) {
+        appended++;
+        el.isConnected = true;
+        el.parentNode = this;
+        el.nextElementSibling = null;
+        this.lastChild = el;
+    };
+    c.apply(data());
+    const styleEl = head.lastChild;
+    assert.equal(appended, 1);
+    // Simulate a SPA injecting a <style> tag after our fallback style element.
+    styleEl.nextElementSibling = { tagName: 'STYLE', nextElementSibling: null };
+    head.lastChild = styleEl.nextElementSibling;
+    c.ensureRules();
+    assert.equal(appended, 2);
+    assert.equal(head.lastChild, styleEl);
+});

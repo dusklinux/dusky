@@ -1,5 +1,5 @@
 /* =============================================================================
- * Dusky Sites — Content Runtime v6.2.3
+ * Dusky Sites — Content Runtime v6.2.4
  * Firefox 161+ · document_start · every frame (all_frames + about:blank)
  *
  * PER-REVISION COST MODEL — the only thing that matters under a matugen burst
@@ -123,6 +123,13 @@
         mountElement();
         watchHead();
     }
+    function hasLaterStyle() {
+        for (let n = styleEl?.nextElementSibling; n; n = n.nextElementSibling) {
+            const tag = n.tagName?.toLowerCase();
+            if (tag === 'style' || tag === 'link') return true;
+        }
+        return false;
+    }
     /** Cheap liveness check on every flush: a page that reassigns or appends document.adoptedStyleSheets drops or precedes us. */
     function ensureRules() {
         if (!rulHash || nativeDark) return;
@@ -135,7 +142,9 @@
                     }
                 } catch { /* next flush */ }
             }
-        } else if (mode === 'element' && styleEl && !styleEl.isConnected) { mountElement(); watchHead(); }
+        } else if (mode === 'element' && styleEl && (!styleEl.isConnected || hasLaterStyle())) {
+            mountElement(); watchHead();
+        }
     }
     function mountElement() {
         const host = document.head || document.documentElement;
@@ -161,7 +170,9 @@
     function onHeadMutated() {
         if (disposed || !styleEl) return;
         const head = document.head || null;
-        if (head === observedHead && styleEl.isConnected && (!head || styleEl.parentNode === head)) return;
+        if (head === observedHead && styleEl.isConnected && (!head || styleEl.parentNode === head)) {
+            if (document.readyState === 'loading' || !hasLaterStyle()) return;
+        }
         repairTheme();
     }
     function stopHead() { if (headObs) { headObs.disconnect(); headObs = null; } observedHead = null; }
@@ -479,7 +490,10 @@
     }
 
     // Late CSS (route chunks, widgets) only shows up in document.styleSheets after load.
-    window.addEventListener('load', () => { if (scanState) scheduleScan('load'); }, { once: true, capture: true });
+    window.addEventListener('load', () => {
+        if (!disposed && mode === 'element' && styleEl && !nativeDark && hasLaterStyle()) mountElement();
+        if (scanState) scheduleScan('load');
+    }, { once: true, capture: true });
 
     fastPaint().then((go) => { if (go) sync(); });
 })();

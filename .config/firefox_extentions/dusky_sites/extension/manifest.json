@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Dusky Sites",
-  "version": "6.2.3",
+  "version": "6.2.4",
   "description": "Real-time Material You (Matugen) theming for the Firefox chrome and for website content, driven by a local native-messaging daemon.",
   "homepage_url": "https://github.com/dusklinux/dusky",
 
