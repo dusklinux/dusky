@@ -2,42 +2,26 @@
 #
 # Socket-activated: enable dusky_kokoro.socket, never this unit directly.
 #   systemctl --user enable --now dusky_kokoro.socket
-#
-# Notes
-#   * Type=notify: the daemon sends READY=1 / STATUS=... / STOPPING=1 itself
-#     (15-line sd_notify implementation, no python-systemd dependency), so
-#     "systemctl --user status dusky_kokoro" shows the live engine state.
-#   * Restart=on-failure: exit-on-idle is a clean exit (0) and must NOT be
-#     restarted; crashes are.
-#   * KillMode=mixed: SIGTERM to the daemon only (it quits mpv gracefully over
-#     IPC), SIGKILL to the whole cgroup after TimeoutStopSec as a last resort.
-#   * No ProtectHome / PrivateDevices / RestrictAddressFamilies: the service
-#     needs /dev/nvidia*, /dev/kfd, /dev/dri, the PipeWire socket and the
-#     compositor socket, all of which live in the user session.
-#   * The venv interpreter is executed directly: no "uv run" (which may try to
-#     re-lock / hit the network) on the hot path of a desktop hotkey.
-#   * Debug logging for the next start:  systemctl --user set-environment DUSKY_LOG_LEVEL=DEBUG
 [Unit]
 Description=Dusky Kokoro TTS daemon (Kokoro-ONNX, socket-activated, exits when idle)
 Requires=dusky_kokoro.socket
-After=dusky_kokoro.socket pipewire.service wireplumber.service pulseaudio.service
+After=dusky_kokoro.socket pipewire.service wireplumber.service
 PartOf=graphical-session.target
 
 [Service]
 Type=notify
 NotifyAccess=main
-ExecStart=%h/contained_apps/uv/dusky_kokoro/.venv/bin/python -X utf8 -u %h/contained_apps/uv/dusky_kokoro/dusky_main.py daemon
+ExecStart="%h/contained_apps/uv/dusky_kokoro/.venv/bin/python" -X utf8 -u "%h/contained_apps/uv/dusky_kokoro/dusky_main.py" --config "%E/dusky-kokoro/config.toml" --socket "%t/dusky-kokoro/control.sock" daemon
 WorkingDirectory=%h/contained_apps/uv/dusky_kokoro
 Environment=PYTHONUNBUFFERED=1
-Environment=DUSKY_CONFIG=%E/dusky-kokoro/config.toml
+Environment="DUSKY_CONFIG=%E/dusky-kokoro/config.toml"
 Restart=on-failure
 RestartSec=1
 TimeoutStartSec=120
 TimeoutStopSec=10
 KillMode=mixed
-NoNewPrivileges=yes
 UMask=0077
 OOMScoreAdjust=100
 
 [Install]
-# intentionally empty: activation happens through dusky_kokoro.socket
+# Socket-activated on purpose: enable dusky_kokoro.socket, not this unit.

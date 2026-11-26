@@ -1,44 +1,41 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  trigger.sh - Dusky Kokoro TTS desktop hook  (clipboard / selection -> daemon)
-#  Arch Linux, Wayland (wl-clipboard), Bash 5.3+
+#  trigger.sh - Dusky Kokoro TTS desktop hook (clipboard / selection -> daemon)
+#  Target: Arch Linux, Wayland / Hyprland (wl-clipboard), Bash 5.3.20+
 #
-#  Bind this script to a hotkey. It reads the clipboard (or the primary
-#  selection with --primary), makes sure the daemon is reachable (systemd
-#  socket activation, systemd-run, or a detached process - in that order) and
-#  submits the text over the Unix domain socket. The daemon answers with a
-#  structured acknowledgement, so every failure is reported precisely.
-#
-#  Style note: no "parameter-expansion-with-braces" is used on purpose; unset
-#  environment defaults are resolved with printenv so the script stays safe
-#  under "set -u" and embeddable in template literals.
+#  Bind this script to a Hyprland hotkey. It reads the Wayland clipboard (or
+#  primary selection with --primary) and dispatches directly over the Unix
+#  domain socket so systemd socket activation handles cold starts with a single
+#  Python invocation on the hot path.
 # =============================================================================
 set -Eeuo pipefail
+shopt -s inherit_errexit
 
 # --- locations (override with environment variables) --------------------------
-DUSKY_HOME=$(printenv DUSKY_HOME || true)
+CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+DUSKY_HOME="${DUSKY_HOME:-}"
 if [[ -z "$DUSKY_HOME" ]]; then
-    install_path="${XDG_CONFIG_HOME:-$HOME/.config}/dusky-kokoro/install-path"
-    if [[ -r "$install_path" ]]; then IFS= read -r DUSKY_HOME < "$install_path" || true; fi
-    [[ -n "$DUSKY_HOME" ]] || DUSKY_HOME="$HOME/contained_apps/uv/dusky_kokoro"
+    install_path="$CONFIG_HOME/dusky-kokoro/install-path"
+    if [[ -r "$install_path" ]]; then
+        IFS= read -r DUSKY_HOME < "$install_path" || true
+    fi
+    DUSKY_HOME="${DUSKY_HOME:-$HOME/contained_apps/uv/dusky_kokoro}"
 fi
 VENV_PY="$DUSKY_HOME/.venv/bin/python"
 MAIN_PY="$DUSKY_HOME/dusky_main.py"
 
-RUNTIME_DIR=$(printenv XDG_RUNTIME_DIR || true)
-[[ -n "$RUNTIME_DIR" ]] || RUNTIME_DIR="/run/user/$(id -u)"
-
-SOCKET_PATH=$(printenv DUSKY_SOCKET || true)
-CONFIG_FILE="${DUSKY_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/dusky-kokoro/config.toml}"
+RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+SOCKET_PATH="${DUSKY_SOCKET:-}"
+CONFIG_FILE="${DUSKY_CONFIG:-$CONFIG_HOME/dusky-kokoro/config.toml}"
 
 STANDALONE_LOG="$RUNTIME_DIR/dusky-kokoro/daemon.log"
 SOCKET_UNIT="dusky_kokoro.socket"
 SERVICE_UNIT="dusky_kokoro.service"
 ADHOC_UNIT="dusky_kokoro_adhoc.service"
-START_TIMEOUT=45          # seconds to wait for a cold daemon (model download excluded)
+START_TIMEOUT=45          # seconds to wait for a cold daemon
 REQUEST_TIMEOUT=120       # seconds to wait for the daemon's acknowledgement
 
-# --- request state -------------------------------------------------------------
+# --- request state ------------------------------------------------------------
 ACTION="speak"
 SOURCE="clipboard"        # clipboard | primary | text | file | stdin
 SOURCE_TEXT=""
@@ -51,7 +48,9 @@ WAIT=0
 NOTIFY=1
 LEVEL="DEBUG"
 
-# --- helpers -------------------------------------------------------------------
+declare -A KV=()
+
+# --- helpers ------------------------------------------------------------------
 have() { command -v "$1" >/dev/null 2>&1; }
 
 die() {
@@ -66,13 +65,29 @@ notify() {  # summary body urgency
         -h string:x-canonical-private-synchronous:dusky-kokoro "$1" "$2" >/dev/null 2>&1 || true
 }
 
-# control client: stdlib only, isolated interpreter, no site-packages => ~30 ms
-ctl() { "$VENV_PY" -I -S "$MAIN_PY" "$@"; }
-# full interpreter (numpy / onnxruntime available): diagnostics only
-ctl_full() { "$VENV_PY" "$MAIN_PY" "$@"; }
+# control client: stdlib only, isolated interpreter, no site-packages (~25-30 ms)
+ctl() {
+    local -a base_args=(--config "$CONFIG_FILE")
+    [[ -n "$SOCKET_PATH" ]] && base_args+=(--socket "$SOCKET_PATH")
+    "$VENV_PY" -I -S "$MAIN_PY" "${base_args[@]}" "$@"
+}
 
-kv_get() {  # kv_get "<kv output>" key
-    printf '%s\n' "$1" | sed -n "s/^$2=//p" | head -n 1
+# full interpreter (numpy / onnxruntime available): diagnostics only
+ctl_full() {
+    local -a base_args=(--config "$CONFIG_FILE")
+    [[ -n "$SOCKET_PATH" ]] && base_args+=(--socket "$SOCKET_PATH")
+    "$VENV_PY" "$MAIN_PY" "${base_args[@]}" "$@"
+}
+
+parse_kv() {
+    KV=()
+    local line key val
+    while IFS= read -r line; do
+        [[ "$line" == *=* ]] || continue
+        key="${line%%=*}"
+        val="${line#*=}"
+        KV["$key"]="$val"
+    done <<< "$1"
 }
 
 systemd_user_ok() { have systemctl && systemctl --user show-environment >/dev/null 2>&1; }
@@ -82,9 +97,59 @@ require_install() {
     [[ -x "$VENV_PY" && -f "$MAIN_PY" ]] || die "Dusky Kokoro is not installed at $DUSKY_HOME (run kokoro_installer.sh)"
 }
 
+# Zero-wake liveness check: proves whether a daemon is running without touching
+# the listening systemd socket (connecting to control.sock would cold-boot it).
+daemon_running() {
+    local lock_dir lock_file pid_file pid state line
+    if [[ -n "$SOCKET_PATH" ]]; then
+        lock_dir="${SOCKET_PATH%/*}"
+    else
+        lock_dir="$RUNTIME_DIR/dusky-kokoro"
+    fi
+    lock_file="$lock_dir/daemon.lock"
+
+    if [[ -e "$lock_file" ]]; then
+        if have flock; then
+            if ! flock -n "$lock_file" true 2>/dev/null; then
+                return 0
+            fi
+        else
+            pid_file="$lock_dir/daemon.pid"
+            if [[ -r "$pid_file" ]]; then
+                IFS= read -r pid < "$pid_file" || true
+                if [[ "$pid" =~ ^[0-9]+$ && -d "/proc/$pid" ]]; then
+                    return 0
+                fi
+            fi
+        fi
+    fi
+
+    if [[ -z "$SOCKET_PATH" ]] && systemd_user_ok; then
+        state=$(systemctl --user is-active "$SERVICE_UNIT" "$ADHOC_UNIT" 2>/dev/null || true)
+        while IFS= read -r line; do
+            case "$line" in
+                active|activating) return 0 ;;
+            esac
+        done <<< "$state"
+    fi
+
+    # If a custom socket_path is configured in config.toml and DUSKY_SOCKET is
+    # unset, let the caller probe it rather than falsely assuming idle.
+    if [[ -z "$SOCKET_PATH" && -r "$CONFIG_FILE" ]]; then
+        if grep -Eq '^[[:space:]]*socket_path[[:space:]]*=[[:space:]]*["'\''][^"'\'']+["'\'']' "$CONFIG_FILE"; then
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
 wait_ready() {
-    local deadline=$(( SECONDS + START_TIMEOUT ))
-    while (( SECONDS < deadline )); do
+    local now deadline
+    # shellcheck disable=SC2154
+    now="$BASH_MONOSECONDS"
+    deadline=$(( now + START_TIMEOUT ))
+    while (( BASH_MONOSECONDS < deadline )); do
         if ctl ping --timeout 5 >/dev/null 2>&1; then
             return 0
         fi
@@ -103,34 +168,41 @@ ensure_daemon() {
         systemctl --user start "$SOCKET_UNIT" >/dev/null 2>&1 || true
         systemctl --user start "$SERVICE_UNIT" >/dev/null 2>&1 || true
     elif systemd_user_ok && have systemd-run; then
-        # No units installed: run a transient, journald-logged service.
         systemctl --user reset-failed "$ADHOC_UNIT" >/dev/null 2>&1 || true
-        local -a socket_args=()
-        [[ -n "$SOCKET_PATH" ]] && socket_args=(--socket "$SOCKET_PATH")
+        local -a run_args=(--config "$CONFIG_FILE")
+        [[ -n "$SOCKET_PATH" ]] && run_args+=(--socket "$SOCKET_PATH")
         systemd-run --user --quiet --collect --unit "$ADHOC_UNIT" \
             --property=KillMode=mixed --property=TimeoutStopSec=10 \
-            "$VENV_PY" "$MAIN_PY" --config "$CONFIG_FILE" "${socket_args[@]}" daemon >/dev/null 2>&1 || true
+            "$VENV_PY" -X utf8 -u "$MAIN_PY" "${run_args[@]}" daemon >/dev/null 2>&1 || true
     else
-        # Last resort: fully detached process with a log file.
-        mkdir -p "$(dirname "$STANDALONE_LOG")"
-        setsid -f "$VENV_PY" "$MAIN_PY" daemon >>"$STANDALONE_LOG" 2>&1 </dev/null
+        mkdir -p "${STANDALONE_LOG%/*}"
+        local -a standalone_args=(--config "$CONFIG_FILE")
+        [[ -n "$SOCKET_PATH" ]] && standalone_args+=(--socket "$SOCKET_PATH")
+        setsid -f "$VENV_PY" -X utf8 -u "$MAIN_PY" "${standalone_args[@]}" daemon >>"$STANDALONE_LOG" 2>&1 </dev/null
     fi
     wait_ready
 }
 
-read_selection() {  # clipboard | primary  -> stdout (empty when there is no text)
-    local sel="$1" wl_display flag="" types
-    wl_display=$(printenv WAYLAND_DISPLAY || true)
-    if [[ -n "$wl_display" ]] && have wl-paste; then
-        [[ "$sel" == primary ]] && flag="--primary"
-        types=$(wl-paste $flag --list-types 2>/dev/null || true)
-        if ! grep -qiE '^(text/|utf8_string|string$|text$)' <<<"$types"; then
-            return 0
-        fi
-        wl-paste $flag --no-newline --type text 2>/dev/null || true
+read_selection() {  # clipboard | primary -> stdout (empty when there is no text)
+    local sel="$1" types mime=""
+    local -a flags=()
+    if [[ -z "${WAYLAND_DISPLAY:-}" ]] || ! have wl-paste; then
+        die "Wayland clipboard unavailable (wl-paste and WAYLAND_DISPLAY are required)"
+    fi
+    [[ "$sel" == primary ]] && flags+=(--primary)
+    types=$(wl-paste "${flags[@]}" --list-types 2>/dev/null || true)
+    [[ -n "$types" ]] || return 0
+
+    if grep -qiFx 'text/plain;charset=utf-8' <<< "$types"; then
+        mime="text/plain;charset=utf-8"
+    elif grep -qiFx 'text/plain' <<< "$types"; then
+        mime="text/plain"
+    elif grep -qiE '^(text/|utf8_string$|string$|text$)' <<< "$types"; then
+        mime="text"
+    else
         return 0
     fi
-    die "Wayland clipboard unavailable (wl-paste and WAYLAND_DISPLAY are required)"
+    wl-paste "${flags[@]}" --no-newline --type "$mime" 2>/dev/null || true
 }
 
 show_help() {
@@ -171,7 +243,7 @@ Inspect
 HELP
 }
 
-# --- argument parsing ------------------------------------------------------------
+# --- argument parsing ---------------------------------------------------------
 while (( $# > 0 )); do
     case "$1" in
         -h|--help)      show_help; exit 0 ;;
@@ -205,18 +277,30 @@ done
 
 require_install
 
-# --- actions -------------------------------------------------------------------------
+# --- actions ------------------------------------------------------------------
 case "$ACTION" in
     --stop)
+        if ! daemon_running; then
+            echo "daemon not running - nothing to stop"
+            exit 0
+        fi
         if out=$(ctl stop --format kv --timeout 5 2>/dev/null); then
-            if [[ "$(kv_get "$out" was_playing)" == true ]]; then notify "Kokoro TTS" "Stopped" low; fi
+            parse_kv "$out"
+            if [[ "${KV[was_playing]:-}" == true ]]; then
+                notify "Kokoro TTS" "Stopped" low
+            fi
         else
             echo "daemon not running - nothing to stop"
         fi
         exit 0 ;;
     --pause)
+        if ! daemon_running; then
+            notify "Kokoro TTS" "Daemon not running" low
+            exit 0
+        fi
         if out=$(ctl pause --format kv --timeout 5 2>/dev/null); then
-            case "$(kv_get "$out" paused)" in
+            parse_kv "$out"
+            case "${KV[paused]:-}" in
                 true)  notify "Kokoro TTS" "Paused" low ;;
                 false) notify "Kokoro TTS" "Resumed" low ;;
                 *)     notify "Kokoro TTS" "Nothing is playing" low ;;
@@ -226,28 +310,48 @@ case "$ACTION" in
         fi
         exit 0 ;;
     --status)
-        if ! ctl status --format pretty --timeout 5; then
-            echo "daemon: not running (it starts on demand)"
-            if systemd_user_ok && socket_unit_present; then
-                printf 'systemd: %s=%s %s=%s\n' "$SOCKET_UNIT" "$(systemctl --user is-active "$SOCKET_UNIT" || true)" \
-                    "$SERVICE_UNIT" "$(systemctl --user is-active "$SERVICE_UNIT" || true)"
-            fi
+        if daemon_running && ctl status --format pretty --timeout 5; then
+            exit 0
+        fi
+        echo "daemon: not running (it starts on demand)"
+        if systemd_user_ok && socket_unit_present; then
+            sock_state=$(systemctl --user is-active "$SOCKET_UNIT" 2>/dev/null || true)
+            svc_state=$(systemctl --user is-active "$SERVICE_UNIT" 2>/dev/null || true)
+            printf 'systemd: %s=%s %s=%s\n' "$SOCKET_UNIT" "$sock_state" "$SERVICE_UNIT" "$svc_state"
         fi
         exit 0 ;;
     --ping)     ctl ping --format pretty --timeout 5; exit $? ;;
-    --unload)   ctl unload --format kv --timeout 10 && echo "model unloaded"; exit $? ;;
-    --reload)   ctl reload --format pretty --timeout 10; exit $? ;;
+    --unload)
+        if ! daemon_running; then
+            echo "daemon not running - model already unloaded"
+            exit 0
+        fi
+        ctl unload --format kv --timeout 10 && echo "model unloaded"
+        exit $? ;;
+    --reload)
+        if ! daemon_running; then
+            if ctl config >/dev/null; then
+                echo "config valid (daemon not running; changes will apply on next start)"
+                exit 0
+            fi
+            exit 1
+        fi
+        ctl reload --format pretty --timeout 10
+        exit $? ;;
     --loglevel) ctl loglevel "$LEVEL" --format kv --timeout 5; exit $? ;;
     --voices)   ctl_full voices; exit $? ;;
     --doctor)   ctl_full doctor; exit $? ;;
     --doctor-synth) ctl_full doctor --synth; exit $? ;;
     --kill)
-        ctl shutdown --timeout 5 >/dev/null 2>&1 || true
-        if systemd_user_ok; then
-            systemctl --user stop "$SERVICE_UNIT" >/dev/null 2>&1 || true
-            systemctl --user stop "$ADHOC_UNIT" >/dev/null 2>&1 || true
+        if daemon_running; then
+            ctl shutdown --timeout 5 >/dev/null 2>&1 || true
+            if systemd_user_ok; then
+                systemctl --user stop "$SERVICE_UNIT" "$ADHOC_UNIT" >/dev/null 2>&1 || true
+            fi
+            echo "daemon stopped (the socket unit stays active: the next trigger relaunches it)"
+        else
+            echo "daemon not running (the socket unit stays active: the next trigger relaunches it)"
         fi
-        echo "daemon stopped (the socket unit stays active: the next trigger relaunches it)"
         echo "to disable completely:  systemctl --user disable --now $SOCKET_UNIT"
         exit 0 ;;
     --restart)
@@ -255,8 +359,12 @@ case "$ACTION" in
             systemctl --user reset-failed "$SERVICE_UNIT" >/dev/null 2>&1 || true
             systemctl --user restart "$SERVICE_UNIT" >/dev/null 2>&1 || true
         else
-            ctl shutdown --timeout 5 >/dev/null 2>&1 || true
-            if systemd_user_ok; then systemctl --user stop "$SERVICE_UNIT" "$ADHOC_UNIT" >/dev/null 2>&1 || true; fi
+            if daemon_running; then
+                ctl shutdown --timeout 5 >/dev/null 2>&1 || true
+            fi
+            if systemd_user_ok; then
+                systemctl --user stop "$SERVICE_UNIT" "$ADHOC_UNIT" >/dev/null 2>&1 || true
+            fi
             sleep 0.3
             ensure_daemon
         fi
@@ -266,7 +374,9 @@ case "$ACTION" in
     --debug)
         if systemd_user_ok && socket_unit_present; then
             systemctl --user set-environment DUSKY_LOG_LEVEL=DEBUG
-            ctl shutdown --timeout 5 >/dev/null 2>&1 || true
+            if daemon_running; then
+                ctl shutdown --timeout 5 >/dev/null 2>&1 || true
+            fi
             systemctl --user stop "$SERVICE_UNIT" >/dev/null 2>&1 || true
             ensure_daemon
             echo "DEBUG logging active for new daemon starts; revert with: systemctl --user unset-environment DUSKY_LOG_LEVEL"
@@ -287,38 +397,41 @@ case "$ACTION" in
     *) die "internal error: unknown action $ACTION" ;;
 esac
 
-# --- speak ------------------------------------------------------------------------------
+# --- speak --------------------------------------------------------------------
+speak_args=(speak --format kv --client trigger --timeout "$REQUEST_TIMEOUT")
+[[ -n "$MODE" ]] && speak_args+=(--mode "$MODE")
+[[ -n "$VOICE" ]] && speak_args+=(--voice "$VOICE")
+[[ -n "$SPEED" ]] && speak_args+=(--speed "$SPEED")
+[[ -n "$LANG_CODE" ]] && speak_args+=(--lang "$LANG_CODE")
+
 if [[ "$SOURCE" == "file" ]]; then
     [[ -f "$SOURCE_FILE" ]] || die "file not found: $SOURCE_FILE"
     [[ -r "$SOURCE_FILE" ]] || die "cannot read $SOURCE_FILE (permission denied)"
-    ensure_daemon
+    speak_args+=(--file "$SOURCE_FILE")
 
-    set -- speak --file "$SOURCE_FILE" --format kv --client trigger --timeout "$REQUEST_TIMEOUT"
-    [[ -n "$MODE" ]] && set -- "$@" --mode "$MODE"
-    [[ -n "$VOICE" ]] && set -- "$@" --voice "$VOICE"
-    [[ -n "$SPEED" ]] && set -- "$@" --speed "$SPEED"
-    [[ -n "$LANG_CODE" ]] && set -- "$@" --lang "$LANG_CODE"
-
-    if [[ "$WAIT" == 1 ]]; then
-        ctl "$@" --wait
+    if (( WAIT )); then
+        if ! daemon_running && ! { systemd_user_ok && socket_unit_present; }; then
+            ensure_daemon
+        fi
+        ctl "${speak_args[@]}" --wait
         exit $?
     fi
 
     rc=0
-    out=$(ctl "$@") || rc=$?
+    out=$(ctl "${speak_args[@]}") || rc=$?
     if (( rc == 2 || rc == 3 )); then
         ensure_daemon
         rc=0
-        out=$(ctl "$@") || rc=$?
+        out=$(ctl "${speak_args[@]}") || rc=$?
     fi
 
-    event=$(kv_get "$out" event)
-    case "$event" in
+    parse_kv "$out"
+    case "${KV[event]:-}" in
         accepted)
-            segments=$(kv_get "$out" segments)
-            chars=$(kv_get "$out" chars)
-            base_name=$(basename -- "$SOURCE_FILE")
-            if [[ "$(kv_get "$out" engine_loaded)" == true ]]; then
+            segments="${KV[segments]:-0}"
+            chars="${KV[chars]:-0}"
+            base_name="${SOURCE_FILE##*/}"
+            if [[ "${KV[engine_loaded]:-}" == true ]]; then
                 notify "Kokoro TTS" "Reading $base_name ($segments segments, $chars chars)" low
             else
                 notify "Kokoro TTS" "Loading model... reading $base_name ($segments segments)" low
@@ -327,8 +440,7 @@ if [[ "$SOURCE" == "file" ]]; then
         deduplicated)
             ;;
         *)
-            err=$(kv_get "$out" error)
-            [[ -n "$err" ]] || err="unknown error (exit code $rc)"
+            err="${KV[error]:-unknown error (exit code $rc)}"
             notify "Kokoro TTS error" "$err" critical
             printf 'trigger.sh: %s\n' "$err" >&2
             exit 1 ;;
@@ -343,39 +455,36 @@ case "$SOURCE" in
     stdin)             text=$(cat) ;;
 esac
 
-if [[ -z "$(printf '%s' "$text" | tr -d '[:space:]')" ]]; then
+if [[ "$text" != *[![:space:]]* ]]; then
     notify "Kokoro TTS" "Nothing to read: the $SOURCE contains no text" low
     exit 0
 fi
 
-ensure_daemon
+speak_args+=(--stdin)
 
-set -- speak --stdin --format kv --client trigger --timeout "$REQUEST_TIMEOUT"
-[[ -n "$MODE" ]] && set -- "$@" --mode "$MODE"
-[[ -n "$VOICE" ]] && set -- "$@" --voice "$VOICE"
-[[ -n "$SPEED" ]] && set -- "$@" --speed "$SPEED"
-[[ -n "$LANG_CODE" ]] && set -- "$@" --lang "$LANG_CODE"
-
-if [[ "$WAIT" == 1 ]]; then
-    printf '%s' "$text" | ctl "$@" --wait
+if (( WAIT )); then
+    if ! daemon_running && ! { systemd_user_ok && socket_unit_present; }; then
+        ensure_daemon
+    fi
+    printf '%s' "$text" | ctl "${speak_args[@]}" --wait
     exit $?
 fi
 
 rc=0
-out=$(printf '%s' "$text" | ctl "$@") || rc=$?
+out=$(printf '%s' "$text" | ctl "${speak_args[@]}") || rc=$?
 if (( rc == 2 || rc == 3 )); then
-    # The daemon exited between our ping and the request (idle-exit race): relaunch once and retry.
+    # Socket inactive or idle-exit race: start daemon once and retry.
     ensure_daemon
     rc=0
-    out=$(printf '%s' "$text" | ctl "$@") || rc=$?
+    out=$(printf '%s' "$text" | ctl "${speak_args[@]}") || rc=$?
 fi
 
-event=$(kv_get "$out" event)
-case "$event" in
+parse_kv "$out"
+case "${KV[event]:-}" in
     accepted)
-        segments=$(kv_get "$out" segments)
-        chars=$(kv_get "$out" chars)
-        if [[ "$(kv_get "$out" engine_loaded)" == true ]]; then
+        segments="${KV[segments]:-0}"
+        chars="${KV[chars]:-0}"
+        if [[ "${KV[engine_loaded]:-}" == true ]]; then
             notify "Kokoro TTS" "Reading $segments segment(s), $chars characters" low
         else
             notify "Kokoro TTS" "Loading model... reading $segments segment(s)" low
@@ -384,8 +493,7 @@ case "$event" in
     deduplicated)
         ;;
     *)
-        err=$(kv_get "$out" error)
-        [[ -n "$err" ]] || err="unknown error (exit code $rc)"
+        err="${KV[error]:-unknown error (exit code $rc)}"
         notify "Kokoro TTS error" "$err" critical
         printf 'trigger.sh: %s\n' "$err" >&2
         exit 1 ;;

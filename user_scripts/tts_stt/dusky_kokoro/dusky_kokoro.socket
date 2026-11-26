@@ -1,15 +1,10 @@
 # ~/.config/systemd/user/dusky_kokoro.socket
 #
-# The control socket is owned by systemd, not by the daemon. Consequences:
-#   * trigger.sh connects successfully even when no daemon process exists; the
-#     request waits in the kernel backlog while systemd spawns the service.
-#     => no readiness file, no PID file, no cold-boot race.
-#   * the daemon may exit whenever it is idle (releasing VRAM and the CUDA/HIP
-#     driver context completely) without any client ever noticing.
-#   * %t = $XDG_RUNTIME_DIR (tmpfs, 0700, per user, cleared at logout).
+# Socket-activated control plane for Dusky Kokoro TTS.
+# Enable this unit, never dusky_kokoro.service directly:
+#   systemctl --user enable --now dusky_kokoro.socket
 [Unit]
 Description=Dusky Kokoro TTS control socket
-Documentation=file://%h/contained_apps/uv/dusky_kokoro/dusky_main.py
 
 [Socket]
 ListenStream=%t/dusky-kokoro/control.sock

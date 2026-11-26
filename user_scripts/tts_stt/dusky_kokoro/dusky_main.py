@@ -5,36 +5,27 @@
 #  License: MIT
 # =============================================================================
 """
-Dusky Kokoro TTS v5
+Dusky Kokoro TTS v5.2
 
 Process model
 -------------
-* One asyncio event loop owns ALL mutable state (jobs, player, timers, sockets).
-  Text preparation runs outside the loop; worker lifecycle and I/O are serialized.
-* A separate synthesis process owns ONNX Runtime and espeak-ng. One caller
-  uses the runtime at a time. Unloading exits this process to release the
-  driver context as well as the model arena.
-* mpv is a per-utterance child process: raw float32 PCM goes in through stdin,
-  control (pause / quit / observe) goes through a socketpair passed as
-  --input-ipc-client=fd://N. mpv exits by itself when that socket closes, so a
-  crashed daemon can never leave an orphaned player behind.
+* One asyncio event loop owns ALL mutable state (jobs, player, timers, sockets)
+  and stays pure-stdlib (zero numpy/onnxruntime imports in the daemon process).
+* A separate synthesis process (`synth-worker`) owns ONNX Runtime, numpy,
+  kokoro-onnx, and espeak-ng. It quantizes float32 waveforms once into s16le or
+  s24le PCM so both mpv playback and WAV archiving consume the exact same bytes.
+  Interrupting an idle worker leaves it warm in memory; interrupting an active
+  segment signals a lightweight abort pipe so ORT aborts in-flight via
+  RunOptions.terminate without forcing a cold reload. Unloading or idle exit
+  terminates the worker process to release GPU driver contexts completely.
+* mpv is a per-utterance child process: raw s16le/s24le PCM goes in through
+  stdin, control (pause / quit / observe) goes through a socketpair passed as
+  --input-ipc-client=fd://N. mpv exits automatically when that socket closes.
 * Control plane: newline-delimited JSON over a Unix domain socket inside
-  XDG_RUNTIME_DIR. systemd socket activation is supported and preferred: the
-  socket is pre-bound by systemd, so the first request of a cold boot waits in
-  the kernel backlog instead of racing a readiness file.
-
-Why not the old FIFO + Base64 design?  A FIFO is unidirectional, has no message
-boundaries, cannot report errors back, races on open(2) during cold boot and
-lived in world-shared /tmp. A UDS gives framing, peer credentials (SO_PEERCRED),
-bidirectional acks and events, and can be socket-activated.
-
-Client mode (speak / stop / pause / status / ...) imports only the standard
-library and returns in a few tens of milliseconds; numpy, onnxruntime and
-kokoro-onnx are imported lazily by the daemon only.
+  XDG_RUNTIME_DIR with systemd socket activation (sd_listen_fds).
 
 A SyntaxError on import means the interpreter is older than 3.14: PEP 758
-except-clauses without parentheses are used deliberately, older interpreters
-are unsupported by design.
+except-clauses without parentheses are used deliberately.
 """
 
 import argparse
@@ -49,15 +40,15 @@ import json
 import logging
 import logging.handlers
 import math
-import subprocess
-import tempfile
 import os
 import re
 import shutil
 import signal
 import socket
 import struct
+import subprocess
 import sys
+import tempfile
 import threading
 import time
 import tomllib
@@ -65,18 +56,16 @@ import unicodedata
 import wave
 from collections import deque
 from collections.abc import Callable, Iterable, Sequence
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, fields
 from pathlib import Path
-from typing import Any, Final, Literal, NoReturn, get_type_hints, get_origin, get_args
+from typing import Any, Final, NoReturn, get_args, get_origin, get_type_hints
 from urllib.parse import urlsplit
 
-VERSION: Final = "5.1.1"
+VERSION: Final = "5.2.0"
 PROTOCOL: Final = 1
 APP_NAME: Final = "dusky-kokoro"
 APP_DIR: Final = Path(__file__).resolve().parent
 SAMPLE_RATE: Final = 24_000
-BYTES_PER_SAMPLE: Final = 4  # float32 little-endian PCM
 TERMINAL_EVENTS: Final = frozenset({"finished", "cancelled", "error", "deduplicated"})
 CLIENT_ENV_KEYS: Final = (
     "WAYLAND_DISPLAY", "XDG_SESSION_TYPE", "XDG_CURRENT_DESKTOP",
@@ -103,29 +92,15 @@ LANG_BY_PREFIX: Final[dict[str, str]] = {
     "f": "fr-fr", "h": "hi", "i": "it", "p": "pt-br",
 }
 
-# =============================================================================
-#  TUI & USER DEFAULTS
-#  Maintained for backwards compatibility with kokoro_tui.sh and external
-#  scripts. These can be inspected and rewritten by kokoro_tui.sh in-place.
-# =============================================================================
-BLEND_VOICES = True
-VOICE_1 = "af_heart"
-VOICE_1_WEIGHT = 0.4
-VOICE_2 = "af_bella"
-SPEED = 1.0
-MPV_SPEED = 1.0
-MODEL_PRECISION = "auto"
-SAMPLE_RATE = 24000
-STRIP_SPECIAL_CHARS = True
-ALLOWED_PUNCTUATION = frozenset({".", ",", "!", "?", ";", ":", "'", "%", "-"})
-MAX_BATCH_LEN = 2000
-IDLE_TIMEOUT = 10.0
-DEDUP_WINDOW = 2.0
-QUEUE_SIZE = 5
-
-
-
 log = logging.getLogger("dusky")
+
+
+def sample_width_for(bit_depth: int) -> int:
+    return 3 if bit_depth == 24 else 2
+
+
+def pcm_format_for(bit_depth: int) -> str:
+    return "s24le" if bit_depth == 24 else "s16le"
 
 
 # =============================================================================
@@ -221,7 +196,7 @@ class EngineConfig:
     allow_spinning: bool = True
     graph_optimization: str = "all"        # all | extended | basic | disabled
     require_accelerator: bool = False
-    warmup: bool = True
+    warmup: bool = False
     model_idle_timeout_s: float = 30.0
     profiling: bool = False
     env: dict[str, str] = field(default_factory=dict)
@@ -234,9 +209,9 @@ class VoiceConfig:
     speed: float = 1.0
     blend: bool = True
     voice_1: str = "af_heart"
-    weight_1: float = 0.5
+    weight_1: float = 0.4
     voice_2: str = "af_bella"
-    weight_2: float = 0.5
+    weight_2: float = 0.6
     voice_3: str = "none"
     weight_3: float = 0.0
 
@@ -252,7 +227,7 @@ class TextConfig:
     target_segment_chars: int = 220
     max_segment_chars: int = 320
     min_segment_chars: int = 24
-    first_segment_max_chars: int = 140
+    first_segment_max_chars: int = 110
     max_phonemes: int = 480
     sentence_pause_ms: int = 140
     paragraph_pause_ms: int = 380
@@ -269,7 +244,7 @@ class PlaybackConfig:
     audio_device: str = ""
     volume: int = 100
     cache_max_mb: int = 512
-    use_user_mpv_config: bool = True
+    use_user_mpv_config: bool = False
     extra_args: tuple[str, ...] = ()
     prefetch_segments: int = 4
     write_stall_timeout_s: float = 0.0
@@ -336,7 +311,7 @@ _CHOICES: Final[dict[tuple[str, str], tuple[Any, ...]]] = {
 DEFAULT_CONFIG_TOML: Final = """# Dusky Kokoro TTS - configuration (TOML)
 # Location: ~/.config/dusky-kokoro/config.toml   (override with DUSKY_CONFIG)
 # Every key is optional; omitted keys use the built-in defaults shown here.
-# Apply changes with:  trigger.sh --reload   (or: systemctl --user restart dusky-kokoro)
+# Apply changes with:  trigger.sh --reload   (or: systemctl --user restart dusky_kokoro)
 
 [engine]
 provider = "auto"          # auto | cuda | tensorrt | migraphx | openvino | cpu
@@ -348,7 +323,7 @@ gpu_mem_limit_mb = 2048    # provider arena cap, NOT total VRAM (0 = unlimited)
 cudnn_conv_use_max_workspace = false # cap cuDNN workspace to 32 MiB; true may need several GiB
 worker_start_timeout_s = 120.0
 arena_extend_strategy = "kSameAsRequested"   # or kNextPowerOfTwo
-cudnn_conv_algo_search = "HEURISTIC"         # HEURISTIC | DEFAULT | EXHAUSTIVE (exhaustive re-searches per new shape)
+cudnn_conv_algo_search = "HEURISTIC"         # HEURISTIC | DEFAULT | EXHAUSTIVE
 cuda_lib_dirs = []         # explicit dirs for onnxruntime.preload_dlls(); [] = NVIDIA pip wheels inside the venv
 openvino_device = "GPU"    # GPU | GPU.1 | NPU | CPU | AUTO:GPU,CPU
 openvino_precision = "FP16"
@@ -361,8 +336,8 @@ intra_op_threads = 0       # 0 = up to 8 available CPUs; GPU providers use 2
 allow_spinning = true
 graph_optimization = "all" # all | extended | basic | disabled
 require_accelerator = false   # true: refuse to run on the CPU when a GPU provider was requested
-warmup = true              # synthesize a short phrase right after load (moves first-run JIT cost off the first request)
-model_idle_timeout_s = 30.0   # unload the model after this much inactivity (frees the GPU arena / RAM)
+warmup = false             # false avoids adding a throwaway synthesis pass onto cold first-request latency
+model_idle_timeout_s = 30.0   # unload the model after this much inactivity (0.0 = immediately after synthesis)
 profiling = false          # write ONNX Runtime JSON profiles to the cache dir
 
 [engine.env]               # extra environment for the inference runtime, applied before ONNX Runtime loads
@@ -370,7 +345,7 @@ profiling = false          # write ONNX Runtime JSON profiles to the cache dir
 # MIOPEN_FIND_MODE = "FAST"
 
 [voice]
-spec = "af_heart:0.4,af_bella:0.6"   # "name" or "name:weight,name:weight" (weights are normalised)
+spec = "af_heart:0.4,af_bella:0.6"   # "name" or "name:weight,name:weight" ("" auto-compiles from voice_1..3)
 blend = true                         # true | false
 voice_1 = "af_heart"
 weight_1 = 0.4
@@ -387,11 +362,11 @@ url_mode = "domain"        # domain | placeholder | omit
 url_placeholder = "link"
 emoji_mode = "strip"       # strip | name
 read_code_blocks = false
-strip_citations = true     # remove [12] / [^3] style markers
+strip_citations = true     # remove [12], [4, 5], [1-3], [^3] style markers
 target_segment_chars = 220
 max_segment_chars = 320
 min_segment_chars = 24
-first_segment_max_chars = 140   # keep the first segment short: time-to-first-audio
+first_segment_max_chars = 110   # keep the first segment short for fast time-to-first-audio
 max_phonemes = 480         # hard token guard (model context is 512 incl. padding)
 sentence_pause_ms = 140
 paragraph_pause_ms = 380
@@ -406,16 +381,16 @@ window_title = "Kokoro TTS"
 audio_device = ""          # mpv --audio-device (list with: mpv --audio-device=help)
 volume = 100
 cache_max_mb = 512         # mpv demuxer cache: generation may run this far ahead of playback
-use_user_mpv_config = true
+use_user_mpv_config = false   # false (--no-config) avoids video scripts/keep-open conflicts and /tmp/mpv.sock collisions
 extra_args = []
 prefetch_segments = 4      # synthesized segments buffered ahead of the player
 write_stall_timeout_s = 0.0   # abort if mpv stops consuming audio for this long (0 = never)
 
 [archive]
 enabled = true
-dir = ""                   # "" = ~/.cache/dusky-kokoro/audio  (a zram / tmpfs path works fine here)
+dir = ""                   # "" = ~/.cache/dusky-kokoro/audio
 max_files = 32
-bit_depth = 16             # 16 | 24
+bit_depth = 16             # 16 | 24 (also sets worker -> daemon -> mpv wire PCM bit depth)
 
 [daemon]
 socket_path = ""           # "" = $XDG_RUNTIME_DIR/dusky-kokoro/control.sock
@@ -434,6 +409,19 @@ file = ""                  # optional rotating log file (journald already captur
 file_max_mb = 5
 ort_verbose = false        # ONNX Runtime verbose session logs
 """
+
+
+def _compile_voice_spec(vc: VoiceConfig) -> str:
+    if not vc.blend:
+        return vc.voice_1.strip()
+    entries: list[tuple[str, float]] = []
+    for name, weight in ((vc.voice_1, vc.weight_1), (vc.voice_2, vc.weight_2), (vc.voice_3, vc.weight_3)):
+        cleaned = name.strip()
+        if cleaned and cleaned.lower() != "none" and weight > 0:
+            entries.append((cleaned, weight))
+    if not entries:
+        return vc.voice_1.strip()
+    return ",".join(f"{name}:{weight:g}" for name, weight in entries)
 
 
 def _build_section(cls: type, data: dict[str, Any], where: str) -> Any:
@@ -494,60 +482,10 @@ def _validate(cfg: Config) -> None:
         raise ConfigError("[text] max_segment_chars must be >= target_segment_chars")
     if cfg.daemon.max_queue < 1 or cfg.playback.prefetch_segments < 1:
         raise ConfigError("[daemon] max_queue and [playback] prefetch_segments must be >= 1")
-    VoiceBank.parse_spec(cfg.voice.spec)
-
-
-def _tui_defaults() -> dict[str, dict[str, Any]]:
-    """Derives structured config dictionary from the top-level TUI variables."""
-    g = globals()
-    blend = bool(g.get("BLEND_VOICES", True))
-    v1 = str(g.get("VOICE_1", "af_heart"))
     try:
-        w1 = float(g.get("VOICE_1_WEIGHT", 0.4))
-    except (TypeError, ValueError):
-        w1 = 0.4
-    v2 = str(g.get("VOICE_2", "af_bella"))
-    if blend:
-        w2 = round(1.0 - w1, 2)
-        spec = f"{v1}:{w1},{v2}:{w2}"
-    else:
-        spec = v1
-
-    prec = str(g.get("MODEL_PRECISION", "fp16")).lower()
-    if prec not in MODEL_FILES and prec != "auto":
-        prec = "auto"
-
-    try:
-        speed = float(g.get("SPEED", 1.0))
-    except (TypeError, ValueError):
-        speed = 1.0
-
-    try:
-        mpv_speed = float(g.get("MPV_SPEED", 1.0))
-    except (TypeError, ValueError):
-        mpv_speed = 1.0
-
-    try:
-        idle_timeout = float(g.get("IDLE_TIMEOUT", 30.0))
-    except (TypeError, ValueError):
-        idle_timeout = 30.0
-
-    try:
-        dedup_window = float(g.get("DEDUP_WINDOW", 2.0))
-    except (TypeError, ValueError):
-        dedup_window = 2.0
-
-    try:
-        queue_size = int(g.get("QUEUE_SIZE", 8))
-    except (TypeError, ValueError):
-        queue_size = 8
-
-    return {
-        "engine": {"precision": prec, "model_idle_timeout_s": idle_timeout},
-        "voice": {"spec": spec, "speed": speed},
-        "playback": {"mpv_speed": mpv_speed},
-        "daemon": {"dedup_window_s": dedup_window, "max_queue": queue_size},
-    }
+        VoiceBank.parse_spec(cfg.voice.spec)
+    except VoiceError as exc:
+        raise ConfigError(f"[voice] {exc}") from exc
 
 
 def load_config(path: Path) -> Config:
@@ -559,14 +497,6 @@ def load_config(path: Path) -> Config:
         except (tomllib.TOMLDecodeError, OSError) as exc:
             raise ConfigError(f"{path}: {exc}") from exc
 
-    tui_defs = _tui_defaults()
-    for sec_name, sec_dict in tui_defs.items():
-        if sec_name not in data:
-            data[sec_name] = dict(sec_dict)
-        elif isinstance(data[sec_name], dict):
-            for k, val in sec_dict.items():
-                data[sec_name].setdefault(k, val)
-
     sections: dict[str, Any] = {}
     for name, value in data.items():
         if name not in _SECTIONS:
@@ -575,6 +505,11 @@ def load_config(path: Path) -> Config:
             raise ConfigError(f"{path}: [{name}] must be a table")
         sections[name] = _build_section(_SECTIONS[name], value, f"{path} [{name}]")
     cfg = Config(**sections)
+
+    raw_voice = data.get("voice") if isinstance(data.get("voice"), dict) else {}
+    explicit_spec = raw_voice.get("spec")
+    if not isinstance(explicit_spec, str) or not explicit_spec.strip():
+        cfg = dataclasses.replace(cfg, voice=dataclasses.replace(cfg.voice, spec=_compile_voice_spec(cfg.voice)))
 
     env = os.environ
     if v := env.get("DUSKY_PROVIDER"):
@@ -616,10 +551,7 @@ def resolve_paths(cfg: Config, config_file: Path, socket_override: str | None = 
     cache = xdg_cache_home() / APP_NAME
     sock = Path(socket_override) if socket_override else (
         expand(cfg.daemon.socket_path) if cfg.daemon.socket_path else default_socket_path())
-    if cfg.archive.dir:
-        archive_dir = expand(cfg.archive.dir)
-    else:
-        archive_dir = cache / "audio"
+    archive_dir = expand(cfg.archive.dir) if cfg.archive.dir else cache / "audio"
 
     return Paths(
         config_file=config_file,
@@ -680,7 +612,6 @@ _TYPOGRAPHY: Final = str.maketrans({
     "\u300c": '"', "\u300d": '"', "\u300e": '"', "\u300f": '"',
     "\u2013": "-", "\u2014": ", ", "\u2015": ", ", "\u2212": "-", "\u2026": "...",
     "\u00a0": " ", "\u2009": " ", "\u202f": " ", "\u3000": " ", "\t": " ",
-    "[": "(", "]": ")",
 })
 _SYMBOL_WORDS_EN: Final = {
     "\u00d7": " times ", "\u00f7": " divided by ", "\u00b1": " plus or minus ", "\u2248": " approximately ",
@@ -690,13 +621,29 @@ _SYMBOL_WORDS_EN: Final = {
 }
 _KEEP_PUNCT: Final = frozenset(".,!?;:'\"()-/%&+=\u00b0\u00bf\u00a1\u3002\uff0c\uff01\uff1f\uff1b\uff1a\u3001\uff05")
 
+_HTML_TAG_NAMES: Final = (
+    "a|abbr|address|article|aside|audio|b|bdi|bdo|blockquote|body|br|button|caption|cite|code|"
+    "col|colgroup|data|dd|del|details|dfn|dialog|div|dl|dt|em|figcaption|figure|footer|form|"
+    "h[1-6]|head|header|hr|html|i|iframe|img|input|ins|kbd|label|legend|li|link|main|mark|meta|"
+    "nav|noscript|ol|option|p|picture|pre|q|rp|rt|ruby|s|samp|script|section|select|small|source|"
+    "span|strong|style|sub|summary|sup|svg|table|tbody|td|template|textarea|tfoot|th|thead|time|"
+    "title|tr|u|ul|var|video|wbr"
+)
+
 _RE_FENCE_LINE = re.compile(r"^[ \t]{0,3}(\x60{3,}|~{3,})([^\n]*)$")
 _RE_INLINE_CODE = re.compile(r"\x60([^\x60\n]{1,300})\x60")
 _RE_IMAGE = re.compile(r"!\[([^\[\]]*)\]\([^)]*\)")
 _RE_LINK = re.compile(r"\[([^\[\]]+)\]\((?:[^)\s]+)(?:\s+\"[^\"]*\")?\)")
 _RE_REF_LINK = re.compile(r"\[([^\[\]]+)\]\[[^\[\]]*\]")
 _RE_AUTOLINK = re.compile(r"<(https?://[^>\s]+)>")
-_RE_HTML_TAG = re.compile(r"</?[A-Za-z][^<>]{0,120}>")
+_RE_HTML_TAG = re.compile(
+    rf"<!--[\s\S]{{0,2000}}?-->|"
+    rf"</[A-Za-z][A-Za-z0-9:-]*\s*>|"
+    rf"<(?:{_HTML_TAG_NAMES})\b[^<>]{{0,160}}>|"
+    rf"<[A-Za-z][A-Za-z0-9:-]*\s+[A-Za-z_:][A-Za-z0-9_.:-]*\s*=[^<>]{{0,160}}>|"
+    rf"<[A-Za-z][A-Za-z0-9:-]*\s*/>",
+    re.I,
+)
 _RE_HEADER = re.compile(r"^[ \t]{0,3}#{1,6}[ \t]+(.+?)[ \t#]*$", re.M)
 _RE_HR = re.compile(r"^[ \t]{0,3}(?:(?:[-*_=])[ \t]*){3,}$", re.M)
 _RE_BLOCKQUOTE = re.compile(r"^[ \t]{0,3}(?:>[ \t]?)+", re.M)
@@ -707,11 +654,21 @@ _RE_EMPH = re.compile(r"(?<![\w*])\*(?=\S)([^*\n]+?)(?<=\S)\*(?![\w*])|(?<![\w_]
 _RE_STRIKE = re.compile(r"~~(?=\S)(.+?)(?<=\S)~~", re.S)
 _RE_TABLE_SEP = re.compile(r"^[ \t]*\|?[ \t]*:?-{2,}:?[ \t]*(?:\|[ \t]*:?-{2,}:?[ \t]*)*\|?[ \t]*$", re.M)
 _RE_TABLE_ROW = re.compile(r"^[ \t]*\|(.+)\|[ \t]*$", re.M)
-_RE_CITATION = re.compile(r"\[\^?\d{1,3}\]")
+_RE_CITATION = re.compile(r"\[\^?\d{1,3}(?:\s*[-–,]\s*\d{1,3})*\]")
 _RE_URL = re.compile(r"(?:https?://|www\.)[^\s<>\"')\]]+", re.I)
 _RE_EMAIL = re.compile(r"\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b")
 _RE_SPACES = re.compile(r"[ \t]+")
 _RE_SLUG = re.compile(r"[^\w\s-]")
+
+_RE_HTML_STRIP_BLOCK = re.compile(r"<(style|script|head)\b[^>]*>[\s\S]*?</\1>", re.I)
+_RE_HTML_COMMENT = re.compile(r"<!--[\s\S]*?-->")
+_RE_HTML_PARA_BREAK = re.compile(
+    r"</?(?:p|div|section|article|aside|header|footer|main|nav|blockquote|pre|h[1-6]|hr)\b[^>]*>", re.I
+)
+_RE_HTML_LINE_BREAK = re.compile(r"<(?:br|/li|/tr|/dt|/dd)\b[^>]*>", re.I)
+_RE_HTML_CELL_BREAK = re.compile(r"</t[dh]\b[^>]*>", re.I)
+_RE_ANY_TAG = re.compile(r"<[^>]+>")
+_RE_PDF_MID_FORMFEED = re.compile(r"(?<![.!?:;\n])\s*\x0c\s*(?=[a-z0-9,(])")
 
 
 def _url_replacement(match: re.Match[str], cfg: TextConfig) -> str:
@@ -729,6 +686,12 @@ def _url_replacement(match: re.Match[str], cfg: TextConfig) -> str:
             host = urlsplit(url if "://" in url else "https://" + url).hostname or ""
             host = host.removeprefix("www.")
             return f" {host or cfg.url_placeholder} {tail}"
+
+
+def _email_replacement(cfg: TextConfig, lang: str) -> str:
+    if cfg.url_mode == "omit":
+        return " "
+    return " email address " if lang.startswith("en") else " email "
 
 
 def _filter_chars(text: str, cfg: TextConfig, lang: str) -> str:
@@ -749,6 +712,10 @@ def _filter_chars(text: str, cfg: TextConfig, lang: str) -> str:
             out.append(ch)  # currency symbols: espeak-ng / kokoro normaliser verbalise these
         elif cat == "So" and cfg.emoji_mode == "name" and (name := unicodedata.name(ch, "")):
             out.append(f" {name.lower()} ")
+        elif ch == "[":
+            out.append("(")
+        elif ch == "]":
+            out.append(")")
         else:
             out.append(" ")
     return _RE_SPACES.sub(" ", "".join(out)).strip()
@@ -802,7 +769,7 @@ def normalize_text(text: str, cfg: TextConfig, lang: str = "en-us") -> list[list
         text = _RE_CITATION.sub("", text)
     text = _RE_HTML_TAG.sub(" ", text)
     text = _RE_URL.sub(lambda m: _url_replacement(m, cfg), text)
-    text = _RE_EMAIL.sub(" email address ", text)
+    text = _RE_EMAIL.sub(_email_replacement(cfg, lang), text)
     text = text.translate(_TYPOGRAPHY)
 
     paragraphs: list[list[str]] = []
@@ -1031,14 +998,34 @@ def split_phonemes(phonemes: str, limit: int) -> list[str]:
     return pieces
 
 
+def _html_to_text(raw: str) -> str:
+    cleaned = _RE_HTML_STRIP_BLOCK.sub(" ", raw)
+    cleaned = _RE_HTML_COMMENT.sub(" ", cleaned)
+    cleaned = _RE_HTML_PARA_BREAK.sub("\n\n", cleaned)
+    cleaned = _RE_HTML_LINE_BREAK.sub("\n", cleaned)
+    cleaned = _RE_HTML_CELL_BREAK.sub(", ", cleaned)
+    cleaned = _RE_ANY_TAG.sub("", cleaned)
+    cleaned = html.unescape(cleaned)
+    cleaned = cleaned.replace("\r\n", "\n").replace("\r", "\n")
+    cleaned = _RE_SPACES.sub(" ", cleaned)
+    cleaned = re.sub(r"[ \t]*\n[ \t]*", "\n", cleaned)
+    return re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+
+
+def _normalize_pdf_text(text: str) -> str:
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = _RE_PDF_MID_FORMFEED.sub(" ", text)
+    return text.replace("\x0c", "\n\n").strip()
+
+
 def extract_text_from_file(file_path: Path | str) -> str:
     """
     Extracts readable text from documents, books, and code files.
     Supports:
       - Plain text, Markdown, RST, Org, CSV, JSON, and source code files
       - PDF files (via system pdftotext or pypdf fallback)
-      - EPUB ebooks (native zipfile extraction of XHTML/HTML chapters)
-      - HTML/XML documents (tag stripping and entity decoding)
+      - EPUB ebooks (native zipfile extraction following OPF spine order)
+      - HTML/XML documents (block-preserving tag stripping and entity decoding)
     """
     path = Path(file_path).expanduser().resolve()
     if not path.exists():
@@ -1061,7 +1048,7 @@ def extract_text_from_file(file_path: Path | str) -> str:
                     check=True,
                     errors="replace",
                 )
-                text = res.stdout.strip()
+                text = _normalize_pdf_text(res.stdout)
                 if text:
                     return text
             except Exception as exc:
@@ -1070,7 +1057,7 @@ def extract_text_from_file(file_path: Path | str) -> str:
             import pypdf  # type: ignore
             reader = pypdf.PdfReader(str(path))
             pages = [page.extract_text() or "" for page in reader.pages]
-            text = "\n\n".join(p.strip() for p in pages if p.strip())
+            text = _normalize_pdf_text("\n\n".join(p.strip() for p in pages if p.strip()))
             if text:
                 return text
         except Exception:
@@ -1079,13 +1066,12 @@ def extract_text_from_file(file_path: Path | str) -> str:
 
     # 2. EPUB Ebooks (zero-dependency native zipfile extraction)
     if suffix == ".epub":
+        import posixpath
+        import xml.etree.ElementTree as ET
         import zipfile
-        import html
+        from urllib.parse import unquote
         try:
             with zipfile.ZipFile(path, "r") as z:
-                import posixpath
-                import xml.etree.ElementTree as ET
-                from urllib.parse import unquote
                 container = ET.fromstring(z.read("META-INF/container.xml"))
                 rootfile = container.find(".//{*}rootfile")
                 if rootfile is None:
@@ -1095,10 +1081,15 @@ def extract_text_from_file(file_path: Path | str) -> str:
                 manifest = {
                     item.attrib["id"]: item.attrib["href"]
                     for item in package.findall("./{*}manifest/{*}item")
-                    if item.attrib.get("media-type") == "application/xhtml+xml"
+                    if item.attrib.get("media-type") in ("application/xhtml+xml", "text/html")
                 }
                 files_to_read = [
-                    posixpath.normpath(posixpath.join(posixpath.dirname(opf_name), unquote(manifest[item.attrib["idref"]].split("#", 1)[0])))
+                    posixpath.normpath(
+                        posixpath.join(
+                            posixpath.dirname(opf_name),
+                            unquote(manifest[item.attrib["idref"]].split("#", 1)[0]),
+                        )
+                    )
                     for item in package.findall("./{*}spine/{*}itemref")
                     if item.attrib.get("linear", "yes") != "no" and item.attrib.get("idref") in manifest
                 ]
@@ -1107,12 +1098,7 @@ def extract_text_from_file(file_path: Path | str) -> str:
                 for name in files_to_read:
                     try:
                         raw = z.read(name).decode("utf-8", "replace")
-                        cleaned = re.sub(r"<style[\s\S]*?</style>", " ", raw, flags=re.IGNORECASE)
-                        cleaned = re.sub(r"<script[\s\S]*?</script>", " ", cleaned, flags=re.IGNORECASE)
-                        cleaned = re.sub(r"<[^>]+>", " ", cleaned)
-                        cleaned = html.unescape(cleaned)
-                        cleaned = re.sub(r"[ \t]+", " ", cleaned)
-                        cleaned = re.sub(r"\n\s*\n", "\n\n", cleaned).strip()
+                        cleaned = _html_to_text(raw)
                         if cleaned:
                             parts.append(cleaned)
                     except (KeyError, OSError) as exc:
@@ -1125,14 +1111,7 @@ def extract_text_from_file(file_path: Path | str) -> str:
 
     # 3. HTML Documents
     if suffix in (".html", ".htm", ".xhtml"):
-        import html
-        raw = path.read_text(encoding="utf-8", errors="replace")
-        cleaned = re.sub(r"<style[\s\S]*?</style>", " ", raw, flags=re.IGNORECASE)
-        cleaned = re.sub(r"<script[\s\S]*?</script>", " ", cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(r"<[^>]+>", " ", cleaned)
-        cleaned = html.unescape(cleaned)
-        cleaned = re.sub(r"[ \t]+", " ", cleaned)
-        return re.sub(r"\n\s*\n", "\n\n", cleaned).strip()
+        return _html_to_text(path.read_text(encoding="utf-8", errors="replace"))
 
     # 4. Standard text, Markdown, RST, Org, and source code files
     return path.read_text(encoding="utf-8", errors="replace")
@@ -1200,7 +1179,7 @@ class VoiceBank:
         return LANG_BY_PREFIX.get(first[0], "en-us")
 
     def resolve(self, spec: str) -> Any:
-        """Weighted linear blend of style tensors (engine thread only)."""
+        """Weighted linear blend of style tensors (worker process only)."""
         import numpy as np
         parts = self.parse_spec(spec)
         key = ",".join(f"{n}:{w!r}" for n, w in parts)
@@ -1221,14 +1200,18 @@ class VoiceBank:
 
 
 # =============================================================================
-#  Inference engine (ONNX Runtime + kokoro-onnx), single owning thread
+#  Inference engine (ONNX Runtime + kokoro-onnx)
 # =============================================================================
+class _AbortedError(Exception):
+    """Internal worker sentinel for an intentionally aborted segment."""
+
+
 class _SessionProxy:
     """Thin forwarding wrapper handed to Kokoro.from_session().
 
-    Replaces the old monkey-patch of onnxruntime.InferenceSession: kokoro-onnx
-    keeps using its own code paths, we only inject RunOptions so an in-flight
-    run can be aborted (RunOptions.terminate) when the user interrupts.
+    Injects RunOptions so an in-flight ONNX run can be aborted from the worker's
+    abort watcher thread (RunOptions.terminate = True) without killing the
+    process or discarding the warm session.
     """
 
     __slots__ = ("_inner", "run_options")
@@ -1247,6 +1230,15 @@ class _SessionProxy:
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._inner, name)
+
+
+def _quantize_pcm(samples: Any, bit_depth: int) -> bytes:
+    """Convert float32 samples in [-1, 1] to packed little-endian s16le or s24le."""
+    import numpy as np
+    if bit_depth == 24:
+        ints = np.clip(samples * 8388607.0, -8388608.0, 8388607.0).astype("<i4")
+        return ints.view(np.uint8).reshape(-1, 4)[:, :3].tobytes()
+    return np.clip(samples * 32767.0, -32768.0, 32767.0).astype("<i2").tobytes()
 
 
 @dataclass(slots=True)
@@ -1292,13 +1284,15 @@ def choose_model(precision: str, kind: str, models_dir: Path) -> tuple[str, Path
 
 
 class Engine:
+    _ABORT_DRAIN_TIMEOUT_S: Final = 1.5
+
     def __init__(self, cfg: Config, paths: Paths, voices: VoiceBank, is_worker: bool = False) -> None:
         self.cfg = cfg
         self.paths = paths
         self.voices = voices
         self.is_worker = is_worker
-        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="engine") if is_worker else None
         self._worker_proc: asyncio.subprocess.Process | None = None
+        self._abort_w: int | None = None
         self._loaded = False
         self._kokoro: Any = None
         self._session: Any = None
@@ -1306,6 +1300,10 @@ class Engine:
         self._cuda_preloaded = False
         self._load_lock = asyncio.Lock()
         self._io_lock = asyncio.Lock()
+        self._req_id = 0
+        self._in_flight_req_id: int | None = None
+        self._aborted_req_id = 0
+        self._drain_task: asyncio.Task[None] | None = None
         self._reaping: set[asyncio.Task[Any]] = set()
         self.reload_pending = False
         self.last_used = time.monotonic()
@@ -1318,7 +1316,7 @@ class Engine:
         self.warnings: list[str] = []
         self.stats = EngineStats()
 
-    # ---- async facade -------------------------------------------------------
+    # ---- async facade (daemon side) -----------------------------------------
     @property
     def loaded(self) -> bool:
         if self.is_worker:
@@ -1328,19 +1326,35 @@ class Engine:
     def touch(self) -> None:
         self.last_used = time.monotonic()
 
-    async def run(self, fn: Callable[..., Any], *args: Any) -> Any:
-        if self._executor is not None:
-            return await asyncio.get_running_loop().run_in_executor(self._executor, fn, *args)
-        return await asyncio.to_thread(fn, *args)
+    def _close_abort_pipe(self) -> None:
+        fd, self._abort_w = self._abort_w, None
+        if fd is not None:
+            with contextlib.suppress(OSError):
+                os.close(fd)
+
+    def _signal_abort(self, req_id: int) -> None:
+        if req_id <= self._aborted_req_id:
+            return
+        self._aborted_req_id = req_id
+        fd = self._abort_w
+        if fd is not None:
+            with contextlib.suppress(OSError):
+                os.write(fd, struct.pack("<I", req_id))
+
+    async def _await_drain(self) -> None:
+        task = self._drain_task
+        if task is not None:
+            await asyncio.shield(task)
 
     async def ensure_loaded(self) -> None:
+        await self._await_drain()
         async with self._load_lock:
             if self.is_worker:
                 if self.reload_pending and self.loaded:
-                    await self.run(self._unload_sync, "configuration reload")
+                    self._unload_sync("configuration reload")
                 self.reload_pending = False
                 if not self.loaded:
-                    await self.run(self._load_sync)
+                    self._load_sync()
             else:
                 if self.reload_pending and self.loaded:
                     await self._unload_worker("configuration reload")
@@ -1349,20 +1363,34 @@ class Engine:
                     await self._unload_worker("restart failed worker")
                     script_path = str(Path(__file__).resolve())
                     await asyncio.gather(*self._reaping, return_exceptions=True)
-                    proc = await asyncio.create_subprocess_exec(
-                        sys.executable, "-u", script_path, "synth-worker",
-                        "--config", str(self.paths.config_file),
-                        stdin=asyncio.subprocess.PIPE,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=None,
-                    )
+                    abort_r, abort_w = os.pipe()
+                    os.set_blocking(abort_w, False)
+                    try:
+                        proc = await asyncio.create_subprocess_exec(
+                            sys.executable, "-X", "utf8", "-u", script_path, "synth-worker",
+                            "--config", str(self.paths.config_file),
+                            "--abort-fd", str(abort_r),
+                            stdin=asyncio.subprocess.PIPE,
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=None,
+                            pass_fds=(abort_r,),
+                        )
+                    except BaseException:
+                        os.close(abort_w)
+                        raise
+                    finally:
+                        os.close(abort_r)
                     self._worker_proc = proc
+                    self._abort_w = abort_w
+                    self._req_id = 0
+                    self._aborted_req_id = 0
                     try:
                         async with asyncio.timeout(self.cfg.engine.worker_start_timeout_s):
                             assert proc.stdin is not None and proc.stdout is not None
                             proc.stdin.write(json.dumps({
                                 "config": dataclasses.asdict(self.cfg),
-                                "models_dir": str(self.paths.models_dir), "voices_file": str(self.paths.voices_file),
+                                "models_dir": str(self.paths.models_dir),
+                                "voices_file": str(self.paths.voices_file),
                             }).encode() + b"\n")
                             await proc.stdin.drain()
                             line = await proc.stdout.readline()
@@ -1393,90 +1421,12 @@ class Engine:
                              proc.pid, self.active_kind, self.active_providers)
         self.touch()
 
-    async def _unload_worker(self, reason: str) -> None:
-        proc, self._worker_proc = self._worker_proc, None
-        self._loaded = False
-        if proc is not None:
-            if proc.stdin is not None:
-                proc.stdin.close()
-            if proc.returncode is None:
-                with contextlib.suppress(ProcessLookupError):
-                    proc.terminate()
-            try:
-                async with asyncio.timeout(2.0):
-                    await proc.wait()
-            except TimeoutError:
-                with contextlib.suppress(ProcessLookupError):
-                    proc.kill()
-                await proc.wait()
-        self.active_kind = "none"
-        self.active_providers = []
-        log.info("Synthesis worker exited (%s)", reason)
-
-    async def unload(self, reason: str) -> None:
-        async with self._load_lock:
-            async with self._io_lock:
-                if self.is_worker:
-                    if self._kokoro is not None:
-                        await self.run(self._unload_sync, reason)
-                else:
-                    await self._unload_worker(reason)
-
-    async def synthesize(self, text: str, voice_spec: Any, speed: float, lang: str, pause_ms: int) -> bytes:
-        if self.is_worker:
-            vec = self.voices.resolve(voice_spec) if isinstance(voice_spec, str) else voice_spec
-            return await self.run(self._synth_sync, text, vec, speed, lang, pause_ms)
-
-        if not self.loaded:
-            await self.ensure_loaded()
-        async with self._io_lock:
-            proc = self._worker_proc
-            if proc is None or proc.stdin is None or proc.stdout is None:
-                raise EngineError("synthesis worker is not running")
-            req = json.dumps({"cmd": "synth", "text": text, "voice": voice_spec,
-                              "speed": speed, "lang": lang, "pause_ms": pause_ms}) + "\n"
-            t0 = time.perf_counter()
-            try:
-                proc.stdin.write(req.encode("utf-8"))
-                await proc.stdin.drain()
-                (length,) = struct.unpack("<I", await proc.stdout.readexactly(4))
-                state = json.loads(await proc.stdout.readexactly(length))
-                self.active_kind = state["kind"]
-                self.active_providers = state["providers"]
-                self.degraded = state["degraded"]
-                self.model_precision = state["precision"]
-                self.model_path = Path(state["model"])
-                if state.get("error"):
-                    raise EngineError(state["error"])
-                pcm = await proc.stdout.readexactly(state["pcm_bytes"])
-            except (ConnectionError, asyncio.IncompleteReadError) as exc:
-                await self._unload_worker("worker pipe closed")
-                raise EngineError("synthesis worker exited during synthesis (see daemon logs)") from exc
-            elapsed = time.perf_counter() - t0
-            self.stats.segments += 1
-            self.stats.synth_s += elapsed
-            self.stats.audio_s += len(pcm) / (BYTES_PER_SAMPLE * SAMPLE_RATE)
-            self.touch()
-            return pcm
-
-    def interrupt(self) -> None:
-        """Abort the in-flight ONNX run."""
-        if self.is_worker:
-            if self._run_options is not None:
-                self._run_options.terminate = True
-        else:
-            if self._worker_proc is not None and self._worker_proc.returncode is None:
-                proc, self._worker_proc = self._worker_proc, None
-                self._loaded = False
-                task = asyncio.create_task(self._reap_interrupted(proc))
-                self._reaping.add(task)
-                task.add_done_callback(self._reaping.discard)
-
-    async def _reap_interrupted(self, proc: asyncio.subprocess.Process) -> None:
+    async def _terminate_proc(self, proc: asyncio.subprocess.Process) -> None:
         if proc.stdin is not None:
             proc.stdin.close()
-        with contextlib.suppress(ProcessLookupError):
-            proc.terminate()
+        if proc.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                proc.terminate()
         try:
             async with asyncio.timeout(2.0):
                 await proc.wait()
@@ -1484,6 +1434,171 @@ class Engine:
             with contextlib.suppress(ProcessLookupError):
                 proc.kill()
             await proc.wait()
+
+    async def _unload_worker(self, reason: str) -> None:
+        drain, self._drain_task = self._drain_task, None
+        if drain is not None and not drain.done():
+            drain.cancel()
+            with contextlib.suppress(BaseException):
+                await drain
+        self._close_abort_pipe()
+        proc, self._worker_proc = self._worker_proc, None
+        self._loaded = False
+        self._in_flight_req_id = None
+        if proc is not None:
+            await self._terminate_proc(proc)
+            log.info("Synthesis worker exited (%s)", reason)
+        self.active_kind = "none"
+        self.active_providers = []
+
+    async def _kill_if_current(self, proc: asyncio.subprocess.Process, reason: str) -> None:
+        if self._worker_proc is proc:
+            self._close_abort_pipe()
+            self._worker_proc = None
+            self._loaded = False
+            self.active_kind = "none"
+            self.active_providers = []
+        await self._terminate_proc(proc)
+        log.info("Synthesis worker terminated (%s)", reason)
+
+    async def unload(self, reason: str) -> None:
+        async with self._load_lock:
+            async with self._io_lock:
+                if self.is_worker:
+                    if self._kokoro is not None:
+                        self._unload_sync(reason)
+                else:
+                    await self._unload_worker(reason)
+
+    async def _rpc_synth(self, proc: asyncio.subprocess.Process, payload: bytes) -> tuple[dict[str, Any], bytes]:
+        assert proc.stdin is not None and proc.stdout is not None
+        proc.stdin.write(payload)
+        await proc.stdin.drain()
+        (length,) = struct.unpack("<I", await proc.stdout.readexactly(4))
+        state = json.loads(await proc.stdout.readexactly(length))
+        pcm = await proc.stdout.readexactly(state["pcm_bytes"])
+        return state, pcm
+
+    async def _finish_aborted_rpc(
+        self,
+        rpc: asyncio.Task[tuple[dict[str, Any], bytes]],
+        proc: asyncio.subprocess.Process,
+    ) -> None:
+        try:
+            async with asyncio.timeout(self._ABORT_DRAIN_TIMEOUT_S):
+                state, _pcm = await rpc
+                self._apply_worker_state(state)
+        except TimeoutError:
+            rpc.cancel()
+            with contextlib.suppress(BaseException):
+                await rpc
+            await self._kill_if_current(proc, "abort drain timeout")
+        except (ConnectionError, asyncio.IncompleteReadError):
+            await self._kill_if_current(proc, "worker pipe closed during abort")
+        except asyncio.CancelledError:
+            rpc.cancel()
+            with contextlib.suppress(BaseException):
+                await rpc
+            raise
+        except Exception as exc:
+            log.debug("aborted worker RPC ended with error: %s", exc)
+            await self._kill_if_current(proc, "worker error during abort")
+        finally:
+            if self._drain_task is asyncio.current_task():
+                self._drain_task = None
+
+    def _apply_worker_state(self, state: dict[str, Any]) -> None:
+        self.active_kind = state["kind"]
+        self.active_providers = state["providers"]
+        self.degraded = state["degraded"]
+        self.model_precision = state["precision"]
+        self.model_path = Path(state["model"]) if state.get("model") else None
+
+    async def synthesize(
+        self,
+        text: str,
+        voice_spec: Any,
+        speed: float,
+        lang: str,
+        pause_ms: int,
+        *,
+        bit_depth: int = 16,
+        max_phonemes: int | None = None,
+        trim_silence: bool | None = None,
+    ) -> bytes:
+        if self.is_worker:
+            vec = self.voices.resolve(voice_spec) if isinstance(voice_spec, str) else voice_spec
+            return self._synth_sync(
+                text, vec, speed, lang, pause_ms,
+                bit_depth=bit_depth,
+                max_phonemes=max_phonemes,
+                trim_silence=trim_silence,
+            )
+
+        while True:
+            await self._await_drain()
+            if not self.loaded:
+                await self.ensure_loaded()
+            async with self._io_lock:
+                if self._drain_task is not None or not self.loaded:
+                    continue
+                proc = self._worker_proc
+                if proc is None or proc.stdin is None or proc.stdout is None:
+                    continue
+                self._req_id += 1
+                req_id = self._req_id
+                payload = (json.dumps({
+                    "cmd": "synth",
+                    "req_id": req_id,
+                    "text": text,
+                    "voice": voice_spec,
+                    "speed": speed,
+                    "lang": lang,
+                    "pause_ms": pause_ms,
+                    "bit_depth": bit_depth,
+                    "max_phonemes": self.cfg.text.max_phonemes if max_phonemes is None else max_phonemes,
+                    "trim_silence": self.cfg.text.trim_silence if trim_silence is None else trim_silence,
+                }) + "\n").encode("utf-8")
+                t0 = time.perf_counter()
+                rpc = asyncio.create_task(self._rpc_synth(proc, payload), name=f"worker-rpc-{req_id}")
+                self._in_flight_req_id = req_id
+                try:
+                    state, pcm = await asyncio.shield(rpc)
+                except asyncio.CancelledError:
+                    self._signal_abort(req_id)
+                    self._drain_task = asyncio.create_task(
+                        self._finish_aborted_rpc(rpc, proc), name=f"worker-drain-{req_id}"
+                    )
+                    raise
+                except (ConnectionError, asyncio.IncompleteReadError) as exc:
+                    await self._kill_if_current(proc, "worker pipe closed")
+                    raise EngineError("synthesis worker exited during synthesis (see daemon logs)") from exc
+                finally:
+                    if self._in_flight_req_id == req_id:
+                        self._in_flight_req_id = None
+
+                self._apply_worker_state(state)
+                if state.get("aborted"):
+                    raise asyncio.CancelledError("synthesis aborted")
+                if state.get("error"):
+                    raise EngineError(state["error"])
+                elapsed = time.perf_counter() - t0
+                sample_width = sample_width_for(bit_depth)
+                self.stats.segments += 1
+                self.stats.synth_s += elapsed
+                self.stats.audio_s += len(pcm) / (sample_width * SAMPLE_RATE)
+                self.touch()
+                return pcm
+
+    def interrupt(self) -> None:
+        """Abort an in-flight ONNX run while keeping an idle worker warm."""
+        if self.is_worker:
+            if self._run_options is not None:
+                self._run_options.terminate = True
+            return
+        req_id = self._in_flight_req_id
+        if req_id is not None:
+            self._signal_abort(req_id)
 
     def pop_warnings(self) -> list[str]:
         out, self.warnings = self.warnings, []
@@ -1493,10 +1608,8 @@ class Engine:
         with contextlib.suppress(Exception):
             await self.unload("shutdown")
         await asyncio.gather(*self._reaping, return_exceptions=True)
-        if self._executor is not None:
-            self._executor.shutdown(wait=True, cancel_futures=True)
 
-    # ---- synchronous internals (engine thread) --------------------------------
+    # ---- synchronous internals (worker process / offline bench) -------------
     def _preload_cuda_libs(self, ort: Any) -> None:
         if self._cuda_preloaded:
             return
@@ -1581,6 +1694,8 @@ class Engine:
         so.inter_op_num_threads = 1
         so.log_severity_level = 0 if self.cfg.logging.ort_verbose else 3
         so.add_session_config_entry("session.intra_op.allow_spinning", "1" if e.allow_spinning else "0")
+        if kind == "cpu":
+            so.add_session_config_entry("session.set_denormal_as_zero", "1")
         if e.profiling:
             self.paths.cache_dir.mkdir(parents=True, exist_ok=True)
             so.enable_profiling = True
@@ -1594,33 +1709,38 @@ class Engine:
         if not hasattr(Kokoro, "from_session"):
             raise EngineError("kokoro-onnx is too old: Kokoro.from_session() is missing (need >= 0.4)")
         if self._kokoro is not None:
-            return  # a load submitted by an interrupted job already completed on this thread
+            return
         e = self.cfg.engine
         t0 = time.perf_counter()
         available = list(ort.get_available_providers())
-        if e.require_accelerator and (e.provider == "cpu" or
-                (e.provider != "auto" and EP_NAMES[e.provider] not in available) or
-                (e.provider == "auto" and not any(EP_NAMES[k] in available for k in ("cuda", "migraphx", "openvino")))):
+        if e.require_accelerator and (
+            e.provider == "cpu"
+            or (e.provider != "auto" and EP_NAMES[e.provider] not in available)
+            or (e.provider == "auto" and not any(EP_NAMES[k] in available for k in ("cuda", "migraphx", "openvino")))
+        ):
             raise EngineError("requested accelerator is unavailable in this ONNX Runtime build")
         chain = provider_chain(e.provider, available)
-        precision, model_path = choose_model(e.precision, chain[0], self.paths.models_dir)
         log.info("Loading Kokoro via %s (onnxruntime %s, available: %s)", " > ".join(chain), ort.__version__, available)
 
         session = None
         kind = "cpu"
+        precision = "none"
+        model_path: Path | None = None
         self.degraded = e.provider not in ("cpu", "auto") and chain == ["cpu"]
         if self.degraded:
             self.warnings.append(f"{EP_NAMES[e.provider]} unavailable; using CPU")
         last_error: Exception | None = None
         for kind in chain:
             try:
-                # precision "auto" is provider dependent: re-select when we fall down the chain
                 precision, model_path = choose_model(e.precision, kind, self.paths.models_dir)
                 log.info("Trying %s with %s [%s]", EP_NAMES[kind], model_path.name, precision)
                 if kind in ("cuda", "tensorrt"):
                     self._preload_cuda_libs(ort)
-                session = ort.InferenceSession(str(model_path), sess_options=self._session_options(kind, ort),
-                                               providers=self._providers_for(kind))
+                session = ort.InferenceSession(
+                    str(model_path),
+                    sess_options=self._session_options(kind, ort),
+                    providers=self._providers_for(kind),
+                )
                 active = session.get_providers()
                 if active[0] != EP_NAMES[kind]:
                     msg = f"{EP_NAMES[kind]} was requested but ONNX Runtime activated {active[0]} (missing runtime libraries?)"
@@ -1642,7 +1762,7 @@ class Engine:
                 log.warning("%s - falling back to the next provider", msg)
                 self.warnings.append(msg)
                 self.degraded = True
-        if session is None:
+        if session is None or model_path is None:
             raise EngineError(f"no execution provider could be initialised: {last_error}")
 
         self._run_options = ort.RunOptions()
@@ -1697,10 +1817,21 @@ class Engine:
         self.active_providers = []
         self.active_kind = "none"
         gc.collect()
-        log.info("Model unloaded (%s). Device arena released; the CUDA/HIP driver context itself is only "
-                 "freed on process exit (see daemon.exit_when_idle).", reason)
+        log.info("Model unloaded (%s). Device arena released; CUDA/HIP driver context is freed on worker exit.", reason)
 
-    def _synth_sync(self, text: str, voice_vec: Any, speed: float, lang: str, pause_ms: int) -> bytes:
+    def _synth_sync(
+        self,
+        text: str,
+        voice_vec: Any,
+        speed: float,
+        lang: str,
+        pause_ms: int,
+        *,
+        bit_depth: int = 16,
+        max_phonemes: int | None = None,
+        trim_silence: bool | None = None,
+        abort_event: threading.Event | None = None,
+    ) -> bytes:
         import numpy as np
 
         kokoro = self._kokoro
@@ -1708,44 +1839,62 @@ class Engine:
             raise EngineError("engine not loaded")
         if self.supported_langs and lang not in self.supported_langs:
             raise EngineError(f"language '{lang}' is not supported by kokoro-onnx (supported: {sorted(self.supported_langs)})")
+        if abort_event is not None and abort_event.is_set():
+            raise _AbortedError()
         speed = min(2.0, max(0.5, float(speed)))
-        self._run_options.terminate = False
+        eff_max_phonemes = self.cfg.text.max_phonemes if max_phonemes is None else max_phonemes
+        eff_trim = self.cfg.text.trim_silence if trim_silence is None else trim_silence
         t0 = time.perf_counter()
         phonemes = kokoro.tokenizer.phonemize(text, lang)
+        if abort_event is not None and abort_event.is_set():
+            raise _AbortedError()
         parts: list[Any] = []
-        for piece in split_phonemes(phonemes, self.cfg.text.max_phonemes):
-            audio, _sr = kokoro.create(piece, voice=voice_vec, speed=speed, lang=lang,
-                                       is_phonemes=True, trim=self.cfg.text.trim_silence)
-            if _sr != SAMPLE_RATE:
-                raise EngineError(f"unexpected sample rate {_sr}")
+        for piece in split_phonemes(phonemes, eff_max_phonemes):
+            if abort_event is not None and abort_event.is_set():
+                raise _AbortedError()
+            try:
+                audio, sr = kokoro.create(
+                    piece, voice=voice_vec, speed=speed, lang=lang,
+                    is_phonemes=True, trim=eff_trim,
+                )
+            except Exception:
+                if abort_event is not None and abort_event.is_set():
+                    raise _AbortedError() from None
+                raise
+            if abort_event is not None and abort_event.is_set():
+                raise _AbortedError()
+            if sr != SAMPLE_RATE:
+                raise EngineError(f"unexpected sample rate {sr}")
             samples = np.asarray(audio, dtype=np.float32).reshape(-1)
             if samples.size == 0 or not np.isfinite(samples).all():
-                raise EngineError("model produced empty or non-finite audio")
+                raise InferenceError("model produced empty or non-finite audio")
             parts.append(samples)
         if pause_ms > 0:
             parts.append(np.zeros(SAMPLE_RATE * pause_ms // 1000, dtype=np.float32))
-        pcm = np.concatenate(parts) if parts else np.zeros(0, dtype=np.float32)
+        pcm_f32 = np.concatenate(parts) if parts else np.zeros(0, dtype=np.float32)
+        pcm_bytes = _quantize_pcm(pcm_f32, bit_depth)
         elapsed = time.perf_counter() - t0
         self.stats.segments += 1
         self.stats.synth_s += elapsed
-        self.stats.audio_s += len(pcm) / SAMPLE_RATE
+        self.stats.audio_s += len(pcm_f32) / SAMPLE_RATE
         self.touch()
         log.debug("segment: %d chars -> %d phonemes -> %.2fs audio in %.0f ms", len(text), len(phonemes),
-                  len(pcm) / SAMPLE_RATE, elapsed * 1000)
-        return np.ascontiguousarray(pcm).tobytes()
+                  len(pcm_f32) / SAMPLE_RATE, elapsed * 1000)
+        return pcm_bytes
 
 
 # =============================================================================
-#  WAV archive (stdlib wave module; float32 -> 16/24-bit PCM)
+#  WAV archive (pure stdlib wave module; accepts pre-quantized s16le/s24le PCM)
 # =============================================================================
 class ArchiveWriter:
     def __init__(self, path: Path, bit_depth: int) -> None:
         self.path = path
         self.bit_depth = bit_depth
+        self._sampwidth = sample_width_for(bit_depth)
         self.frames = 0
         self._wf = wave.open(str(path), "wb")
         self._wf.setnchannels(1)
-        self._wf.setsampwidth(bit_depth // 8)
+        self._wf.setsampwidth(self._sampwidth)
         self._wf.setframerate(SAMPLE_RATE)
 
     @classmethod
@@ -1756,16 +1905,9 @@ class ArchiveWriter:
         os.close(fd)
         return cls(Path(name), bit_depth)
 
-    def write(self, pcm_f32: bytes) -> None:
-        import numpy as np
-        samples = np.frombuffer(pcm_f32, dtype=np.float32)
-        if self.bit_depth == 16:
-            data = np.clip(samples * 32767.0, -32768, 32767).astype("<i2").tobytes()
-        else:
-            ints = np.clip(samples * 8388607.0, -8388608, 8388607).astype("<i4")
-            data = ints.view(np.uint8).reshape(-1, 4)[:, :3].tobytes()
-        self._wf.writeframes(data)
-        self.frames += len(samples)
+    def write(self, pcm: bytes) -> None:
+        self._wf.writeframes(pcm)
+        self.frames += len(pcm) // self._sampwidth
 
     def close(self, discard: bool = False, max_files: int = 0) -> None:
         try:
@@ -1778,28 +1920,31 @@ class ArchiveWriter:
             self.path.unlink(missing_ok=True)
             return
         if max_files > 0:
-            files = sorted(self.path.parent.glob("*.wav"), key=lambda p: p.stat().st_mtime)
+            files = sorted(self.path.parent.glob("*.wav"), key=lambda p: p.name)
             for old in files[:-max_files]:
                 old.unlink(missing_ok=True)
 
 
 # =============================================================================
-#  mpv player (one process per utterance; stdin = PCM, socketpair = JSON IPC)
+#  mpv player (one process per utterance; stdin = s16le/s24le, socketpair = IPC)
 # =============================================================================
 class MpvPlayer:
-    def __init__(self, cfg: PlaybackConfig, env: dict[str, str], title: str) -> None:
+    def __init__(self, cfg: PlaybackConfig, env: dict[str, str], title: str, bit_depth: int = 16) -> None:
         self.cfg = cfg
         self.env = env
         self.title = title
+        self.bit_depth = bit_depth
         self.proc: asyncio.subprocess.Process | None = None
         self.paused = False
         self.end_reason: str | None = None
         self.stderr_tail: deque[str] = deque(maxlen=8)
+        self.eof_reached = False
         self._ipc_reader: asyncio.StreamReader | None = None
         self._ipc_writer: asyncio.StreamWriter | None = None
         self._pending: dict[int, asyncio.Future[dict[str, Any]]] = {}
         self._next_id = 1
         self._tasks: list[asyncio.Task[None]] = []
+        self._input_ended = False
         self._stopped = False
 
     def _command_line(self, ipc_fd: int) -> list[str]:
@@ -1809,9 +1954,11 @@ class MpvPlayer:
             cmd.append("--no-config")
         cmd += [
             "--no-terminal", "--msg-level=all=warn", "--idle=no", "--keep-open=no", "--loop-file=no",
+            "--pause=no", "--ytdl=no", "--no-resume-playback", "--no-save-position-on-quit", "--no-sub",
+            "--input-ipc-server=", "--load-auto-profiles=no", "--video-sync=audio", "--interpolation=no",
             f"--input-ipc-client=fd://{ipc_fd}",
             "--demuxer=rawaudio", f"--demuxer-rawaudio-rate={SAMPLE_RATE}",
-            "--demuxer-rawaudio-channels=1", "--demuxer-rawaudio-format=floatle",
+            "--demuxer-rawaudio-channels=1", f"--demuxer-rawaudio-format={pcm_format_for(self.bit_depth)}",
             "--cache=yes", f"--demuxer-max-bytes={c.cache_max_mb}MiB", "--demuxer-max-back-bytes=8MiB",
             "--demuxer-readahead-secs=36000",
             "--cache-secs=36000",
@@ -1849,7 +1996,19 @@ class MpvPlayer:
         ]
         with contextlib.suppress(Exception):
             await self.command("observe_property", 1, "pause")
-        log.info("mpv started (pid %d)", self.proc.pid)
+            await self.command("observe_property", 2, "eof-reached")
+        log.info("mpv started (pid %d, %s)", self.proc.pid, pcm_format_for(self.bit_depth))
+
+    def _send_nowait(self, *args: Any) -> None:
+        writer = self._ipc_writer
+        if writer is not None and not writer.is_closing():
+            with contextlib.suppress(OSError):
+                writer.write(json.dumps({"command": list(args)}).encode() + b"\n")
+
+    async def is_eof(self) -> bool:
+        with contextlib.suppress(Exception):
+            return bool(await self.command("get_property", "eof-reached", timeout=0.5))
+        return False
 
     async def command(self, *args: Any, timeout: float = 2.0) -> Any:
         writer = self._ipc_writer
@@ -1888,6 +2047,11 @@ class MpvPlayer:
                 match msg.get("event"):
                     case "property-change" if msg.get("name") == "pause":
                         self.paused = bool(msg.get("data"))
+                    case "property-change" if msg.get("name") == "eof-reached":
+                        if msg.get("data") is True:
+                            self.eof_reached = True
+                            if self._input_ended:
+                                self._send_nowait("quit")
                     case "end-file":
                         self.end_reason = msg.get("reason")
                     case _:
@@ -1916,10 +2080,23 @@ class MpvPlayer:
             raise PlayerError(f"mpv failed: {detail}")
         raise PlayerClosed(self.end_reason or "closed")
 
+    async def _await_exit_context(self) -> None:
+        """Wait briefly for mpv exit code and stderr flush before classifying a broken pipe."""
+        proc = self.proc
+        if proc is not None and proc.returncode is None:
+            with contextlib.suppress(TimeoutError):
+                async with asyncio.timeout(0.25):
+                    await proc.wait()
+        if self._tasks:
+            with contextlib.suppress(TimeoutError):
+                async with asyncio.timeout(0.1):
+                    await asyncio.gather(*self._tasks, return_exceptions=True)
+
     async def write(self, pcm: bytes) -> None:
         proc = self.proc
         assert proc is not None and proc.stdin is not None
         if proc.returncode is not None or proc.stdin.is_closing():
+            await self._await_exit_context()
             self._raise_closed()
         try:
             proc.stdin.write(pcm)
@@ -1931,9 +2108,11 @@ class MpvPlayer:
         except TimeoutError as exc:
             raise PlayerError(f"mpv stopped consuming audio for {self.cfg.write_stall_timeout_s:.0f}s") from exc
         except ConnectionError, BrokenPipeError:  # PEP 758
+            await self._await_exit_context()
             self._raise_closed()
 
     async def end_input(self) -> None:
+        self._input_ended = True
         proc = self.proc
         if proc is not None and proc.stdin is not None and not proc.stdin.is_closing():
             proc.stdin.close()
@@ -2002,6 +2181,7 @@ class Job:
     mode: str
     env: dict[str, str]
     client: str
+    bit_depth: int = 16
     truncated: bool = False
     created: float = field(default_factory=time.monotonic)
     started_at: float | None = None
@@ -2070,15 +2250,6 @@ def activation_socket() -> socket.socket | None:
     return sock
 
 
-def peer_is_self(sock: socket.socket) -> bool:
-    try:
-        creds = sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
-        _pid, uid, _gid = struct.unpack("3i", creds)
-        return uid == os.getuid()
-    except OSError:
-        return False
-
-
 # =============================================================================
 #  Daemon
 # =============================================================================
@@ -2099,11 +2270,13 @@ class Daemon:
         self._job_task: asyncio.Task[None] | None = None
         self._worker_task: asyncio.Task[None] | None = None
         self._idle_task: asyncio.Task[None] | None = None
+        self._idle_wakeup = asyncio.Event()
         self._client_tasks: set[asyncio.Task[Any]] = set()
         self._bg_tasks: set[asyncio.Task[Any]] = set()
         self._shutdown = asyncio.Event()
         self._shutdown_reason = ""
         self._owns_socket = False
+        self._last_raw_digest = ""
         self._last_digest = ""
         self._last_digest_at = 0.0
         self._notified_degraded = False
@@ -2111,7 +2284,10 @@ class Daemon:
         self._prepare_generation = 0
         self.is_synthesizing = False
 
-    # ---- lifecycle ------------------------------------------------------------
+    def _poke_idle(self) -> None:
+        self._idle_wakeup.set()
+
+    # ---- lifecycle ----------------------------------------------------------
     async def serve(self) -> int:
         loop = asyncio.get_running_loop()
         loop.set_exception_handler(self._loop_exception_handler)
@@ -2125,9 +2301,11 @@ class Daemon:
             log.info("Listening on %s (standalone)", self.paths.socket)
         else:
             log.info("Listening on inherited socket %s (systemd socket activation)", listen.getsockname())
-        self.server = await asyncio.start_unix_server(self._handle_client, sock=listen,
-                                                      limit=self.cfg.daemon.max_request_bytes,
-                                                      cleanup_socket=self._owns_socket)
+        self.server = await asyncio.start_unix_server(
+            self._handle_client, sock=listen,
+            limit=self.cfg.daemon.max_request_bytes,
+            cleanup_socket=self._owns_socket,
+        )
         self._worker_task = asyncio.create_task(self._worker(), name="worker")
         self._idle_task = asyncio.create_task(self._idle_ticker(), name="idle-ticker")
         with contextlib.suppress(OSError):
@@ -2159,6 +2337,7 @@ class Daemon:
         if not self._shutdown.is_set():
             self._shutdown_reason = reason
             self._shutdown.set()
+            self._poke_idle()
 
     async def _graceful_shutdown(self) -> None:
         sd_notify("STOPPING=1")
@@ -2199,7 +2378,7 @@ class Daemon:
     def _set_status(self, text: str) -> None:
         sd_notify(f"STATUS={text}")
 
-    # ---- desktop notifications --------------------------------------------------
+    # ---- desktop notifications ----------------------------------------------
     def notify(self, summary: str, body: str, urgency: str = "normal", env: dict[str, str] | None = None) -> None:
         if not self.cfg.daemon.desktop_notifications or shutil.which("notify-send") is None:
             return
@@ -2220,17 +2399,13 @@ class Daemon:
         env.update({k: v for k, v in job_env.items() if k in CLIENT_ENV_KEYS and isinstance(v, str)})
         return env
 
-    # ---- control connections ---------------------------------------------------
+    # ---- control connections ------------------------------------------------
     async def _handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         task = asyncio.current_task()
         if task is not None:
             self._client_tasks.add(task)
         self.clients += 1
         try:
-            sock = writer.get_extra_info("socket")
-            if sock is None or not peer_is_self(sock):
-                await self._send(writer, {"ok": False, "error": "peer credentials rejected"})
-                return
             while not self._shutdown.is_set():
                 try:
                     async with asyncio.timeout(self.cfg.daemon.request_timeout_s):
@@ -2259,6 +2434,7 @@ class Daemon:
             writer.close()
             with contextlib.suppress(Exception):
                 await writer.wait_closed()
+            self._poke_idle()
 
     @staticmethod
     async def _send(writer: asyncio.StreamWriter, message: dict[str, Any]) -> None:
@@ -2288,6 +2464,7 @@ class Daemon:
                     await asyncio.gather(self._job_task, return_exceptions=True)
                 await self.engine.unload("unload command")
                 self._set_status("Idle (model not loaded)")
+                self._poke_idle()
                 await self._send(writer, {"ok": True, "event": "unloaded"})
             case "reload":
                 await self._send(writer, await self._reload_config())
@@ -2347,6 +2524,21 @@ class Daemon:
         wait = str(req.get("wait") or "accepted")
         raw_env = req.get("env") if isinstance(req.get("env"), dict) else {}
 
+        # Fast pre-normalization dedup check prevents accidental hotkey double-taps
+        # from interrupting active playback or doing redundant text prep.
+        now = time.monotonic()
+        raw_digest = hashlib.blake2b(
+            json.dumps([text, voice_spec, speed, lang], ensure_ascii=False).encode(), digest_size=16
+        ).hexdigest()
+        if raw_digest == self._last_raw_digest and now - self._last_digest_at < cfg.daemon.dedup_window_s:
+            self._last_digest_at = now
+            await self._send(writer, {"ok": True, "event": "deduplicated", "window_s": cfg.daemon.dedup_window_s})
+            return
+
+        if mode == "interrupt":
+            # Stop prior playback & invalidate any older in-flight preparations immediately.
+            self.stop_all("superseded by a new request")
+
         generation = self._prepare_generation
         paragraphs, segments = await asyncio.to_thread(prepare_text, text, cfg.text, lang)
         if generation != self._prepare_generation:
@@ -2356,11 +2548,16 @@ class Daemon:
             await self._send(writer, {"ok": False, "error": "nothing readable after normalisation"})
             return
         flat = flatten_paragraphs(paragraphs)
-        digest = hashlib.blake2b(json.dumps([flat, voice_spec, speed, lang], ensure_ascii=False).encode(), digest_size=16).hexdigest()
+        digest = hashlib.blake2b(
+            json.dumps([flat, voice_spec, speed, lang], ensure_ascii=False).encode(), digest_size=16
+        ).hexdigest()
         now = time.monotonic()
         if digest == self._last_digest and now - self._last_digest_at < cfg.daemon.dedup_window_s:
             self._last_digest_at = now
             await self._send(writer, {"ok": True, "event": "deduplicated", "window_s": cfg.daemon.dedup_window_s})
+            return
+        if self.jobs.qsize() >= cfg.daemon.max_queue:
+            await self._send(writer, {"ok": False, "error": f"queue full ({cfg.daemon.max_queue})"})
             return
 
         self._job_counter += 1
@@ -2368,22 +2565,19 @@ class Daemon:
             id=f"{self._job_counter:04d}-{digest[:6]}", preview=flat[:80].replace("\n", " "), title=make_slug(paragraphs),
             digest=digest, segments=segments, chars=len(flat), voice_spec=voice_spec, speed=speed, lang=lang,
             mode=mode, env={k: str(v) for k, v in raw_env.items() if k in CLIENT_ENV_KEYS},
-            client=str(req.get("client") or "unknown"), truncated=truncated,
+            client=str(req.get("client") or "unknown"), bit_depth=cfg.archive.bit_depth, truncated=truncated,
         )
-        if mode == "interrupt":
-            self.stop_all("superseded by a new request")
-        if self.jobs.qsize() >= cfg.daemon.max_queue:
-            await self._send(writer, {"ok": False, "error": f"queue full ({cfg.daemon.max_queue})"})
-            return
         events: asyncio.Queue[dict[str, Any]] | None = None
         if wait == "done":
             events = asyncio.Queue()
             job.subscribers.append(events)
         queued_ahead = self.jobs.qsize() + (1 if self.current else 0)
         self.jobs.put_nowait(job)
+        self._last_raw_digest = raw_digest
         self._last_digest, self._last_digest_at = digest, now
         self.jobs_total += 1
         self.last_activity = now
+        self._poke_idle()
         log.info("job %s accepted: %d chars, %d segments, voice=%s, lang=%s, mode=%s, client=%s",
                  job.id, job.chars, len(segments), voice_spec, lang, mode, job.client)
         await self._send(writer, {
@@ -2443,8 +2637,12 @@ class Daemon:
         except ConfigError as exc:
             log.error("config reload failed: %s", exc)
             return {"ok": False, "error": str(exc)}
-        engine_changed = (new_cfg.engine != self.cfg.engine or new_cfg.text != self.cfg.text
-                          or new_cfg.voice != self.cfg.voice or new_cfg.logging.ort_verbose != self.cfg.logging.ort_verbose)
+        # Voice, text, playback, archive, and daemon settings are applied dynamically
+        # per job/segment so only actual engine or ORT logging changes require reloading the worker.
+        engine_changed = (
+            new_cfg.engine != self.cfg.engine
+            or new_cfg.logging.ort_verbose != self.cfg.logging.ort_verbose
+        )
         self.cfg = new_cfg
         self.paths = resolve_paths(new_cfg, self.paths.config_file, str(self.paths.socket))
         self.engine.cfg = new_cfg
@@ -2453,13 +2651,15 @@ class Daemon:
             self.voices.reset(self.paths.voices_file)
         logging.getLogger().setLevel(new_cfg.logging.level)
         if engine_changed:
+            self._notified_degraded = False
             self.engine.reload_pending = True
             if self.current is None:
                 await self.engine.unload("configuration reload")
+        self._poke_idle()
         log.info("configuration reloaded from %s (engine_changed=%s)", self.paths.config_file, engine_changed)
         return {"ok": True, "event": "reloaded", "engine_changed": engine_changed}
 
-    # ---- job control ------------------------------------------------------------
+    # ---- job control --------------------------------------------------------
     def stop_all(self, reason: str) -> int:
         self._prepare_generation += 1
         flushed = self._clear_queue(reason)
@@ -2516,16 +2716,25 @@ class Daemon:
                 self.jobs.task_done()
                 self.last_activity = time.monotonic()
                 self._set_status("Idle (model loaded)" if self.engine.loaded else "Idle (model not loaded)")
+                self._poke_idle()
 
-    async def _produce(self, job: Job, voice_spec: Any, chunks: asyncio.Queue[bytes | None]) -> None:
+    async def _produce(self, job: Job, chunks: asyncio.Queue[bytes | None]) -> None:
         """Synthesis producer. End-of-stream handoff rules:
         * normal / error paths: the consumer is alive and draining, so a blocking put(None) always completes;
         * cancellation: the consumer may already be gone, so never block - a lost sentinel is harmless then."""
+        sample_width = sample_width_for(job.bit_depth)
+        max_phonemes = self.cfg.text.max_phonemes
+        trim_silence = self.cfg.text.trim_silence
         try:
             for index, segment in enumerate(job.segments):
-                pcm = await self.engine.synthesize(segment.text, job.voice_spec, job.speed, job.lang, segment.pause_ms)
+                pcm = await self.engine.synthesize(
+                    segment.text, job.voice_spec, job.speed, job.lang, segment.pause_ms,
+                    bit_depth=job.bit_depth,
+                    max_phonemes=max_phonemes,
+                    trim_silence=trim_silence,
+                )
                 job.segments_done = index + 1
-                job.audio_s += len(pcm) / (BYTES_PER_SAMPLE * SAMPLE_RATE)
+                job.audio_s += len(pcm) / (sample_width * SAMPLE_RATE)
                 await chunks.put(pcm)
         except asyncio.CancelledError:
             with contextlib.suppress(asyncio.QueueFull):
@@ -2554,18 +2763,17 @@ class Daemon:
                     self._notified_degraded = True
                     self.notify("Kokoro TTS: running degraded", warning, "normal", job.env)
             job.state = "synthesizing"
-            player = MpvPlayer(cfg.playback, self._player_env(job.env), job.title)
+            player = MpvPlayer(cfg.playback, self._player_env(job.env), job.title, bit_depth=job.bit_depth)
             job.player = player
             await player.start()
             if cfg.archive.enabled:
                 try:
-                    archive = await asyncio.to_thread(ArchiveWriter.create, self.paths.archive_dir, job.title, cfg.archive.bit_depth)
+                    archive = await asyncio.to_thread(ArchiveWriter.create, self.paths.archive_dir, job.title, job.bit_depth)
                 except OSError as exc:
                     log.warning("archive disabled for this job: %s", exc)
-            max_prefetch = cfg.playback.prefetch_segments
-            chunks: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=max_prefetch)
+            chunks: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=cfg.playback.prefetch_segments)
             self.is_synthesizing = True
-            producer = asyncio.create_task(self._produce(job, job.voice_spec, chunks), name=f"synth-{job.id}")
+            producer = asyncio.create_task(self._produce(job, chunks), name=f"synth-{job.id}")
             first = True
             try:
                 while (pcm := await chunks.get()) is not None:
@@ -2589,6 +2797,7 @@ class Daemon:
             finally:
                 self.is_synthesizing = False
                 self.engine.touch()
+                self._poke_idle()
 
             if first:
                 raise EngineError("no audio produced")
@@ -2597,10 +2806,16 @@ class Daemon:
                 await self.engine.unload("synthesis complete (model_idle_timeout_s = 0)")
 
             await player.end_input()
+            if cfg.playback.use_user_mpv_config:
+                with contextlib.suppress(Exception):
+                    await player.command("set_property", "keep-open", "no", timeout=0.5)
+                if player.eof_reached or await player.is_eof():
+                    player.eof_reached = True
+                    player._send_nowait("quit")
             rc = await player.wait()
             if rc != 0 or player.end_reason == "error":
                 player._raise_closed()
-            if player.end_reason == "quit":
+            if player.end_reason == "quit" and not player.eof_reached:
                 outcome = "cancelled"
                 job.cancel_reason = "player closed by user"
                 self._clear_queue("player closed by user")
@@ -2647,29 +2862,52 @@ class Daemon:
                     detail = {"error": job.error}
             self._emit(job, outcome, **detail)
             self.engine.touch()
+            self._poke_idle()
 
     async def _idle_ticker(self) -> None:
-        while True:
-            await asyncio.sleep(1.0)
+        """Event-driven idle manager: zero timer wakeups while active or permanently idle."""
+        while not self._shutdown.is_set():
+            self._idle_wakeup.clear()
             now = time.monotonic()
-            engine_busy = (self.current is not None and self.current.state in ("loading", "synthesizing")) or self.is_synthesizing or not self.jobs.empty()
-            if self.engine.loaded and not engine_busy and now - self.engine.last_used > self.cfg.engine.model_idle_timeout_s:
+            engine_busy = (
+                (self.current is not None and self.current.state in ("loading", "synthesizing"))
+                or self.is_synthesizing
+                or not self.jobs.empty()
+            )
+            if self.engine.loaded and not engine_busy and now - self.engine.last_used >= self.cfg.engine.model_idle_timeout_s:
                 await self.engine.unload(f"idle for {self.cfg.engine.model_idle_timeout_s:.0f}s")
                 if self.current is not None:
                     self._set_status(f"Speaking (model unloaded: {self.current.id})")
                 else:
                     self._set_status("Idle (model not loaded)")
-
-            busy = self.current is not None or not self.jobs.empty()
-            if busy:
                 continue
 
-            if (self.cfg.daemon.exit_when_idle and not self.engine.loaded and self.clients == 0
-                    and now - self.last_activity > self.cfg.daemon.process_idle_timeout_s):
+            busy = self.current is not None or not self.jobs.empty()
+            if (
+                not busy
+                and self.cfg.daemon.exit_when_idle
+                and not self.engine.loaded
+                and self.clients == 0
+                and now - self.last_activity >= self.cfg.daemon.process_idle_timeout_s
+            ):
                 log.info("Process idle for %.0fs - exiting; socket activation / trigger.sh relaunches on demand",
                          self.cfg.daemon.process_idle_timeout_s)
                 self.request_shutdown("idle timeout")
                 return
+
+            wait_s: float | None = None
+            if self.engine.loaded and not engine_busy:
+                wait_s = max(0.05, self.cfg.engine.model_idle_timeout_s - (now - self.engine.last_used))
+            if not busy and self.cfg.daemon.exit_when_idle and not self.engine.loaded and self.clients == 0:
+                proc_rem = max(0.05, self.cfg.daemon.process_idle_timeout_s - (now - self.last_activity))
+                wait_s = proc_rem if wait_s is None else min(wait_s, proc_rem)
+
+            if wait_s is None:
+                await self._idle_wakeup.wait()
+            else:
+                with contextlib.suppress(TimeoutError):
+                    async with asyncio.timeout(wait_s):
+                        await self._idle_wakeup.wait()
 
 
 def _rss_bytes() -> int:
@@ -2748,8 +2986,8 @@ def run_client(args: argparse.Namespace) -> int:
         socket_path = Path(os.path.expandvars(override)).expanduser()
     else:
         config_file = Path(args.config) if args.config else default_config_path()
-        # Control commands need only the transport path. They must still work
-        # when other settings fail validation so users can reload or stop.
+        # Control commands need only the transport path so reload/stop still work
+        # even when other settings in config.toml fail validation.
         try:
             data = tomllib.loads(config_file.read_text(encoding="utf-8")) if config_file.is_file() else {}
             configured = data.get("daemon", {}).get("socket_path", "")
@@ -2857,9 +3095,9 @@ def run_doctor(args: argparse.Namespace) -> int:
         if key in os.environ:
             row(f"env {key}", os.environ[key])
     try:
+        from importlib.metadata import version as pkg_version
         import numpy
         import onnxruntime as ort
-        from importlib.metadata import version as pkg_version
         row("numpy", numpy.__version__)
         row("onnxruntime", f"{ort.__version__}  device={ort.get_device()}")
         row("kokoro-onnx", pkg_version("kokoro-onnx"))
@@ -2875,9 +3113,12 @@ def run_doctor(args: argparse.Namespace) -> int:
                 ok = False
                 row("cuda preload", "onnxruntime.preload_dlls missing (need onnxruntime-gpu >= 1.21)")
             else:
+                dirs: tuple[str | None, ...] = tuple(os.path.expanduser(d) for d in cfg.engine.cuda_lib_dirs) or (None,)
                 try:
-                    preload(cuda=True, cudnn=True, msvc=False, directory=None)
-                    row("cuda preload", "ok (NVIDIA pip wheels)")
+                    for directory in dirs:
+                        preload(cuda=True, cudnn=True, msvc=False, directory=directory)
+                    source_desc = ", ".join(d for d in dirs if d) or "NVIDIA pip wheels"
+                    row("cuda preload", f"ok ({source_desc})")
                 except Exception as exc:
                     ok = False
                     row("cuda preload", f"FAILED: {exc}")
@@ -2906,8 +3147,12 @@ def run_synth(args: argparse.Namespace, cfg: Config | None = None, config_file: 
     speed = cfg.voice.speed if args.speed is None else args.speed
     if not 0.5 <= speed <= 2.0:
         raise ConfigError("speed must be within 0.5 .. 2.0")
+    bit_depth = cfg.archive.bit_depth
+    sample_width = sample_width_for(bit_depth)
     engine = Engine(cfg, paths, VoiceBank(paths.voices_file), is_worker=True)
     report: dict[str, Any] = {"provider_requested": cfg.engine.provider, "voice": voice_spec, "lang": lang, "speed": speed}
+    writer: ArchiveWriter | None = None
+    writer_closed = False
     try:
         t0 = time.perf_counter()
         engine._load_sync()
@@ -2919,24 +3164,25 @@ def run_synth(args: argparse.Namespace, cfg: Config | None = None, config_file: 
         segments = segment_text(normalize_text(text, cfg.text, lang), cfg.text)
         report["segments"] = len(segments)
         out = Path(args.out) if args.out else Path(tempfile.gettempdir()) / f"dusky-kokoro-synth-{os.getpid()}.wav"
-        writer = ArchiveWriter(out, cfg.archive.bit_depth)
+        writer = ArchiveWriter(out, bit_depth)
         audio_bytes = 0
         t1 = time.perf_counter()
         first_ms: float | None = None
         for seg in segments:
-            pcm = engine._synth_sync(seg.text, vec, speed, lang, seg.pause_ms)
+            pcm = engine._synth_sync(seg.text, vec, speed, lang, seg.pause_ms, bit_depth=bit_depth)
             writer.write(pcm)
             audio_bytes += len(pcm)
             if first_ms is None:
                 first_ms = (time.perf_counter() - t1) * 1000
         synth_s = time.perf_counter() - t1
-        audio_s = audio_bytes / (BYTES_PER_SAMPLE * SAMPLE_RATE)
+        audio_s = audio_bytes / (sample_width * SAMPLE_RATE)
         report.update({"first_segment_ms": round(first_ms or 0, 1), "synth_s": round(synth_s, 3),
                        "audio_s": round(audio_s, 3), "rtf": round(synth_s / audio_s, 4) if audio_s else None})
         writer.close()
+        writer_closed = True
         report["wav"] = str(out)
-        a = engine._synth_sync("Testing the playback speed control of this engine.", vec, 1.0, lang, 0)
-        b = engine._synth_sync("Testing the playback speed control of this engine.", vec, 1.5, lang, 0)
+        a = engine._synth_sync("Testing the playback speed control of this engine.", vec, 1.0, lang, 0, bit_depth=bit_depth)
+        b = engine._synth_sync("Testing the playback speed control of this engine.", vec, 1.5, lang, 0, bit_depth=bit_depth)
         ratio = len(a) / len(b) if len(b) else 0.0
         report["model_speed_ratio_1p0_over_1p5"] = round(ratio, 3)
         report["model_speed_effective"] = ratio > 1.25
@@ -2949,11 +3195,9 @@ def run_synth(args: argparse.Namespace, cfg: Config | None = None, config_file: 
     finally:
         with contextlib.suppress(Exception):
             engine._unload_sync("synth done")
-        if "writer" in locals():
+        if writer is not None and not writer_closed:
             with contextlib.suppress(OSError, wave.Error, struct.error):
                 writer.close(discard="error" in report)
-        if engine._executor is not None:
-            engine._executor.shutdown(wait=False, cancel_futures=True)
     print(json.dumps(report, indent=2))
     return 0 if report.get("model_speed_effective") and report.get("audio_s", 0) > 0 else 1
 
@@ -3003,7 +3247,7 @@ def run_config(args: argparse.Namespace) -> int:
 
 
 # =============================================================================
-#  Daemon entry
+#  Daemon & worker entry points
 # =============================================================================
 def run_daemon(args: argparse.Namespace) -> int:
     config_file = Path(args.config) if args.config else default_config_path()
@@ -3033,6 +3277,166 @@ def run_daemon(args: argparse.Namespace) -> int:
         return 1
     finally:
         lock.release()
+
+
+def run_synth_worker(args: argparse.Namespace) -> int:
+    # stdout is a framed binary transport; all library logs belong on stderr.
+    raw_initial = sys.stdin.buffer.readline()
+    if not raw_initial:
+        return 1
+    initial = json.loads(raw_initial)
+    cfg = Config(**{name: _build_section(_SECTIONS[name], data, name)
+                    for name, data in initial["config"].items()})
+    _validate(cfg)
+    setup_logging(cfg.logging, os.environ.get("DUSKY_LOG_LEVEL"))
+    cfg = dataclasses.replace(cfg, engine=dataclasses.replace(
+        cfg.engine, models_dir=initial["models_dir"], voices_file=initial["voices_file"]))
+    _apply_engine_env(cfg)
+    config_file = Path(args.config) if args.config else default_config_path()
+    paths = resolve_paths(cfg, config_file)
+    voices = VoiceBank(paths.voices_file)
+    engine = Engine(cfg, paths, voices, is_worker=True)
+
+    abort_lock = threading.Lock()
+    abort_event = threading.Event()
+    current_req_id = 0
+    aborted_req_id = 0
+
+    def _watch_abort(fd: int) -> None:
+        nonlocal aborted_req_id
+        buf = bytearray()
+        try:
+            while chunk := os.read(fd, 64):
+                buf.extend(chunk)
+                while len(buf) >= 4:
+                    (target_id,) = struct.unpack("<I", buf[:4])
+                    del buf[:4]
+                    with abort_lock:
+                        if target_id > aborted_req_id:
+                            aborted_req_id = target_id
+                        if target_id == current_req_id:
+                            abort_event.set()
+                            ro = engine._run_options
+                            if ro is not None:
+                                ro.terminate = True
+        except OSError:
+            pass
+        finally:
+            with contextlib.suppress(OSError):
+                os.close(fd)
+
+    if args.abort_fd is not None:
+        threading.Thread(target=_watch_abort, args=(args.abort_fd,), name="abort-watcher", daemon=True).start()
+
+    try:
+        engine._load_sync()
+    except Exception as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}), flush=True)
+        return 1
+    print(json.dumps({
+        "ok": True,
+        "providers": engine.active_providers,
+        "kind": engine.active_kind,
+        "precision": engine.model_precision,
+        "model": str(engine.model_path),
+        "degraded": engine.degraded,
+        "warnings": engine.pop_warnings(),
+        "load_s": engine.stats.last_load_s,
+    }), flush=True)
+
+    try:
+        while line := sys.stdin.buffer.readline():
+            req = json.loads(line)
+            if req.get("cmd") == "quit":
+                break
+            req_id = int(req.get("req_id", 0))
+            with abort_lock:
+                current_req_id = req_id
+                already_aborted = req_id > 0 and aborted_req_id >= req_id
+                if already_aborted:
+                    abort_event.set()
+                    if engine._run_options is not None:
+                        engine._run_options.terminate = True
+                else:
+                    abort_event.clear()
+                    if engine._run_options is not None:
+                        engine._run_options.terminate = False
+
+            pcm = b""
+            error: str | None = None
+            aborted = False
+            bit_depth = int(req.get("bit_depth", cfg.archive.bit_depth))
+            max_phonemes = int(req.get("max_phonemes", cfg.text.max_phonemes))
+            trim_silence = bool(req.get("trim_silence", cfg.text.trim_silence))
+            try:
+                if already_aborted:
+                    raise _AbortedError()
+                vec = voices.resolve(req["voice"])
+                try:
+                    pcm = engine._synth_sync(
+                        req["text"], vec, req["speed"], req["lang"], req["pause_ms"],
+                        bit_depth=bit_depth,
+                        max_phonemes=max_phonemes,
+                        trim_silence=trim_silence,
+                        abort_event=abort_event,
+                    )
+                except _AbortedError:
+                    raise
+                except Exception as exc:
+                    if abort_event.is_set():
+                        raise _AbortedError() from None
+                    if (
+                        engine.active_kind == "cpu"
+                        or cfg.engine.require_accelerator
+                        or not (type(exc).__module__.startswith("onnxruntime") or isinstance(exc, InferenceError))
+                    ):
+                        raise
+                    # Retry on CPU once for eligible accelerator inference failures.
+                    engine.fallback_to_cpu(exc)
+                    if abort_event.is_set():
+                        raise _AbortedError() from None
+                    vec = voices.resolve(req["voice"])
+                    pcm = engine._synth_sync(
+                        req["text"], vec, req["speed"], req["lang"], req["pause_ms"],
+                        bit_depth=bit_depth,
+                        max_phonemes=max_phonemes,
+                        trim_silence=trim_silence,
+                        abort_event=abort_event,
+                    )
+                if not pcm:
+                    raise EngineError("no audio produced for segment")
+            except _AbortedError:
+                aborted = True
+                pcm = b""
+            except Exception as exc:
+                log.exception("worker synthesis failed")
+                error = f"{type(exc).__name__}: {exc}"
+            finally:
+                with abort_lock:
+                    current_req_id = 0
+                    abort_event.clear()
+                    if engine._run_options is not None:
+                        engine._run_options.terminate = False
+
+            state = json.dumps({
+                "req_id": req_id,
+                "pcm_bytes": len(pcm),
+                "aborted": aborted,
+                "error": error,
+                "kind": engine.active_kind,
+                "providers": engine.active_providers,
+                "degraded": engine.degraded,
+                "precision": engine.model_precision,
+                "model": str(engine.model_path) if engine.model_path else None,
+            }).encode()
+            sys.stdout.buffer.write(struct.pack("<I", len(state)))
+            sys.stdout.buffer.write(state)
+            if pcm:
+                sys.stdout.buffer.write(pcm)
+            sys.stdout.buffer.flush()
+    finally:
+        engine._unload_sync("worker shutdown")
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -3086,68 +3490,8 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--force", action="store_true")
     w = sub.add_parser("synth-worker", help="internal synthesis worker subprocess")
     w.add_argument("--config", help="path to config.toml")
+    w.add_argument("--abort-fd", type=int, default=None, help="inherited pipe fd for in-flight abort tokens")
     return parser
-
-
-def run_synth_worker(args: argparse.Namespace) -> int:
-    # stdout is a framed binary transport; all library logs belong on stderr.
-    setup_logging(LoggingConfig(), os.environ.get("DUSKY_LOG_LEVEL"))
-    initial = json.loads(sys.stdin.buffer.readline())
-    cfg = Config(**{name: _build_section(_SECTIONS[name], data, name)
-                    for name, data in initial["config"].items()})
-    _validate(cfg)
-    cfg = dataclasses.replace(cfg, engine=dataclasses.replace(
-        cfg.engine, models_dir=initial["models_dir"], voices_file=initial["voices_file"]))
-    _apply_engine_env(cfg)
-    config_file = Path(args.config) if args.config else default_config_path()
-    paths = resolve_paths(cfg, config_file)
-    voices = VoiceBank(paths.voices_file)
-    engine = Engine(cfg, paths, voices, is_worker=True)
-    try:
-        engine._load_sync()
-    except Exception as exc:
-        print(json.dumps({"ok": False, "error": str(exc)}), flush=True)
-        return 1
-    print(json.dumps({"ok": True, "providers": engine.active_providers,
-                      "kind": engine.active_kind, "precision": engine.model_precision,
-                      "model": str(engine.model_path), "degraded": engine.degraded,
-                      "warnings": engine.pop_warnings(), "load_s": engine.stats.last_load_s}), flush=True)
-    try:
-        while line := sys.stdin.buffer.readline():
-            req = json.loads(line)
-            if req.get("cmd") == "quit":
-                break
-            pcm = b""
-            error = None
-            try:
-                vec = voices.resolve(req["voice"])
-                try:
-                    pcm = engine._synth_sync(req["text"], vec, req["speed"], req["lang"], req["pause_ms"])
-                except Exception as exc:
-                    if (engine.active_kind == "cpu" or cfg.engine.require_accelerator
-                            or not (type(exc).__module__.startswith("onnxruntime") or isinstance(exc, InferenceError))):
-                        raise
-                    # Retry on the CPU once; repeated GPU reloads cannot free the
-                    # driver's context or make an unsupported card work.
-                    engine.fallback_to_cpu(exc)
-                    vec = voices.resolve(req["voice"])
-                    pcm = engine._synth_sync(req["text"], vec, req["speed"], req["lang"], req["pause_ms"])
-                if not pcm:
-                    raise EngineError("no audio produced for segment")
-            except Exception as exc:
-                log.exception("worker synthesis failed")
-                error = f"{type(exc).__name__}: {exc}"
-            state = json.dumps({"pcm_bytes": len(pcm), "error": error,
-                                "kind": engine.active_kind, "providers": engine.active_providers,
-                                "degraded": engine.degraded, "precision": engine.model_precision,
-                                "model": str(engine.model_path)}).encode()
-            sys.stdout.buffer.write(struct.pack("<I", len(state)))
-            sys.stdout.buffer.write(state)
-            sys.stdout.buffer.write(pcm)
-            sys.stdout.buffer.flush()
-    finally:
-        engine._unload_sync("worker shutdown")
-    return 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:

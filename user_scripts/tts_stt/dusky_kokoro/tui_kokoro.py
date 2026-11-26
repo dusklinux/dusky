@@ -10,19 +10,21 @@ Features:
 - Full support for all 54 Kokoro voices with traits and grades from VOICES.md
 - Independent controls for neural generation speed vs mpv playback tempo
 - Multi-voice blending with automatic weight normalization
-- Hardware selection (CUDA, ROCm, OpenVINO, CPU) and GPU power management
+- Hardware selection (CUDA, TensorRT, MIGraphX, OpenVINO, CPU) and power control
 - Direct trigger action integration for hot-reloading and audio preview
 - Zero hardcoded usernames (portable across all Linux machines and accounts)
 ===============================================================================
 """
 
-import sys
 import os
-import subprocess
 import shlex
+import subprocess
+import sys
 from pathlib import Path
 
-_DUSKY_TUI_ROOT = Path.home() / "user_scripts" / "dusky_tui"
+_DUSKY_TUI_ROOT = Path(
+    os.environ.get("DUSKY_TUI_ROOT") or Path.home() / "user_scripts" / "dusky_tui"
+).expanduser()
 if str(_DUSKY_TUI_ROOT) not in sys.path:
     sys.path.insert(0, str(_DUSKY_TUI_ROOT))
 
@@ -32,7 +34,11 @@ from python.frontend.core_types import ConfigItem
 # 1. CORE APPLICATION ROUTING & METADATA
 # =============================================================================
 ENGINE_TYPE = "kokoro"
-TARGET_FILE = os.environ.get("DUSKY_CONFIG") or str(Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "dusky-kokoro/config.toml")
+TARGET_FILE = os.environ.get("DUSKY_CONFIG") or str(
+    Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+    / "dusky-kokoro"
+    / "config.toml"
+)
 APP_TITLE = "Dusky Kokoro TTS"
 
 DEFAULT_MODE = "auto"
@@ -244,9 +250,9 @@ SCHEMA = {
             key="spec",
             scope="voice",
             type_="string",
-            default="af_heart:0.40,af_bella:0.60",
+            default="af_heart:0.4,af_bella:0.6",
             group="Language & Spec",
-            extended_help="**Kokoro Vector Specification**\n\nUnderlying normalized spec passed to the ONNX runtime. Automatically calculated whenever voice weights change.",
+            extended_help="**Kokoro Vector Specification**\n\nUnderlying normalized spec passed to the ONNX runtime. Automatically compiled from voice weights if left empty.",
         ),
         ConfigItem(
             label="Test Voice (Speak Sample)",
@@ -352,9 +358,9 @@ SCHEMA = {
             key="use_user_mpv_config",
             scope="playback",
             type_="bool",
-            default=True,
+            default=False,
             group="Playback Controls",
-            extended_help="**Load MPV User Configuration**\n\nLoads `~/.config/mpv/` (user scripts, shaders, themes, and Dusky Player UI). When disabled, runs with bare `--no-config`.",
+            extended_help="**Load MPV User Configuration**\n\nDisabled by default (`--no-config`) for fast, isolated TTS playback without video-player scripts, shaders, or IPC socket collisions. Enable to load `~/.config/mpv/` (such as Dusky Player UI).",
         ),
         ConfigItem(
             label="Window Geometry",
@@ -385,7 +391,7 @@ SCHEMA = {
             type_="bool",
             default=True,
             group="Audio Archiving",
-            extended_help="**WAV Archiver**\n\nAutomatically saves completed speech jobs as pristine WAV audio files in the audio cache directory (`~/.cache/dusky-kokoro/audio` or zram).",
+            extended_help="**WAV Archiver**\n\nAutomatically saves completed speech jobs as pristine WAV audio files in the audio cache directory (`~/.cache/dusky-kokoro/audio`).",
         ),
         ConfigItem(
             label="Archive Bit Depth",
@@ -395,7 +401,7 @@ SCHEMA = {
             default=16,
             options=[16, 24],
             group="Audio Archiving",
-            extended_help="**Audio Resolution**\n\n16-bit PCM (standard CD quality) or 24-bit PCM (studio high resolution).",
+            extended_help="**Audio Resolution**\n\n16-bit PCM (standard CD quality, half the pipe bandwidth) or 24-bit PCM (studio high resolution).",
         ),
         ConfigItem(
             label="Max Archive Files",
@@ -421,9 +427,9 @@ SCHEMA = {
             scope="engine",
             type_="cycle",
             default="auto",
-            options=["cuda", "cpu", "migraphx", "openvino", "auto"],
+            options=["auto", "cuda", "tensorrt", "migraphx", "openvino", "cpu"],
             group="Hardware Backend",
-            extended_help="**Compute Execution Provider**\n\n- `cuda`: NVIDIA GPUs supported by the installed CUDA runtime\n- `cpu`: CPU inference\n- `migraphx`: AMD GPUs with a matching MIGraphX runtime\n- `openvino`: Intel Iris / Arc / NPU\n- `auto`: Auto-detect available GPU accelerator",
+            extended_help="**Compute Execution Provider**\n\n- `auto`: Auto-detect available GPU accelerator\n- `cuda`: NVIDIA GPUs supported by the installed CUDA runtime\n- `tensorrt`: NVIDIA TensorRT EP with disk engine cache\n- `migraphx`: AMD GPUs with a matching MIGraphX runtime\n- `openvino`: Intel Iris / Arc / NPU\n- `cpu`: CPU inference",
         ),
         ConfigItem(
             label="Model Precision",
@@ -431,9 +437,9 @@ SCHEMA = {
             scope="engine",
             type_="cycle",
             default="auto",
-            options=["fp16-gpu", "int8", "f32", "fp16", "auto"],
+            options=["auto", "fp16-gpu", "f32", "int8", "fp16"],
             group="Hardware Backend",
-            extended_help="**Model Weight Precision**\n\n- `fp16-gpu`: 177 MB; tested fast default on CPU and CUDA.\n- `int8`: 92 MB, compact export; not necessarily faster on CPU.\n- `auto`: Prefers the tested fp16-gpu export on CPU/CUDA and f32 on OpenVINO.",
+            extended_help="**Model Weight Precision**\n\n- `auto`: Uses the tested `fp16-gpu` export on CPU and CUDA, and `f32` on OpenVINO.\n- `fp16-gpu`: 177 MB; sole default download and fastest tested export on both CUDA and CPU.\n- `f32` / `int8` / `fp16`: Opt-in exports installed via `kokoro_installer.sh --models`.",
         ),
         ConfigItem(
             label="GPU VRAM Limit (MB)",
@@ -448,13 +454,25 @@ SCHEMA = {
             extended_help="**VRAM Memory Cap**\n\nLimits the execution provider memory arena. Total VRAM can exceed this cap because driver and other allocations are separate. 0 = unlimited.",
         ),
         ConfigItem(
+            label="CPU Inference Threads",
+            key="intra_op_threads",
+            scope="engine",
+            type_="int",
+            default=0,
+            min_val=0,
+            max_val=32,
+            step=1,
+            group="Hardware Backend",
+            extended_help="**ONNX Runtime Intra-Op Threads**\n\n`0` = automatic (up to 8 available CPUs on CPU backend; 2 threads on GPU backends). Set explicitly to override.",
+        ),
+        ConfigItem(
             label="Model Warmup JIT",
             key="warmup",
             scope="engine",
             type_="bool",
-            default=True,
+            default=False,
             group="Hardware Backend",
-            extended_help="**Warmup JIT Run**\n\nSynthesizes a short phrase right after model load to move the initial CUDA JIT compilation off your first user request.",
+            extended_help="**Optional Warmup Synthesis**\n\nDisabled by default so cold starts do not add a throwaway synthesis pass before your first segment. Enable only for pre-warmed benchmarking.",
         ),
         ConfigItem(
             label="Model Idle Unload (s)",
@@ -462,11 +480,11 @@ SCHEMA = {
             scope="engine",
             type_="float",
             default=30.0,
-            min_val=5.0,
+            min_val=0.0,
             max_val=300.0,
             step=5.0,
             group="Power Management & Laptop Battery",
-            extended_help="**VRAM Arena Release**\n\nUnloads the ONNX Runtime model from GPU memory after this many seconds of inactivity, freeing VRAM back to baseline.",
+            extended_help="**VRAM Arena Release**\n\nUnloads the synthesis worker after this many seconds of inactivity (`0.0` unloads immediately after synthesis finishes).",
         ),
         ConfigItem(
             label="Process Idle Exit (s)",
@@ -497,7 +515,7 @@ SCHEMA = {
             default="interrupt",
             options=["interrupt", "enqueue"],
             group="Daemon Controls",
-            extended_help="**Playback Conflict Resolution**\n\n- `interrupt`: Immediately stops current speech and starts new utterance.\n- `enqueue`: Queues new speech behind current utterance.",
+            extended_help="**Playback Conflict Resolution**\n\n- `interrupt`: Immediately stops current speech and starts new utterance (keeps model warm).\n- `enqueue`: Queues new speech behind current utterance.",
         ),
         ConfigItem(
             label="Desktop Notifications",
@@ -506,7 +524,7 @@ SCHEMA = {
             type_="bool",
             default=True,
             group="Daemon Controls",
-            extended_help="**Status Notifications**\n\nSends libnotify notifications when speech jobs start, pause, or finish.",
+            extended_help="**Status Notifications**\n\nSends libnotify notifications when speech jobs start, pause, or fail.",
         ),
         ConfigItem(
             label="Restart Daemon Service",
@@ -524,7 +542,7 @@ SCHEMA = {
             type_="action",
             default=f"{_TRIGGER_CMD} --reload",
             group="Daemon Controls",
-            extended_help="**Instant Config Reload**\n\nSignals the running daemon to re-read `config.toml` over Unix socket IPC without interrupting playback.",
+            extended_help="**Instant Config Reload**\n\nSignals the running daemon to re-read `config.toml` over Unix socket IPC without unloading the model for voice/text/playback tweaks.",
         ),
         ConfigItem(
             label="Stop Daemon Service",
@@ -533,7 +551,7 @@ SCHEMA = {
             type_="action",
             default=f"{_TRIGGER_CMD} --kill",
             group="Daemon Controls",
-            extended_help="**Stop Daemon**\n\nStops the active daemon process.",
+            extended_help="**Stop Daemon**\n\nStops the active daemon process without disabling socket activation.",
         ),
     ],
 
@@ -548,7 +566,7 @@ SCHEMA = {
             type_="bool",
             default=True,
             group="Cleaning & Normalization",
-            extended_help="**Citation Filter**\n\nRemoves academic citation markers like `[12]`, `[4, 5]`, and footnote refs `[^1]` from spoken text.",
+            extended_help="**Citation Filter**\n\nRemoves academic citation markers like `[12]`, `[4, 5]`, `[1-3]`, and footnote refs `[^1]` from spoken text.",
         ),
         ConfigItem(
             label="Read Code Blocks",
@@ -567,7 +585,7 @@ SCHEMA = {
             default="domain",
             options=["domain", "placeholder", "omit"],
             group="Cleaning & Normalization",
-            extended_help="**URL Speech Style**\n\n- `domain`: Speaks only the domain (e.g. 'github dot com').\n- `placeholder`: Speaks 'link'.\n- `omit`: Completely ignores URLs.",
+            extended_help="**URL Speech Style**\n\n- `domain`: Speaks only the domain (e.g. 'github dot com').\n- `placeholder`: Speaks 'link'.\n- `omit`: Completely ignores URLs and email addresses.",
         ),
         ConfigItem(
             label="Emoji Mode",
@@ -578,6 +596,18 @@ SCHEMA = {
             options=["strip", "name"],
             group="Cleaning & Normalization",
             extended_help="**Emoji Filter**\n\n- `strip`: Silently removes emojis from speech.\n- `name`: Reads emoji names out loud (e.g. 'thumbs up').",
+        ),
+        ConfigItem(
+            label="First Segment Cap",
+            key="first_segment_max_chars",
+            scope="text",
+            type_="int",
+            default=110,
+            min_val=40,
+            max_val=240,
+            step=10,
+            group="Segmentation Tuning",
+            extended_help="**Time-to-First-Audio Cap**\n\nMaximum weighted characters for the opening segment. Shorter opening segments cut start latency, especially on CPU.",
         ),
         ConfigItem(
             label="Target Segment Length",
@@ -625,6 +655,8 @@ SCHEMA = {
                 "voice.weight_2": 0.60,
                 "voice.voice_3": "none",
                 "voice.weight_3": 0.00,
+                "voice.lang": "auto",
+                "voice.spec": "af_heart:0.4,af_bella:0.6",
                 "voice.speed": 1.00,
                 "playback.mpv_speed": 1.00,
             },
@@ -646,6 +678,8 @@ SCHEMA = {
                 "voice.weight_2": 0.50,
                 "voice.voice_3": "none",
                 "voice.weight_3": 0.00,
+                "voice.lang": "auto",
+                "voice.spec": "af_bella:0.5,af_nicole:0.5",
                 "voice.speed": 1.05,
                 "playback.mpv_speed": 1.00,
             },
@@ -668,6 +702,7 @@ SCHEMA = {
                 "voice.voice_3": "none",
                 "voice.weight_3": 0.00,
                 "voice.lang": "en-gb",
+                "voice.spec": "bf_emma:0.6,bm_george:0.4",
                 "voice.speed": 0.95,
                 "playback.mpv_speed": 1.00,
             },
@@ -711,7 +746,6 @@ if __name__ == "__main__":
     main_router = _DUSKY_TUI_ROOT / "python" / "main" / "main.py"
 
     if main_router.exists():
-        sys.exit(subprocess.run([sys.executable, str(main_router), str(script_path)] + sys.argv[1:]).returncode)
-    else:
-        print(f"[-] Error: Main Dusky TUI router not found at {main_router}", file=sys.stderr)
-        sys.exit(1)
+        sys.exit(subprocess.run([sys.executable, str(main_router), str(script_path), *sys.argv[1:]]).returncode)
+    print(f"[-] Error: Main Dusky TUI router not found at {main_router}", file=sys.stderr)
+    sys.exit(1)
