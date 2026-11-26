@@ -1,6 +1,6 @@
 /* =============================================================================
- * Dusky Sites — Content Runtime v6.2.2
- * Firefox 158+ · document_start · every frame (all_frames + about:blank)
+ * Dusky Sites — Content Runtime v6.2.3
+ * Firefox 161+ · document_start · every frame (all_frames + about:blank)
  *
  * PER-REVISION COST MODEL — the only thing that matters under a matugen burst
  *   palette  ~100 × root.style.setProperty('--x', v, 'important'), diffed against the previous
@@ -23,6 +23,7 @@
 
     const XHTML = 'http://www.w3.org/1999/xhtml';
     const STYLE_ID = 'dusky-sites-theme';
+    const SCHEMA = 8;
     const MAX_FIGHTS = 24;
     const COST_X = 3;                              // min gap between flushes = 3 × measured frame cost
     const GAP_MAX_MS = 1000;
@@ -30,7 +31,7 @@
 
     /* ── 0. State ────────────────────────────────────────────────────────── */
     let pending = null;        // latest payload awaiting flush
-    let raf = 0, gapTimer = 0, lastFlushAt = -1e9, minGap = 0;
+    let raf = 0, measureRaf = 0, gapTimer = 0, syncTimer = 0, lastFlushAt = -1e9, minGap = 0;
     let everApplied = false;
     let disposed = false;
     let deliveryEpoch = 0;       // ignore pulls superseded by a push/rollback
@@ -113,6 +114,7 @@
                 if (adoptedHas()) { mode = 'adopted'; stopHead(); return; }
                 throw new TypeError('adoption not observable');
             } catch {
+                if (sheet) { try { document.adoptedStyleSheets = Array.from(document.adoptedStyleSheets).filter((s) => s !== sheet); } catch { /* opaque */ } }
                 sheet = null; mode = 'element';       // never guess: an unverifiable adoption could clobber page sheets
             }
         }
@@ -121,16 +123,26 @@
         mountElement();
         watchHead();
     }
-    /** Cheap liveness check on every flush: a page that reassigns document.adoptedStyleSheets drops us. */
+    /** Cheap liveness check on every flush: a page that reassigns or appends document.adoptedStyleSheets drops or precedes us. */
     function ensureRules() {
         if (!rulHash || nativeDark) return;
         if (mode === 'adopted') {
-            if (sheet && !adoptedHas()) { try { document.adoptedStyleSheets = [...Array.from(document.adoptedStyleSheets), sheet]; } catch { /* next flush */ } }
+            if (sheet) {
+                try {
+                    const list = Array.from(document.adoptedStyleSheets);
+                    if (list[list.length - 1] !== sheet) {
+                        document.adoptedStyleSheets = [...list.filter((s) => s !== sheet), sheet];
+                    }
+                } catch { /* next flush */ }
+            }
         } else if (mode === 'element' && styleEl && !styleEl.isConnected) { mountElement(); watchHead(); }
     }
     function mountElement() {
         const host = document.head || document.documentElement;
-        if (host && styleEl && (styleEl.parentNode !== host || styleEl !== host.lastChild)) host.appendChild(styleEl);
+        if (host && styleEl && (styleEl.parentNode !== host || styleEl !== host.lastChild)) {
+            host.appendChild(styleEl);
+            headObs?.takeRecords();
+        }
     }
     function unmountRules() {
         if (sheet) { try { document.adoptedStyleSheets = Array.from(document.adoptedStyleSheets).filter((s) => s !== sheet); } catch { /* opaque */ } }
@@ -209,7 +221,13 @@
         // Frame cost = time until the next animation frame: style + layout + paint of this change. Only
         // measured for rAF-driven flushes; the synchronous first paint would count document parsing.
         if (typeof frameTs === 'number') {
-            requestAnimationFrame((t) => { minGap = Math.min(GAP_MAX_MS, Math.max(0, (t - t0) * COST_X)); if (pending) schedule(); });
+            if (measureRaf) cancelAnimationFrame(measureRaf);
+            measureRaf = requestAnimationFrame((t) => {
+                measureRaf = 0;
+                const dt = t - t0;
+                if (!document.hidden && dt >= 0 && dt <= 500) minGap = Math.min(GAP_MAX_MS, dt * COST_X);
+                if (pending) schedule();
+            });
         }
         if (d.scan && !nativeDark) { hints = Array.isArray(d.hints) ? d.hints.slice(0, 16) : null; scheduleScan('payload'); }
         else if (!d.scan && scanState) cancelScan();
@@ -219,7 +237,9 @@
         deliveryEpoch++;
         pending = null;
         if (raf) { cancelAnimationFrame(raf); raf = 0; }
+        if (measureRaf) { cancelAnimationFrame(measureRaf); measureRaf = 0; }
         if (gapTimer) { clearTimeout(gapTimer); gapTimer = 0; }
+        if (syncTimer) { clearTimeout(syncTimer); syncTimer = 0; }
         cancelScan(); stopHead(); stopRoot();
         unsetVars();
         unmountRules(); rulHash = null; rulCss = ''; derived = ''; nativeDark = false;
@@ -262,7 +282,13 @@
             return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
         }
         const h = s.match(/^hsla?\s*\(([^()]*)\)$/);
-        if (h) { const l = parseFloat(h[1].replaceAll('/', ' ').split(/[\s,]+/).filter(Boolean)[2]); return Number.isFinite(l) ? l / 100 : -1; }
+        if (h) {
+            const p = h[1].replaceAll('/', ' ').split(/[\s,]+/).filter(Boolean);
+            if (p.length < 3) return -1;
+            if (p.length > 3) { const a = p[3].endsWith('%') ? parseFloat(p[3]) / 100 : parseFloat(p[3]); if (Number.isFinite(a) && a < 0.1) return -1; }
+            const l = parseFloat(p[2]);
+            return Number.isFinite(l) ? l / 100 : -1;
+        }
         return Object.hasOwn(NAMED, s) ? NAMED[s] / 255 : -1;
     }
 
@@ -288,6 +314,23 @@
         return list;
     }
 
+    function ruleHeader(rule) {
+        const kind = rule.constructor?.name;
+        if (kind === 'CSSMediaRule') { const t = rule.conditionText ?? rule.media?.mediaText; if (t) return '@media ' + t; }
+        else if (kind === 'CSSSupportsRule' && rule.conditionText) return '@supports ' + rule.conditionText;
+        else if (kind === 'CSSContainerRule') {
+            const t = rule.conditionText ?? [rule.containerName, rule.containerQuery].filter(Boolean).join(' ');
+            if (t) return '@container ' + t;
+        } else if (kind === 'CSSLayerBlockRule') return rule.name ? '@layer ' + rule.name : '@layer';
+        else if (kind === 'CSSScopeRule') {
+            let h = '@scope';
+            if (rule.start) h += ` (${rule.start})`;
+            if (rule.end) h += ` to (${rule.end})`;
+            return h;
+        } else if (kind === 'CSSStartingStyleRule') return '@starting-style';
+        return (rule.cssText ?? '').split('{', 1)[0].trim();
+    }
+
     function walk(rules, depth, out, budget) {
         for (const rule of rules) {
             if (budget.rules-- <= 0 || budget.chars <= 0) return;
@@ -305,7 +348,7 @@
             // from @media print or @container would change when it applies.
             const children = [];
             const kids = rule.cssRules;
-            const header = typeof sel === 'string' ? sel : (rule.cssText ?? '').split('{', 1)[0].trim();
+            const header = typeof sel === 'string' ? sel : ruleHeader(rule);
             const canNest = typeof sel === 'string' || /^@(media|supports|layer|container|scope|starting-style)\b/i.test(header);
             const wrapperCost = header.length + 2;
             if (canNest && kids?.length && depth < CAPS.depth && budget.chars > wrapperCost + body.length) {
@@ -364,24 +407,26 @@
 
     /** Parent-process storage read at document_start: lands before first paint without waking the event page. */
     function fastPaint() {
-        if (!IS_TOP) return Promise.resolve();
         let host = '';
-        try { host = location.hostname.toLowerCase(); } catch { /* opaque origin */ }
-        if (!host) return Promise.resolve();
+        if (IS_TOP) { try { host = location.hostname.toLowerCase(); } catch { /* opaque origin */ } }
+        const keys = host ? ['schema', 'enabled', 'seed', 'paint:palette', 'paint:' + host] : ['schema', 'enabled', 'seed'];
         const epoch = deliveryEpoch;
-        return browser.storage.local.get(['schema', 'enabled', 'seed', 'paint:palette', 'paint:' + host]).then((r) => {
-            if (epoch !== deliveryEpoch || r.schema !== 8 || r.enabled === false || !r.seed?.webThemeEnabled) return;
-            if (everApplied || pending) return;                          // authoritative payload already won the race
+        return browser.storage.local.get(keys).then((r) => {
+            if (r.enabled === false || (r.schema === SCHEMA && r.seed?.webThemeEnabled === false)) return false;
+            if (!host || epoch !== deliveryEpoch || r.schema !== SCHEMA || !r.seed?.webThemeEnabled) return true;
+            if (everApplied || pending) return true;                     // authoritative payload already won the race
             const p = r['paint:palette'], e = r['paint:' + host];
-            if (!p || typeof p.vars !== 'object' || !p.vars || typeof p.hash !== 'string') return;
-            if (!e || typeof e.rules?.css !== 'string' || typeof e.rules.hash !== 'string') return;
+            if (!p || typeof p.vars !== 'object' || !p.vars || typeof p.hash !== 'string') return true;
+            if (!e || typeof e.rules?.css !== 'string' || typeof e.rules.hash !== 'string') return true;
             apply({ palette: p, rules: e.rules, scan: !!e.scan, hints: e.hints });
-        }).catch(() => { /* storage unavailable in this context */ });
+            return true;
+        }).catch(() => true);                                            // storage unavailable → fall back to sync()
     }
 
     let attempt = 0;
     function sync() {
         if (disposed) return;
+        if (syncTimer) { clearTimeout(syncTimer); syncTimer = 0; }
         const epoch = deliveryEpoch;
         browser.runtime.sendMessage({ type: 'GET_THEME_DATA', have: have() }).then((res) => {
             if (disposed || epoch !== deliveryEpoch) return;
@@ -390,8 +435,8 @@
             apply(res.data ?? null);
         }).catch(() => {
             // Event page cold start: back off with jitter so N frames of one page don't stampede a single wake-up.
-            if (++attempt > 6) return;
-            setTimeout(sync, Math.min(250 * 2 ** attempt, 8000) * (0.6 + Math.random() * 0.8));
+            if (disposed || ++attempt > 6) return;
+            syncTimer = setTimeout(() => { syncTimer = 0; sync(); }, Math.min(250 * 2 ** attempt, 8000) * (0.6 + Math.random() * 0.8));
         });
     }
 
@@ -408,14 +453,17 @@
         if (palVars) watchRoot();
         ensureRules();
         if (pending) schedule();
-        sync();
+        if (everApplied || pending) sync();
+        else fastPaint().then((go) => { if (go && !disposed) sync(); });
     }, true);
 
     window.addEventListener('pagehide', (e) => {
         // Zero live observers/timers into bfcache, or Gecko evicts the entry.
         stopHead(); stopRoot(); cancelScan();
         if (raf) { cancelAnimationFrame(raf); raf = 0; }
+        if (measureRaf) { cancelAnimationFrame(measureRaf); measureRaf = 0; }
         if (gapTimer) { clearTimeout(gapTimer); gapTimer = 0; }
+        if (syncTimer) { clearTimeout(syncTimer); syncTimer = 0; }
         if (!e.persisted) disposed = true;
     }, true);
 
@@ -424,8 +472,14 @@
         scheduleScan('visible');
     }, true);
 
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => {
+            if (!disposed && mode === 'element' && styleEl && !nativeDark) mountElement();
+        }, { once: true, capture: true });
+    }
+
     // Late CSS (route chunks, widgets) only shows up in document.styleSheets after load.
     window.addEventListener('load', () => { if (scanState) scheduleScan('load'); }, { once: true, capture: true });
 
-    fastPaint().then(sync);
+    fastPaint().then((go) => { if (go) sync(); });
 })();

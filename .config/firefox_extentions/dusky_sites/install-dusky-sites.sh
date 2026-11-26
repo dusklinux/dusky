@@ -41,8 +41,8 @@ ff_major="$(
     <<<"$ff_ver"
 )"
 
-if [[ ! "$ff_major" =~ ^[0-9]+$ ]] || (( ff_major < 158 )); then
-  echo "Firefox >= 158 required" >&2
+if [[ ! "$ff_major" =~ ^[0-9]+$ ]] || (( ff_major < 161 )); then
+  echo "Firefox >= 161 required" >&2
   exit 1
 fi
 if command -v node >/dev/null; then

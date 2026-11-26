@@ -55,9 +55,12 @@ function content() {
         requestIdleCallback(fn) { timers.set(++timer, fn); return timer; }, cancelIdleCallback(id) { timers.delete(id); },
         setTimeout(fn) { timers.set(++timer, fn); return timer; }, clearTimeout(id) { timers.delete(id); }
     });
-    const source = readFileSync(root + 'content.js', 'utf8').replace('    fastPaint().then(sync);', 'globalThis.api = { apply, clear, flush, walk, sync, have, setVars, unsetVars, scheduleScan, runScanSlice, fastPaint, get state() { return { pending, palHash, rulHash, scanState }; } };');
+    const source = readFileSync(root + 'content.js', 'utf8').replace(
+        '    fastPaint().then((go) => { if (go) sync(); });',
+        'globalThis.api = { apply, clear, flush, walk, sync, have, setVars, unsetVars, scheduleScan, runScanSlice, fastPaint, ensureRules, setRules, quickLuma, get state() { return { pending, palHash, rulHash, scanState, minGap }; } };'
+    );
     vm.runInContext(source, context);
-    return { ...context.api, get state() { return context.api.state; }, document, style, timers, listeners, browser, respond(p) { response = p; }, setHost(host) { context.location.hostname = host; } };
+    return { ...context.api, get state() { return context.api.state; }, context, document, style, timers, listeners, browser, respond(p) { response = p; }, setHost(host) { context.location.hostname = host; } };
 }
 const data = (p = 'p1', r = 'r1', css = 'body{color:red}') => ({ palette: { vars: { '--primary': '#123456' }, hash: p }, rules: { hash: r, ...(css === undefined ? {} : { css }) } });
 
@@ -103,7 +106,7 @@ test('paused extension cannot repopulate first-paint palette', async () => {
 });
 test('fallback cache expires without an unrelated rule revision', () => {
     const b = background(); b.S.cfg.forceUnthemedWebsites = true;
-    b.domainCache.set('other.test', { css: '', neg: false, at: Date.now() - 700000 });
+    b.domainCache.set('other.test', { css: '', neg: false, at: performance.now() - 700000 });
     b.rulesCache.set('other.test', b.packRules('stale', true, null, false));
     assert.notEqual(b.resolve('other.test').rules.css, 'stale');
 });
@@ -234,4 +237,113 @@ test('cached authored rules avoid rescanning the rule map in forced mode', () =>
     const first = b.resolve('example.com');
     b.S.theme = { ...b.S.theme, websites: new Proxy({}, { ownKeys() { throw new Error('unnecessary rule-map scan'); } }) };
     assert.equal(b.resolve('example.com').rules, first.rules);
+});
+
+test('buildThemePayload preserves alpha on non-opaque keys, flattens opaque keys, and separates hover/active', () => {
+    const b = background();
+    const payload = b.buildThemePayload({
+        '--background': '#101014', '--surface': 'rgba(30, 30, 40, 0.5)',
+        '--surface_container': '#22222c', '--surface_container_high': '#333344',
+        '--outline_variant': 'transparent', '--primary': '#88aaff', '--on_primary': '#050510',
+        '--on_background': '#eeeeff', '--on_surface': '#ffffff'
+    });
+    assert.equal(payload.colors.toolbar_top_separator, 'rgba(0, 0, 0, 0)');
+    assert.equal(payload.colors.toolbar_vertical_separator, 'rgba(0, 0, 0, 0)');
+    assert.match(payload.colors.toolbar, /^#[0-9a-f]{6}$/);
+    assert.notEqual(payload.colors.button_background_hover, payload.colors.button_background_active);
+    assert.equal(payload.colors.popup_highlight_text, '#050510');
+    assert.equal('bookmark_text' in payload.colors, false);
+});
+
+test('adopt updates scheme and injects --color-scheme even when browserThemeEnabled is false', () => {
+    const b = background(); b.S.cfg.browserThemeEnabled = false;
+    b.adopt({ colors: { '--background': '#fafafa', '--on_background': '#111111' }, colorsRev: 'c-light', websitesRev: 'r1' }, false);
+    assert.equal(b.S.scheme, 'light');
+    assert.equal(b.S.palette.vars['--color-scheme'], 'light');
+});
+
+test('boot merges seedSites when session colors exist without local seed', async () => {
+    const b = background();
+    b.disk.schema = 8;
+    b.disk.enabled = false;
+    b.disk.seedSites = { websites: { 'restored.test': 'body{color:green}' }, websitesRev: 'r-restored' };
+    b.session.colors = { colors: { '--background': '#111111' }, colorsRev: 'c-sess', webThemeEnabled: true };
+    b.S.theme = null;
+    await b.boot();
+    assert.equal(b.S.theme.websitesRev, 'r-restored');
+    assert.ok(b.resolve('restored.test').rules.css.includes('color:green'));
+});
+
+test('markPaint and dropPaint arm the settle timer', () => {
+    const b = background();
+    b.S.tm.settle = 0;
+    b.markPaint('example.com', b.resolve('example.com').rules);
+    assert.notEqual(b.S.tm.settle, 0);
+});
+
+test('reassemble rejects out-of-bounds chunk metadata', () => {
+    const b = background();
+    assert.equal(b.reassemble({ id: 'x', seq: 0, total: 0, part: '{}' }), null);
+    assert.equal(b.reassemble({ id: 'x', seq: -1, total: 2, part: '{}' }), null);
+    assert.equal(b.reassemble({ id: 'x', seq: 2, total: 2, part: '{}' }), null);
+});
+
+test('fastPaint suppresses sync when opted out or paused, including subframes', async () => {
+    const c = content(); c.setHost('');
+    c.browser.storage.local.get = async () => ({ schema: 8, enabled: true, seed: { webThemeEnabled: false } });
+    assert.equal(await c.fastPaint(), false);
+    c.browser.storage.local.get = async () => ({ schema: 8, enabled: false });
+    assert.equal(await c.fastPaint(), false);
+    c.browser.storage.local.get = async () => ({ schema: 8, enabled: true, seed: { webThemeEnabled: true } });
+    assert.equal(await c.fastPaint(), true);
+});
+
+test('quickLuma rejects transparent hsla colors', () => {
+    const c = content();
+    assert.equal(c.quickLuma('hsla(0, 0%, 100%, 0)'), -1);
+    assert.equal(c.quickLuma('hsla(0, 0%, 100%, 0.05)'), -1);
+    assert.ok(c.quickLuma('hsla(0, 0%, 100%, 0.9)') > 0.9);
+});
+
+test('fallback scanner reads CSSOM grouping headers without touching cssText', () => {
+    const c = content(), out = [], budget = { rules: 100, chars: 120000 };
+    const mediaRule = {
+        constructor: { name: 'CSSMediaRule' },
+        conditionText: 'screen and (min-width: 600px)',
+        get cssText() { throw new Error('must not serialize cssText'); },
+        cssRules: [{ selectorText: '.box', style: { color: 'black' } }]
+    };
+    const layerRule = {
+        constructor: { name: 'CSSLayerBlockRule' },
+        name: 'utilities',
+        get cssText() { throw new Error('must not serialize cssText'); },
+        cssRules: [{ selectorText: '.u', style: { color: 'black' } }]
+    };
+    c.walk([mediaRule, layerRule], 0, out, budget);
+    assert.match(out.join(''), /@media screen and \(min-width: 600px\)\{/);
+    assert.match(out.join(''), /@layer utilities\{/);
+});
+
+test('ensureRules keeps adopted sheet last and pagehide cancels timers without poisoning minGap', async () => {
+    const c = content();
+    const otherSheet = {};
+    c.document.adoptedStyleSheets = [otherSheet];
+    c.context.CSSStyleSheet = class { replaceSync(css) { this.css = css; } };
+    c.apply(data());
+    assert.equal(c.document.adoptedStyleSheets.length, 2);
+    const ours = c.document.adoptedStyleSheets[1];
+    c.document.adoptedStyleSheets = [ours, otherSheet];
+    c.ensureRules();
+    assert.equal(c.document.adoptedStyleSheets[1], ours);
+    c.apply(data('p2', 'r1', 'body{color:red}'));
+    c.flush(1);
+    c.document.hidden = true;
+    for (const [id, fn] of [...c.timers]) { c.timers.delete(id); fn(performance.now() + 900); }
+    assert.equal(c.state.minGap, 0);
+    c.respond(Promise.reject(new Error('cold')));
+    c.sync();
+    await tick();
+    assert.ok(c.timers.size > 0);
+    c.listeners.get('pagehide')({ persisted: true });
+    assert.equal(c.timers.size, 0);
 });

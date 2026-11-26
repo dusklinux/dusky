@@ -222,10 +222,11 @@ def save_config(cfg: Config, updates: dict | None = None) -> bool:
 
 
 # ── Palette + site rules (stat-signature cached) ─────────────────────────────
+_CSS_TOKEN_RE = re.compile(r"""/\*.*?\*/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'""", re.DOTALL)
 _COLOR_RE = re.compile(r"(--[\w-]+)\s*:\s*([^;{}]+?)\s*(?:!important)?\s*;", re.IGNORECASE)
 _MOZ_DOC_RE = re.compile(r"@-moz-document\s+(?P<specs>[^{]+)\{", re.IGNORECASE)
 _DOMAIN_SPEC_RE = re.compile(r"""domain\(\s*["']?([^"')\s]+)["']?\s*\)""", re.IGNORECASE)
-_URL_SPEC_RE = re.compile(r"""(?:url|url-prefix)\(\s*["']?(?:https?://)?([^/"')\s]+)""", re.IGNORECASE)
+_URL_SPEC_RE = re.compile(r"""(?:url|url-prefix)\(\s*["']?https?://([^/:"')\s]+)""", re.IGNORECASE)
 
 
 def parse_colors(path: Path) -> dict[str, str]:
@@ -233,6 +234,7 @@ def parse_colors(path: Path) -> dict[str, str]:
         text = path.read_text(encoding="utf-8")
     except OSError, UnicodeDecodeError:
         return {}
+    text = _CSS_TOKEN_RE.sub(lambda m: "" if m.group(0).startswith("/*") else m.group(0), text)
     # CSS uses private names so unrelated userChrome palettes cannot override it.
     # Keep the existing native-message palette keys consumed by the signed XPI.
     colors = {name.replace("--dusky-palette-", "--", 1): value.strip()
@@ -280,18 +282,22 @@ def parse_site_file(path: Path, out: dict[str, str]) -> None:
     Several files targeting the same domain are concatenated (v5 silently kept the last one)."""
     text = path.read_text(encoding="utf-8")
     stem = path.stem.lower()
-    protected = list(re.finditer(r"""/\*.*?\*/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'""", text, re.DOTALL))
+    protected = list(_CSS_TOKEN_RE.finditer(text))
     blocks = [match for match in _MOZ_DOC_RE.finditer(text)
               if not any(part.start() <= match.start() < part.end() for part in protected)]
     if not blocks:
-        out[stem] = text.strip()
+        body = text.strip()
+        if body:
+            out[stem] = f"{out[stem]}\n{body}" if stem in out else body
         return
     for m in blocks:
         specs = m.group("specs")
         domains = dict.fromkeys(d.lower() for d in (*_DOMAIN_SPEC_RE.findall(specs), *_URL_SPEC_RE.findall(specs)))
         body = balanced_block(text, m.end() - 1)
         if not domains:
-            out[stem] = body or text.strip()
+            chunk = body or text.strip()
+            if chunk:
+                out[stem] = f"{out[stem]}\n{chunk}" if stem in out else chunk
         for d in domains:
             out[d] = f"{out[d]}\n{body}" if d in out else body
 
@@ -325,13 +331,13 @@ class SiteRules:
     rev: str = digest("{}")
 
     def signature(self) -> tuple:
-        entries: list[tuple[str, int, int]] = []
+        entries: list[tuple[str, int, int, int]] = []
         try:
             with os.scandir(self.dir) as it:
                 for e in it:
                     if e.name.endswith(".css") and e.name != "about.css" and e.is_file():
                         st = e.stat()
-                        entries.append((e.name, st.st_mtime_ns, st.st_size))
+                        entries.append((e.name, st.st_mtime_ns, st.st_size, st.st_ino))
         except OSError:
             return ()
         entries.sort()
@@ -344,7 +350,7 @@ class SiteRules:
         self.sig = sig
         t0 = time.perf_counter()
         sites: dict[str, str] = {}
-        for name, _, _ in sig:
+        for name, _, _, _ in sig:
             try:
                 parse_site_file(self.dir / name, sites)
             except OSError, UnicodeDecodeError:
@@ -416,6 +422,8 @@ def parse_blocks(text: str) -> list[Block]:
                 cur = s
                 sections.setdefault(cur, [])
             elif cur is None:
+                if s.startswith("#"):
+                    continue
                 domains.append(s.split("/", 1)[0].lower())
             else:
                 sections[cur].append(line.rstrip())
@@ -426,17 +434,28 @@ def parse_blocks(text: str) -> list[Block]:
 
 def domain_score(host: str, pattern: str) -> int:
     """0 = no match; larger = more specific. '*' is the common block and never scores here."""
+    h = host.strip().lower().rstrip(".")
     p = pattern.strip().lower().rstrip(".")
-    if not p or p == "*":
+    if not h or not p or p == "*":
         return 0
     if p.startswith("*."):
         p = p[2:]
     if p.endswith(".*"):
         base = p[:-2]
-        return len(base) + 2 if base in host.split(".")[:-1] else 0
-    if host == p:
+        if not base:
+            return 0
+        h_parts = h.split(".")
+        b_parts = base.split(".")
+        n = len(b_parts)
+        if len(h_parts) > n and h_parts[-(n + 1):-1] == b_parts:
+            return len(base) + 2
+        if (len(h_parts) > n + 1 and len(h_parts[-1]) == 2 and len(h_parts[-2]) <= 3
+                and h_parts[-(n + 2):-2] == b_parts):
+            return len(base) + 2
+        return 0
+    if h == p:
         return len(p) + 100
-    if host.endswith("." + p):
+    if h.endswith("." + p):
         return len(p) + 50
     return 0
 
@@ -624,7 +643,9 @@ class Wire:
                 except BlockingIOError:
                     # stdout shares a non-blocking description with stdin when the browser hands us a
                     # socketpair instead of two pipes: wait for writability instead of dropping the frame.
-                    select.select([], [1], [], 5.0)
+                    if not select.select([], [1], [], 5.0)[1]:
+                        err("stdout write timed out")
+                        return False
             return True
         except BrokenPipeError:
             raise SystemExit(0) from None
@@ -738,6 +759,7 @@ class Host:
         self.stop = False
         self.query_live = False
         self.sent_sites_rev: str | None = None
+        self._live_theme_canon: str | None = None
         self.dirty = {"palette": False, "sites": False, "config": False}
         self.force = False
         now = time.monotonic()
@@ -787,6 +809,7 @@ class Host:
         config_target = CONFIG_PATH.resolve()
         config_parent = CONFIG_PATH.parent.resolve()
         palette_event = False
+        config_event = False
         for d, mask, name in events:
             if mask & IN_Q_OVERFLOW:
                 self.dirty.update(palette=True, sites=True, config=True)
@@ -800,16 +823,17 @@ class Host:
                 self.dirty["palette"] = True
                 palette_event = True
                 self.schedule_update()
-            if d == sites_dir and (not name or name.endswith(".css")):
+            if d == sites_dir and (not name or (name.endswith(".css") and name != "about.css")):
                 self.dirty["sites"] = True
                 self.schedule_update()
             if ((d == config_parent and name == CONFIG_PATH.name)
                     or (d == config_target.parent and name == config_target.name)):
                 self.dirty["config"] = True
+                config_event = True
                 self.schedule_update()
 
-        if palette_event:
-            self.sync_watches()  # A palette alias may now point into another directory.
+        if palette_event or config_event:
+            self.sync_watches()  # A palette or config alias may now point into another directory.
 
     # timers ---------------------------------------------------------------
     def next_timeout(self) -> float:
@@ -843,10 +867,12 @@ class Host:
             self.dirty.update(palette=True, sites=True, config=True)
             self.tick()
         if not self.watch_ok and t >= self.t_watch:
+            before = set(self.ino._by_dir)
             self.sync_watches()
-            # Reconcile changes made while a directory had no valid watch.
-            self.dirty.update(palette=True, sites=True, config=True)
-            self.tick()
+            # Reconcile only when at least one watch recovered or was newly added.
+            if self.watch_ok or set(self.ino._by_dir) - before:
+                self.dirty.update(palette=True, sites=True, config=True)
+                self.tick()
 
     # state ----------------------------------------------------------------
     def tick(self) -> None:
@@ -931,8 +957,12 @@ class Host:
         self.sent_sites_rev = rev if isinstance(rev, str) else None
 
     def write_live_theme(self, theme: object) -> None:
+        sig = canon(theme)
+        if sig == self._live_theme_canon and LIVE_THEME_PATH.is_file():
+            return
         try:
             atomic_write(LIVE_THEME_PATH, json.dumps({"theme": theme, "timestamp": int(time.time() * 1000)}, indent=2) + "\n")
+            self._live_theme_canon = sig
         except OSError as e:
             err(f"live theme cache write failed: {e}")
 

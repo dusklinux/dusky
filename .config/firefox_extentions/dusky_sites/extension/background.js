@@ -1,6 +1,6 @@
 /* =============================================================================
- * Dusky Sites — Background Engine v6.2.2
- * Firefox 158+ · MV3 event page · wire v3 (delta) native host · no UI
+ * Dusky Sites — Background Engine v6.2.3
+ * Firefox 161+ · MV3 event page · wire v3 (delta) native host · no UI
  *
  * HOT PATH — one matugen tick = one ~4 KB MATUGEN_UPDATE frame
  *   adopt()            O(colours)  the rule map is hashed only when the host actually sends it
@@ -112,6 +112,7 @@
 
     const clamp = (n, lo, hi) => (n < lo ? lo : n > hi ? hi : n);
     const now = () => Date.now();
+    const mono = () => performance.now();
 
     /* ── 3. Colour engine (pure arithmetic; chrome theme only) ───────────── */
     const NAMED = { transparent: [0, 0, 0, 0], black: [0, 0, 0, 1], white: [255, 255, 255, 1] };
@@ -186,6 +187,10 @@
         if (c.a >= 0.999) return c;
         return { r: to255(c.r * c.a + bg.r * (1 - c.a)), g: to255(c.g * c.a + bg.g * (1 - c.a)), b: to255(c.b * c.a + bg.b * (1 - c.a)), a: 1 };
     }
+    const toCssColor = (c, bg) => {
+        if (bg) return toHex(flatten(c, bg));
+        return c.a >= 0.999 ? toHex(c) : `rgba(${c.r}, ${c.g}, ${c.b}, ${Number(c.a.toFixed(3))})`;
+    };
     const lin = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
     /** CIE L* — Material You's "is this tone light" boundary is L* = 50. */
     function lstar(c) {
@@ -206,28 +211,30 @@
         disabledSites: [],
         paletteTemplate: {
             background: '--background', backgroundLight: '--surface', backgroundExtra: '--surface_container',
-            accentPrimary: '--primary', accentSecondary: '--secondary', text: '--on_background', textFocus: '--on_surface'
+            surfaceHigh: '--surface_container_high', border: '--outline_variant',
+            accentPrimary: '--primary', onAccentPrimary: '--on_primary', accentSecondary: '--secondary',
+            text: '--on_background', textFocus: '--on_surface'
         },
         browserTemplate: {
             frame: 'background', frame_inactive: 'background',
             tab_text: 'textFocus', tab_background_text: 'text', tab_selected: 'backgroundLight',
             tab_line: 'accentPrimary', tab_loading: 'accentPrimary',
             toolbar: 'backgroundLight', toolbar_text: 'textFocus',
-            toolbar_field: 'backgroundExtra', toolbar_field_text: 'textFocus', toolbar_field_border: 'backgroundExtra',
+            toolbar_field: 'backgroundExtra', toolbar_field_text: 'textFocus', toolbar_field_border: 'border',
             toolbar_field_focus: 'backgroundLight', toolbar_field_text_focus: 'textFocus', toolbar_field_border_focus: 'accentPrimary',
-            toolbar_field_highlight: 'accentPrimary', toolbar_field_highlight_text: 'background',
+            toolbar_field_highlight: 'accentPrimary', toolbar_field_highlight_text: 'onAccentPrimary',
             icons: 'text', icons_attention: 'accentPrimary',
-            sidebar: 'backgroundLight', sidebar_text: 'textFocus', sidebar_border: 'backgroundExtra',
-            sidebar_highlight: 'accentPrimary', sidebar_highlight_text: 'background',
-            popup: 'backgroundLight', popup_text: 'textFocus', popup_border: 'backgroundExtra',
-            popup_highlight: 'accentPrimary', popup_highlight_text: 'background',
+            sidebar: 'backgroundLight', sidebar_text: 'textFocus', sidebar_border: 'border',
+            sidebar_highlight: 'accentPrimary', sidebar_highlight_text: 'onAccentPrimary',
+            popup: 'backgroundLight', popup_text: 'textFocus', popup_border: 'border',
+            popup_highlight: 'accentPrimary', popup_highlight_text: 'onAccentPrimary',
             ntp_background: 'background', ntp_card_background: 'backgroundLight', ntp_text: 'text',
-            bookmark_text: 'textFocus', toolbar_top_separator: 'backgroundExtra', toolbar_bottom_separator: 'backgroundExtra',
-            button_background_hover: 'backgroundExtra', button_background_active: 'backgroundExtra'
+            toolbar_top_separator: 'border', toolbar_bottom_separator: 'border', toolbar_vertical_separator: 'border',
+            button_background_hover: 'backgroundExtra', button_background_active: 'surfaceHigh'
         }
     });
 
-    /** Colour keys Gecko 158 honours (tab_background_separator / toolbar_field_separator died in 89). */
+    /** Colour keys Gecko 161 honours in LightweightThemeManager.sys.mjs. */
     const VALID_THEME_KEYS = new Set([
         'bookmark_text', 'button_background_active', 'button_background_hover', 'frame', 'frame_inactive',
         'icons', 'icons_attention', 'ntp_background', 'ntp_card_background', 'ntp_text',
@@ -306,7 +313,7 @@
         theme: null,      // frozen {colors, colorsRev, websites, websitesRev, disabled, disabledRev, status, at}
         palette: null,    // frozen {vars, hash} — derived once per colour revision, shared by every tab
         port: null, ready: false, gen: 0, attempt: 0, nextAt: 0, rxAt: 0, connectedAt: 0, lastError: null,
-        themeHash: null, themeCost: 0, themeAt: 0, themeBusy: false, themeDirty: false, themeEpoch: 0, scheme: 'dark',
+        themeHash: null, themeCost: 0, themeAt: -Infinity, themeBusy: false, themeDirty: false, themeEpoch: 0, pendingLiveReply: false, scheme: 'dark',
         wantTrickle: false,
         tm: { retry: 0, ping: 0, hs: 0, theme: 0, settle: 0, trickle: 0 }
     };
@@ -323,6 +330,7 @@
     const paintDirty = new Map();                   // host -> paint entry | null (tombstone)
     let paintIndex = [];                            // [[host, rulesHash], …] MRU order, mirrors paint:<host> keys on disk
     let paintWork = Promise.resolve();               // serialize cache clear/publish operations
+    let seedWork = Promise.resolve();                // serialize cold-start seed writes
     let paletteWritten = null;                      // palette hash last written to paint:palette
     let seedHash = null, seedSitesRev = null;
 
@@ -430,6 +438,7 @@
             sess.colors.colors
                 ? {
                     ...(seed || {}),
+                    ...(seedSites || {}),
                     ...sess.colors,
                     ...(sess.sites || {})
                 }
@@ -569,7 +578,7 @@
 
         const gen = ++S.gen;
         const live = () => S.gen === gen && S.port === port;
-        S.port = port; S.ready = false; S.connectedAt = S.rxAt = now();
+        S.port = port; S.ready = false; S.connectedAt = S.rxAt = mono();
         port.onMessage.addListener((m) => { if (live()) onHostMessage(m); });
         port.onDisconnect.addListener(() => { if (live()) onHostDisconnect(port); });
 
@@ -600,7 +609,7 @@
 
     function onHostDisconnect(port) {
         S.lastError = port.error?.message || browser.runtime.lastError?.message || 'host closed the pipe';
-        const lived = now() - S.connectedAt;
+        const lived = mono() - S.connectedAt;
         teardown(port);
         if (lived > 30000) S.attempt = 0;   // a healthy host restarted: retry immediately
         if (S.enabled) scheduleReconnect();
@@ -613,27 +622,29 @@
         const exp = Math.min(T.RECONNECT_BASE_MS * 2 ** S.attempt, T.RECONNECT_MAX_MS);
         const delay = Math.round(exp / 2 + Math.random() * exp / 2);
         S.attempt = Math.min(S.attempt + 1, 24);
-        S.nextAt = now() + delay;
+        S.nextAt = mono() + delay;
         S.tm.retry = setTimeout(() => { S.tm.retry = 0; connect(); }, delay);
     }
 
     /** Half-open detector: a wedged interpreter keeps the pipe nominally open. */
-    function armPing() {
+    function armPing(wait = T.IDLE_PING_MS) {
         clearT('ping');
         S.tm.ping = setTimeout(() => {
             S.tm.ping = 0;
             if (!S.port) return;
-            if (now() - S.rxAt < T.IDLE_PING_MS) { armPing(); return; }
+            const left = T.IDLE_PING_MS - (mono() - S.rxAt);
+            if (left > 0) { armPing(left); return; }
             const port = S.port, gen = S.gen;
             rawSend({ type: 'PING', at: now() });
-            setTimeout(() => {
+            S.tm.ping = setTimeout(() => {
+                S.tm.ping = 0;
                 if (S.gen !== gen || S.port !== port) return;
-                if (now() - S.rxAt > T.IDLE_PING_MS + T.PING_GRACE_MS) {
+                if (mono() - S.rxAt > T.IDLE_PING_MS + T.PING_GRACE_MS) {
                     S.lastError = 'host unresponsive'; warn(S.lastError);
                     teardown(port); S.attempt = 0; scheduleReconnect();
                 } else armPing();
             }, T.PING_GRACE_MS);
-        }, T.IDLE_PING_MS);
+        }, wait);
     }
 
     function rawSend(frame) {
@@ -669,13 +680,16 @@
     /** Host frames above 1 MiB arrive as {type:'CHUNK', id, seq, total, part}. */
     function reassemble(msg) {
         const id = String(msg.id || '');
-        if (!id) return null;
-        const t = now();
+        const total = msg.total | 0, seq = msg.seq | 0;
+        if (!id || total <= 0 || seq < 0 || seq >= total) return null;
+        const t = mono();
         for (const [k, v] of chunks) if (t - v.at > T.CHUNK_TTL_MS) chunks.delete(k);
         let slot = chunks.get(id);
-        if (!slot) { slot = { parts: [], total: msg.total | 0, bytes: 0, at: t }; chunks.set(id, slot); }
+        if (!slot) { slot = { parts: [], total, bytes: 0, at: t }; chunks.set(id, slot); }
+        if (slot.total !== total) { chunks.delete(id); return null; }
         const part = typeof msg.part === 'string' ? msg.part : '';
-        slot.parts[msg.seq | 0] = part;
+        if (typeof slot.parts[seq] === 'string') slot.bytes -= slot.parts[seq].length;
+        slot.parts[seq] = part;
         slot.bytes += part.length;
         if (slot.bytes > LIM.CHUNK_BYTES) { chunks.delete(id); fail('chunk stream exceeded cap'); return null; }
         let have = 0;
@@ -687,7 +701,7 @@
 
     /* ── 8. Inbound host protocol ────────────────────────────────────────── */
     async function onHostMessage(raw) {
-        S.rxAt = now(); stats.hostFrames++;
+        S.rxAt = mono(); stats.hostFrames++;
         if (!S.ready) { S.ready = true; S.attempt = 0; S.lastError = null; clearT('hs'); flushOutbox(); log('handshake complete'); }
         if (!raw || typeof raw !== 'object') return;
         let msg = raw;
@@ -845,6 +859,7 @@
         });
 
         if (colors || !S.palette) {
+            syncScheme(d.colors);
             S.palette = buildPalette(d.colors);
             stats.revs++;
         }
@@ -873,6 +888,7 @@
         // Rule/disabled-site transitions invalidate every cached host, including
         // background tabs that eco mode deliberately does not visit.
         if (ch.rules || ch.webOff) clearPaint();
+        if (ch.webOn || ch.webOff) persistSeed();
         if (ch.webOff) rollbackAll();
         else if (S.cfg.webThemeEnabled && (ch.colors || ch.rules || ch.webOn)) {
             broadcastActive(false);
@@ -888,7 +904,7 @@
             css: typeof m.css === 'string' ? m.css.slice(0, LIM.SITE_CSS_BYTES) : '',
             isDarkSite: !!m.isDarkSite,
             hints: Array.isArray(m.hints) ? m.hints.filter((s) => typeof s === 'string' && s.length < 200).slice(0, 16) : null,
-            neg: false, at: now()
+            neg: false, at: mono()
         });
         rulesCache.delete(host);
         browser.tabs.query({ active: true, discarded: false }).then((tabs) => {
@@ -900,12 +916,16 @@
         if (domainInflight.has(host)) return;
         const p = request({ type: 'GET_DOMAIN_FIX', domain: host })
             .then(cacheDomainFix)
-            .catch(() => { domainCache.set(host, { css: '', isDarkSite: false, hints: null, neg: true, at: now() }); })
+            .catch(() => { domainCache.set(host, { css: '', isDarkSite: false, hints: null, neg: true, at: mono() }); })
             .finally(() => domainInflight.delete(host));
         domainInflight.set(host, p);
     }
 
     async function replyLiveTheme() {
+        if (S.enabled && S.cfg.browserThemeEnabled && (S.themeBusy || S.themeDirty || S.tm.theme)) {
+            S.pendingLiveReply = true;
+            return;
+        }
         try { send({ type: 'LIVE_THEME_RESPONSE', theme: await browser.theme.getCurrent() }); }
         catch (e) { warn('theme.getCurrent failed', e); }
     }
@@ -932,7 +952,7 @@
             runTheme,
             Math.max(
                 0,
-                S.themeAt + gap - now()
+                S.themeAt + gap - mono()
             )
         );
     }
@@ -951,6 +971,7 @@
             !S.cfg.browserThemeEnabled ||
             !S.theme
         ) {
+            S.pendingLiveReply = false;
             return;
         }
 
@@ -962,6 +983,10 @@
 
         if (h === S.themeHash) {
             stats.themeSkipped++;
+            if (S.pendingLiveReply) {
+                S.pendingLiveReply = false;
+                replyLiveTheme();
+            }
             return;
         }
 
@@ -969,7 +994,7 @@
 
         S.themeBusy = true;
 
-        const t0 = performance.now();
+        const t0 = mono();
 
         let ok = false;
 
@@ -981,7 +1006,7 @@
         }
 
         const rtt =
-            performance.now() - t0;
+            mono() - t0;
 
         if (epoch === S.themeEpoch) {
             S.themeHash =
@@ -1011,10 +1036,15 @@
                 Math.round(rtt);
         }
 
-        S.themeAt = now();
+        S.themeAt = mono();
         S.themeBusy = false;
 
         await persistMeta();
+
+        if (S.pendingLiveReply && !S.themeDirty) {
+            S.pendingLiveReply = false;
+            replyLiveTheme();
+        }
 
         // A newer palette may have dirtied us while theme.update() was pending.
         scheduleTheme();
@@ -1024,6 +1054,7 @@
         S.themeEpoch++;
         S.themeHash = null;
         S.themeDirty = false;
+        S.pendingLiveReply = false;
 
         clearT('theme');
 
@@ -1039,22 +1070,32 @@
     function rolePalette(colors) {
         const p = {};
         for (const [role, cssVar] of Object.entries(S.cfg.paletteTemplate)) p[role] = colors[cssVar] ?? null;
+        p.surfaceHigh ??= p.backgroundExtra ?? null;
+        p.border ??= p.backgroundExtra ?? null;
+        p.onAccentPrimary ??= p.background ?? null;
         return p;
     }
 
-    function buildThemePayload(colors) {
+    function syncScheme(colors) {
         const roles = rolePalette(colors);
         const bg = flatten(parseColor(roles.background) || { r: 24, g: 26, b: 27, a: 1 }, { r: 0, g: 0, b: 0, a: 1 });
+        const frameRole = S.cfg.browserTemplate.frame;
+        const frame = parseColor(frameRole ? roles[frameRole] : null);
+        // Hysteresis: a burst hovering around L* = 50 must not flip prefers-color-scheme for every content document.
+        const L = lstar(frame ? flatten(frame, bg) : bg);
+        if (S.scheme === 'dark' ? L > 55 : L < 45) S.scheme = S.scheme === 'dark' ? 'light' : 'dark';
+        return { roles, bg };
+    }
+
+    function buildThemePayload(colors) {
+        const { roles, bg } = syncScheme(colors);
         const out = {};
         for (const [key, role] of Object.entries(S.cfg.browserTemplate)) {
             if (!VALID_THEME_KEYS.has(key)) continue;
             const c = parseColor(roles[role]);
-            if (c) out[key] = toHex(OPAQUE_THEME_KEYS.has(key) ? flatten(c, bg) : c);
+            if (c) out[key] = toCssColor(c, OPAQUE_THEME_KEYS.has(key) ? bg : null);
         }
         out.frame ??= toHex(bg);
-        // Hysteresis: a burst hovering around L* = 50 must not flip prefers-color-scheme for every content document.
-        const L = lstar(parseColor(out.frame) || bg);
-        if (S.scheme === 'dark' ? L > 55 : L < 45) S.scheme = S.scheme === 'dark' ? 'light' : 'dark';
         out.tab_background_text ??= S.scheme === 'light' ? '#15141a' : '#fbfbfe';
         const cs = S.cfg.contentColorScheme;
         return { colors: out, properties: { color_scheme: S.scheme, content_color_scheme: cs === 'auto' ? S.scheme : cs } };
@@ -1072,6 +1113,10 @@
             if (!SAFE_VALUE.test(val) || BAD_VALUE.test(val)) continue;
             vars[k] = val;
             if (++n >= LIM.VAR_COUNT) break;
+        }
+        if (!Object.hasOwn(vars, '--color-scheme')) {
+            const cs = S.cfg.contentColorScheme;
+            vars['--color-scheme'] = cs === 'system' ? 'light dark' : (cs === 'auto' ? S.scheme : cs);
         }
         return Object.freeze({ vars, hash: hash32(JSON.stringify(vars)) });
     }
@@ -1138,7 +1183,7 @@
             const fix = domainCache.get(host);
             const ttl = fix?.neg ? LIM.DOMAIN_NEG_TTL_MS : LIM.DOMAIN_TTL_MS;
             if (!S.cfg.forceUnthemedWebsites || hit?.scan === false
-                || (fix && now() - fix.at <= ttl) || isSiteDisabled(host)) return hit;
+                || (fix && mono() - fix.at <= ttl) || isSiteDisabled(host)) return hit;
             rulesCache.delete(host);
         }
         let out = null;
@@ -1148,7 +1193,7 @@
             else if (S.cfg.forceUnthemedWebsites) {
                 const fix = domainCache.get(host);
                 const ttl = fix?.neg ? LIM.DOMAIN_NEG_TTL_MS : LIM.DOMAIN_TTL_MS;
-                if (!fix || now() - fix.at > ttl) {
+                if (!fix || mono() - fix.at > ttl) {
                     requestDomainFix(host);                                   // authoritative answer re-pushes the tab
                     return packRules(FALLBACK_CSS, true, null, true);         // provisional: deliberately not cached
                 }
@@ -1352,11 +1397,14 @@
     async function trickle() {
         S.wantTrickle = false;
         clearT('trickle');
+        if (!S.enabled || !S.cfg.webThemeEnabled) return;
         let tabs;
         try { tabs = await browser.tabs.query({ active: false, discarded: false }); } catch { return; }
+        if (!S.enabled || !S.cfg.webThemeEnabled) return;
         let i = 0;
         const step = () => {
             S.tm.trickle = 0;
+            if (!S.enabled || !S.cfg.webThemeEnabled) return;
             const end = Math.min(i + T.TRICKLE_BATCH, tabs.length);
             for (; i < end; i++) pushTab(tabs[i].id, tabs[i].url, false);
             if (i < tabs.length) S.tm.trickle = setTimeout(step, T.TRICKLE_MS);
@@ -1468,7 +1516,12 @@
     }
 
     /** storage.local cold-start seed: seed (4 KB) per settle when changed, seedSites only when the rule map changed. */
-    async function persistSeed() {
+    function persistSeed() {
+        seedWork = seedWork.then(persistSeedNow).catch(swallow);
+        return seedWork;
+    }
+
+    async function persistSeedNow() {
         const th = S.theme;
 
         if (!th) {
@@ -1594,10 +1647,14 @@
         if (!S.cfg.fastPaint || !host || rules.css.length > LIM.PAINT_ENTRY_BYTES) return;
         if (paintHashOf(host) === rules.hash && !paintDirty.has(host)) return;      // already on disk
         paintDirty.set(host, { rules: { css: rules.css, hash: rules.hash }, scan: rules.scan, hints: rules.hints, at: now() });
+        if (!S.tm.settle) armSettle();
     }
     function dropPaint(host) {
         if (!host) return;
-        if (paintHashOf(host) !== null) paintDirty.set(host, null); else paintDirty.delete(host);
+        if (paintHashOf(host) !== null) {
+            paintDirty.set(host, null);
+            if (!S.tm.settle) armSettle();
+        } else paintDirty.delete(host);
     }
 
     function flushPaint() {
@@ -1766,7 +1823,8 @@
         const top = !!sender.tab && sender.frameId === 0;
         if (!res) {
             if (top) {
-                pushTab(sender.tab.id, url, true);
+                noteTabSig(sender.tab.id, 'x');
+                dropPaint(host);
             }
 
             return {
@@ -1780,7 +1838,7 @@
                 '?'
             );
         }
-        if (!res.rules.provisional) { markPaint(host, res.rules); if (!S.tm.settle) armSettle(); }
+        if (!res.rules.provisional) markPaint(host, res.rules);
         if (req.have && req.have.p === res.palette.hash && req.have.r === res.rules.hash) return { same: true };
         return { data: payloadOf(res, true) };
     }
@@ -1788,7 +1846,7 @@
     function status() {
         return {
             connected: !!S.port && S.ready, enabled: S.enabled, lastError: S.lastError,
-            nextAttemptIn: S.port ? 0 : Math.max(0, S.nextAt - now()),
+            nextAttemptIn: S.port ? 0 : Math.max(0, Math.round(S.nextAt - mono())),
             colorsRev:
                 S.theme?.colorsRev ?? null,
 
@@ -1824,19 +1882,21 @@
     }
 
     /* ── 14. Event wiring (all synchronous — I1) ─────────────────────────── */
+    const hasWebWork = () => S.enabled && (S.cfg.webThemeEnabled || lastSig.size > 0 || slots.size > 0);
+
     // A new document's content script registers its own signature through GET_THEME_DATA, so this is only a
     // safety net; the signature compare makes it free. No 'url' in the filter: pushState churn must not wake us.
     browser.tabs.onUpdated.addListener((tabId, change, tab) => {
         ready().then(() => {
             if (change.discarded) { dropTab(tabId); return; }
-            if (change.status !== 'complete' || !S.theme) return;
+            if (change.status !== 'complete' || !S.theme || !hasWebWork()) return;
             if (tab.active || !S.cfg.ecoMode) pushTab(tabId, tab.url, false);
         });
     }, { properties: ['status', 'discarded'] });
 
     browser.tabs.onActivated.addListener((info) => {
         ready().then(async () => {
-            if (!S.theme) return;
+            if (!S.theme || !hasWebWork()) return;
             try { const t = await browser.tabs.get(info.tabId); pushTab(t.id, t.url, false); } catch { /* closed */ }
         });
     });
@@ -1844,7 +1904,7 @@
     browser.windows.onFocusChanged.addListener((windowId) => {
         if (windowId === browser.windows.WINDOW_ID_NONE) return;
         ready().then(async () => {
-            if (!S.theme) return;
+            if (!S.theme || !hasWebWork()) return;
             try { const [t] = await browser.tabs.query({ active: true, windowId }); if (t) pushTab(t.id, t.url, false); } catch { /* gone */ }
         });
     });
@@ -1874,7 +1934,7 @@
             if (!S.enabled || !S.cfg.browserThemeEnabled || !S.theme || !S.themeHash) return;
             if (info?.windowId !== undefined) return;            // per-window override by another add-on
             if (info?.theme?.colors) return;                     // a real theme was applied (ours included): no fight
-            const t = now();
+            const t = mono();
             while (reasserts.length && t - reasserts[0] > T.REASSERT_WINDOW_MS) reasserts.shift();
             if (reasserts.length >= T.REASSERT_MAX) { warn('theme re-assert budget exhausted'); return; }
             reasserts.push(t); S.themeHash = null; queueTheme();
@@ -1885,7 +1945,7 @@
         if (alarm.name !== ALARM) return;
         ready().then(() => {
             // Durable revival: timers die with the event page, alarms do not.
-            if (S.enabled && !S.port && now() >= S.nextAt) connect();
+            if (S.enabled && !S.port && mono() >= S.nextAt) connect();
             if (paintDirty.size && !S.tm.settle) armSettle();
         });
     });

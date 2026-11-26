@@ -124,6 +124,87 @@ class HostTests(unittest.TestCase):
                 self.assertIn('var(--on_surface)', fallback.domain_fix('light.test')['css'])
                 self.assertIn('invert(1)', fallback.domain_fix('light.test')['css'])
 
+    def test_parse_colors_strips_comments_without_corrupting_values(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'palette.css'
+            path.write_text('/* --primary: #ff0000; */\n:root { --dusky-palette-primary: #112233; /* inline */ --note: "/* keep */"; }\n', encoding='utf-8')
+            colors = host.parse_colors(path)
+            self.assertEqual(colors['--primary'], '#112233')
+            self.assertEqual(colors['--note'], '"/* keep */"')
+
+    def test_site_parser_concatenates_stems_and_filters_url_scheme_and_port(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            a, b = root / 'foo.css', root / 'sub' / 'foo.css'
+            b.parent.mkdir()
+            a.write_text('body{color:red}', encoding='utf-8')
+            b.write_text('body{color:blue}', encoding='utf-8')
+            sites = {}
+            host.parse_site_file(a, sites)
+            host.parse_site_file(b, sites)
+            self.assertEqual(sites['foo'], 'body{color:red}\nbody{color:blue}')
+            c = root / 'urls.css'
+            c.write_text('@-moz-document url-prefix("https://app.test:8443/x"), url("about:preferences") {body{color:green}}', encoding='utf-8')
+            sites2 = {}
+            host.parse_site_file(c, sites2)
+            self.assertEqual(sites2, {'app.test': 'body{color:green}'})
+
+    def test_site_rules_detect_inode_replacement_with_same_mtime_and_size(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / 'example.com.css'
+            target.write_text('body{color:red}', encoding='utf-8')
+            st = target.stat()
+            rules = host.SiteRules(root)
+            self.assertTrue(rules.refresh())
+            replacement = root / 'replacement.tmp'
+            replacement.write_text('body{color:tan}', encoding='utf-8')
+            os.utime(replacement, ns=(st.st_atime_ns, st.st_mtime_ns))
+            replacement.replace(target)
+            self.assertTrue(rules.refresh())
+            self.assertEqual(rules.sites['example.com'], 'body{color:tan}')
+
+    def test_fallback_wildcard_tld_and_header_comments(self):
+        self.assertGreater(host.domain_score('mail.google.com', 'mail.google.*'), 0)
+        self.assertGreater(host.domain_score('www.google.co.uk', 'google.*'), 0)
+        self.assertGreater(host.domain_score('sub.mail.google.com.au', 'mail.google.*'), 0)
+        self.assertEqual(host.domain_score('notgoogle.com', 'google.*'), 0)
+        self.assertEqual(host.domain_score('evil.google.com.attacker.org', 'google.*'), 0)
+        self.assertEqual(host.domain_score('google.attacker.uk', 'google.*'), 0)
+        blocks = host.parse_blocks('# header comment\nexample.test\nCSS\n#id { color: red; }\n')
+        self.assertEqual(blocks[0][0], ['example.test'])
+        self.assertEqual(blocks[0][1]['CSS'], ['#id { color: red; }'])
+
+    def test_wire_write_returns_false_on_select_timeout(self):
+        with patch.object(os, 'write', side_effect=BlockingIOError), \
+             patch.object(host.select, 'select', return_value=([], [], [])):
+            self.assertFalse(host.Wire._write(b'{}'))
+
+    def test_save_config_preserves_unknown_keys(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = Path(tmp) / 'config.json'
+            cfg_path.write_text(json.dumps({'installerFlag': True, 'webThemeEnabled': False}), encoding='utf-8')
+            with patch.object(host, 'CONFIG_PATH', cfg_path):
+                cfg = host.Config()
+                self.assertTrue(host.save_config(cfg, {'webThemeEnabled': True}))
+                saved = json.loads(cfg_path.read_text(encoding='utf-8'))
+                self.assertTrue(saved['installerFlag'])
+                self.assertTrue(saved['webThemeEnabled'])
+
+    def test_write_live_theme_deduplicates_and_recreates_if_deleted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            live_path = Path(tmp) / 'live_theme_cache.json'
+            dummy = object.__new__(host.Host)
+            dummy._live_theme_canon = None
+            with patch.object(host, 'LIVE_THEME_PATH', live_path), \
+                 patch.object(host, 'atomic_write', wraps=host.atomic_write) as spy:
+                dummy.write_live_theme({'colors': {'frame': '#112233'}})
+                dummy.write_live_theme({'colors': {'frame': '#112233'}})
+                self.assertEqual(spy.call_count, 1)
+                live_path.unlink()
+                dummy.write_live_theme({'colors': {'frame': '#112233'}})
+                self.assertEqual(spy.call_count, 2)
+
 
 if __name__ == '__main__':
     unittest.main()

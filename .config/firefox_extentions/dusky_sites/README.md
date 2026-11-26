@@ -1,13 +1,13 @@
 # Dusky Sites
 
-Targets Firefox 158+ and Python 3.15+ on Linux/Wayland. Website CSS injection
+Targets Firefox 161+ and Python 3.15+ on Linux/Wayland. Website CSS injection
 remains off by default; `~/.config/dusky/settings/dusky_sites/config.json` controls `webThemeEnabled`,
 `forceUnthemedWebsites`, `disabledSites`, `colorsPath`, and `websitesDir`.
 Extension-only options, including eco mode and browser-theme control, belong in
 `extension/defaults.js`. The content color scheme now follows the palette by
 default (`auto`); an explicit override still wins.
 
-The native port itself keeps Firefox 158's event page alive. Host `keepAlive`
+The native port itself keeps Firefox 161's event page alive. Host `keepAlive`
 is therefore off by default; setting it to true still requests periodic host
 pings. The extension retains connection-health probes and a revival alarm.
 
@@ -36,12 +36,12 @@ active; forced termination with SIGKILL cannot execute cleanup.
 
 ## Release packaging
 
-The audited source version is **6.2.2**, with paint-cache schema 8. Existing
+The audited source version is **6.2.3**, with paint-cache schema 8. Existing
 schema-7 paint entries are invalidated on upgrade. The preserved signed
 `xpi/dusky_sites.xpi` is **6.2.1** and does not include these JavaScript fixes.
 
 Submit `dusky_sites-unsigned.zip` to Mozilla for an unlisted signature, then
-replace `xpi/dusky_sites.xpi` with the returned signed 6.2.2 package. Re-run the
+replace `xpi/dusky_sites.xpi` with the returned signed 6.2.3 package. Re-run the
 main Firefox theme setup and its source/file audit after replacing it. Normal
 setup can update the native host and styles using the existing signed release;
 it reports that local JavaScript changes still await signing. It prefers a
