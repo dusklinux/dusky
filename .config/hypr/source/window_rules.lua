@@ -1937,17 +1937,6 @@ hl.config({
 --     center = true
 -- })
 
---- Calendar (ikhal): Float with Default Size ---
-hl.window_rule({
-    name = "float-calendar",
-    match = {
-        class = "^(ikhal)$"
-    },
-    float = true,
-    size = {650, 700},
-    center = true
-})
-
 --- 470_vesktop_matugen.sh (Vesktop Setup Script ONLY - 80% W, 80% H Floating Dynamic) ---
 hl.window_rule({
     name = "470_vesktop_matugen.sh",

@@ -248,7 +248,6 @@ zoxide
 man-db
 tldr
 lsof
-khal
 # Group 9: Development
 rust
 neovim

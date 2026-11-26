@@ -274,7 +274,6 @@ terminal = [
     "man-db",
     "tldr",
     "lsof",
-    "khal",
 ]
 
 dev = [
