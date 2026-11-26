@@ -12,7 +12,7 @@ use crate::ui::style;
 use crate::ui::{Element, Message};
 use chrono::{DateTime, Datelike, Local, NaiveDate, NaiveTime, TimeDelta, Timelike};
 use iced_core::{Alignment, Color, Length, Padding};
-use iced_widget::{Space, button, column, container, row, scrollable, text};
+use iced_widget::{Space, button, column, container, row, scrollable, text, tooltip};
 
 pub const WEEK_SCROLL_ID: &str = "dusky-calendar-week-scroll";
 const COLLAPSED_ALL_DAY_LANES: usize = 3;
@@ -21,21 +21,73 @@ pub fn week_scroll_id() -> iced_core::widget::Id {
     iced_core::widget::Id::new(WEEK_SCROLL_ID)
 }
 
-fn calendar_color(calendars: &[CalendarMeta], calendar_id: &str, theme: &AppTheme) -> Color {
+fn calendar_info<'a>(
+    calendars: &'a [CalendarMeta],
+    calendar_id: &str,
+    theme: &AppTheme,
+) -> (Color, &'a str) {
     calendars
         .iter()
         .find(|c| c.id == calendar_id)
-        .map(|c| c.resolved_color(theme))
-        .unwrap_or(theme.accent)
+        .map(|c| (c.resolved_color(theme), c.name.as_str()))
+        .unwrap_or((theme.accent, "Calendar"))
 }
 
+fn build_event_tooltip<'a>(
+    theme: AppTheme,
+    occ: &EventOccurrence,
+    event_color: Color,
+    cal_name: &str,
+    use_24h: bool,
+) -> Element<'a> {
+    let mut tip = column![
+        text(occ.summary.clone())
+            .size(12.5)
+            .font(style::bold_font())
+            .color(theme.fg)
+            .wrapping(iced_core::text::Wrapping::WordOrGlyph),
+        row![
+            container(Space::new().width(7.0).height(7.0))
+                .style(style::color_dot(event_color, 999.0)),
+            text(occ.format_time_range(use_24h))
+                .size(11.5)
+                .font(style::mono_font())
+                .color(theme.fg_muted),
+            text("·").size(11.5).color(theme.muted_day_fg()),
+            text(cal_name.to_string()).size(11.5).color(theme.fg_muted),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center),
+    ]
+    .spacing(3);
+
+    if let Some(loc) = &occ.location {
+        tip = tip.push(
+            row![
+                render_icon("location", 11.5, theme.fg_muted),
+                text(loc.clone())
+                    .size(11.5)
+                    .color(theme.fg_muted)
+                    .wrapping(iced_core::text::Wrapping::WordOrGlyph),
+            ]
+            .spacing(5)
+            .align_y(Alignment::Center),
+        );
+    }
+
+    tip.into()
+}
+
+#[allow(clippy::too_many_arguments)]
 fn build_all_day_pill<'a>(
     theme: AppTheme,
     occ: &EventOccurrence,
     event_color: Color,
+    cal_name: &str,
     past: bool,
     continues_left: bool,
     continues_right: bool,
+    use_24h: bool,
 ) -> Element<'a> {
     let palette = theme.event_pill_colors(event_color, past, false);
     let mut content = row![].spacing(5).align_y(Alignment::Center);
@@ -75,7 +127,7 @@ fn build_all_day_pill<'a>(
         content = content.push(render_icon("chevron_right", 10.0, palette.edge));
     }
 
-    button(
+    let pill_btn = button(
         container(content)
             .width(Length::Fill)
             .height(Length::Fill)
@@ -99,8 +151,10 @@ fn build_all_day_pill<'a>(
         continues_left,
         continues_right,
     ))
-    .on_press(Message::OpenEventPreview(occ.clone()))
-    .into()
+    .on_press(Message::OpenEventPreview(occ.clone()));
+
+    let tip = build_event_tooltip(theme, occ, event_color, cal_name, use_24h);
+    style::rich_tooltip(theme, pill_btn, tip, tooltip::Position::Top)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -108,6 +162,7 @@ fn build_timed_block<'a>(
     theme: AppTheme,
     occ: &EventOccurrence,
     event_color: Color,
+    cal_name: &str,
     past: bool,
     block_height: f32,
     continues_prev: bool,
@@ -205,7 +260,7 @@ fn build_timed_block<'a>(
     .width(Length::Fill)
     .height(Length::Fill);
 
-    button(inner)
+    let block_btn = button(inner)
         .width(Length::Fill)
         .height(Length::Fill)
         .padding(0)
@@ -217,8 +272,10 @@ fn build_timed_block<'a>(
             continues_prev,
             continues_next,
         ))
-        .on_press(Message::OpenEventPreview(occ.clone()))
-        .into()
+        .on_press(Message::OpenEventPreview(occ.clone()));
+
+    let tip = build_event_tooltip(theme, occ, event_color, cal_name, use_24h);
+    style::rich_tooltip(theme, block_btn, tip, tooltip::Position::Top)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -231,6 +288,7 @@ pub fn view_week<'a>(
     window_height: f32,
     all_day_expanded: bool,
     use_24h: bool,
+    is_empty_calendar: bool,
     calendars: &'a [CalendarMeta],
 ) -> Element<'a> {
     // 1. Sticky Day Headers row (aligned with WEEK_HOUR_GUTTER).
@@ -240,7 +298,7 @@ pub fn view_week<'a>(
         text(format!("W{:02}", layout.week_start.iso_week().week()))
             .size(11)
             .font(style::mono_font())
-            .color(mix(theme.sidebar_bg, theme.fg_muted, 0.72)),
+            .color(mix(theme.chrome_bg(), theme.fg_muted, 0.72)),
     )
     .width(Length::Fixed(WEEK_HOUR_GUTTER))
     .align_x(Alignment::Center);
@@ -343,15 +401,17 @@ pub fn view_week<'a>(
         if span.lane >= visible_lanes {
             continue;
         }
-        let color = calendar_color(calendars, &span.occurrence.calendar_id, &theme);
+        let (color, cal_name) = calendar_info(calendars, &span.occurrence.calendar_id, &theme);
         let past = span.occurrence.is_past(now);
         let pill = build_all_day_pill(
             theme,
             &span.occurrence,
             color,
+            cal_name,
             past,
             span.continues_left,
             span.continues_right,
+            use_24h,
         );
         banner_items.push((
             WeekBannerPlacement {
@@ -381,12 +441,22 @@ pub fn view_week<'a>(
             .align_y(Alignment::Center)
             .into()
         };
-        container(
-            button(label_widget)
-                .padding([4, 6])
-                .style(style::icon_button(theme, all_day_expanded))
-                .on_press(Message::ToggleWeekAllDayExpanded),
-        )
+        let expand_tip = if all_day_expanded {
+            "Collapse all-day events".to_string()
+        } else {
+            format!("Show all {} all-day rows", layout.total_all_day_lanes)
+        };
+        let expand_btn = button(label_widget)
+            .padding([4, 6])
+            .style(style::icon_button(theme, all_day_expanded))
+            .on_press(Message::ToggleWeekAllDayExpanded);
+
+        container(style::tooltip(
+            theme,
+            expand_btn,
+            expand_tip,
+            tooltip::Position::Right,
+        ))
         .width(Length::Fixed(WEEK_HOUR_GUTTER))
         .align_x(Alignment::Center)
         .align_y(Alignment::Center)
@@ -448,6 +518,7 @@ pub fn view_week<'a>(
     // 3. Scrollable 24-hour time grid.
     let weekend_cols: [bool; 7] = std::array::from_fn(|i| layout.days[i].is_weekend);
     let today_col = layout.days.iter().position(|d| d.is_today);
+    let selected_col = layout.days.iter().position(|d| d.date == selected_date);
     let now_minutes = today_col.map(|_| (now.hour() as f32) * 60.0 + (now.minute() as f32));
 
     let mut hour_labels = Vec::with_capacity(23);
@@ -457,7 +528,7 @@ pub fn view_week<'a>(
             text(format_clock_time(t, use_24h))
                 .size(11)
                 .font(style::mono_font())
-                .color(mix(theme.sidebar_bg, theme.fg_muted, 0.78)),
+                .color(mix(theme.chrome_bg(), theme.fg_muted, 0.78)),
         )
         .width(Length::Fill)
         .align_x(Alignment::End);
@@ -466,7 +537,7 @@ pub fn view_week<'a>(
 
     let mut blocks = Vec::with_capacity(layout.timed_blocks.len());
     for block in &layout.timed_blocks {
-        let color = calendar_color(calendars, &block.occurrence.calendar_id, &theme);
+        let (color, cal_name) = calendar_info(calendars, &block.occurrence.calendar_id, &theme);
         let past = block.occurrence.is_past(now);
         let block_height =
             (((block.end_minutes - block.start_minutes) / 60.0) * hour_height - 2.0).max(18.0);
@@ -474,6 +545,7 @@ pub fn view_week<'a>(
             theme,
             &block.occurrence,
             color,
+            cal_name,
             past,
             block_height,
             block.continues_from_prev_day,
@@ -499,6 +571,7 @@ pub fn view_week<'a>(
         use_24h,
         weekend_cols,
         today_col,
+        selected_col,
         now_minutes,
         hour_labels,
         blocks,
@@ -507,7 +580,8 @@ pub fn view_week<'a>(
             start_minutes,
             end_minutes,
         },
-    );
+    )
+    .on_zoom(Message::ZoomWeek);
 
     let scroll = scrollable(time_grid)
         .id(week_scroll_id())
@@ -515,8 +589,34 @@ pub fn view_week<'a>(
         .height(Length::Fill)
         .style(style::clean_scrollable(theme));
 
-    column![top_section, scroll]
+    let mut root = column![top_section, scroll]
         .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+        .height(Length::Fill);
+
+    if is_empty_calendar {
+        let hint_divider = container(Space::new().width(Length::Fill).height(1))
+            .width(Length::Fill)
+            .height(Length::Fixed(1.0))
+            .style(style::hairline_rule(theme));
+
+        let hint_bar = container(
+            row![
+                render_icon("info", 13.0, theme.accent),
+                text("Click or drag any time slot to schedule · Drag the All day strip for multi-day · Ctrl+Scroll to zoom · Drop .ics files to import")
+                    .size(12)
+                    .color(theme.fg_muted)
+                    .wrapping(iced_core::text::Wrapping::WordOrGlyph),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        )
+        .width(Length::Fill)
+        .padding(Padding::from([7, 14]))
+        .align_x(Alignment::Center)
+        .style(style::header_bar(theme));
+
+        root = root.push(hint_divider).push(hint_bar);
+    }
+
+    root.into()
 }

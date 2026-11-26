@@ -12,7 +12,7 @@ use crate::ui::style;
 use crate::ui::{Element, Message};
 use chrono::{DateTime, Local, NaiveDate};
 use iced_core::{Alignment, Color, Length, Padding};
-use iced_widget::{Space, button, column, container, row, scrollable, text};
+use iced_widget::{Space, button, column, container, row, scrollable, text, tooltip};
 
 fn calendar_meta<'a>(calendars: &'a [CalendarMeta], id: &str) -> Option<&'a CalendarMeta> {
     calendars.iter().find(|c| c.id == id)
@@ -89,7 +89,7 @@ fn build_agenda_row<'a>(
         .align_y(Alignment::Center)
         .width(Length::Fill);
 
-    button(
+    let row_btn = button(
         container(content)
             .width(Length::Fill)
             .padding(Padding::from([8, 12])),
@@ -103,8 +103,36 @@ fn build_agenda_row<'a>(
         false,
         false,
     ))
-    .on_press(Message::OpenEventPreview(occ.clone()))
-    .into()
+    .on_press(Message::OpenEventPreview(occ.clone()));
+
+    let mut tip = column![
+        text(occ.summary.clone())
+            .size(12.5)
+            .font(style::bold_font())
+            .color(theme.fg)
+            .wrapping(iced_core::text::Wrapping::WordOrGlyph),
+        text(occ.format_time_range(use_24h))
+            .size(11.5)
+            .font(style::mono_font())
+            .color(theme.fg_muted),
+    ]
+    .spacing(3);
+
+    if let Some(loc) = &occ.location {
+        tip = tip.push(
+            row![
+                render_icon("location", 11.5, theme.fg_muted),
+                text(loc.clone())
+                    .size(11.5)
+                    .color(theme.fg_muted)
+                    .wrapping(iced_core::text::Wrapping::WordOrGlyph),
+            ]
+            .spacing(5)
+            .align_y(Alignment::Center),
+        );
+    }
+
+    style::rich_tooltip(theme, row_btn, tip, tooltip::Position::Top)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -214,6 +242,14 @@ pub fn view_agenda<'a>(
         for group in &layout.groups {
             let day_heading = format_agenda_day_heading(group.date, today);
 
+            let add_day_btn = button(render_icon("plus", 13.0, theme.fg_muted))
+                .padding([3, 5])
+                .style(style::icon_button(theme, false))
+                .on_press(Message::OpenQuickAdd {
+                    date: Some(group.date),
+                    hour: None,
+                });
+
             let header_row = row![
                 text(day_heading)
                     .size(13)
@@ -224,13 +260,15 @@ pub fn view_agenda<'a>(
                         theme.fg_muted
                     }),
                 Space::new().width(Length::Fill),
-                button(render_icon("plus", 13.0, theme.fg_muted))
-                    .padding([3, 5])
-                    .style(style::icon_button(theme, false))
-                    .on_press(Message::OpenQuickAdd {
-                        date: Some(group.date),
-                        hour: None,
-                    }),
+                style::tooltip(
+                    theme,
+                    add_day_btn,
+                    format!(
+                        "New Event on {}",
+                        format_relative_date_short(group.date, today)
+                    ),
+                    tooltip::Position::Left,
+                ),
             ]
             .align_y(Alignment::Center)
             .padding(Padding {

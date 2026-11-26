@@ -1,9 +1,13 @@
 //! Centralized Iced 0.14 styling helpers driven exclusively by `AppTheme` (Matugen `dusky.json`).
 
 use crate::theme::{AppTheme, contrasting_fg, mix, saturate};
+use crate::ui::Element;
 use iced_core::border::Radius;
-use iced_core::{Background, Border, Color, Font, Shadow, Vector};
-use iced_widget::{button, container, scrollable, text_editor, text_input};
+use iced_core::{Background, Border, Color, Font, Padding, Shadow, Vector};
+use iced_widget::{button, container, scrollable, text, text_editor, text_input};
+use std::time::Duration;
+
+const TOOLTIP_DELAY: Duration = Duration::from_millis(450);
 
 pub fn regular_font() -> Font {
     Font::with_name(crate::fonts::DEFAULT_FAMILY)
@@ -47,7 +51,7 @@ pub fn root_shell(theme: AppTheme) -> impl Fn(&iced_core::Theme) -> container::S
 
 pub fn header_bar(theme: AppTheme) -> impl Fn(&iced_core::Theme) -> container::Style {
     move |_| container::Style {
-        background: Some(Background::Color(theme.surface)),
+        background: Some(Background::Color(theme.chrome_bg())),
         text_color: Some(theme.fg),
         ..Default::default()
     }
@@ -55,10 +59,61 @@ pub fn header_bar(theme: AppTheme) -> impl Fn(&iced_core::Theme) -> container::S
 
 pub fn sidebar_surface(theme: AppTheme) -> impl Fn(&iced_core::Theme) -> container::Style {
     move |_| container::Style {
-        background: Some(Background::Color(theme.sidebar_bg)),
+        background: Some(Background::Color(theme.chrome_bg())),
         text_color: Some(theme.fg),
         ..Default::default()
     }
+}
+
+pub fn tooltip_surface(theme: AppTheme) -> impl Fn(&iced_core::Theme) -> container::Style {
+    move |_| container::Style {
+        background: Some(Background::Color(theme.card_bg)),
+        text_color: Some(theme.fg),
+        border: Border {
+            color: theme.surface_border(),
+            width: 1.0,
+            radius: 8.0.into(),
+        },
+        shadow: Shadow {
+            color: Color::from_rgba(0.0, 0.0, 0.0, if theme.is_light() { 0.14 } else { 0.44 }),
+            offset: Vector::new(0.0, 4.0),
+            blur_radius: 12.0,
+        },
+        ..Default::default()
+    }
+}
+
+pub fn rich_tooltip<'a, Message: 'a>(
+    theme: AppTheme,
+    content: impl Into<Element<'a, Message>>,
+    tip: impl Into<Element<'a, Message>>,
+    position: iced_widget::tooltip::Position,
+) -> Element<'a, Message> {
+    let tip_box = container(tip)
+        .padding(Padding::from([5, 9]))
+        .max_width(280.0);
+
+    iced_widget::tooltip(content, tip_box, position)
+        .gap(6.0)
+        .padding(0.0)
+        .delay(TOOLTIP_DELAY)
+        .snap_within_viewport(true)
+        .style(tooltip_surface(theme))
+        .into()
+}
+
+pub fn tooltip<'a, Message: 'a>(
+    theme: AppTheme,
+    content: impl Into<Element<'a, Message>>,
+    label: impl Into<String>,
+    position: iced_widget::tooltip::Position,
+) -> Element<'a, Message> {
+    rich_tooltip(
+        theme,
+        content,
+        text(label.into()).size(12).color(theme.fg),
+        position,
+    )
 }
 
 pub fn hairline_rule(theme: AppTheme) -> impl Fn(&iced_core::Theme) -> container::Style {
@@ -170,14 +225,17 @@ pub fn first_day_badge(theme: AppTheme) -> impl Fn(&iced_core::Theme) -> contain
 }
 
 pub fn weeknum_chip(theme: AppTheme) -> impl Fn(&iced_core::Theme) -> container::Style {
-    move |_| container::Style {
-        background: Some(Background::Color(mix(theme.sidebar_bg, theme.fg, 0.055))),
-        text_color: Some(mix(theme.sidebar_bg, theme.fg_muted, 0.72)),
-        border: Border {
-            radius: 4.0.into(),
+    move |_| {
+        let base = theme.chrome_bg();
+        container::Style {
+            background: Some(Background::Color(mix(base, theme.fg, 0.055))),
+            text_color: Some(mix(base, theme.fg_muted, 0.72)),
+            border: Border {
+                radius: 4.0.into(),
+                ..Default::default()
+            },
             ..Default::default()
-        },
-        ..Default::default()
+        }
     }
 }
 
@@ -564,15 +622,14 @@ pub fn mini_day_button(
             } else {
                 theme.fg
             };
+            let base = theme.chrome_bg();
             let bg = match status {
-                button::Status::Hovered => Some(Background::Color(theme.card_hover)),
-                button::Status::Pressed => {
-                    Some(Background::Color(mix(theme.sidebar_bg, theme.accent, 0.20)))
-                }
+                button::Status::Hovered => Some(Background::Color(theme.mini_day_hover())),
+                button::Status::Pressed => Some(Background::Color(mix(base, theme.accent, 0.24))),
                 _ => None,
             };
             let (b_col, b_w) = if is_today {
-                (mix(theme.sidebar_bg, theme.accent, 0.65), 1.2)
+                (mix(base, theme.accent, 0.70), 1.2)
             } else {
                 (Color::TRANSPARENT, 0.0)
             };
@@ -698,8 +755,8 @@ pub fn text_input_style(
     move |_, status| {
         let border_color = match status {
             text_input::Status::Focused { .. } => theme.accent,
-            text_input::Status::Hovered => theme.surface_border(),
-            text_input::Status::Active => theme.grid_line(),
+            text_input::Status::Hovered => mix(theme.surface_border(), theme.fg, 0.22),
+            text_input::Status::Active => theme.surface_border(),
             text_input::Status::Disabled => theme.grid_line_subtle(),
         };
         text_input::Style {
@@ -730,8 +787,9 @@ pub fn text_editor_style(
         style.border = Border {
             color: match status {
                 text_editor::Status::Focused { .. } => theme.accent,
-                text_editor::Status::Hovered => theme.surface_border(),
-                _ => theme.grid_line(),
+                text_editor::Status::Hovered => mix(theme.surface_border(), theme.fg, 0.22),
+                text_editor::Status::Disabled => theme.grid_line_subtle(),
+                _ => theme.surface_border(),
             },
             width: if matches!(status, text_editor::Status::Focused { .. }) {
                 1.5

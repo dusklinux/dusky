@@ -10,6 +10,7 @@ use crate::model::{
 };
 use crate::storage::UserPrefs;
 use crate::theme::{AppTheme, SemanticToken, contrasting_fg};
+use crate::ui::header::HEADER_HEIGHT;
 use crate::ui::sidebar::view_date_chooser;
 use crate::ui::style;
 use crate::ui::{
@@ -19,8 +20,8 @@ use crate::ui::{
 use chrono::{DateTime, Local, NaiveDate, NaiveTime};
 use iced_core::{Alignment, Length, Padding};
 use iced_widget::{
-    Space, button, column, container, mouse_area, opaque, row, scrollable, text, text_editor,
-    text_input,
+    Space, Stack, button, column, container, mouse_area, opaque, row, scrollable, text,
+    text_editor, text_input, tooltip,
 };
 
 pub fn quick_add_input_id() -> iced_core::widget::Id {
@@ -37,10 +38,16 @@ fn calendar_meta<'a>(calendars: &'a [CalendarMeta], id: &str) -> Option<&'a Cale
 
 fn parse_hm_preview(raw: &str) -> Option<NaiveTime> {
     let trimmed = raw.trim();
-    NaiveTime::parse_from_str(trimmed, "%H:%M")
-        .or_else(|_| NaiveTime::parse_from_str(trimmed, "%-H:%M"))
-        .or_else(|_| NaiveTime::parse_from_str(trimmed, "%I:%M %p"))
-        .ok()
+    if let Ok(t) = NaiveTime::parse_from_str(trimmed, "%H:%M") {
+        return Some(t);
+    }
+    let upper = trimmed.to_ascii_uppercase();
+    for fmt in ["%I:%M %p", "%I:%M%p", "%I %p", "%I%p"] {
+        if let Ok(t) = NaiveTime::parse_from_str(&upper, fmt) {
+            return Some(t);
+        }
+    }
+    None
 }
 
 fn wrap_modal_backdrop<'a>(
@@ -103,6 +110,11 @@ fn view_quick_add<'a>(
         draft.start_date.format("%A, %B %-d, %Y").to_string()
     };
 
+    let close_btn = button(render_icon("close", 15.0, theme.fg_muted))
+        .padding([5, 6])
+        .style(style::icon_button(theme, false))
+        .on_press(Message::CloseOverlay);
+
     let header = row![
         column![
             text(heading)
@@ -113,15 +125,12 @@ fn view_quick_add<'a>(
         ]
         .spacing(2)
         .width(Length::Fill),
-        button(render_icon("close", 15.0, theme.fg_muted))
-            .padding([5, 6])
-            .style(style::icon_button(theme, false))
-            .on_press(Message::CloseOverlay),
+        style::tooltip(theme, close_btn, "Close (Esc)", tooltip::Position::Bottom),
     ]
     .spacing(8)
     .align_y(Alignment::Center);
 
-    let title_input = text_input("Event title… (Enter with empty title for full editor)", &draft.title)
+    let title_input = text_input("Event title…", &draft.title)
         .id(quick_add_input_id())
         .on_input(Message::QuickAddTitleChanged)
         .on_submit(Message::QuickAddSubmit)
@@ -156,65 +165,98 @@ fn view_quick_add<'a>(
     let mut time_row = row![all_day_btn].spacing(8).align_y(Alignment::Center);
 
     if !draft.all_day {
-        time_row = time_row
-            .push(
-                text_input("09:00", &draft.start_time)
-                    .on_input(Message::QuickAddStartTimeChanged)
-                    .on_submit(Message::QuickAddSubmit)
-                    .padding([6, 8])
-                    .size(12.5)
-                    .font(style::mono_font())
-                    .width(Length::Fixed(74.0))
-                    .style(style::text_input_style(theme)),
-            )
-            .push(text("–").size(13).color(theme.fg_muted))
-            .push(
-                text_input("10:00", &draft.end_time)
-                    .on_input(Message::QuickAddEndTimeChanged)
-                    .on_submit(Message::QuickAddSubmit)
-                    .padding([6, 8])
-                    .size(12.5)
-                    .font(style::mono_font())
-                    .width(Length::Fixed(74.0))
-                    .style(style::text_input_style(theme)),
-            );
-    }
-
-    // Calendar selector list.
-    let mut cal_list = column![].spacing(3);
-    for cal in calendars {
-        let selected = cal.id == draft.calendar_id;
-        let dot = container(Space::new().width(10.0).height(10.0))
-            .style(style::color_dot(cal.resolved_color(&theme), 999.0));
-        let mut r = row![
-            dot,
-            text(&cal.name).size(13).color(theme.fg),
-            Space::new().width(Length::Fill),
+        let time_w = if use_24h { 74.0 } else { 90.0 };
+        let start_ph = if use_24h { "09:00" } else { "9:00 AM" };
+        let end_ph = if use_24h { "10:00" } else { "10:00 AM" };
+        let range_group = row![
+            text_input(start_ph, &draft.start_time)
+                .on_input(Message::QuickAddStartTimeChanged)
+                .on_submit(Message::QuickAddSubmit)
+                .padding([6, 8])
+                .size(12.5)
+                .font(style::mono_font())
+                .width(Length::Fixed(time_w))
+                .style(style::text_input_style(theme)),
+            text("–").size(13).color(theme.fg_muted),
+            text_input(end_ph, &draft.end_time)
+                .on_input(Message::QuickAddEndTimeChanged)
+                .on_submit(Message::QuickAddSubmit)
+                .padding([6, 8])
+                .size(12.5)
+                .font(style::mono_font())
+                .width(Length::Fixed(time_w))
+                .style(style::text_input_style(theme)),
         ]
-        .spacing(9)
+        .spacing(6)
         .align_y(Alignment::Center);
-        if selected {
-            r = r.push(render_icon("check", 13.0, theme.accent));
-        }
-        cal_list = cal_list.push(
-            button(r)
-                .width(Length::Fill)
-                .padding([7, 10])
-                .style(style::subtle_row_button(theme, selected))
-                .on_press(Message::QuickAddSelectCalendar(cal.id.clone())),
-        );
+
+        time_row = time_row.push(range_group);
     }
 
-    let cal_scroll = container(
-        scrollable(cal_list)
-            .height(Length::Shrink)
-            .style(style::clean_scrollable(theme)),
-    )
-    .max_height(145.0)
-    .padding(4)
-    .style(style::flat_card(theme, 9.0));
+    let time_controls = time_row.wrap().vertical_spacing(6);
 
-    let mut body = column![header, title_input, time_row, cal_scroll]
+    // Calendar selector: collapse to a compact badge when only one calendar exists.
+    let cal_section: Element<'a> = if calendars.len() <= 1 {
+        let active_cal = calendar_meta(calendars, &draft.calendar_id).or_else(|| calendars.first());
+        let color = active_cal
+            .map(|c| c.resolved_color(&theme))
+            .unwrap_or(theme.accent);
+        let name = active_cal.map(|c| c.name.as_str()).unwrap_or("Personal");
+        container(
+            row![
+                container(Space::new().width(9.0).height(9.0))
+                    .style(style::color_dot(color, 999.0)),
+                text(name)
+                    .size(12.5)
+                    .font(style::bold_font())
+                    .color(theme.fg),
+                Space::new().width(Length::Fill),
+                text("Calendar").size(11.5).color(theme.muted_day_fg()),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        )
+        .width(Length::Fill)
+        .padding([7, 10])
+        .style(style::flat_card(theme, 9.0))
+        .into()
+    } else {
+        let mut cal_list = column![].spacing(3);
+        for cal in calendars {
+            let selected = cal.id == draft.calendar_id;
+            let dot = container(Space::new().width(10.0).height(10.0))
+                .style(style::color_dot(cal.resolved_color(&theme), 999.0));
+            let mut r = row![
+                dot,
+                text(&cal.name).size(13).color(theme.fg),
+                Space::new().width(Length::Fill),
+            ]
+            .spacing(9)
+            .align_y(Alignment::Center);
+            if selected {
+                r = r.push(render_icon("check", 13.0, theme.accent));
+            }
+            cal_list = cal_list.push(
+                button(r)
+                    .width(Length::Fill)
+                    .padding([7, 10])
+                    .style(style::subtle_row_button(theme, selected))
+                    .on_press(Message::QuickAddSelectCalendar(cal.id.clone())),
+            );
+        }
+
+        container(
+            scrollable(cal_list)
+                .height(Length::Shrink)
+                .style(style::clean_scrollable(theme)),
+        )
+        .max_height(145.0)
+        .padding(4)
+        .style(style::flat_card(theme, 9.0))
+        .into()
+    };
+
+    let mut body = column![header, title_input, time_controls, cal_section]
         .spacing(12)
         .padding(18);
 
@@ -281,6 +323,32 @@ fn view_event_preview<'a>(
         Message::PreviewConfirmDelete(EditScope::All)
     };
 
+    let export_btn = button(render_icon("export", 15.0, theme.fg_muted))
+        .padding([6, 7])
+        .style(style::icon_button(theme, false))
+        .on_press(Message::PreviewExportEvent);
+    let edit_btn = button(render_icon("edit", 15.0, theme.fg))
+        .padding([6, 7])
+        .style(style::icon_button(theme, false))
+        .on_press(Message::PreviewEditEvent);
+    let delete_btn = button(render_icon("trash", 15.0, theme.danger))
+        .padding([6, 7])
+        .style(style::icon_button(theme, confirm_delete))
+        .on_press(trash_msg);
+    let close_btn = button(render_icon("close", 15.0, theme.fg_muted))
+        .padding([6, 7])
+        .style(style::icon_button(theme, false))
+        .on_press(Message::CloseOverlay);
+
+    let action_sep_left = container(Space::new().width(1).height(16))
+        .width(Length::Fixed(1.0))
+        .height(Length::Fixed(16.0))
+        .style(style::hairline_rule(theme));
+    let action_sep_right = container(Space::new().width(1).height(16))
+        .width(Length::Fixed(1.0))
+        .height(Length::Fixed(16.0))
+        .style(style::hairline_rule(theme));
+
     let top_bar = row![
         container(Space::new().width(10.0).height(10.0))
             .style(style::color_dot(event_color, 999.0)),
@@ -289,22 +357,22 @@ fn view_event_preview<'a>(
             .font(style::bold_font())
             .color(theme.fg_muted),
         Space::new().width(Length::Fill),
-        button(render_icon("export", 15.0, theme.fg_muted))
-            .padding([6, 7])
-            .style(style::icon_button(theme, false))
-            .on_press(Message::PreviewExportEvent),
-        button(render_icon("edit", 15.0, theme.fg))
-            .padding([6, 7])
-            .style(style::icon_button(theme, false))
-            .on_press(Message::PreviewEditEvent),
-        button(render_icon("trash", 15.0, theme.danger))
-            .padding([6, 7])
-            .style(style::icon_button(theme, confirm_delete))
-            .on_press(trash_msg),
-        button(render_icon("close", 15.0, theme.fg_muted))
-            .padding([6, 7])
-            .style(style::icon_button(theme, false))
-            .on_press(Message::CloseOverlay),
+        style::tooltip(
+            theme,
+            export_btn,
+            "Export .ics to Downloads",
+            tooltip::Position::Bottom,
+        ),
+        style::tooltip(theme, edit_btn, "Edit Event", tooltip::Position::Bottom),
+        action_sep_left,
+        style::tooltip(
+            theme,
+            delete_btn,
+            "Delete Event",
+            tooltip::Position::Bottom,
+        ),
+        action_sep_right,
+        style::tooltip(theme, close_btn, "Close (Esc)", tooltip::Position::Bottom),
     ]
     .spacing(6)
     .align_y(Alignment::Center);
@@ -429,27 +497,18 @@ fn view_event_preview<'a>(
         );
     }
 
-    let sep = container(Space::new().width(Length::Fill).height(1))
-        .width(Length::Fill)
-        .height(Length::Fixed(1.0))
-        .style(style::hairline_rule(theme));
-    body = body.push(sep);
-
     if let Some(desc) = &occ.description {
+        let sep = container(Space::new().width(Length::Fill).height(1))
+            .width(Length::Fill)
+            .height(Length::Fixed(1.0))
+            .style(style::hairline_rule(theme));
         let notes_scroll = container(
             scrollable(text(desc).size(13).color(theme.fg))
                 .height(Length::Shrink)
                 .style(style::clean_scrollable(theme)),
         )
         .max_height(180.0);
-        body = body.push(notes_scroll);
-    } else {
-        body = body.push(
-            text("No event notes")
-                .size(12.5)
-                .font(style::italic_font())
-                .color(theme.muted_day_fg()),
-        );
+        body = body.push(sep).push(notes_scroll);
     }
 
     if confirm_delete && occ.is_recurring_instance {
@@ -472,7 +531,10 @@ fn view_event_preview<'a>(
                     .style(style::secondary_button(theme))
                     .on_press(Message::PreviewCancelDelete),
             ]
-            .spacing(6),
+            .spacing(6)
+            .align_y(Alignment::Center)
+            .wrap()
+            .vertical_spacing(6),
         ]
         .spacing(8);
 
@@ -592,6 +654,7 @@ fn view_event_editor<'a>(
     calendars: &'a [CalendarMeta],
     today: NaiveDate,
     week_start_monday: bool,
+    use_24h: bool,
 ) -> Element<'a> {
     let is_editing = draft.original_key.is_some();
     let heading = if is_editing {
@@ -599,12 +662,22 @@ fn view_event_editor<'a>(
     } else {
         "New Event"
     };
+    let can_save = !draft.summary.trim().is_empty();
+
+    let cancel_btn = button(text("Cancel").size(13))
+        .padding([7, 12])
+        .style(style::secondary_button(theme))
+        .on_press(Message::CloseOverlay);
+
+    let mut save_btn = button(text("Save").size(13).font(style::bold_font()))
+        .padding([7, 16])
+        .style(style::primary_button(theme));
+    if can_save {
+        save_btn = save_btn.on_press(Message::EditorSave);
+    }
 
     let header = row![
-        button(text("Cancel").size(13))
-            .padding([7, 12])
-            .style(style::secondary_button(theme))
-            .on_press(Message::CloseOverlay),
+        style::tooltip(theme, cancel_btn, "Cancel (Esc)", tooltip::Position::Bottom),
         container(
             text(heading)
                 .size(15.5)
@@ -613,10 +686,16 @@ fn view_event_editor<'a>(
         )
         .width(Length::Fill)
         .align_x(Alignment::Center),
-        button(text("Save").size(13).font(style::bold_font()))
-            .padding([7, 16])
-            .style(style::primary_button(theme))
-            .on_press(Message::EditorSave),
+        style::tooltip(
+            theme,
+            save_btn,
+            if can_save {
+                "Save Event (Ctrl+S)"
+            } else {
+                "Enter an event title to save"
+            },
+            tooltip::Position::Bottom,
+        ),
     ]
     .spacing(10)
     .align_y(Alignment::Center);
@@ -652,7 +731,6 @@ fn view_event_editor<'a>(
                     .size(13)
                     .font(style::bold_font())
                     .color(theme.fg),
-                Space::new().width(Length::Fill),
                 button(
                     text("Only This Occurrence")
                         .size(12.5)
@@ -678,8 +756,10 @@ fn view_event_editor<'a>(
                 .style(style::toggle_chip(theme, all_active))
                 .on_press(Message::EditorScopeChanged(EditScope::All)),
             ]
-            .spacing(6)
-            .align_y(Alignment::Center),
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .wrap()
+            .vertical_spacing(6),
         )
         .width(Length::Fill)
         .padding([8, 12])
@@ -792,10 +872,24 @@ fn view_event_editor<'a>(
     ]
     .align_y(Alignment::Center);
 
+    let time_input_w = if use_24h { 70.0 } else { 88.0 };
+    let start_time_ph = if use_24h { "09:00" } else { "9:00 AM" };
+    let end_time_ph = if use_24h { "10:00" } else { "10:00 AM" };
+
     let start_row = {
-        let mut r = row![
+        let start_picker_btn = button(render_icon("calendar", 14.0, theme.fg_muted))
+            .padding([6, 7])
+            .style(style::icon_button(
+                theme,
+                draft
+                    .active_date_picker
+                    .is_some_and(|(t, _)| t == EditorDateTarget::Start),
+            ))
+            .on_press(Message::EditorToggleDatePicker(EditorDateTarget::Start));
+
+        let date_group = row![
             container(text("Starts").size(12.5).color(theme.fg_muted))
-                .width(Length::Fixed(52.0)),
+                .width(Length::Fixed(48.0)),
             button(render_icon("chevron_left", 13.0, theme.fg_muted))
                 .padding([6, 7])
                 .style(style::secondary_button(theme))
@@ -817,57 +911,65 @@ fn view_event_editor<'a>(
                     is_start: true,
                     delta_days: 1,
                 }),
-            button(render_icon("calendar", 14.0, theme.fg_muted))
-                .padding([6, 7])
-                .style(style::icon_button(
-                    theme,
-                    draft
-                        .active_date_picker
-                        .is_some_and(|(t, _)| t == EditorDateTarget::Start),
-                ))
-                .on_press(Message::EditorToggleDatePicker(EditorDateTarget::Start)),
+            style::tooltip(
+                theme,
+                start_picker_btn,
+                "Pick Start Date",
+                tooltip::Position::Top,
+            ),
         ]
         .spacing(5)
         .align_y(Alignment::Center);
 
+        let mut r = row![date_group].spacing(10).align_y(Alignment::Center);
+
         if !draft.all_day {
-            r = r
-                .push(Space::new().width(6.0))
-                .push(
-                    button(render_icon("minus", 12.0, theme.fg_muted))
-                        .padding([6, 6])
-                        .style(style::secondary_button(theme))
-                        .on_press(Message::EditorStepTime {
-                            is_start: true,
-                            delta_minutes: -15,
-                        }),
-                )
-                .push(
-                    text_input("09:00", &draft.start_time_text)
-                        .on_input(Message::EditorStartTimeChanged)
-                        .padding([6, 8])
-                        .size(12.5)
-                        .font(style::mono_font())
-                        .width(Length::Fixed(70.0))
-                        .style(style::text_input_style(theme)),
-                )
-                .push(
-                    button(render_icon("plus", 12.0, theme.fg_muted))
-                        .padding([6, 6])
-                        .style(style::secondary_button(theme))
-                        .on_press(Message::EditorStepTime {
-                            is_start: true,
-                            delta_minutes: 15,
-                        }),
-                );
+            let time_group = row![
+                button(render_icon("minus", 12.0, theme.fg_muted))
+                    .padding([6, 6])
+                    .style(style::secondary_button(theme))
+                    .on_press(Message::EditorStepTime {
+                        is_start: true,
+                        delta_minutes: -15,
+                    }),
+                text_input(start_time_ph, &draft.start_time_text)
+                    .on_input(Message::EditorStartTimeChanged)
+                    .padding([6, 8])
+                    .size(12.5)
+                    .font(style::mono_font())
+                    .width(Length::Fixed(time_input_w))
+                    .style(style::text_input_style(theme)),
+                button(render_icon("plus", 12.0, theme.fg_muted))
+                    .padding([6, 6])
+                    .style(style::secondary_button(theme))
+                    .on_press(Message::EditorStepTime {
+                        is_start: true,
+                        delta_minutes: 15,
+                    }),
+            ]
+            .spacing(5)
+            .align_y(Alignment::Center);
+
+            r = r.push(time_group);
         }
-        r
+
+        r.wrap().vertical_spacing(6)
     };
 
     let end_row = {
-        let mut r = row![
+        let end_picker_btn = button(render_icon("calendar", 14.0, theme.fg_muted))
+            .padding([6, 7])
+            .style(style::icon_button(
+                theme,
+                draft
+                    .active_date_picker
+                    .is_some_and(|(t, _)| t == EditorDateTarget::End),
+            ))
+            .on_press(Message::EditorToggleDatePicker(EditorDateTarget::End));
+
+        let date_group = row![
             container(text("Ends").size(12.5).color(theme.fg_muted))
-                .width(Length::Fixed(52.0)),
+                .width(Length::Fixed(48.0)),
             button(render_icon("chevron_left", 13.0, theme.fg_muted))
                 .padding([6, 7])
                 .style(style::secondary_button(theme))
@@ -889,51 +991,49 @@ fn view_event_editor<'a>(
                     is_start: false,
                     delta_days: 1,
                 }),
-            button(render_icon("calendar", 14.0, theme.fg_muted))
-                .padding([6, 7])
-                .style(style::icon_button(
-                    theme,
-                    draft
-                        .active_date_picker
-                        .is_some_and(|(t, _)| t == EditorDateTarget::End),
-                ))
-                .on_press(Message::EditorToggleDatePicker(EditorDateTarget::End)),
+            style::tooltip(
+                theme,
+                end_picker_btn,
+                "Pick End Date",
+                tooltip::Position::Top,
+            ),
         ]
         .spacing(5)
         .align_y(Alignment::Center);
 
+        let mut r = row![date_group].spacing(10).align_y(Alignment::Center);
+
         if !draft.all_day {
-            r = r
-                .push(Space::new().width(6.0))
-                .push(
-                    button(render_icon("minus", 12.0, theme.fg_muted))
-                        .padding([6, 6])
-                        .style(style::secondary_button(theme))
-                        .on_press(Message::EditorStepTime {
-                            is_start: false,
-                            delta_minutes: -15,
-                        }),
-                )
-                .push(
-                    text_input("10:00", &draft.end_time_text)
-                        .on_input(Message::EditorEndTimeChanged)
-                        .padding([6, 8])
-                        .size(12.5)
-                        .font(style::mono_font())
-                        .width(Length::Fixed(70.0))
-                        .style(style::text_input_style(theme)),
-                )
-                .push(
-                    button(render_icon("plus", 12.0, theme.fg_muted))
-                        .padding([6, 6])
-                        .style(style::secondary_button(theme))
-                        .on_press(Message::EditorStepTime {
-                            is_start: false,
-                            delta_minutes: 15,
-                        }),
-                );
+            let time_group = row![
+                button(render_icon("minus", 12.0, theme.fg_muted))
+                    .padding([6, 6])
+                    .style(style::secondary_button(theme))
+                    .on_press(Message::EditorStepTime {
+                        is_start: false,
+                        delta_minutes: -15,
+                    }),
+                text_input(end_time_ph, &draft.end_time_text)
+                    .on_input(Message::EditorEndTimeChanged)
+                    .padding([6, 8])
+                    .size(12.5)
+                    .font(style::mono_font())
+                    .width(Length::Fixed(time_input_w))
+                    .style(style::text_input_style(theme)),
+                button(render_icon("plus", 12.0, theme.fg_muted))
+                    .padding([6, 6])
+                    .style(style::secondary_button(theme))
+                    .on_press(Message::EditorStepTime {
+                        is_start: false,
+                        delta_minutes: 15,
+                    }),
+            ]
+            .spacing(5)
+            .align_y(Alignment::Center);
+
+            r = r.push(time_group);
         }
-        r
+
+        r.wrap().vertical_spacing(6)
     };
 
     let mut schedule_col = column![all_day_row, start_row, end_row].spacing(8);
@@ -1005,7 +1105,7 @@ fn view_event_editor<'a>(
             ]
             .spacing(6)
             .align_y(Alignment::Center),
-            freq_row,
+            freq_row.wrap().vertical_spacing(5),
         ]
         .spacing(8);
 
@@ -1060,7 +1160,7 @@ fn view_event_editor<'a>(
                         .on_press(Message::EditorRecurrenceToggleWeekday(idx)),
                     );
                 }
-                rec_col = rec_col.push(days_row);
+                rec_col = rec_col.push(days_row.wrap().vertical_spacing(5));
             }
 
             let end_mode: u8 = match draft.recurrence.end {
@@ -1100,44 +1200,55 @@ fn view_event_editor<'a>(
             .align_y(Alignment::Center);
 
             if end_mode == 1 {
-                end_row = end_row
-                    .push(
-                        text_input("YYYY-MM-DD", &draft.until_date_text)
-                            .on_input(Message::EditorRecurrenceUntilChanged)
-                            .padding([5, 8])
-                            .size(12)
-                            .font(style::mono_font())
-                            .width(Length::Fixed(104.0))
-                            .style(style::text_input_style(theme)),
-                    )
-                    .push(
-                        button(render_icon("calendar", 13.0, theme.fg_muted))
-                            .padding([5, 6])
-                            .style(style::icon_button(
-                                theme,
-                                draft
-                                    .active_date_picker
-                                    .is_some_and(|(t, _)| t == EditorDateTarget::RecurrenceUntil),
-                            ))
-                            .on_press(Message::EditorToggleDatePicker(
-                                EditorDateTarget::RecurrenceUntil,
-                            )),
-                    );
+                let until_picker_btn = button(render_icon("calendar", 13.0, theme.fg_muted))
+                    .padding([5, 6])
+                    .style(style::icon_button(
+                        theme,
+                        draft
+                            .active_date_picker
+                            .is_some_and(|(t, _)| t == EditorDateTarget::RecurrenceUntil),
+                    ))
+                    .on_press(Message::EditorToggleDatePicker(
+                        EditorDateTarget::RecurrenceUntil,
+                    ));
+
+                let until_group = row![
+                    text_input("YYYY-MM-DD", &draft.until_date_text)
+                        .on_input(Message::EditorRecurrenceUntilChanged)
+                        .padding([5, 8])
+                        .size(12)
+                        .font(style::mono_font())
+                        .width(Length::Fixed(104.0))
+                        .style(style::text_input_style(theme)),
+                    style::tooltip(
+                        theme,
+                        until_picker_btn,
+                        "Pick End Date",
+                        tooltip::Position::Top,
+                    ),
+                ]
+                .spacing(5)
+                .align_y(Alignment::Center);
+
+                end_row = end_row.push(until_group);
             } else if end_mode == 2 {
-                end_row = end_row
-                    .push(
-                        text_input("10", &draft.count_text)
-                            .on_input(Message::EditorRecurrenceCountChanged)
-                            .padding([5, 8])
-                            .size(12)
-                            .font(style::mono_font())
-                            .width(Length::Fixed(56.0))
-                            .style(style::text_input_style(theme)),
-                    )
-                    .push(text("times").size(12).color(theme.fg_muted));
+                let count_group = row![
+                    text_input("10", &draft.count_text)
+                        .on_input(Message::EditorRecurrenceCountChanged)
+                        .padding([5, 8])
+                        .size(12)
+                        .font(style::mono_font())
+                        .width(Length::Fixed(56.0))
+                        .style(style::text_input_style(theme)),
+                    text("times").size(12).color(theme.fg_muted),
+                ]
+                .spacing(5)
+                .align_y(Alignment::Center);
+
+                end_row = end_row.push(count_group);
             }
 
-            rec_col = rec_col.push(end_row);
+            rec_col = rec_col.push(end_row.wrap().vertical_spacing(6));
         }
 
         form = form.push(
@@ -1198,7 +1309,7 @@ fn view_event_editor<'a>(
                 ]
                 .spacing(6)
                 .align_y(Alignment::Center),
-                rem_chips,
+                rem_chips.wrap().vertical_spacing(5),
             ]
             .spacing(8),
         )
@@ -1271,7 +1382,10 @@ fn view_event_editor<'a>(
                         .style(style::secondary_button(theme))
                         .on_press(Message::EditorCancelDelete),
                 ]
-                .spacing(6),
+                .spacing(6)
+                .align_y(Alignment::Center)
+                .wrap()
+                .vertical_spacing(6),
             ]
             .spacing(8);
 
@@ -1324,6 +1438,11 @@ fn view_calendar_manager<'a>(
     calendars: &'a [CalendarMeta],
     prefs: &'a UserPrefs,
 ) -> Element<'a> {
+    let close_mgr_btn = button(render_icon("close", 15.0, theme.fg_muted))
+        .padding([6, 7])
+        .style(style::icon_button(theme, false))
+        .on_press(Message::CloseOverlay);
+
     let header = row![
         text("Manage Calendars")
             .size(16)
@@ -1341,10 +1460,12 @@ fn view_calendar_manager<'a>(
         .padding([7, 12])
         .style(style::primary_button(theme))
         .on_press(Message::CalendarManagerStartCreate),
-        button(render_icon("close", 15.0, theme.fg_muted))
-            .padding([6, 7])
-            .style(style::icon_button(theme, false))
-            .on_press(Message::CloseOverlay),
+        style::tooltip(
+            theme,
+            close_mgr_btn,
+            "Close (Esc)",
+            tooltip::Position::Bottom,
+        ),
     ]
     .spacing(8)
     .align_y(Alignment::Center);
@@ -1382,23 +1503,41 @@ fn view_calendar_manager<'a>(
         for token in SemanticToken::ALL {
             let color = theme.resolve_token(token);
             let selected = form.color == CalendarColor::Token(token);
-            token_row = token_row.push(
-                button(
-                    container(if selected {
-                        render_icon("check", 12.0, contrasting_fg(color))
-                    } else {
-                        Space::new().width(12).height(12).into()
-                    })
-                    .width(Length::Fixed(24.0))
-                    .height(Length::Fixed(24.0))
-                    .align_x(Alignment::Center)
-                    .align_y(Alignment::Center),
-                )
-                .padding(0)
-                .style(style::swatch_button(theme, color, selected))
-                .on_press(Message::CalendarManagerSelectToken(token)),
-            );
+            let swatch_btn = button(
+                container(if selected {
+                    render_icon("check", 12.0, contrasting_fg(color))
+                } else {
+                    Space::new().width(12).height(12).into()
+                })
+                .width(Length::Fixed(24.0))
+                .height(Length::Fixed(24.0))
+                .align_x(Alignment::Center)
+                .align_y(Alignment::Center),
+            )
+            .padding(0)
+            .style(style::swatch_button(theme, color, selected))
+            .on_press(Message::CalendarManagerSelectToken(token));
+
+            token_row = token_row.push(style::tooltip(
+                theme,
+                swatch_btn,
+                format!("{} · Dynamic Matugen palette", token.label()),
+                tooltip::Position::Top,
+            ));
         }
+
+        let hex_group = row![
+            text("Custom Hex:").size(12).color(theme.fg_muted),
+            text_input("#afc6ff", &form.custom_hex_text)
+                .on_input(Message::CalendarManagerHexChanged)
+                .padding([5, 8])
+                .size(12)
+                .font(style::mono_font())
+                .width(Length::Fixed(96.0))
+                .style(style::text_input_style(theme)),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center);
 
         let form_box = container(
             column![
@@ -1417,17 +1556,11 @@ fn view_calendar_manager<'a>(
                     token_row,
                 ]
                 .spacing(10)
-                .align_y(Alignment::Center),
+                .align_y(Alignment::Center)
+                .wrap()
+                .vertical_spacing(6),
                 row![
-                    text("Custom Hex:").size(12).color(theme.fg_muted),
-                    text_input("#afc6ff", &form.custom_hex_text)
-                        .on_input(Message::CalendarManagerHexChanged)
-                        .padding([5, 8])
-                        .size(12)
-                        .font(style::mono_font())
-                        .width(Length::Fixed(96.0))
-                        .style(style::text_input_style(theme)),
-                    Space::new().width(Length::Fill),
+                    hex_group,
                     button(
                         row![
                             render_icon(
@@ -1452,8 +1585,10 @@ fn view_calendar_manager<'a>(
                     .style(style::toggle_chip(theme, form.make_default))
                     .on_press(Message::CalendarManagerToggleDefault),
                 ]
-                .spacing(8)
-                .align_y(Alignment::Center),
+                .spacing(10)
+                .align_y(Alignment::Center)
+                .wrap()
+                .vertical_spacing(6),
                 row![
                     Space::new().width(Length::Fill),
                     button(text("Cancel").size(12.5))
@@ -1530,41 +1665,65 @@ fn view_calendar_manager<'a>(
                         .on_press(Message::CalendarManagerConfirmDelete(cal.id.clone())),
                 );
         } else {
+            let vis_btn = button(render_icon(
+                if cal.visible { "eye" } else { "eye_off" },
+                14.0,
+                if cal.visible {
+                    theme.fg
+                } else {
+                    theme.muted_day_fg()
+                },
+            ))
+            .padding([5, 6])
+            .style(style::icon_button(theme, false))
+            .on_press(Message::ToggleCalendarVisible(cal.id.clone()));
+
+            let exp_btn = button(render_icon("export", 14.0, theme.fg_muted))
+                .padding([5, 6])
+                .style(style::icon_button(theme, false))
+                .on_press(Message::CalendarManagerExport(cal.id.clone()));
+
+            let edit_btn = button(render_icon("edit", 14.0, theme.fg))
+                .padding([5, 6])
+                .style(style::icon_button(theme, false))
+                .on_press(Message::CalendarManagerStartEdit(cal.id.clone()));
+
             row_controls = row_controls
-                .push(
-                    button(render_icon(
-                        if cal.visible { "eye" } else { "eye_off" },
-                        14.0,
-                        if cal.visible {
-                            theme.fg
-                        } else {
-                            theme.muted_day_fg()
-                        },
-                    ))
-                    .padding([5, 6])
-                    .style(style::icon_button(theme, false))
-                    .on_press(Message::ToggleCalendarVisible(cal.id.clone())),
-                )
-                .push(
-                    button(render_icon("export", 14.0, theme.fg_muted))
-                        .padding([5, 6])
-                        .style(style::icon_button(theme, false))
-                        .on_press(Message::CalendarManagerExport(cal.id.clone())),
-                )
-                .push(
-                    button(render_icon("edit", 14.0, theme.fg))
-                        .padding([5, 6])
-                        .style(style::icon_button(theme, false))
-                        .on_press(Message::CalendarManagerStartEdit(cal.id.clone())),
-                );
+                .push(style::tooltip(
+                    theme,
+                    vis_btn,
+                    if cal.visible {
+                        "Hide Calendar"
+                    } else {
+                        "Show Calendar"
+                    },
+                    tooltip::Position::Top,
+                ))
+                .push(style::tooltip(
+                    theme,
+                    exp_btn,
+                    "Export .ics to Downloads",
+                    tooltip::Position::Top,
+                ))
+                .push(style::tooltip(
+                    theme,
+                    edit_btn,
+                    "Edit Calendar",
+                    tooltip::Position::Top,
+                ));
 
             if calendars.len() > 1 {
-                row_controls = row_controls.push(
-                    button(render_icon("trash", 14.0, theme.danger))
-                        .padding([5, 6])
-                        .style(style::icon_button(theme, false))
-                        .on_press(Message::CalendarManagerRequestDelete(cal.id.clone())),
-                );
+                let del_btn = button(render_icon("trash", 14.0, theme.danger))
+                    .padding([5, 6])
+                    .style(style::icon_button(theme, false))
+                    .on_press(Message::CalendarManagerRequestDelete(cal.id.clone()));
+
+                row_controls = row_controls.push(style::tooltip(
+                    theme,
+                    del_btn,
+                    "Delete Calendar",
+                    tooltip::Position::Top,
+                ));
             }
         }
 
@@ -1646,14 +1805,13 @@ fn view_calendar_manager<'a>(
 
     content = content.push(import_box);
 
-    // Compact Display Preferences strip.
+    // Compact Display Preferences strip (wraps cleanly at narrow window widths).
     let prefs_box = container(
         row![
             text("Display")
                 .size(13)
                 .font(style::bold_font())
                 .color(theme.fg),
-            Space::new().width(Length::Fill),
             button(
                 text(if prefs.use_24h_time {
                     "24-Hour Clock"
@@ -1699,8 +1857,10 @@ fn view_calendar_manager<'a>(
             .style(style::toggle_chip(theme, prefs.show_week_numbers))
             .on_press(Message::TogglePrefShowWeekNumbers),
         ]
-        .spacing(7)
-        .align_y(Alignment::Center),
+        .spacing(8)
+        .align_y(Alignment::Center)
+        .wrap()
+        .vertical_spacing(6),
     )
     .width(Length::Fill)
     .padding([10, 12])
@@ -1755,9 +1915,14 @@ pub fn view_active_overlay<'a>(
             now,
             prefs.use_24h_time,
         ),
-        Overlay::EventEditor(draft) => {
-            view_event_editor(theme, draft, calendars, today, prefs.week_start_monday)
-        }
+        Overlay::EventEditor(draft) => view_event_editor(
+            theme,
+            draft,
+            calendars,
+            today,
+            prefs.week_start_monday,
+            prefs.use_24h_time,
+        ),
         Overlay::CalendarManager(state) => view_calendar_manager(theme, state, calendars, prefs),
     }
 }
@@ -1832,18 +1997,40 @@ pub fn view_search_dropdown<'a>(
         .style(style::card_surface(theme, 12.0)),
     );
 
-    container(card)
+    let dismiss_backdrop = mouse_area(
+        container(Space::new().width(Length::Fill).height(Length::Fill))
+            .width(Length::Fill)
+            .height(Length::Fill),
+    )
+    .on_press(Message::ClearSearch);
+
+    let card_layer = container(card)
         .width(Length::Fill)
         .height(Length::Fill)
         .padding(Padding {
-            top: 56.0,
+            top: 4.0,
             right: 16.0,
             bottom: 16.0,
             left: 16.0,
         })
         .align_x(Alignment::End)
-        .align_y(Alignment::Start)
-        .into()
+        .align_y(Alignment::Start);
+
+    let below_header = Stack::new()
+        .push(dismiss_backdrop)
+        .push(card_layer)
+        .width(Length::Fill)
+        .height(Length::Fill);
+
+    column![
+        Space::new()
+            .width(Length::Fill)
+            .height(Length::Fixed(HEADER_HEIGHT)),
+        below_header,
+    ]
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
 }
 
 /// Full-window drag-and-drop overlay displayed while hovering `.ics` file(s).
@@ -1907,23 +2094,28 @@ pub fn view_toast<'a>(theme: AppTheme, toast: &'a ToastNotice) -> Element<'a> {
                         .on_press(Message::UndoDelete),
                 );
             }
-            ToastAction::JumpTo { date, key } => {
+            ToastAction::JumpTo { date, occurrence } => {
                 content = content.push(
                     button(text("View").size(12).font(style::bold_font()))
                         .padding([4, 10])
                         .style(style::toast_action_button(theme))
-                        .on_press(Message::ToastJump(*date, key.clone())),
+                        .on_press(Message::ToastJump(*date, occurrence.clone())),
                 );
             }
         }
     }
 
-    content = content.push(
-        button(render_icon("close", 13.0, theme.fg_muted))
-            .padding([4, 5])
-            .style(style::icon_button(theme, false))
-            .on_press(Message::DismissToast(toast.id)),
-    );
+    let dismiss_btn = button(render_icon("close", 13.0, theme.fg_muted))
+        .padding([4, 5])
+        .style(style::icon_button(theme, false))
+        .on_press(Message::DismissToast(toast.id));
+
+    content = content.push(style::tooltip(
+        theme,
+        dismiss_btn,
+        "Dismiss",
+        tooltip::Position::Top,
+    ));
 
     let card = opaque(
         container(content)

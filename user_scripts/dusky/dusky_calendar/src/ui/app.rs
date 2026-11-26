@@ -9,8 +9,8 @@ use crate::layout::{
 };
 use crate::model::{
     CalendarColor, EditScope, Event, EventKey, EventOccurrence, EventTime, RecurrenceEnd,
-    RecurrenceFreq, RecurrenceRule, expand_events_in_range, format_reminder_minutes,
-    is_safe_http_url, local_timezone_name, resolve_local_datetime,
+    RecurrenceFreq, RecurrenceRule, expand_events_in_range, format_clock_time,
+    format_reminder_minutes, is_safe_http_url, local_timezone_name, resolve_local_datetime,
 };
 use crate::storage::CalendarStore;
 use crate::theme::{AppTheme, SemanticToken, ThemeStamp};
@@ -98,13 +98,17 @@ fn parse_hm(raw: &str) -> Option<NaiveTime> {
     if let Ok(t) = NaiveTime::parse_from_str(trimmed, "%H:%M") {
         return Some(t);
     }
-    if let Ok(t) = NaiveTime::parse_from_str(trimmed, "%-H:%M") {
-        return Some(t);
-    }
-    if let Ok(t) = NaiveTime::parse_from_str(trimmed, "%I:%M %p") {
-        return Some(t);
+    let upper = trimmed.to_ascii_uppercase();
+    for fmt in ["%I:%M %p", "%I:%M%p", "%I %p", "%I%p"] {
+        if let Ok(t) = NaiveTime::parse_from_str(&upper, fmt) {
+            return Some(t);
+        }
     }
     None
+}
+
+fn format_editor_time(time: NaiveTime, use_24h: bool) -> String {
+    format_clock_time(time, use_24h)
 }
 
 fn parse_ymd(raw: &str) -> Option<NaiveDate> {
@@ -278,7 +282,8 @@ impl CalendarApp {
     }
 
     fn today_enabled(&self) -> bool {
-        self.active_date != self.today
+        self.effective_view() == ViewMode::Week
+            || self.active_date != self.today
             || self.mini_calendar_month != first_of_month(self.today)
     }
 
@@ -637,7 +642,7 @@ impl CalendarApp {
                             10,
                             Some(ToastAction::JumpTo {
                                 date: occ.start_date,
-                                key: Some(occ.event_key.clone()),
+                                occurrence: Some(occ.clone()),
                             }),
                         );
                     }
@@ -657,17 +662,24 @@ impl CalendarApp {
         } else {
             (end_date, start_date)
         };
+        let use_24h = self.store.prefs.use_24h_time;
         let (all_day, start_time, end_time) = match time_range {
             Some((start_mins, end_mins)) => {
                 let s = start_mins.min(1438);
                 let e = end_mins.max(s + 1).min(1439);
+                let st = NaiveTime::from_hms_opt(s / 60, s % 60, 0).expect("valid start time");
+                let et = NaiveTime::from_hms_opt(e / 60, e % 60, 0).expect("valid end time");
                 (
                     false,
-                    format!("{:02}:{:02}", s / 60, s % 60),
-                    format!("{:02}:{:02}", e / 60, e % 60),
+                    format_editor_time(st, use_24h),
+                    format_editor_time(et, use_24h),
                 )
             }
-            None => (true, "09:00".to_string(), "10:00".to_string()),
+            None => (
+                true,
+                format_editor_time(NaiveTime::from_hms_opt(9, 0, 0).expect("time"), use_24h),
+                format_editor_time(NaiveTime::from_hms_opt(10, 0, 0).expect("time"), use_24h),
+            ),
         };
 
         self.overlay = Some(Overlay::QuickAdd(QuickAddDraft {
@@ -702,6 +714,9 @@ impl CalendarApp {
         let start_h = hour.unwrap_or(9).min(23);
         let end_h = (start_h + 1).min(23);
         let end_m = if start_h == 23 { 59 } else { 0 };
+        let use_24h = self.store.prefs.use_24h_time;
+        let start_t = NaiveTime::from_hms_opt(start_h, 0, 0).expect("valid start time");
+        let end_t = NaiveTime::from_hms_opt(end_h, end_m, 0).expect("valid end time");
 
         let draft = EventEditorDraft {
             original_calendar_id: None,
@@ -717,8 +732,8 @@ impl CalendarApp {
             start_date_text: date.format("%Y-%m-%d").to_string(),
             end_date: date,
             end_date_text: date.format("%Y-%m-%d").to_string(),
-            start_time_text: format!("{start_h:02}:00"),
-            end_time_text: format!("{end_h:02}:{end_m:02}"),
+            start_time_text: format_editor_time(start_t, use_24h),
+            end_time_text: format_editor_time(end_t, use_24h),
             recurrence: RecurrenceRule::NONE,
             interval_text: "1".to_string(),
             until_date_text: (date + TimeDelta::days(30)).format("%Y-%m-%d").to_string(),
@@ -777,6 +792,7 @@ impl CalendarApp {
             EditScope::All
         };
 
+        let use_24h = self.store.prefs.use_24h_time;
         let (all_day, start_date, end_date, start_time_text, end_time_text) =
             if edit_scope == EditScope::All {
                 if let Some(m) = master.as_ref() {
@@ -785,16 +801,16 @@ impl CalendarApp {
                         m.time.is_all_day(),
                         s_date,
                         e_date,
-                        m.time.start_local().format("%H:%M").to_string(),
-                        m.time.end_local().format("%H:%M").to_string(),
+                        format_editor_time(m.time.start_local().time(), use_24h),
+                        format_editor_time(m.time.end_local().time(), use_24h),
                     )
                 } else {
                     (
                         occ.is_all_day,
                         occ.start_date,
                         occ.end_date,
-                        occ.start_local.format("%H:%M").to_string(),
-                        occ.end_local.format("%H:%M").to_string(),
+                        format_editor_time(occ.start_local.time(), use_24h),
+                        format_editor_time(occ.end_local.time(), use_24h),
                     )
                 }
             } else {
@@ -802,8 +818,8 @@ impl CalendarApp {
                     occ.is_all_day,
                     occ.start_date,
                     occ.end_date,
-                    occ.start_local.format("%H:%M").to_string(),
-                    occ.end_local.format("%H:%M").to_string(),
+                    format_editor_time(occ.start_local.time(), use_24h),
+                    format_editor_time(occ.end_local.time(), use_24h),
                 )
             };
 
@@ -855,12 +871,17 @@ impl CalendarApp {
             let end_excl = end_date.succ_opt().unwrap_or(end_date);
             Event::new_all_day(draft.calendar_id.clone(), title, draft.start_date, end_excl)
         } else {
+            let time_hint = if self.store.prefs.use_24h_time {
+                "HH:MM (e.g. 09:30)"
+            } else {
+                "H:MM AM/PM (e.g. 9:30 AM)"
+            };
             let Some(start_t) = parse_hm(&draft.start_time) else {
-                draft.error = Some("Start time must be HH:MM (e.g. 09:30).".to_string());
+                draft.error = Some(format!("Start time must be {time_hint}."));
                 return;
             };
             let Some(end_t) = parse_hm(&draft.end_time) else {
-                draft.error = Some("End time must be HH:MM (e.g. 10:30).".to_string());
+                draft.error = Some(format!("End time must be {time_hint}."));
                 return;
             };
             let start_dt = draft.start_date.and_time(start_t);
@@ -908,12 +929,17 @@ impl CalendarApp {
                 end: end_date.succ_opt().unwrap_or(end_date),
             }
         } else {
+            let time_hint = if self.store.prefs.use_24h_time {
+                "HH:MM (e.g. 09:30)"
+            } else {
+                "H:MM AM/PM (e.g. 9:30 AM)"
+            };
             let Some(start_t) = parse_hm(&draft.start_time_text) else {
-                draft.error = Some("Start time must be HH:MM (24-hour).".to_string());
+                draft.error = Some(format!("Start time must be {time_hint}."));
                 return;
             };
             let Some(end_t) = parse_hm(&draft.end_time_text) else {
-                draft.error = Some("End time must be HH:MM (24-hour).".to_string());
+                draft.error = Some(format!("End time must be {time_hint}."));
                 return;
             };
             let start_naive = start_date.and_time(start_t);
@@ -1364,6 +1390,11 @@ impl CalendarApp {
                 self.rebuild_search_results();
                 self.rebuild_projections();
             }
+            Message::SearchSubmit => {
+                if let Some(top) = self.search_results.first().cloned() {
+                    return self.update(Message::SelectSearchResult(top));
+                }
+            }
             Message::SelectSearchResult(occ) => {
                 self.active_date = occ.start_date;
                 self.mini_calendar_month = first_of_month(occ.start_date);
@@ -1742,6 +1773,7 @@ impl CalendarApp {
                 return self.open_new_editor(date, hour);
             }
             Message::EditorScopeChanged(scope) => {
+                let use_24h = self.store.prefs.use_24h_time;
                 let master_schedule = if scope == EditScope::All {
                     if let Some(Overlay::EventEditor(draft)) = &self.overlay {
                         if let (Some(orig_cal), Some(orig_key)) =
@@ -1755,8 +1787,8 @@ impl CalendarApp {
                                         m.time.is_all_day(),
                                         s_date,
                                         e_date,
-                                        m.time.start_local().format("%H:%M").to_string(),
-                                        m.time.end_local().format("%H:%M").to_string(),
+                                        format_editor_time(m.time.start_local().time(), use_24h),
+                                        format_editor_time(m.time.end_local().time(), use_24h),
                                     )
                                 })
                         } else {
@@ -1797,8 +1829,10 @@ impl CalendarApp {
                                     occ.start_date.format("%Y-%m-%d").to_string();
                                 draft.end_date = occ.end_date;
                                 draft.end_date_text = occ.end_date.format("%Y-%m-%d").to_string();
-                                draft.start_time_text = occ.start_local.format("%H:%M").to_string();
-                                draft.end_time_text = occ.end_local.format("%H:%M").to_string();
+                                draft.start_time_text =
+                                    format_editor_time(occ.start_local.time(), use_24h);
+                                draft.end_time_text =
+                                    format_editor_time(occ.end_local.time(), use_24h);
                             }
                         }
                     }
@@ -1881,6 +1915,7 @@ impl CalendarApp {
                 is_start,
                 delta_minutes,
             } => {
+                let use_24h = self.store.prefs.use_24h_time;
                 if let Some(Overlay::EventEditor(draft)) = self.overlay.as_mut() {
                     let cur_start = parse_hm(&draft.start_time_text)
                         .unwrap_or_else(|| NaiveTime::from_hms_opt(9, 0, 0).expect("time"));
@@ -1895,10 +1930,10 @@ impl CalendarApp {
                         let new_end_dt = new_start_dt + dur;
                         draft.start_date = new_start_dt.date();
                         draft.start_date_text = draft.start_date.format("%Y-%m-%d").to_string();
-                        draft.start_time_text = new_start_dt.format("%H:%M").to_string();
+                        draft.start_time_text = format_editor_time(new_start_dt.time(), use_24h);
                         draft.end_date = new_end_dt.date();
                         draft.end_date_text = draft.end_date.format("%Y-%m-%d").to_string();
-                        draft.end_time_text = new_end_dt.format("%H:%M").to_string();
+                        draft.end_time_text = format_editor_time(new_end_dt.time(), use_24h);
                     } else {
                         let start_dt = draft.start_date.and_time(cur_start);
                         let new_end_dt = (draft.end_date.and_time(cur_end)
@@ -1906,7 +1941,7 @@ impl CalendarApp {
                         .max(start_dt + TimeDelta::minutes(15));
                         draft.end_date = new_end_dt.date();
                         draft.end_date_text = draft.end_date.format("%Y-%m-%d").to_string();
-                        draft.end_time_text = new_end_dt.format("%H:%M").to_string();
+                        draft.end_time_text = format_editor_time(new_end_dt.time(), use_24h);
                     }
                     draft.error = None;
                 }
@@ -2097,11 +2132,17 @@ impl CalendarApp {
                     self.rebuild_projections();
                 }
             }
-            Message::ToastJump(date, _key) => {
+            Message::ToastJump(date, occurrence) => {
                 self.toast = None;
                 self.active_date = date;
                 self.mini_calendar_month = first_of_month(date);
                 self.rebuild_projections();
+                if let Some(occ) = occurrence {
+                    self.overlay = Some(Overlay::EventPreview {
+                        occurrence: occ,
+                        confirm_delete: false,
+                    });
+                }
             }
             Message::WindowResized(size) => {
                 if !size.width.is_finite()
@@ -2280,6 +2321,7 @@ impl CalendarApp {
             &self.search_query,
         );
 
+        let is_empty_calendar = self.store.total_event_count() == 0;
         let main_view: Element<'_> = match active_view {
             ViewMode::Month => view_month(
                 self.theme,
@@ -2289,6 +2331,7 @@ impl CalendarApp {
                 self.store.prefs.week_start_monday,
                 self.store.prefs.show_week_numbers,
                 self.store.prefs.use_24h_time,
+                is_empty_calendar,
                 &self.store.calendars,
             ),
             ViewMode::Week => view_week(
@@ -2300,6 +2343,7 @@ impl CalendarApp {
                 self.window_size.height,
                 self.week_all_day_expanded,
                 self.store.prefs.use_24h_time,
+                is_empty_calendar,
                 &self.store.calendars,
             ),
             ViewMode::Agenda => view_agenda(

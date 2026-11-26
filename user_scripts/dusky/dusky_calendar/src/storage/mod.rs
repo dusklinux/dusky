@@ -493,6 +493,10 @@ impl CalendarStore {
             .unwrap_or(&[])
     }
 
+    pub fn total_event_count(&self) -> usize {
+        self.events_by_calendar.values().map(Vec::len).sum()
+    }
+
     pub fn visible_events(&self) -> Vec<Event> {
         let mut out = Vec::new();
         for cal in &self.calendars {

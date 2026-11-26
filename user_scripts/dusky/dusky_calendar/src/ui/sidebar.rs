@@ -11,7 +11,7 @@ use crate::ui::style;
 use crate::ui::{Element, Message, SIDEBAR_WIDTH};
 use chrono::{Datelike, NaiveDate, TimeDelta, Weekday};
 use iced_core::{Alignment, Length, Padding};
-use iced_widget::{Space, Stack, button, column, container, row, scrollable, text};
+use iced_widget::{Space, Stack, button, column, container, row, scrollable, text, tooltip};
 
 fn month_short_name(month: u32) -> &'static str {
     match month {
@@ -83,11 +83,22 @@ pub fn view_date_chooser<'a>(
 
     // Header row: either split Month + Year steppers (sidebar) or combined Month Year (narrow/picker).
     let nav_header: Element<'a> = if split_month_year {
+        let month_prev_btn = button(render_icon("chevron_left", 13.0, theme.fg_muted))
+            .padding([4, 5])
+            .style(style::icon_button(theme, false))
+            .on_press(on_shift_month(-1));
+        let month_next_btn = button(render_icon("chevron_right", 13.0, theme.fg_muted))
+            .padding([4, 5])
+            .style(style::icon_button(theme, false))
+            .on_press(on_shift_month(1));
+
         let month_nav = row![
-            button(render_icon("chevron_left", 13.0, theme.fg_muted))
-                .padding([4, 5])
-                .style(style::icon_button(theme, false))
-                .on_press(on_shift_month(-1)),
+            style::tooltip(
+                theme,
+                month_prev_btn,
+                "Previous Month",
+                tooltip::Position::Bottom,
+            ),
             container(
                 text(month_short_name(month))
                     .size(13)
@@ -96,10 +107,12 @@ pub fn view_date_chooser<'a>(
             )
             .width(Length::Fill)
             .align_x(Alignment::Center),
-            button(render_icon("chevron_right", 13.0, theme.fg_muted))
-                .padding([4, 5])
-                .style(style::icon_button(theme, false))
-                .on_press(on_shift_month(1)),
+            style::tooltip(
+                theme,
+                month_next_btn,
+                "Next Month",
+                tooltip::Position::Bottom,
+            ),
         ]
         .spacing(2)
         .align_y(Alignment::Center)
@@ -108,11 +121,22 @@ pub fn view_date_chooser<'a>(
         let year_prev = on_shift_year.map(|f| f(-1)).unwrap_or_else(|| on_shift_month(-12));
         let year_next = on_shift_year.map(|f| f(1)).unwrap_or_else(|| on_shift_month(12));
 
+        let year_prev_btn = button(render_icon("chevron_left", 13.0, theme.fg_muted))
+            .padding([4, 5])
+            .style(style::icon_button(theme, false))
+            .on_press(year_prev);
+        let year_next_btn = button(render_icon("chevron_right", 13.0, theme.fg_muted))
+            .padding([4, 5])
+            .style(style::icon_button(theme, false))
+            .on_press(year_next);
+
         let year_nav = row![
-            button(render_icon("chevron_left", 13.0, theme.fg_muted))
-                .padding([4, 5])
-                .style(style::icon_button(theme, false))
-                .on_press(year_prev),
+            style::tooltip(
+                theme,
+                year_prev_btn,
+                "Previous Year",
+                tooltip::Position::Bottom,
+            ),
             container(
                 text(format!("{year}"))
                     .size(13)
@@ -121,10 +145,12 @@ pub fn view_date_chooser<'a>(
             )
             .width(Length::Fill)
             .align_x(Alignment::Center),
-            button(render_icon("chevron_right", 13.0, theme.fg_muted))
-                .padding([4, 5])
-                .style(style::icon_button(theme, false))
-                .on_press(year_next),
+            style::tooltip(
+                theme,
+                year_next_btn,
+                "Next Year",
+                tooltip::Position::Bottom,
+            ),
         ]
         .spacing(2)
         .align_y(Alignment::Center)
@@ -136,11 +162,17 @@ pub fn view_date_chooser<'a>(
             .width(Length::Fill)
             .into()
     } else {
+        let prev_btn = button(render_icon("chevron_left", 14.0, theme.fg_muted))
+            .padding([4, 6])
+            .style(style::icon_button(theme, false))
+            .on_press(on_shift_month(-1));
+        let next_btn = button(render_icon("chevron_right", 14.0, theme.fg_muted))
+            .padding([4, 6])
+            .style(style::icon_button(theme, false))
+            .on_press(on_shift_month(1));
+
         row![
-            button(render_icon("chevron_left", 14.0, theme.fg_muted))
-                .padding([4, 6])
-                .style(style::icon_button(theme, false))
-                .on_press(on_shift_month(-1)),
+            style::tooltip(theme, prev_btn, "Previous Month", tooltip::Position::Bottom),
             container(
                 text(format!("{} {}", month_full_name(month), year))
                     .size(13.5)
@@ -149,10 +181,7 @@ pub fn view_date_chooser<'a>(
             )
             .width(Length::Fill)
             .align_x(Alignment::Center),
-            button(render_icon("chevron_right", 14.0, theme.fg_muted))
-                .padding([4, 6])
-                .style(style::icon_button(theme, false))
-                .on_press(on_shift_month(1)),
+            style::tooltip(theme, next_btn, "Next Month", tooltip::Position::Bottom),
         ]
         .spacing(4)
         .align_y(Alignment::Center)
@@ -203,7 +232,7 @@ pub fn view_date_chooser<'a>(
                     .size(10.5)
                     .line_height(1.0)
                     .font(style::mono_font())
-                    .color(mix(theme.sidebar_bg, theme.fg_muted, 0.72)),
+                    .color(mix(theme.chrome_bg(), theme.fg_muted, 0.72)),
             )
             .width(Length::Fixed(22.0))
             .height(Length::Fixed(24.0))
@@ -359,20 +388,15 @@ pub fn view_sidebar<'a>(
         .height(Length::Fixed(1.0))
         .style(style::hairline_rule(theme));
 
-    let cal_header = row![
+    let cal_header = container(
         text("Calendars")
             .size(12.5)
             .font(style::bold_font())
             .color(theme.fg_muted),
-        Space::new().width(Length::Fill),
-        button(render_icon("calendar", 14.0, theme.fg_muted))
-            .padding([4, 6])
-            .style(style::icon_button(theme, false))
-            .on_press(Message::OpenCalendarManager),
-    ]
-    .align_y(Alignment::Center)
+    )
+    .width(Length::Fill)
     .padding(Padding {
-        top: 10.0,
+        top: 12.0,
         right: 12.0,
         bottom: 4.0,
         left: 14.0,
@@ -427,30 +451,45 @@ pub fn view_sidebar<'a>(
             .style(style::subtle_row_button(theme, false))
             .on_press(Message::ToggleCalendarVisible(cal.id.clone()));
 
-        cal_rows = cal_rows.push(item_btn);
+        let cal_tip = if cal.visible {
+            format!("Hide \"{}\"", cal.name)
+        } else {
+            format!("Show \"{}\"", cal.name)
+        };
+        cal_rows = cal_rows.push(style::tooltip(
+            theme,
+            item_btn,
+            cal_tip,
+            tooltip::Position::Right,
+        ));
     }
 
     let cal_scroll = scrollable(cal_rows)
         .height(Length::Fill)
         .style(style::clean_scrollable(theme));
 
-    let manage_footer = container(
-        button(
-            row![
-                render_icon("plus", 14.0, theme.fg),
-                text("Manage Calendars")
-                    .size(13)
-                    .font(style::bold_font())
-                    .color(theme.fg),
-            ]
-            .spacing(7)
-            .align_y(Alignment::Center),
-        )
-        .width(Length::Fill)
-        .padding([8, 10])
-        .style(style::secondary_button(theme))
-        .on_press(Message::OpenCalendarManager),
+    let manage_btn = button(
+        row![
+            render_icon("plus", 14.0, theme.fg),
+            text("Manage Calendars")
+                .size(13)
+                .font(style::bold_font())
+                .color(theme.fg),
+        ]
+        .spacing(7)
+        .align_y(Alignment::Center),
     )
+    .width(Length::Fill)
+    .padding([8, 10])
+    .style(style::secondary_button(theme))
+    .on_press(Message::OpenCalendarManager);
+
+    let manage_footer = container(style::tooltip(
+        theme,
+        manage_btn,
+        "Manage Calendars, Import & Preferences (F8)",
+        tooltip::Position::Top,
+    ))
     .padding(Padding {
         top: 8.0,
         right: 10.0,

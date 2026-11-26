@@ -28,8 +28,8 @@ use std::sync::Mutex;
 use std::time::Duration;
 use ui::app::CalendarApp;
 
-const DEFAULT_WIDTH: f32 = 800.0;
-const DEFAULT_HEIGHT: f32 = 600.0;
+const DEFAULT_WIDTH: f32 = 1060.0;
+const DEFAULT_HEIGHT: f32 = 680.0;
 const MIN_WIDTH: f32 = 360.0;
 const MIN_HEIGHT: f32 = 600.0;
 

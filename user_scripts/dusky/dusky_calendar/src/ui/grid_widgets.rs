@@ -13,7 +13,7 @@ use crate::renderer::Renderer;
 use crate::theme::{AppTheme, mix};
 use crate::ui::style;
 use crate::ui::Element;
-use chrono::{NaiveDate, NaiveTime};
+use chrono::{Datelike, NaiveDate, NaiveTime};
 use iced_core::alignment;
 use iced_core::text::{self, Renderer as _};
 use iced_core::widget::tree::{self, Tree};
@@ -83,6 +83,7 @@ pub struct MonthCellMeta {
 #[derive(Default)]
 struct MonthGridState {
     hovered_cell: Option<(usize, usize)>,
+    hovered_add: Option<(usize, usize)>,
     hovered_overflow: Option<(usize, usize)>,
     drag_anchor: Option<(usize, usize)>,
     drag_current: Option<(usize, usize)>,
@@ -239,6 +240,39 @@ impl<'a, Message> MonthGrid<'a, Message> {
         }
     }
 
+    fn add_badge_rect(
+        &self,
+        bounds: Rectangle,
+        row_tops: &[f32; 7],
+        row: usize,
+        col: usize,
+    ) -> Option<Rectangle> {
+        let gutter = self.gutter_width();
+        let col_w = ((bounds.width - gutter) / 7.0).max(1.0);
+        if col_w < 46.0 || (self.cells[row][col].date.day() == 1 && col_w < 74.0) {
+            return None;
+        }
+        let row_top = bounds.y + row_tops[row];
+        let size = 19.0;
+        Some(Rectangle {
+            x: bounds.x + gutter + ((col + 1) as f32) * col_w - size - 4.0,
+            y: row_top + 4.5,
+            width: size,
+            height: size,
+        })
+    }
+
+    fn add_badge_at_window_pos(
+        &self,
+        bounds: Rectangle,
+        state: &MonthGridState,
+        window_pos: Point,
+    ) -> Option<(usize, usize)> {
+        let (row, col) = self.cell_at_window_pos(bounds, &state.row_tops, window_pos, false)?;
+        let rect = self.add_badge_rect(bounds, &state.row_tops, row, col)?;
+        rect.contains(window_pos).then_some((row, col))
+    }
+
     fn overflow_at_window_pos(
         &self,
         bounds: Rectangle,
@@ -251,6 +285,23 @@ impl<'a, Message> MonthGrid<'a, Message> {
         }
         let rect = self.overflow_rect(bounds, &state.row_tops, row, col);
         rect.contains(window_pos).then_some((row, col))
+    }
+
+    fn is_over_visible_span(
+        &self,
+        layouts: &[Layout<'_>],
+        state: &MonthGridState,
+        window_pos: Point,
+    ) -> bool {
+        self.slots
+            .iter()
+            .zip(layouts.iter())
+            .enumerate()
+            .any(|(idx, (slot, layout))| {
+                matches!(slot, MonthChildSlot::Span(_))
+                    && state.child_visible.get(idx).copied().unwrap_or(true)
+                    && layout.bounds().contains(window_pos)
+            })
     }
 
     fn drag_range_indices(state: &MonthGridState) -> Option<(usize, usize)> {
@@ -568,22 +619,50 @@ impl<'a, Message> Widget<Message, Theme, Renderer> for MonthGrid<'a, Message> {
                 let next_cell = cursor
                     .position()
                     .and_then(|p| self.cell_at_window_pos(bounds, &state.row_tops, p, false));
-                let next_overflow = cursor
+                let over_span = cursor
                     .position()
-                    .and_then(|p| self.overflow_at_window_pos(bounds, state, p));
-                if state.hovered_cell != next_cell || state.hovered_overflow != next_overflow {
+                    .is_some_and(|p| self.is_over_visible_span(&layouts, state, p));
+                let next_add = if over_span {
+                    None
+                } else {
+                    cursor
+                        .position()
+                        .and_then(|p| self.add_badge_at_window_pos(bounds, state, p))
+                };
+                let next_overflow = if over_span {
+                    None
+                } else {
+                    cursor
+                        .position()
+                        .and_then(|p| self.overflow_at_window_pos(bounds, state, p))
+                };
+                if state.hovered_cell != next_cell
+                    || state.hovered_add != next_add
+                    || state.hovered_overflow != next_overflow
+                {
                     state.hovered_cell = next_cell;
+                    state.hovered_add = next_add;
                     state.hovered_overflow = next_overflow;
                     shell.request_redraw();
                 }
             }
             Event::Mouse(mouse::Event::CursorLeft) => {
-                if state.hovered_cell.take().is_some() || state.hovered_overflow.take().is_some() {
+                if state.hovered_cell.take().is_some()
+                    || state.hovered_add.take().is_some()
+                    || state.hovered_overflow.take().is_some()
+                {
                     shell.request_redraw();
                 }
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if let Some(win_pos) = cursor.position() {
+                    if let Some((row, col)) = self.add_badge_at_window_pos(bounds, state, win_pos) {
+                        let date = self.cells[row][col].date;
+                        state.last_click = None;
+                        shell.publish((self.on_range_select)(date, date));
+                        shell.capture_event();
+                        return;
+                    }
                     if let Some((row, col)) = self.overflow_at_window_pos(bounds, state, win_pos) {
                         state.last_click = None;
                         shell.publish((self.on_overflow)(self.cells[row][col].date));
@@ -628,7 +707,7 @@ impl<'a, Message> Widget<Message, Theme, Renderer> for MonthGrid<'a, Message> {
         renderer: &Renderer,
     ) -> mouse::Interaction {
         let state = tree.state.downcast_ref::<MonthGridState>();
-        if state.drag_anchor.is_some() {
+        if Self::drag_range_indices(state).is_some() {
             return mouse::Interaction::Grabbing;
         }
 
@@ -650,9 +729,16 @@ impl<'a, Message> Widget<Message, Theme, Renderer> for MonthGrid<'a, Message> {
         }
 
         if let Some(win_pos) = cursor.position() {
+            let bounds = layout.bounds();
             if self
-                .overflow_at_window_pos(layout.bounds(), state, win_pos)
+                .add_badge_at_window_pos(bounds, state, win_pos)
                 .is_some()
+                || self
+                    .overflow_at_window_pos(bounds, state, win_pos)
+                    .is_some()
+                || self
+                    .cell_at_window_pos(bounds, &state.row_tops, win_pos, false)
+                    .is_some()
             {
                 return mouse::Interaction::Pointer;
             }
@@ -692,7 +778,7 @@ impl<'a, Message> Widget<Message, Theme, Renderer> for MonthGrid<'a, Message> {
                     },
                     ..Default::default()
                 },
-                Background::Color(self.theme.sidebar_bg),
+                Background::Color(self.theme.chrome_bg()),
             );
         }
 
@@ -723,16 +809,16 @@ impl<'a, Message> Widget<Message, Theme, Renderer> for MonthGrid<'a, Message> {
                     ))
                 } else if cell.is_selected {
                     Some(if hovered {
-                        mix(self.theme.selected_tint(), self.theme.fg, 0.03)
+                        mix(self.theme.selected_tint(), self.theme.fg, 0.05)
                     } else {
                         self.theme.selected_tint()
                     })
                 } else if hovered {
                     Some(self.theme.hover_tint())
+                } else if !cell.in_current_month {
+                    Some(self.theme.out_of_month_tint())
                 } else if cell.is_weekend {
                     Some(self.theme.weekend_tint())
-                } else if !cell.in_current_month {
-                    Some(mix(self.theme.bg, self.theme.sidebar_bg, 0.45))
                 } else {
                     None
                 };
@@ -800,6 +886,72 @@ impl<'a, Message> Widget<Message, Theme, Renderer> for MonthGrid<'a, Message> {
             );
         }
 
+        // Direct-render subtle top-right `+` quick-add badge on the hovered day cell.
+        if drag_range.is_none() {
+            if let Some((row, col)) = state.hovered_cell {
+                if let Some(rect) = self.add_badge_rect(bounds, &state.row_tops, row, col) {
+                    let badge_hovered = state.hovered_add == Some((row, col));
+                    let (bg_color, border_color, plus_color) = if badge_hovered {
+                        (
+                            self.theme.accent_pill_hover(),
+                            mix(self.theme.bg, self.theme.accent, 0.65),
+                            self.theme.accent,
+                        )
+                    } else {
+                        (
+                            mix(
+                                self.theme.bg,
+                                self.theme.fg,
+                                if self.theme.is_light() { 0.11 } else { 0.11 },
+                            ),
+                            self.theme.grid_line(),
+                            self.theme.fg_muted,
+                        )
+                    };
+
+                    renderer.fill_quad(
+                        renderer::Quad {
+                            bounds: rect,
+                            border: Border {
+                                color: border_color,
+                                width: 1.0,
+                                radius: 5.0.into(),
+                            },
+                            ..Default::default()
+                        },
+                        Background::Color(bg_color),
+                    );
+
+                    let cx = rect.x + rect.width * 0.5;
+                    let cy = rect.y + rect.height * 0.5;
+                    renderer.fill_quad(
+                        renderer::Quad {
+                            bounds: Rectangle {
+                                x: (cx - 4.5).round(),
+                                y: (cy - 0.75).round(),
+                                width: 9.0,
+                                height: 1.5,
+                            },
+                            ..Default::default()
+                        },
+                        Background::Color(plus_color),
+                    );
+                    renderer.fill_quad(
+                        renderer::Quad {
+                            bounds: Rectangle {
+                                x: (cx - 0.75).round(),
+                                y: (cy - 4.5).round(),
+                                width: 1.5,
+                                height: 9.0,
+                            },
+                            ..Default::default()
+                        },
+                        Background::Color(plus_color),
+                    );
+                }
+            }
+        }
+
         // Draw direct-rendered `+N more` overflow triggers for each overflowing day cell.
         for row in 0..6 {
             for col in 0..7 {
@@ -816,12 +968,13 @@ impl<'a, Message> Widget<Message, Theme, Renderer> for MonthGrid<'a, Message> {
                         renderer::Quad {
                             bounds: rect,
                             border: Border {
+                                color: mix(self.theme.bg, self.theme.accent, 0.55),
+                                width: 1.0,
                                 radius: 5.0.into(),
-                                ..Default::default()
                             },
                             ..Default::default()
                         },
-                        Background::Color(self.theme.card_hover),
+                        Background::Color(self.theme.accent_pill_hover()),
                     );
                 }
 
@@ -925,14 +1078,28 @@ impl<'a, Message> Widget<Message, Theme, Renderer> for MonthGrid<'a, Message> {
         viewport: &Rectangle,
         translation: Vector,
     ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
-        overlay::from_children(
-            &mut self.children,
-            tree,
-            layout,
-            renderer,
-            viewport,
-            translation,
-        )
+        let visible = &tree.state.downcast_ref::<MonthGridState>().child_visible;
+        let children: Vec<_> = self
+            .children
+            .iter_mut()
+            .zip(tree.children.iter_mut())
+            .zip(layout.children())
+            .enumerate()
+            .filter_map(|(idx, ((child, child_tree), child_layout))| {
+                if !visible.get(idx).copied().unwrap_or(true) {
+                    return None;
+                }
+                child.as_widget_mut().overlay(
+                    child_tree,
+                    child_layout,
+                    renderer,
+                    viewport,
+                    translation,
+                )
+            })
+            .collect();
+
+        (!children.is_empty()).then(|| overlay::Group::with_children(children).overlay())
     }
 }
 
@@ -1013,6 +1180,17 @@ impl<'a, Message> WeekAllDayGrid<'a, Message> {
             rx
         };
         Some(((rel_x / grid_w) * 7.0).floor().clamp(0.0, 6.0) as usize)
+    }
+
+    fn is_over_child(layouts: &[Layout<'_>], window_pos: Point) -> bool {
+        layouts.iter().any(|l| l.bounds().contains(window_pos))
+    }
+
+    fn lane_is_free(&self, col: usize, lane: usize) -> bool {
+        !self
+            .placements
+            .iter()
+            .any(|p| p.lane == lane && col >= p.start_col && col <= p.end_col)
     }
 }
 
@@ -1159,9 +1337,13 @@ impl<'a, Message> Widget<Message, Theme, Renderer> for WeekAllDayGrid<'a, Messag
         let state = tree.state.downcast_mut::<WeekAllDayState>();
         match event {
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                let next_hover = cursor
-                    .position()
-                    .and_then(|p| Self::col_at_window_pos(bounds, p, false));
+                let next_hover = cursor.position().and_then(|p| {
+                    if !viewport.contains(p) || Self::is_over_child(&layouts, p) {
+                        None
+                    } else {
+                        Self::col_at_window_pos(bounds, p, false)
+                    }
+                });
                 if state.hovered_col != next_hover {
                     state.hovered_col = next_hover;
                     shell.request_redraw();
@@ -1174,11 +1356,13 @@ impl<'a, Message> Widget<Message, Theme, Renderer> for WeekAllDayGrid<'a, Messag
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if let Some(win_pos) = cursor.position() {
-                    if let Some(col) = Self::col_at_window_pos(bounds, win_pos, false) {
-                        state.drag_start_col = Some(col);
-                        state.drag_end_col = Some(col);
-                        shell.capture_event();
-                        shell.request_redraw();
+                    if viewport.contains(win_pos) && !Self::is_over_child(&layouts, win_pos) {
+                        if let Some(col) = Self::col_at_window_pos(bounds, win_pos, false) {
+                            state.drag_start_col = Some(col);
+                            state.drag_end_col = Some(col);
+                            shell.capture_event();
+                            shell.request_redraw();
+                        }
                     }
                 }
             }
@@ -1195,8 +1379,10 @@ impl<'a, Message> Widget<Message, Theme, Renderer> for WeekAllDayGrid<'a, Messag
         renderer: &Renderer,
     ) -> mouse::Interaction {
         let state = tree.state.downcast_ref::<WeekAllDayState>();
-        if state.drag_start_col.is_some() {
-            return mouse::Interaction::Grabbing;
+        if let (Some(s), Some(e)) = (state.drag_start_col, state.drag_end_col) {
+            if s != e {
+                return mouse::Interaction::Grabbing;
+            }
         }
         let layouts: Vec<Layout<'_>> = layout.children().collect();
         for idx in (0..self.children.len()).rev() {
@@ -1209,6 +1395,14 @@ impl<'a, Message> Widget<Message, Theme, Renderer> for WeekAllDayGrid<'a, Messag
             );
             if interaction != mouse::Interaction::None {
                 return interaction;
+            }
+        }
+        if let Some(win_pos) = cursor.position() {
+            if viewport.contains(win_pos)
+                && !Self::is_over_child(&layouts, win_pos)
+                && Self::col_at_window_pos(layout.bounds(), win_pos, false).is_some()
+            {
+                return mouse::Interaction::Pointer;
             }
         }
         mouse::Interaction::None
@@ -1231,7 +1425,7 @@ impl<'a, Message> Widget<Message, Theme, Renderer> for WeekAllDayGrid<'a, Messag
         let line_color = self.theme.grid_line();
         let state = tree.state.downcast_ref::<WeekAllDayState>();
 
-        // Subtle empty-column hover highlight when not actively dragging.
+        // Empty-column hover highlight + subtle `+` ghost pill in hovered unoccupied lane.
         if state.drag_start_col.is_none() {
             if let Some(col) = state.hovered_col {
                 let x = bounds.x + (col as f32) * col_w;
@@ -1247,6 +1441,67 @@ impl<'a, Message> Widget<Message, Theme, Renderer> for WeekAllDayGrid<'a, Messag
                     },
                     Background::Color(self.theme.hover_tint()),
                 );
+
+                let cursor_lane = cursor.position().and_then(|p| {
+                    let rel_y = p.y - bounds.y - 2.0;
+                    if rel_y < 0.0 {
+                        return None;
+                    }
+                    let lane = (rel_y / (WEEK_ALL_DAY_LANE_H + WEEK_ALL_DAY_GAP)).floor() as usize;
+                    (lane < self.visible_lanes).then_some(lane)
+                });
+                let target_lane = cursor_lane
+                    .filter(|&l| self.lane_is_free(col, l))
+                    .or_else(|| (0..self.visible_lanes).find(|&l| self.lane_is_free(col, l)));
+
+                if let Some(lane) = target_lane {
+                    let pill_rect = Rectangle {
+                        x: x + 3.0,
+                        y: bounds.y
+                            + 2.0
+                            + (lane as f32) * (WEEK_ALL_DAY_LANE_H + WEEK_ALL_DAY_GAP),
+                        width: (col_w - 6.0).max(8.0),
+                        height: WEEK_ALL_DAY_LANE_H,
+                    };
+                    renderer.fill_quad(
+                        renderer::Quad {
+                            bounds: pill_rect,
+                            border: Border {
+                                color: mix(self.theme.bg, self.theme.accent, 0.45),
+                                width: 1.0,
+                                radius: 5.0.into(),
+                            },
+                            ..Default::default()
+                        },
+                        Background::Color(mix(
+                            self.theme.chrome_bg(),
+                            self.theme.accent,
+                            if self.theme.is_light() { 0.16 } else { 0.14 },
+                        )),
+                    );
+
+                    let ghost_label = if pill_rect.width >= 68.0 {
+                        "+ All day"
+                    } else {
+                        "+"
+                    };
+                    renderer.fill_text(
+                        text::Text {
+                            content: ghost_label.to_string(),
+                            bounds: Size::new((pill_rect.width - 10.0).max(1.0), pill_rect.height),
+                            size: Pixels(10.5),
+                            line_height: text::LineHeight::default(),
+                            font: style::bold_font(),
+                            align_x: text::Alignment::Default,
+                            align_y: alignment::Vertical::Center,
+                            shaping: text::Shaping::Basic,
+                            wrapping: text::Wrapping::None,
+                        },
+                        Point::new(pill_rect.x + 6.0, pill_rect.y + pill_rect.height * 0.5),
+                        self.theme.accent,
+                        pill_rect,
+                    );
+                }
             }
         }
 
@@ -1288,7 +1543,7 @@ impl<'a, Message> Widget<Message, Theme, Renderer> for WeekAllDayGrid<'a, Messag
                     ..Default::default()
                 },
                 Background::Color(mix(
-                    self.theme.sidebar_bg,
+                    self.theme.chrome_bg(),
                     self.theme.accent,
                     if self.theme.is_light() { 0.26 } else { 0.24 },
                 )),
@@ -1358,6 +1613,7 @@ struct WeekTimeState {
     hovered_slot: Option<(usize, u32)>,
     /// `(locked_day_col 0..7, anchor_slot 0..48, current_slot 0..48)`
     drag: Option<(usize, u32, u32)>,
+    ctrl_held: bool,
 }
 
 enum WeekChildSlot {
@@ -1371,10 +1627,12 @@ pub struct WeekTimeGrid<'a, Message> {
     use_24h: bool,
     weekend_cols: [bool; 7],
     today_col: Option<usize>,
+    selected_col: Option<usize>,
     now_minutes: Option<f32>,
     slots: Vec<WeekChildSlot>,
     children: Vec<Element<'a, Message>>,
     on_range_select: Box<dyn Fn(usize, u32, u32) -> Message + 'a>,
+    on_zoom: Option<Box<dyn Fn(f32) -> Message + 'a>>,
 }
 
 impl<'a, Message> WeekTimeGrid<'a, Message> {
@@ -1385,6 +1643,7 @@ impl<'a, Message> WeekTimeGrid<'a, Message> {
         use_24h: bool,
         weekend_cols: [bool; 7],
         today_col: Option<usize>,
+        selected_col: Option<usize>,
         now_minutes: Option<f32>,
         hour_labels: Vec<(u32, Element<'a, Message>)>,
         blocks: Vec<(WeekTimedPlacement, Element<'a, Message>)>,
@@ -1408,15 +1667,32 @@ impl<'a, Message> WeekTimeGrid<'a, Message> {
             use_24h,
             weekend_cols,
             today_col,
+            selected_col,
             now_minutes,
             slots,
             children,
             on_range_select: Box::new(on_range_select),
+            on_zoom: None,
         }
+    }
+
+    pub fn on_zoom(mut self, f: impl Fn(f32) -> Message + 'a) -> Self {
+        self.on_zoom = Some(Box::new(f));
+        self
     }
 
     fn half_hour_height(&self) -> f32 {
         self.hour_height * 0.5
+    }
+
+    fn is_over_timed_block(&self, layouts: &[Layout<'_>], window_pos: Point) -> bool {
+        self.slots
+            .iter()
+            .zip(layouts.iter())
+            .any(|(slot, layout)| {
+                matches!(slot, WeekChildSlot::TimedBlock(_))
+                    && layout.bounds().contains(window_pos)
+            })
     }
 
     fn slot_at_rel(&self, bounds: Rectangle, pos: Point) -> Option<(usize, u32)> {
@@ -1536,6 +1812,41 @@ impl<'a, Message> Widget<Message, Theme, Renderer> for WeekTimeGrid<'a, Message>
     ) {
         let bounds = layout.bounds();
 
+        match event {
+            Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
+                tree.state.downcast_mut::<WeekTimeState>().ctrl_held = modifiers.control();
+            }
+            Event::Window(window::Event::Unfocused) => {
+                let state = tree.state.downcast_mut::<WeekTimeState>();
+                state.ctrl_held = false;
+                if state.drag.take().is_some() {
+                    shell.request_redraw();
+                    return;
+                }
+            }
+            Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
+                let ctrl_held = tree.state.downcast_ref::<WeekTimeState>().ctrl_held;
+                let over_visible = cursor
+                    .position()
+                    .is_some_and(|p| bounds.contains(p) && viewport.contains(p));
+                if ctrl_held && over_visible {
+                    if let Some(on_zoom) = &self.on_zoom {
+                        let y = match delta {
+                            mouse::ScrollDelta::Lines { y, .. } => *y,
+                            mouse::ScrollDelta::Pixels { y, .. } => *y / 30.0,
+                        };
+                        if y.abs() >= 0.1 {
+                            let step = if y > 0.0 { 10.0 } else { -10.0 };
+                            shell.publish(on_zoom(step));
+                            shell.capture_event();
+                            return;
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+
         let is_dragging = tree.state.downcast_ref::<WeekTimeState>().drag.is_some();
         if is_dragging {
             let state = tree.state.downcast_mut::<WeekTimeState>();
@@ -1574,11 +1885,6 @@ impl<'a, Message> Widget<Message, Theme, Renderer> for WeekTimeGrid<'a, Message>
                     shell.request_redraw();
                     return;
                 }
-                Event::Window(window::Event::Unfocused) => {
-                    state.drag = None;
-                    shell.request_redraw();
-                    return;
-                }
                 _ => {}
             }
         }
@@ -1604,9 +1910,15 @@ impl<'a, Message> Widget<Message, Theme, Renderer> for WeekTimeGrid<'a, Message>
 
         match event {
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                let next_hover = cursor
-                    .position_in(bounds)
-                    .and_then(|pos| self.slot_at_rel(bounds, pos));
+                let next_hover = match (cursor.position(), cursor.position_in(bounds)) {
+                    (Some(win_pos), Some(rel_pos))
+                        if viewport.contains(win_pos)
+                            && !self.is_over_timed_block(&layouts, win_pos) =>
+                    {
+                        self.slot_at_rel(bounds, rel_pos)
+                    }
+                    _ => None,
+                };
                 if state.hovered_slot != next_hover {
                     state.hovered_slot = next_hover;
                     shell.request_redraw();
@@ -1618,11 +1930,14 @@ impl<'a, Message> Widget<Message, Theme, Renderer> for WeekTimeGrid<'a, Message>
                 }
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-                if let Some(pos) = cursor.position_in(bounds) {
-                    if let Some((col, slot)) = self.slot_at_rel(bounds, pos) {
-                        state.drag = Some((col, slot, slot));
-                        shell.capture_event();
-                        shell.request_redraw();
+                if let (Some(win_pos), Some(pos)) = (cursor.position(), cursor.position_in(bounds))
+                {
+                    if viewport.contains(win_pos) && !self.is_over_timed_block(&layouts, win_pos) {
+                        if let Some((col, slot)) = self.slot_at_rel(bounds, pos) {
+                            state.drag = Some((col, slot, slot));
+                            shell.capture_event();
+                            shell.request_redraw();
+                        }
                     }
                 }
             }
@@ -1639,7 +1954,10 @@ impl<'a, Message> Widget<Message, Theme, Renderer> for WeekTimeGrid<'a, Message>
         renderer: &Renderer,
     ) -> mouse::Interaction {
         let state = tree.state.downcast_ref::<WeekTimeState>();
-        if state.drag.is_some() {
+        if state
+            .drag
+            .is_some_and(|(_, anchor, current)| anchor != current)
+        {
             return mouse::Interaction::Grabbing;
         }
         let layouts: Vec<Layout<'_>> = layout.children().collect();
@@ -1653,6 +1971,15 @@ impl<'a, Message> Widget<Message, Theme, Renderer> for WeekTimeGrid<'a, Message>
             );
             if interaction != mouse::Interaction::None {
                 return interaction;
+            }
+        }
+        let bounds = layout.bounds();
+        if let (Some(win_pos), Some(rel_pos)) = (cursor.position(), cursor.position_in(bounds)) {
+            if viewport.contains(win_pos)
+                && !self.is_over_timed_block(&layouts, win_pos)
+                && self.slot_at_rel(bounds, rel_pos).is_some()
+            {
+                return mouse::Interaction::Pointer;
             }
         }
         mouse::Interaction::None
@@ -1688,10 +2015,10 @@ impl<'a, Message> Widget<Message, Theme, Renderer> for WeekTimeGrid<'a, Message>
                 },
                 ..Default::default()
             },
-            Background::Color(self.theme.sidebar_bg),
+            Background::Color(self.theme.chrome_bg()),
         );
 
-        // Day column backdrops (today subtle accent wash, weekend tint).
+        // Day column backdrops (today subtle accent wash, selected column wash, weekend tint).
         for col in 0..7 {
             let x = bounds.x + WEEK_HOUR_GUTTER + (col as f32) * col_w;
             let fill = if self.today_col == Some(col) {
@@ -1699,6 +2026,12 @@ impl<'a, Message> Widget<Message, Theme, Renderer> for WeekTimeGrid<'a, Message>
                     self.theme.bg,
                     self.theme.accent,
                     if self.theme.is_light() { 0.06 } else { 0.045 },
+                ))
+            } else if self.selected_col == Some(col) {
+                Some(mix(
+                    self.theme.bg,
+                    self.theme.accent,
+                    if self.theme.is_light() { 0.085 } else { 0.075 },
                 ))
             } else if self.weekend_cols[col] {
                 Some(self.theme.weekend_tint())
@@ -1718,26 +2051,6 @@ impl<'a, Message> Widget<Message, Theme, Renderer> for WeekTimeGrid<'a, Message>
                         ..Default::default()
                     },
                     Background::Color(color),
-                );
-            }
-        }
-
-        // Hovered empty 30-minute slot preview highlight (when not actively dragging).
-        if state.drag.is_none() {
-            if let Some((col, slot)) = state.hovered_slot {
-                let x = bounds.x + WEEK_HOUR_GUTTER + (col as f32) * col_w + 1.0;
-                let y = bounds.y + (slot as f32) * half_h;
-                renderer.fill_quad(
-                    renderer::Quad {
-                        bounds: Rectangle {
-                            x,
-                            y,
-                            width: (col_w - 1.0).max(1.0),
-                            height: half_h,
-                        },
-                        ..Default::default()
-                    },
-                    Background::Color(self.theme.hover_tint()),
                 );
             }
         }
@@ -1791,6 +2104,59 @@ impl<'a, Message> Widget<Message, Theme, Renderer> for WeekTimeGrid<'a, Message>
                 },
                 Background::Color(line),
             );
+        }
+
+        // Hovered empty 30-minute ghost slot preview (`+ HH:MM – HH:MM`) behind real blocks.
+        if state.drag.is_none() {
+            if let Some((col, slot)) = state.hovered_slot {
+                let start_mins = slot * 30;
+                let end_mins = ((slot + 1) * 30).min(1439);
+                let ghost_rect = Rectangle {
+                    x: bounds.x + WEEK_HOUR_GUTTER + (col as f32) * col_w + 2.0,
+                    y: bounds.y + (slot as f32) * half_h + 1.0,
+                    width: (col_w - 4.0).max(16.0),
+                    height: (half_h - 2.0).max(16.0),
+                };
+
+                renderer.fill_quad(
+                    renderer::Quad {
+                        bounds: ghost_rect,
+                        border: Border {
+                            color: mix(self.theme.bg, self.theme.accent, 0.45),
+                            width: 1.0,
+                            radius: 5.0.into(),
+                        },
+                        ..Default::default()
+                    },
+                    Background::Color(mix(
+                        self.theme.bg,
+                        self.theme.accent,
+                        if self.theme.is_light() { 0.14 } else { 0.13 },
+                    )),
+                );
+
+                let ghost_label = format!(
+                    "+ {} – {}",
+                    format_minutes_clock(start_mins, self.use_24h),
+                    format_minutes_clock(end_mins, self.use_24h),
+                );
+                renderer.fill_text(
+                    text::Text {
+                        content: ghost_label,
+                        bounds: Size::new((ghost_rect.width - 10.0).max(1.0), ghost_rect.height),
+                        size: Pixels(10.5),
+                        line_height: text::LineHeight::default(),
+                        font: style::mono_font(),
+                        align_x: text::Alignment::Default,
+                        align_y: alignment::Vertical::Center,
+                        shaping: text::Shaping::Basic,
+                        wrapping: text::Wrapping::None,
+                    },
+                    Point::new(ghost_rect.x + 5.0, ghost_rect.y + ghost_rect.height * 0.5),
+                    self.theme.accent,
+                    ghost_rect,
+                );
+            }
         }
 
         // Draw hour labels & timed event blocks.

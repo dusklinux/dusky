@@ -24,7 +24,7 @@ use std::time::Instant;
 pub type Element<'a, M = Message> =
     iced_core::Element<'a, M, iced_core::Theme, crate::renderer::Renderer>;
 
-pub const WIDE_BREAKPOINT: f32 = 1000.0;
+pub const WIDE_BREAKPOINT: f32 = 960.0;
 pub const NARROW_BREAKPOINT: f32 = 700.0;
 pub const SIDEBAR_WIDTH: f32 = 252.0;
 
@@ -201,7 +201,7 @@ pub enum ToastAction {
     UndoDelete,
     JumpTo {
         date: NaiveDate,
-        key: Option<EventKey>,
+        occurrence: Option<EventOccurrence>,
     },
 }
 
@@ -255,6 +255,7 @@ pub enum Message {
     RequestClose,
     ToggleSearch,
     SearchChanged(String),
+    SearchSubmit,
     SelectSearchResult(EventOccurrence),
     ClearSearch,
 
@@ -333,7 +334,7 @@ pub enum Message {
     UndoDelete,
     CommitPendingDelete(u64),
     DismissToast(u64),
-    ToastJump(NaiveDate, Option<EventKey>),
+    ToastJump(NaiveDate, Option<EventOccurrence>),
     WindowResized(Size),
     SystemEvent(iced::Event),
     IpcReceived(IpcCommand),

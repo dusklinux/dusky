@@ -6,7 +6,7 @@ use crate::theme::AppTheme;
 use crate::ui::style;
 use crate::ui::{Element, Message, ViewMode, ViewportTier};
 use iced_core::{Alignment, Length, Padding};
-use iced_widget::{Space, button, column, container, mouse_area, row, text, text_input};
+use iced_widget::{Space, button, column, container, mouse_area, row, text, text_input, tooltip};
 
 pub const HEADER_HEIGHT: f32 = 52.0;
 
@@ -27,25 +27,47 @@ pub fn view_header<'a>(
 ) -> Element<'a> {
     let mut left_controls = row![].spacing(6).align_y(Alignment::Center);
 
-    // Sidebar toggle (hidden on Narrow tier where Agenda embeds its own Date Chooser).
+    // Sidebar toggle on Wide/Medium; compact Calendar Manager trigger on Narrow so
+    // calendars, imports, and display preferences remain reachable without a sidebar.
     if tier != ViewportTier::Narrow {
-        left_controls = left_controls.push(
-            button(render_icon(
-                "sidebar",
-                16.0,
-                if sidebar_open {
-                    theme.accent
-                } else {
-                    theme.fg
-                },
-            ))
+        let sidebar_btn = button(render_icon(
+            "sidebar",
+            16.0,
+            if sidebar_open {
+                theme.accent
+            } else {
+                theme.fg
+            },
+        ))
+        .padding([7, 8])
+        .style(style::icon_button(theme, sidebar_open))
+        .on_press(Message::ToggleSidebar);
+
+        left_controls = left_controls.push(style::tooltip(
+            theme,
+            sidebar_btn,
+            if sidebar_open {
+                "Hide Sidebar (F9)"
+            } else {
+                "Show Sidebar (F9)"
+            },
+            tooltip::Position::Bottom,
+        ));
+    } else if !search_open {
+        let manager_btn = button(render_icon("calendar", 15.0, theme.fg))
             .padding([7, 8])
-            .style(style::icon_button(theme, sidebar_open))
-            .on_press(Message::ToggleSidebar),
-        );
+            .style(style::icon_button(theme, false))
+            .on_press(Message::OpenCalendarManager);
+
+        left_controls = left_controls.push(style::tooltip(
+            theme,
+            manager_btn,
+            "Manage Calendars & Preferences (F8)",
+            tooltip::Position::Bottom,
+        ));
     }
 
-    // Today quick-jump button (disabled when already anchored on today's date & month).
+    // Today quick-jump button (also re-centers Week view on the current time line).
     let today_icon_color = if today_enabled {
         theme.fg
     } else {
@@ -72,19 +94,40 @@ pub fn view_header<'a>(
         today_btn = today_btn.on_press(Message::GoToday);
     }
 
-    left_controls = left_controls.push(today_btn);
+    let today_tip = if !today_enabled {
+        "Already on Today"
+    } else if active_view == ViewMode::Week {
+        "Jump to Today & Current Time (Ctrl+T)"
+    } else {
+        "Jump to Today (Ctrl+T)"
+    };
+    left_controls = left_controls.push(style::tooltip(
+        theme,
+        today_btn,
+        today_tip,
+        tooltip::Position::Bottom,
+    ));
 
     // Prev / Next period chevrons (shown on Wide and Medium tiers).
     if tier != ViewportTier::Narrow {
+        let (prev_tip, next_tip) = match active_view {
+            ViewMode::Month => ("Previous Month (Alt+←)", "Next Month (Alt+→)"),
+            ViewMode::Week => ("Previous Week (Alt+←)", "Next Week (Alt+→)"),
+            ViewMode::Agenda => ("Previous 2 Weeks (Alt+←)", "Next 2 Weeks (Alt+→)"),
+        };
+
+        let prev_btn = button(render_icon("chevron_left", 15.0, theme.fg))
+            .padding([6, 7])
+            .style(style::icon_button(theme, false))
+            .on_press(Message::NavigatePrev);
+        let next_btn = button(render_icon("chevron_right", 15.0, theme.fg))
+            .padding([6, 7])
+            .style(style::icon_button(theme, false))
+            .on_press(Message::NavigateNext);
+
         let nav_cluster = row![
-            button(render_icon("chevron_left", 15.0, theme.fg))
-                .padding([6, 7])
-                .style(style::icon_button(theme, false))
-                .on_press(Message::NavigatePrev),
-            button(render_icon("chevron_right", 15.0, theme.fg))
-                .padding([6, 7])
-                .style(style::icon_button(theme, false))
-                .on_press(Message::NavigateNext),
+            style::tooltip(theme, prev_btn, prev_tip, tooltip::Position::Bottom),
+            style::tooltip(theme, next_btn, next_tip, tooltip::Position::Bottom),
         ]
         .spacing(2)
         .align_y(Alignment::Center);
@@ -155,12 +198,22 @@ pub fn view_header<'a>(
                 [6, 9]
             };
 
-            seg_row = seg_row.push(
-                button(content)
-                    .padding(pad)
-                    .style(style::segment_button(theme, selected))
-                    .on_press(Message::SwitchView(mode)),
-            );
+            let mode_tip = match mode {
+                ViewMode::Month => "Month View (Alt+1)",
+                ViewMode::Week => "Week View (Alt+2)",
+                ViewMode::Agenda => "Agenda View (Alt+3)",
+            };
+            let seg_btn = button(content)
+                .padding(pad)
+                .style(style::segment_button(theme, selected))
+                .on_press(Message::SwitchView(mode));
+
+            seg_row = seg_row.push(style::tooltip(
+                theme,
+                seg_btn,
+                mode_tip,
+                tooltip::Position::Bottom,
+            ));
         }
 
         Some(
@@ -180,29 +233,41 @@ pub fn view_header<'a>(
             ViewportTier::Medium => 185.0,
             ViewportTier::Narrow => 150.0,
         };
+        let clear_btn = button(render_icon("close", 14.0, theme.fg_muted))
+            .padding([6, 7])
+            .style(style::icon_button(theme, false))
+            .on_press(Message::ClearSearch);
+
         let search_box = row![
             text_input("Search events…", search_query)
                 .id(search_input_id())
                 .on_input(Message::SearchChanged)
+                .on_submit(Message::SearchSubmit)
                 .padding([5, 10])
                 .size(13)
                 .width(Length::Fixed(input_width))
                 .style(style::text_input_style(theme)),
-            button(render_icon("close", 14.0, theme.fg_muted))
-                .padding([6, 7])
-                .style(style::icon_button(theme, false))
-                .on_press(Message::ClearSearch),
+            style::tooltip(
+                theme,
+                clear_btn,
+                "Close Search (Esc)",
+                tooltip::Position::Bottom,
+            ),
         ]
         .spacing(4)
         .align_y(Alignment::Center);
         right_controls = right_controls.push(search_box);
     } else {
-        right_controls = right_controls.push(
-            button(render_icon("search", 15.0, theme.fg))
-                .padding([7, 8])
-                .style(style::icon_button(theme, false))
-                .on_press(Message::ToggleSearch),
-        );
+        let search_btn = button(render_icon("search", 15.0, theme.fg))
+            .padding([7, 8])
+            .style(style::icon_button(theme, false))
+            .on_press(Message::ToggleSearch);
+        right_controls = right_controls.push(style::tooltip(
+            theme,
+            search_btn,
+            "Search Events (Ctrl+F)",
+            tooltip::Position::Bottom,
+        ));
     }
 
     // Primary "+ New Event" button.
@@ -224,23 +289,31 @@ pub fn view_header<'a>(
         [7, 8]
     };
 
-    right_controls = right_controls.push(
-        button(new_btn_content)
-            .padding(new_btn_pad)
-            .style(style::primary_button(theme))
-            .on_press(Message::OpenQuickAdd {
-                date: None,
-                hour: None,
-            }),
-    );
+    let new_btn = button(new_btn_content)
+        .padding(new_btn_pad)
+        .style(style::primary_button(theme))
+        .on_press(Message::OpenQuickAdd {
+            date: None,
+            hour: None,
+        });
+    right_controls = right_controls.push(style::tooltip(
+        theme,
+        new_btn,
+        "New Event (Ctrl+N)",
+        tooltip::Position::Bottom,
+    ));
 
     // Frameless close button.
-    right_controls = right_controls.push(
-        button(render_icon("close", 15.0, theme.fg_muted))
-            .padding([7, 8])
-            .style(style::close_button(theme))
-            .on_press(Message::RequestClose),
-    );
+    let close_btn = button(render_icon("close", 15.0, theme.fg_muted))
+        .padding([7, 8])
+        .style(style::close_button(theme))
+        .on_press(Message::RequestClose);
+    right_controls = right_controls.push(style::tooltip(
+        theme,
+        close_btn,
+        "Close Window (Ctrl+Q)",
+        tooltip::Position::Bottom,
+    ));
 
     let mut bar_row = row![left_controls, drag_spacer_left]
         .spacing(8)

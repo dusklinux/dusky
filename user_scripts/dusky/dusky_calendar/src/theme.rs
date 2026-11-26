@@ -320,6 +320,28 @@ impl AppTheme {
         token.resolve(self)
     }
 
+    /// Luminance-aware tonal separation for window chrome (header, sidebar,
+    /// gutters) when Matugen emits `surface` / `sidebar_bg` identical to `bg`.
+    pub fn chrome_bg(&self) -> Color {
+        let distinct = |candidate: Color| {
+            (candidate.r - self.bg.r)
+                .abs()
+                .max((candidate.g - self.bg.g).abs())
+                .max((candidate.b - self.bg.b).abs())
+                >= 0.015
+        };
+
+        if distinct(self.sidebar_bg) {
+            self.sidebar_bg
+        } else if distinct(self.surface) {
+            self.surface
+        } else if self.is_light() {
+            mix(self.bg, Color::BLACK, 0.032)
+        } else {
+            mix(self.bg, self.fg, 0.022)
+        }
+    }
+
     pub fn grid_line(&self) -> Color {
         mix(self.bg, self.border, if self.is_light() { 0.36 } else { 0.30 })
     }
@@ -332,8 +354,18 @@ impl AppTheme {
         mix(self.bg, self.border, if self.is_light() { 0.55 } else { 0.48 })
     }
 
+    pub fn out_of_month_tint(&self) -> Color {
+        if self.is_light() {
+            mix(self.bg, Color::BLACK, 0.055)
+        } else if relative_luminance(self.bg) > 0.002 {
+            mix(self.bg, Color::BLACK, 0.40)
+        } else {
+            mix(self.bg, self.fg, 0.016)
+        }
+    }
+
     pub fn weekend_tint(&self) -> Color {
-        mix(self.bg, self.fg, if self.is_light() { 0.028 } else { 0.018 })
+        mix(self.bg, self.fg, if self.is_light() { 0.04 } else { 0.03 })
     }
 
     pub fn selected_tint(&self) -> Color {
@@ -341,15 +373,24 @@ impl AppTheme {
     }
 
     pub fn hover_tint(&self) -> Color {
-        mix(self.bg, self.fg, if self.is_light() { 0.055 } else { 0.038 })
+        mix(self.bg, self.fg, if self.is_light() { 0.075 } else { 0.065 })
+    }
+
+    pub fn accent_pill_hover(&self) -> Color {
+        mix(self.bg, self.accent, if self.is_light() { 0.24 } else { 0.20 })
     }
 
     pub fn active_week_tint(&self) -> Color {
-        mix(
-            self.sidebar_bg,
-            self.fg,
-            if self.is_light() { 0.08 } else { 0.07 },
-        )
+        let base = self.chrome_bg();
+        mix(base, self.fg, if self.is_light() { 0.08 } else { 0.07 })
+    }
+
+    /// Hover fill for unselected mini-calendar days; strictly more prominent than
+    /// `active_week_tint` in both dark and light themes so hovering inside the active
+    /// week never inverts contrast.
+    pub fn mini_day_hover(&self) -> Color {
+        let base = self.chrome_bg();
+        mix(base, self.fg, if self.is_light() { 0.14 } else { 0.135 })
     }
 
     pub fn muted_day_fg(&self) -> Color {
@@ -357,7 +398,11 @@ impl AppTheme {
     }
 
     pub fn input_bg(&self) -> Color {
-        mix(self.card_bg, self.bg, if self.is_light() { 0.35 } else { 0.45 })
+        if self.is_light() {
+            mix(self.card_bg, Color::WHITE, 0.55)
+        } else {
+            mix(self.bg, Color::BLACK, 0.28)
+        }
     }
 
     pub fn backdrop(&self) -> Color {
@@ -438,5 +483,29 @@ mod tests {
             theme.profiles[0]
         );
         assert_eq!(SemanticToken::next_for_index(6), SemanticToken::Accent);
+    }
+
+    #[test]
+    fn calibrated_surfaces_separate_flat_palettes_and_preserve_hover_contrast() {
+        let dark = AppTheme::default();
+        assert_ne!(dark.chrome_bg(), dark.bg);
+        assert_ne!(dark.out_of_month_tint(), dark.bg);
+        assert!(relative_luminance(dark.mini_day_hover()) > relative_luminance(dark.active_week_tint()));
+        assert!(relative_luminance(dark.hover_tint()) > relative_luminance(dark.weekend_tint()));
+
+        let light = AppTheme {
+            bg: Color::from_rgb8(245, 246, 250),
+            sidebar_bg: Color::from_rgb8(245, 246, 250),
+            surface: Color::from_rgb8(245, 246, 250),
+            card_bg: Color::from_rgb8(255, 255, 255),
+            card_hover: Color::from_rgb8(236, 238, 245),
+            fg: Color::from_rgb8(24, 26, 32),
+            fg_muted: Color::from_rgb8(90, 94, 108),
+            ..AppTheme::default()
+        };
+        assert!(light.is_light());
+        assert_ne!(light.chrome_bg(), light.bg);
+        assert_ne!(light.out_of_month_tint(), light.bg);
+        assert!(relative_luminance(light.mini_day_hover()) < relative_luminance(light.active_week_tint()));
     }
 }
