@@ -1,4 +1,4 @@
-/* Dusky Sites — Firefox 157+ internal documents.
+/* Dusky Sites — Firefox 161+ internal documents.
  * Imported by userChrome.css and userContent.css with the scoped Matugen palette.
  * Use current design tokens; Firefox owns component layout and state styles.
  * about:blank and about:srcdoc can belong to websites and are excluded.
@@ -10,6 +10,7 @@
     --text-color-deemphasized: var(--dusky-palette-on_surface_variant) !important;
     --text-color-disabled: color-mix(in srgb, var(--dusky-palette-on_surface) 40%, transparent) !important;
     --text-color-error: var(--dusky-palette-error) !important;
+    --icon-color: var(--dusky-palette-on_surface) !important;
     --background-color-canvas: var(--dusky-palette-background) !important;
     --background-color-box: var(--dusky-palette-surface_container) !important;
     --background-color-box-info: var(--dusky-palette-surface_container_high) !important;
@@ -26,7 +27,9 @@
     --border-color-interactive: var(--dusky-palette-outline) !important;
     --border-color-interactive-hover: var(--dusky-palette-on_surface_variant) !important;
     --border-color-interactive-active: var(--dusky-palette-primary) !important;
+    --border-color-interactive-disabled: var(--dusky-palette-outline_variant) !important;
     --border-color-error: var(--dusky-palette-error) !important;
+    --info-bar-border-color: var(--dusky-palette-outline_variant) !important;
     --card-background-color: var(--dusky-palette-surface_container) !important;
     --card-border-color: var(--dusky-palette-outline_variant) !important;
     --card-box-shadow: 0 1px 2px color-mix(in srgb, var(--dusky-palette-surface_container_lowest) 70%, transparent) !important;
@@ -35,16 +38,24 @@
     --text-color-accent-primary-selected: var(--dusky-palette-on_primary) !important;
     --color-accent-primary-hover: color-mix(in srgb, var(--dusky-palette-primary) 90%, var(--dusky-palette-on_primary_container)) !important;
     --color-accent-primary-active: color-mix(in srgb, var(--dusky-palette-primary) 80%, var(--dusky-palette-on_primary_container)) !important;
+    --button-border-color: transparent !important;
     --button-background-color: var(--dusky-palette-surface_container_high) !important;
     --button-background-color-hover: var(--dusky-palette-surface_container_highest) !important;
     --button-background-color-active: var(--dusky-palette-surface_bright) !important;
     --button-background-color-disabled: var(--dusky-palette-surface_container) !important;
+    --button-background-color-muted: var(--dusky-palette-surface_container_high) !important;
+    --button-background-color-muted-hover: var(--dusky-palette-surface_container_highest) !important;
+    --button-background-color-muted-active: var(--dusky-palette-surface_bright) !important;
+    --button-background-color-muted-selected: var(--dusky-palette-surface_bright) !important;
     --button-text-color: var(--dusky-palette-on_surface) !important;
     --button-text-color-primary: var(--dusky-palette-on_primary) !important;
     --button-background-color-primary: var(--dusky-palette-primary) !important;
     --button-background-color-primary-hover: var(--color-accent-primary-hover) !important;
     --button-background-color-primary-active: var(--color-accent-primary-active) !important;
+    --button-background-color-primary-disabled: color-mix(in srgb, var(--dusky-palette-primary) 55%, var(--dusky-palette-surface_container)) !important;
     --button-background-color-destructive: var(--dusky-palette-error) !important;
+    --button-background-color-destructive-hover: color-mix(in srgb, var(--dusky-palette-error) 90%, var(--dusky-palette-on_error_container)) !important;
+    --button-background-color-destructive-active: color-mix(in srgb, var(--dusky-palette-error) 80%, var(--dusky-palette-on_error_container)) !important;
     --button-text-color-destructive: var(--dusky-palette-on_error) !important;
     --button-background-color-ghost-hover: var(--dusky-palette-surface_container_high) !important;
     --button-background-color-ghost-active: var(--dusky-palette-surface_container_highest) !important;
@@ -53,20 +64,22 @@
     --link-color-active: var(--color-accent-primary-active) !important;
     --link-color-visited: var(--dusky-palette-tertiary) !important;
     --focus-outline-color: var(--dusky-palette-primary) !important;
-    --input-text-background-color: var(--dusky-palette-surface_container_low) !important;
-    --input-text-background-color-disabled: var(--dusky-palette-surface_container) !important;
+    --input-background-color: var(--dusky-palette-surface_container_low) !important;
+    --input-background-color-disabled: var(--dusky-palette-surface_container) !important;
     --input-text-color: var(--dusky-palette-on_surface) !important;
-    --input-text-border-color: var(--dusky-palette-outline) !important;
     --input-border-color: var(--dusky-palette-outline) !important;
     --toggle-background-color: var(--dusky-palette-surface_variant) !important;
     --toggle-background-color-hover: var(--dusky-palette-surface_container_high) !important;
     --toggle-background-color-pressed: var(--dusky-palette-primary) !important;
     --toggle-dot-background-color: var(--dusky-palette-on_surface_variant) !important;
     --toggle-dot-background-color-on-pressed: var(--dusky-palette-on_primary) !important;
+    --popup-border-color: var(--dusky-palette-outline_variant) !important;
     --panel-background-color: var(--dusky-palette-surface_container_high) !important;
     --panel-text-color: var(--dusky-palette-on_surface) !important;
     --panel-border-color: var(--dusky-palette-outline_variant) !important;
+    --table-background-color: var(--dusky-palette-surface_container) !important;
     --table-header-background-color: var(--dusky-palette-surface_container_high) !important;
+    --table-header-text-color: var(--dusky-palette-on_surface) !important;
     --table-row-background-color-alternate: var(--dusky-palette-surface_container_low) !important;
     accent-color: var(--dusky-palette-primary);
     scrollbar-color: var(--dusky-palette-outline) var(--dusky-palette-background);
@@ -111,6 +124,9 @@
   #placesMenu > menu:is(:hover, [open]) {
     background-color: var(--dusky-palette-surface_container_high) !important;
   }
+  treechildren::-moz-tree-row(multicol, odd) {
+    background-color: var(--dusky-palette-surface_container_low) !important;
+  }
   treechildren::-moz-tree-row(hover) {
     background-color: var(--dusky-palette-surface_container_high) !important;
   }
@@ -135,6 +151,9 @@
   treechildren::-moz-tree-image(selected, focus),
   treechildren::-moz-tree-twisty(selected, focus) {
     color: var(--dusky-palette-on_primary) !important;
+  }
+  treechildren::-moz-tree-line {
+    border-color: var(--dusky-palette-outline_variant) !important;
   }
   treechildren::-moz-tree-line(selected, focus) {
     border-color: var(--dusky-palette-on_primary) !important;
@@ -201,7 +220,7 @@
     --theme-focus-outline-color: var(--dusky-palette-primary) !important;
     --theme-toolbar-selected-color: var(--dusky-palette-primary) !important;
     --theme-icon-checked-color: var(--dusky-palette-primary) !important;
-    --theme-toolbarbutton-checked-color: var(--dusky-palette-primary) !important;
+    --theme-toolbarbutton-checked-color: var(--dusky-palette-on_primary_container) !important;
     --tab-line-selected-color: var(--dusky-palette-primary) !important;
     --theme-selection-color: var(--dusky-palette-on_primary) !important;
     --theme-selection-focus-background: var(--dusky-palette-primary_container) !important;
@@ -209,6 +228,7 @@
     --theme-text-selection-unfocused-background: var(--dusky-palette-primary_container) !important;
     --theme-toolbar-background-highlighted: var(--dusky-palette-primary_container) !important;
     --theme-toolbarbutton-checked-background: var(--dusky-palette-primary_container) !important;
+    --toolbarbutton-checked-background: var(--dusky-palette-primary_container) !important;
     --theme-toolbar-selected-hover-color: var(--dusky-palette-on_primary_container) !important;
     --toolbarbutton-checked-color: var(--dusky-palette-on_primary_container) !important;
   }

@@ -369,6 +369,50 @@ class DuskySitesTests(unittest.TestCase):
         self.assertFalse(data["userChromeEnabled"])
         self.assertEqual(data["future"], {"keep": True})
 
+    def test_firefox_161_css_tokens_exclude_removed_input_aliases(self):
+        about_css = (ROOT / ".config/dusky_sites/about.css").read_text(encoding="utf-8")
+        obsolete = (
+            "--input-text-background-color",
+            "--input-text-background-color-disabled",
+            "--input-text-border-color",
+        )
+        for label, css in (("MENU_CSS_CONTENT", setup.MENU_CSS_CONTENT), ("about.css", about_css)):
+            with self.subTest(stylesheet=label):
+                for token in obsolete:
+                    self.assertNotIn(token, css)
+                self.assertIn("--input-background-color:", css)
+                self.assertIn("--input-background-color-disabled:", css)
+                self.assertIn("--button-border-color:", css)
+        self.assertIn("--table-header-text-color:", about_css)
+        self.assertIn("treechildren::-moz-tree-row(multicol, odd)", about_css)
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("rich") and importlib.util.find_spec("tinycss2"),
+        "rich and tinycss2 required to import template editor",
+    )
+    def test_template_editor_normalizes_palette_prefix_and_scrim_syntax(self):
+        editor = load_module("dusky_editor_tests", "user_scripts/firefox/theme_matugen/templates/dusky_sites.py")
+        palette = self.root / "dusky_sites.css"
+        palette.write_text(
+            ":root {\n"
+            "  --dusky-palette-color-scheme: dark;\n"
+            "  --dusky-palette-surface: #111111;\n"
+            "  --dusky-palette-scrim_rgb: 0 0 0;\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        tracker = editor.ColorTracker()
+        tracker.path = palette
+        self.assertEqual(
+            tracker.get_colors(),
+            {"--color-scheme": "dark", "--surface": "#111111", "--scrim_rgb": "0 0 0"},
+        )
+        with patch.object(editor, "live_color_tracker", tracker):
+            _, sub_menus, _ = editor.build_menus()
+        self.assertEqual(sub_menus["u"]["items"]["u3"]["var"], "rgb(var(--scrim_rgb) / 0.5)")
+        raw_vars = [item["var"] for item in sub_menus["r"]["items"].values()]
+        self.assertEqual(raw_vars, ["var(--surface)"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

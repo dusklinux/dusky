@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only source and installation checks for native Firefox 158+.
+"""Read-only source and installation checks for native Firefox 161+.
 
 Inspect the installed browser's shipped resources, not a cached web page.
 This checks source contracts and files; it does not claim to test rendering.
@@ -104,8 +104,8 @@ def audit(directory: Path, source_only: bool) -> int:
     ini = configparser.ConfigParser()
     ini.read(directory / "application.ini")
     version = ini.get("App", "Version", fallback="")
-    checks.check(bool(re.prefixmatch(r"\d+", version)) and int(version.split(".")[0]) >= 158,
-                 f"Firefox {version or 'unknown'} (158+ required)")
+    checks.check(bool(re.prefixmatch(r"\d+", version)) and int(version.split(".")[0]) >= 161,
+                 f"Firefox {version or 'unknown'} (161+ required)")
     print(f"Build: {ini.get('App', 'BuildID', fallback='unknown')}; source: {ini.get('App', 'SourceStamp', fallback='unknown')}")
     sources = firefox_sources(directory)
     checks.check(all(any(name.endswith(required) for name in sources) for required in (

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Dusky Dynamic Theme Builder - Ultimate Live Preview Master Edition
-Optimized for: Arch Linux, Python 3.14.5, Dusky Sites Native Host Integration
+Optimized for: Arch Linux, Python 3.15+, Dusky Sites Native Host Integration
 """
 
 import os
@@ -87,24 +87,25 @@ CONFIG_DIR = get_xdg_config_home() / "dusky_sites"
 
 class ColorTracker:
     """
-    Monitors the Matugen CSS file via mtime (Modification Time).
+    Monitors the Matugen CSS file via stat signature (mtime_ns, size, inode).
     If the wallpaper changes, it instantly absorbs the new variables for the TUI.
     """
     def __init__(self):
         self.path = get_xdg_config_home() / "matugen" / "generated" / "dusky_sites.css"
-        self.last_mtime = 0.0
+        self.last_sig: tuple[int, int, int] | None = None
         self.colors: dict[str, str] = {}
 
     def get_colors(self) -> dict[str, str]:
         if not self.path.exists():
             return self.colors
         try:
-            current_mtime = self.path.stat().st_mtime
-            if current_mtime != self.last_mtime:
+            st = self.path.stat()
+            current_sig = (st.st_mtime_ns, st.st_size, st.st_ino)
+            if current_sig != self.last_sig:
                 content = self.path.read_text(encoding="utf-8")
                 matches = re.findall(r'(--[a-zA-Z0-9_-]+):\s*([^;{}]+?)\s*;', content)
-                self.colors = {k: v for k, v in matches}
-                self.last_mtime = current_mtime
+                self.colors = {k.replace("--dusky-palette-", "--", 1): v for k, v in matches}
+                self.last_sig = current_sig
         except (OSError, UnicodeDecodeError):
             pass # Graceful fallback for lock/permission/encoding issues, prevents masking logic bugs
         return self.colors
@@ -190,7 +191,7 @@ def build_menus() -> tuple[dict[str, dict[str, str]], dict[str, Any], dict[str, 
             "items": {
                 "u1": {"name": "Transparent Border", "prop": "border-color", "var": "transparent"},
                 "u2": {"name": "Transparent Text", "prop": "color", "var": "transparent"},
-                "u3": {"name": "Darken Scrim/Overlay", "prop": "background-color", "var": "rgba(var(--scrim_rgb), 0.5)"},
+                "u3": {"name": "Darken Scrim/Overlay", "prop": "background-color", "var": "rgb(var(--scrim_rgb) / 0.5)"},
                 "u4": {"name": "Invert Image/Element", "prop": "filter", "var": "invert(1) hue-rotate(180deg)"},
                 "u5": {"name": "Remove Annoying Shadows", "prop": "box-shadow", "var": "none"},
                 "u6": {"name": "SVG Icon Fill (Primary)", "prop": "fill", "var": "var(--primary)"},
@@ -205,7 +206,10 @@ def build_menus() -> tuple[dict[str, dict[str, str]], dict[str, Any], dict[str, 
             "name": "Raw Matugen Variables (Dynamically Loaded)",
             "items": {}
         }
-        clean_vars = {k: v for k, v in current_colors.items() if not k.endswith("_rgb")}
+        clean_vars = {
+            k: v for k, v in current_colors.items()
+            if not k.endswith("_rgb") and k != "--color-scheme"
+        }
         for idx, (var_name, hex_val) in enumerate(clean_vars.items(), 1):
             prop_guess = "color" if ("on_" in var_name or "text" in var_name or "outline" in var_name) else "background-color"
             sub_menus["r"]["items"][f"r{idx}"] = {

@@ -1,6 +1,6 @@
 # Dusky Sites: Firefox theme maintenance
 
-Target: native Linux Firefox **157+**, Python **3.14.7+**, and Wayland.
+Target: native Linux Firefox **161+**, Python **3.15+**, and Wayland.
 The setup handles the traditional `~/.mozilla/firefox` and current
 `~/.config/mozilla/firefox` profile registries, including external profiles.
 Forks and Flatpak installations are outside this verified installation path.
@@ -42,7 +42,7 @@ page palette, are loaded at browser startup; restart Firefox after regenerating
 colors to refresh internal pages. Re-run setup after changing the setup CSS,
 internal-page template, or `colorsPath`; wallpaper-only changes need no setup
 re-run. The `toolkit.legacyUserProfileCustomizations.stylesheets` preference
-retains that exact name in Firefox 157 and is still required.
+retains that exact name in Firefox 161 and is still required.
 
 ## Webpage opt-in
 
@@ -58,10 +58,11 @@ rolls back the extension's injected palette and rules. `defaults.js` can
 explicitly override host-owned settings; it is optional.
 
 `contentColorScheme` controls the extension's separate theme API
-`content_color_scheme` setting. Its existing default is `dark`: this can affect
-websites' own `prefers-color-scheme` behavior even with CSS injection off.
-Set it to `system` in `defaults.js` to follow the system, or `auto` to follow
-the browser palette. This setting does not enable webpage CSS injection.
+`content_color_scheme` setting. Its default is `auto` (follows the browser
+palette), which can affect websites' own `prefers-color-scheme` behavior even
+with CSS injection off. Set it to `system` in `defaults.js` to follow the
+system, or explicitly to `light` or `dark`. This setting does not enable
+webpage CSS injection.
 
 ## Installation and signed packages
 
@@ -73,8 +74,9 @@ Setup enables profile stylesheets, installs the host and manifests, and copies
 an XPI when its extension ID and signature metadata match. Firefox performs
 cryptographic signature and compatibility checks and manages its own add-on
 state. Setup never edits `extensions.json` or marks an incompatible add-on active.
-Setup requires a signed package and rejects packages whose manifest or runtime
-JavaScript differs from the shipped source before writing installation files.
+Setup requires a signed package and prefers one matching the shipped extension
+source, falling back to the shipped signed release while local JS edits await
+signing; `audit_variables.py` requires an exact source/package match.
 Restart Firefox to discover copied extensions and load stylesheets. Missing
 profiles or profile write failures produce a nonzero setup exit status.
 
@@ -87,7 +89,7 @@ The setup task runs on every update, including updates where only the XPI change
 Restart Firefox after the update; a running browser retains its loaded extension.
 The audit checks each registered profile's XPI against the current signed package.
 Setup always registers the host under `~/.mozilla/native-messaging-hosts`,
-Firefox 157's native-manifest lookup path, even with profiles only in the XDG
+Firefox 161's native-manifest lookup path, even with profiles only in the XDG
 registry. Profile location does not determine the native-host lookup location.
 
 The signed XPI under `~/.config/firefox_extentions/dusky_sites/xpi` is a separate
@@ -96,12 +98,13 @@ before deploying JavaScript changes; modifying its ZIP contents invalidates its
 signature. The audit reports source/package differences. For development,
 load `extension/manifest.json` as a temporary add-on through `about:debugging`.
 
-Extension 6.2.1 repairs page-overwritten root palette properties and removed
+Extension 6.2.1+ repairs page-overwritten root palette properties and removed
 fallback style elements in the mutation observer, before paint. Deferring this
 repair to another animation frame could briefly expose the white page canvas
 when returning to a themed page such as Discord. Palette revisions still use
 the existing frame scheduler; repeated page mutations retain the repair limit.
-This JavaScript fix requires rebuilding and re-signing the XPI.
+Local source changes in `extension/` (currently 6.2.2) require rebuilding and
+re-signing the XPI before Firefox will load them.
 
 The Matugen palette template must remain document-scoped. Regenerate its output
 through the normal wallpaper/color workflow after changing its scope or variable
@@ -112,8 +115,8 @@ the native host reads declarations regardless of their document wrapper.
 Uninstall remains available with `--uninstall` (or `--purge`) and optional
 `--yes`. It removes Dusky-owned imports, stylesheets, extension copies, host,
 and settings; it retains site templates and development sources. It removes
-installer preference lines only when they still match the installer values;
-it does not reconstruct values from before installation.
+only the delimited managed preference block in `user.js`, leaving older
+user preferences intact.
 
 ## Verification after Firefox updates
 

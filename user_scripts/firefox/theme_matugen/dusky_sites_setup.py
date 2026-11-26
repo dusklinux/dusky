@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Dusky Sites Setup Script (Arch Linux / Python 3.15+ / Firefox 158+)
+Dusky Sites Setup Script (Arch Linux / Python 3.15+ / Firefox 161+)
 ======================================================================
 Provisions XDG configuration directories, installs native messaging host
 to ~/.local/share/dusky-sites/dusky_sites_host.py, parses profiles.ini,
@@ -45,7 +45,7 @@ PREFS_TO_SET = [
     ("toolkit.legacyUserProfileCustomizations.stylesheets", "true"),
     ("extensions.autoDisableScopes", "0"),
     ("extensions.enabledScopes", "15"),
-    # Firefox 158 otherwise skips newly copied XPIs after a profile's first run.
+    # Firefox 161+ otherwise skips newly copied XPIs after a profile's first run.
     ("extensions.startupScanScopes", "1"),  # AddonManager.SCOPE_PROFILE
 ]
 
@@ -95,7 +95,7 @@ def ensure_css_import(path: Path, import_line: str) -> None:
     matches = _css_import_matches(content, import_line)
     for match in reversed(matches):
         content = content[:match.start()] + content[match.end():]
-    charset = re.prefixmatch(r'^(?:\ufeff)?@charset\s+"[^"\n]+"\s*;', content)
+    charset = re.prefixmatch(r'^@charset\s+"[^"\n]+"\s*;', content)
     offset = charset.end() if charset else 0
     prefix = content[:offset]
     if charset:
@@ -201,11 +201,12 @@ def iter_firefox_profiles(base_dir: Path):
                 yield profile
 
 
-MENU_CSS_CONTENT = """/* Dusky Sites — Firefox 158+ browser chrome.
+MENU_CSS_CONTENT = """/* Dusky Sites — Firefox 161+ browser chrome.
  * LWT owns toolbar/tab/sidebar/urlbar colors. Override design tokens and
  * native menu defaults only; retain Firefox layout, icons and popup parts.
  * Sources: LightweightThemeConsumer, ThemeVariableMap, tokens-shared.css,
- * popup.css, menu.css, findbar.css, global-shared.css.
+ * tokens-platform.css, browser-colors.css, popup.css, menu.css, findbar.css,
+ * urlbar.css, global-shared.css.
  */
 @-moz-document url("chrome://browser/content/browser.xhtml") {
   :root[lwtheme] {
@@ -216,20 +217,37 @@ MENU_CSS_CONTENT = """/* Dusky Sites — Firefox 158+ browser chrome.
     --text-color: var(--toolbar-text-color) !important;
     --text-color-deemphasized: color-mix(in srgb, var(--toolbar-text-color) 75%, transparent) !important;
     --text-color-disabled: color-mix(in srgb, var(--toolbar-text-color) 40%, transparent) !important;
+    --icon-color: var(--toolbar-text-color) !important;
     --background-color-canvas: var(--toolbar-background-color) !important;
     --background-color-box: var(--toolbar-field-background-color) !important;
     --border-color: var(--chrome-content-separator-color) !important;
+    --border-color-deemphasized: color-mix(in srgb, var(--toolbar-text-color) 24%, transparent) !important;
+    --border-color-interactive: color-mix(in srgb, var(--toolbar-text-color) 35%, transparent) !important;
     --color-accent-primary: var(--toolbarbutton-icon-fill-attention) !important;
+    --color-accent-primary-hover: color-mix(in srgb, var(--toolbarbutton-icon-fill-attention) 88%, var(--toolbar-text-color)) !important;
+    --color-accent-primary-active: color-mix(in srgb, var(--toolbarbutton-icon-fill-attention) 76%, var(--toolbar-text-color)) !important;
+    --color-accent-primary-selected: var(--toolbarbutton-icon-fill-attention) !important;
+    --text-color-accent-primary-selected: var(--lwt-accent-color) !important;
+    --link-color: var(--color-accent-primary) !important;
+    --link-color-hover: var(--color-accent-primary-hover) !important;
+    --link-color-active: var(--color-accent-primary-active) !important;
     --focus-outline-color: var(--toolbar-field-border-color-focus) !important;
+    --button-border-color: transparent !important;
     --button-background-color: var(--toolbar-field-background-color) !important;
-    --button-background-color-hover: var(--toolbarbutton-background-color-hover) !important;
-    --button-background-color-active: var(--toolbarbutton-background-color-active) !important;
-    --button-background-color-ghost-hover: var(--toolbarbutton-background-color-hover) !important;
-    --button-background-color-ghost-active: var(--toolbarbutton-background-color-active) !important;
+    --button-background-color-hover: color-mix(in srgb, var(--toolbarbutton-background-color-hover) 88%, var(--toolbar-text-color)) !important;
+    --button-background-color-active: color-mix(in srgb, var(--toolbarbutton-background-color-active) 76%, var(--toolbar-text-color)) !important;
+    --button-background-color-ghost-hover: var(--button-background-color-hover) !important;
+    --button-background-color-ghost-active: var(--button-background-color-active) !important;
+    --button-background-color-muted: var(--button-background-color) !important;
+    --button-background-color-muted-hover: var(--button-background-color-hover) !important;
+    --button-background-color-muted-active: var(--button-background-color-active) !important;
+    --button-background-color-muted-selected: var(--button-background-color-active) !important;
     --button-text-color: var(--toolbar-text-color) !important;
     --button-background-color-primary: var(--toolbarbutton-icon-fill-attention) !important;
+    --button-background-color-primary-disabled: color-mix(in srgb, var(--toolbarbutton-icon-fill-attention) 55%, var(--toolbar-background-color)) !important;
     --button-text-color-primary: var(--lwt-accent-color) !important;
-    --input-text-background-color: var(--toolbar-field-background-color) !important;
+    --input-background-color: var(--toolbar-field-background-color) !important;
+    --input-background-color-disabled: var(--toolbar-background-color) !important;
     --input-text-color: var(--toolbar-field-text-color) !important;
     --input-border-color: var(--toolbar-field-border-color) !important;
     --border-color-interactive-active: var(--toolbar-field-border-color-focus) !important;
@@ -256,6 +274,9 @@ MENU_CSS_CONTENT = """/* Dusky Sites — Firefox 158+ browser chrome.
     background-color: var(--urlbarview-background-color-selected) !important;
     color: var(--urlbarview-text-color-selected) !important;
   }
+  :root[lwtheme] menupopup :is(menu, menuitem)[_moz-menuactive]:not([disabled]) > .menu-accel {
+    color: color-mix(in srgb, currentColor 75%, transparent) !important;
+  }
   :root[lwtheme] menuitem > .menu-icon {
     accent-color: var(--toolbarbutton-icon-fill-attention);
   }
@@ -274,12 +295,13 @@ MENU_CSS_CONTENT = """/* Dusky Sites — Firefox 158+ browser chrome.
     border-color: var(--toolbar-field-border-color) !important;
   }
 
-  /* moz-button has its own shadow-root tokens; root overrides do not win there. */
+  /* urlbar.css sets --button-*-muted directly on .searchmode-switcher,
+   * overriding inherited root values. */
   :root[lwtheme] .searchmode-switcher {
     --button-background-color-muted: var(--toolbar-field-background-color) !important;
-    --button-background-color-muted-hover: var(--toolbarbutton-background-color-hover) !important;
-    --button-background-color-muted-active: var(--toolbarbutton-background-color-active) !important;
-    --button-background-color-muted-selected: var(--toolbarbutton-background-color-active) !important;
+    --button-background-color-muted-hover: color-mix(in srgb, var(--toolbarbutton-background-color-hover) 88%, var(--toolbar-text-color)) !important;
+    --button-background-color-muted-active: color-mix(in srgb, var(--toolbarbutton-background-color-active) 76%, var(--toolbar-text-color)) !important;
+    --button-background-color-muted-selected: color-mix(in srgb, var(--toolbarbutton-background-color-active) 76%, var(--toolbar-text-color)) !important;
     --button-text-color-muted: var(--toolbar-field-text-color) !important;
     --button-text-color-muted-hover: var(--toolbar-field-text-color) !important;
     --button-text-color-muted-active: var(--toolbar-field-text-color) !important;
@@ -833,8 +855,8 @@ def main() -> None:
     except (OSError, subprocess.TimeoutExpired) as error:
         print_error(f"Could not query Firefox version: {error}")
     version = re.search(r"Firefox (\d+)", result.stdout)
-    if result.returncode or version is None or int(version[1]) < 158:
-        print_error("Firefox 158 or newer is required.")
+    if result.returncode or version is None or int(version[1]) < 161:
+        print_error("Firefox 161 or newer is required.")
     print_success(result.stdout.strip())
     if not source_host.is_file():
         print_error(f"Host script not found. Place {HOST_INSTALL_NAME} next to this setup script.\n  looked for: {source_host}")
@@ -899,7 +921,7 @@ def main() -> None:
 
     for name, path in candidates:
         nmh_dir = path / "native-messaging-hosts"
-        # Firefox 158's XREUserNativeManifests remains ~/.mozilla even when
+        # Firefox 161's XREUserNativeManifests remains ~/.mozilla even when
         # its profile registry is under ~/.config/mozilla/firefox.
         if path == home / ".mozilla" or path.is_dir() or nmh_dir.is_dir():
             targets.append((name, nmh_dir))
