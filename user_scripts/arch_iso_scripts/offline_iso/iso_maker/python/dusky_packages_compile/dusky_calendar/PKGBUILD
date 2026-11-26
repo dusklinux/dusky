@@ -1,0 +1,30 @@
+pkgname=dusky_calendar
+pkgver=1.0.0
+pkgrel=1
+pkgdesc='Dusky Calendar native Rust calendar for Hyprland'
+arch=('x86_64')
+license=('custom')
+depends=('glibc' 'gcc-libs' 'wayland' 'libxkbcommon' 'vulkan-icd-loader' 'mesa' 'libglvnd')
+makedepends=('cargo' 'python')
+options=('!debug')
+
+build() {
+  cp -aL -- "$DUSKY_PACKAGE_SOURCE" "$srcdir/project"
+  python "$DUSKY_BUILD_RUST" "$srcdir/project" "$srcdir/binary-output/dusky_calendar"
+}
+
+package() {
+  install -Dm755 "$srcdir/binary-output/dusky_calendar" \
+    "$pkgdir/usr/bin/dusky_calendar"
+  install -dm755 "$pkgdir/usr/share/dusky_calendar"
+  python - "$srcdir/project" "$DUSKY_BUILD_RUST" > "$pkgdir/usr/share/dusky_calendar/source.sha256" <<'PY'
+import sys
+from pathlib import Path
+
+project = Path(sys.argv[1])
+sys.path.insert(0, str(Path(sys.argv[2]).resolve().parent))
+from build_rust import shared
+print(shared.source_digest(project, recipe="calendar-native-v1-frozen-tmpfs"))
+PY
+  chmod 0644 "$pkgdir/usr/share/dusky_calendar/source.sha256"
+}
