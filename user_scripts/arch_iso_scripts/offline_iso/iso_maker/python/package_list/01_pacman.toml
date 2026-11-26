@@ -272,6 +272,7 @@ terminal = [
     "moreutils",
     "zoxide",
     "man-db",
+    "tldr",
     "lsof",
     "khal",
 ]
