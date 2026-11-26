@@ -32,6 +32,16 @@ HOST_INSTALL_NAME = "dusky_sites_host.py"
 MANIFEST_NAME = "dusky_sites.json"
 EXTENSION_ID = "dusky_sites@dusky.com"
 INTERNAL_DOCUMENT_RULE = '@-moz-document regexp("about:(?!blank(?:[?#]|$)|srcdoc(?:[?#]|$)).*"), url("chrome://global/content/print.html"), url("chrome://global/content/commonDialog.xhtml"), url("chrome://browser/content/places/places.xhtml"), url-prefix("chrome://devtools/content/")'
+REQUIRED_PALETTE_VARS = frozenset({
+    "--dusky-palette-background",
+    "--dusky-palette-primary",
+    "--dusky-palette-on_surface",
+    "--dusky-palette-color-scheme",
+})
+DEFAULT_MATUGEN_SEED_HEX = "#afc6ff"
+DEFAULT_MATUGEN_MODE = "dark"
+_HEX_COLOR_RE = re.compile(r"^#?([0-9a-fA-F]{6})$")
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 def print_step(msg: str) -> None: print(f"{C_BLUE}==>{C_RESET} {msg}")
 def print_success(msg: str) -> None: print(f"{C_GREEN}✓{C_RESET} {msg}")
@@ -356,8 +366,20 @@ def about_css_content(template: str) -> str:
     )
 
 
-def load_profile_styles(home: Path) -> tuple[Path, str, bool, bool]:
-    """Validate shared inputs before provisioning any profile or installed files."""
+def _default_palette_path(home: Path) -> Path:
+    return (home / ".config/matugen/generated/dusky_sites.css").absolute()
+
+
+def _expand_home_path(raw: str, home: Path) -> Path:
+    if raw == "~":
+        return home
+    if raw.startswith("~/"):
+        return home / raw[2:]
+    return Path(os.path.expanduser(raw))
+
+
+def _read_setup_config(home: Path) -> tuple[Path, bool, bool]:
+    """Read and validate setup-relevant keys from config.json."""
     config_file = home / ".config/dusky/settings/dusky_sites/config.json"
     try:
         config = json.loads(config_file.read_text(encoding="utf-8"))
@@ -366,26 +388,133 @@ def load_profile_styles(home: Path) -> tuple[Path, str, bool, bool]:
     if not isinstance(config, dict):
         raise ValueError(f"Configuration must be a JSON object: {config_file}")
     colors_path = config.get("colorsPath", str(home / ".config/matugen/generated/dusky_sites.css"))
-    if not isinstance(colors_path, str) or not colors_path.strip():
-        raise ValueError("colorsPath must be a nonempty string")
-    palette_path = Path(os.path.expanduser(colors_path))
+    if not isinstance(colors_path, str) or not colors_path.strip() or "\0" in colors_path:
+        raise ValueError("colorsPath must be a nonempty string without NUL bytes")
+    palette_path = _expand_home_path(colors_path, home)
     if not palette_path.is_absolute():
         raise ValueError("colorsPath must be absolute or begin with ~")
-    if not palette_path.is_file():
-        raise ValueError(f"Matugen palette not found: {palette_path}. Apply your Matugen theme, then run Install / Update again.")
     chrome_enabled = config.get("userChromeEnabled", True)
     content_enabled = config.get("userContentEnabled", True)
     if not isinstance(chrome_enabled, bool) or not isinstance(content_enabled, bool):
         raise ValueError("userChromeEnabled and userContentEnabled must be JSON booleans")
+    return palette_path, chrome_enabled, content_enabled
+
+
+def is_valid_scoped_palette(text: str) -> bool:
+    """Verify the palette is scoped to internal documents and defines core tokens."""
+    stripped = re.sub(r"/\*.*?\*/", "", text.removeprefix("\ufeff"), flags=re.DOTALL)
+    return (
+        stripped.lstrip().startswith(INTERNAL_DOCUMENT_RULE)
+        and REQUIRED_PALETTE_VARS <= set(re.findall(r"(--[\w-]+)\s*:", stripped))
+    )
+
+
+def _resolve_matugen_seed(home: Path) -> tuple[str, str]:
+    """Infer seed hex and dark/light mode from dusky.json if present."""
+    seed_hex = DEFAULT_MATUGEN_SEED_HEX
+    mode = DEFAULT_MATUGEN_MODE
+    dusky_json = home / ".config/matugen/generated/dusky.json"
+    try:
+        data = json.loads(dusky_json.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return seed_hex, mode
+    if not isinstance(data, dict):
+        return seed_hex, mode
+    primary = data.get("primary")
+    if isinstance(primary, str):
+        match = _HEX_COLOR_RE.fullmatch(primary.strip())
+        if match:
+            seed_hex = f"#{match[1].lower()}"
+    bg = data.get("bg")
+    if isinstance(bg, str):
+        match = _HEX_COLOR_RE.fullmatch(bg.strip())
+        if match:
+            raw = match[1]
+            r, g, b = int(raw[0:2], 16), int(raw[2:4], 16), int(raw[4:6], 16)
+            mode = "light" if (299 * r + 587 * g + 114 * b) >= 128_000 else "dark"
+    return seed_hex, mode
+
+
+def generate_matugen_palette(home: Path, palette_path: Path) -> tuple[str, str]:
+    """Generate only dusky_sites.css via an isolated Matugen config."""
+    if palette_path.is_dir():
+        raise ValueError(f"Matugen palette path is a directory: {palette_path}")
+    template_path = home / ".config/matugen/templates/dusky_sites.css"
+    if not template_path.is_file():
+        raise ValueError(
+            f"Matugen template not found: {template_path}. "
+            "Restore the Dusky Matugen template, then run Install / Update again."
+        )
+    matugen = shutil.which("matugen")
+    if matugen is None:
+        raise ValueError(
+            "matugen was not found in PATH; install matugen or generate "
+            f"{palette_path} manually before running setup."
+        )
+
+    seed_hex, mode = _resolve_matugen_seed(home)
+    env = {**os.environ, "NO_COLOR": "1"}
+    with tempfile.TemporaryDirectory(prefix="dusky-matugen-") as tmp_dir:
+        tmp_root = Path(tmp_dir)
+        tmp_config = tmp_root / "config.toml"
+        tmp_output = tmp_root / "dusky_sites.css"
+        tmp_config.write_text(
+            "[config]\n\n"
+            "[templates.dusky_sites]\n"
+            f"input_path = {json.dumps(str(template_path.absolute()), ensure_ascii=False)}\n"
+            f"output_path = {json.dumps(str(tmp_output.absolute()), ensure_ascii=False)}\n",
+            encoding="utf-8",
+        )
+        try:
+            result = subprocess.run(
+                [matugen, "color", "hex", seed_hex, "-c", str(tmp_config), "-m", mode, "-q"],
+                capture_output=True, text=True, timeout=30, env=env,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise ValueError(f"Could not run matugen to generate palette: {error}") from error
+        if result.returncode != 0:
+            detail = _ANSI_ESCAPE_RE.sub("", (result.stderr or result.stdout).strip())
+            suffix = f": {detail}" if detail else ""
+            raise ValueError(f"matugen failed to generate palette (exit {result.returncode}){suffix}")
+        if not tmp_output.is_file():
+            raise ValueError("matugen completed without writing the generated palette file.")
+        rendered = tmp_output.read_text(encoding="utf-8")
+
+    if not is_valid_scoped_palette(rendered):
+        raise ValueError(
+            f"Generated palette from {template_path} is missing the required "
+            "document-scoped @-moz-document rule or core palette variables."
+        )
+    atomic_write_text(palette_path, rendered)
+    return seed_hex, mode
+
+
+def ensure_matugen_palette(home: Path) -> tuple[str, str] | None:
+    """Auto-generate the default Matugen palette when missing, unreadable, or unscoped."""
+    palette_path, _, _ = _read_setup_config(home)
+    if os.path.normpath(palette_path.absolute()) != os.path.normpath(_default_palette_path(home)):
+        return None
+    if palette_path.is_dir():
+        raise ValueError(f"Matugen palette path is a directory: {palette_path}")
+    if palette_path.is_file():
+        try:
+            if is_valid_scoped_palette(palette_path.read_text(encoding="utf-8")):
+                return None
+        except (OSError, UnicodeError):
+            pass
+    return generate_matugen_palette(home, palette_path)
+
+
+def load_profile_styles(home: Path) -> tuple[Path, str, bool, bool]:
+    """Validate shared inputs before provisioning any profile or installed files."""
+    palette_path, chrome_enabled, content_enabled = _read_setup_config(home)
+    if not palette_path.is_file():
+        raise ValueError(f"Matugen palette not found: {palette_path}. Apply your Matugen theme, then run Install / Update again.")
 
     template_about = home / ".config/dusky_sites/about.css"
-    base_about = template_about.read_text(encoding="utf-8") if chrome_enabled or content_enabled else ""
-    if chrome_enabled or content_enabled:
-        palette = re.sub(r"/\*.*?\*/", "", palette_path.read_text(encoding="utf-8"), flags=re.DOTALL)
-        if (not palette.lstrip().startswith(INTERNAL_DOCUMENT_RULE)
-                or not {"--dusky-palette-background", "--dusky-palette-primary", "--dusky-palette-on_surface", "--dusky-palette-color-scheme"}
-                <= set(re.findall(r"(--[\w-]+)\s*:", palette))):
-            raise ValueError("Regenerate the Matugen palette with the updated document-scoped template before running setup")
+    base_about = template_about.read_text(encoding="utf-8") if (chrome_enabled or content_enabled) else ""
+    if (chrome_enabled or content_enabled) and not is_valid_scoped_palette(palette_path.read_text(encoding="utf-8")):
+        raise ValueError("Regenerate the Matugen palette with the updated document-scoped template before running setup")
     return palette_path, base_about, chrome_enabled, content_enabled
 
 
@@ -866,6 +995,11 @@ def main() -> None:
         print_success(f"Found signed WebExtension package at {source_xpi}")
     else:
         print_error("Signed XPI package not found. Supply the signed extension package before running setup.")
+
+    generated = ensure_matugen_palette(home)
+    if generated is not None:
+        seed_hex, mode = generated
+        print_success(f"Generated Matugen palette ({mode}, {seed_hex}).")
 
     profile_styles = load_profile_styles(home)
     running = _browser_processes_running()

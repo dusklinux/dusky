@@ -5,10 +5,12 @@ import contextlib
 import importlib.util
 import io
 import json
+import subprocess
 import sys
 import tempfile
 import threading
 import time
+import tomllib
 import unittest
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
@@ -74,6 +76,182 @@ class DuskySitesTests(unittest.TestCase):
                            "--dusky-palette-color-scheme: dark; }}", encoding="utf-8")
         self.assertEqual(setup.load_profile_styles(self.root),
                          (palette, "/* fixture */", True, True))
+
+    def _scoped_palette(self, mode: str = "dark", primary: str = "#afc6ff") -> str:
+        return (
+            f"{setup.INTERNAL_DOCUMENT_RULE} {{\n"
+            ":root {\n"
+            f"  --dusky-palette-color-scheme: {mode};\n"
+            "  --dusky-palette-background: #0d0e12;\n"
+            f"  --dusky-palette-primary: {primary};\n"
+            "  --dusky-palette-on_surface: #e3e2e6;\n"
+            "}\n}\n"
+        )
+
+    def _write_matugen_template(self) -> Path:
+        template = self.root / ".config/matugen/templates/dusky_sites.css"
+        template.parent.mkdir(parents=True, exist_ok=True)
+        template.write_text("/* matugen template fixture */\n", encoding="utf-8")
+        return template
+
+    def test_resolve_matugen_seed_uses_dusky_json_and_fallbacks(self):
+        self.assertEqual(
+            setup._resolve_matugen_seed(self.root),
+            (setup.DEFAULT_MATUGEN_SEED_HEX, setup.DEFAULT_MATUGEN_MODE),
+        )
+        dusky_json = self.root / ".config/matugen/generated/dusky.json"
+        dusky_json.parent.mkdir(parents=True, exist_ok=True)
+        cases = [
+            ('{"primary": "#7AA2F7", "bg": "#0d0e12"}', ("#7aa2f7", "dark")),
+            ('{"primary": "336699", "bg": "#f5f6fa"}', ("#336699", "light")),
+            ('{"bg": "#ffffff"}', (setup.DEFAULT_MATUGEN_SEED_HEX, "light")),
+            ('{"primary": "not-a-hex", "bg": "#123"}', (setup.DEFAULT_MATUGEN_SEED_HEX, "dark")),
+            ("{", (setup.DEFAULT_MATUGEN_SEED_HEX, "dark")),
+            ("[]", (setup.DEFAULT_MATUGEN_SEED_HEX, "dark")),
+        ]
+        for payload, expected in cases:
+            with self.subTest(payload=payload):
+                dusky_json.write_text(payload, encoding="utf-8")
+                self.assertEqual(setup._resolve_matugen_seed(self.root), expected)
+
+    def test_ensure_matugen_palette_skips_valid_default_and_custom_paths(self):
+        palette = self.root / ".config/matugen/generated/dusky_sites.css"
+        palette.parent.mkdir(parents=True, exist_ok=True)
+        palette.write_text(self._scoped_palette(), encoding="utf-8")
+        with patch.object(setup.subprocess, "run") as run_mock:
+            self.assertIsNone(setup.ensure_matugen_palette(self.root))
+            run_mock.assert_not_called()
+
+        config_file = self.root / ".config/dusky/settings/dusky_sites/config.json"
+        config_file.parent.mkdir(parents=True, exist_ok=True)
+        config_file.write_text(json.dumps({"colorsPath": str(self.root / "custom.css")}), encoding="utf-8")
+        with patch.object(setup.subprocess, "run") as run_mock:
+            self.assertIsNone(setup.ensure_matugen_palette(self.root))
+            run_mock.assert_not_called()
+        with self.assertRaisesRegex(ValueError, "Matugen palette not found"):
+            setup.load_profile_styles(self.root)
+
+    def test_ensure_matugen_palette_generates_missing_stale_corrupt_and_broken_symlink(self):
+        about = self.root / ".config/dusky_sites/about.css"
+        about.parent.mkdir(parents=True, exist_ok=True)
+        about.write_text("/* about fixture */", encoding="utf-8")
+        template = self._write_matugen_template()
+        dusky_json = self.root / ".config/matugen/generated/dusky.json"
+        dusky_json.parent.mkdir(parents=True, exist_ok=True)
+        dusky_json.write_text(json.dumps({"primary": "#7AA2F7", "bg": "#f5f6fa"}), encoding="utf-8")
+        palette = self.root / ".config/matugen/generated/dusky_sites.css"
+
+        for state in ("missing", "stale", "non_utf8", "broken_symlink"):
+            with self.subTest(state=state):
+                if palette.is_symlink() or palette.exists():
+                    palette.unlink()
+                if state == "stale":
+                    palette.write_text(":root { --primary: #000000; }\n", encoding="utf-8")
+                elif state == "non_utf8":
+                    palette.write_bytes(b"\xff\xfe")
+                elif state == "broken_symlink":
+                    palette.symlink_to(self.root / "does-not-exist.css")
+
+                seen = {}
+
+                def fake_run(cmd, *, capture_output, text, timeout, env):
+                    seen["cmd"] = cmd
+                    seen["env"] = env
+                    cfg_path = Path(cmd[cmd.index("-c") + 1])
+                    parsed = tomllib.loads(cfg_path.read_text(encoding="utf-8"))
+                    seen["config"] = parsed
+                    out_path = Path(parsed["templates"]["dusky_sites"]["output_path"])
+                    out_path.write_text(self._scoped_palette("light", "#7aa2f7"), encoding="utf-8")
+                    return subprocess.CompletedProcess(cmd, 0, "", "")
+
+                with (patch.object(setup.shutil, "which", return_value="/usr/bin/matugen"),
+                      patch.object(setup.subprocess, "run", side_effect=fake_run)):
+                    self.assertEqual(setup.ensure_matugen_palette(self.root), ("#7aa2f7", "light"))
+
+                self.assertEqual(seen["cmd"][:4], ["/usr/bin/matugen", "color", "hex", "#7aa2f7"])
+                self.assertEqual(seen["cmd"][6:], ["-m", "light", "-q"])
+                self.assertEqual(seen["env"]["NO_COLOR"], "1")
+                self.assertEqual(seen["config"]["config"], {})
+                self.assertEqual(set(seen["config"]["templates"]), {"dusky_sites"})
+                self.assertEqual(
+                    seen["config"]["templates"]["dusky_sites"]["input_path"],
+                    str(template.absolute()),
+                )
+                self.assertTrue(palette.is_file() and not palette.is_symlink())
+                self.assertEqual(
+                    setup.load_profile_styles(self.root),
+                    (palette, "/* about fixture */", True, True),
+                )
+
+    def test_ensure_matugen_palette_errors_leave_existing_file_intact(self):
+        palette = self.root / ".config/matugen/generated/dusky_sites.css"
+        palette.mkdir(parents=True, exist_ok=True)
+        with self.assertRaisesRegex(ValueError, "directory"):
+            setup.ensure_matugen_palette(self.root)
+        palette.rmdir()
+
+        stale = ":root { --primary: #000000; }\n"
+        palette.write_text(stale, encoding="utf-8")
+
+        with self.assertRaisesRegex(ValueError, "Matugen template not found"):
+            setup.ensure_matugen_palette(self.root)
+        self.assertEqual(palette.read_text(encoding="utf-8"), stale)
+
+        self._write_matugen_template()
+        with patch.object(setup.shutil, "which", return_value=None):
+            with self.assertRaisesRegex(ValueError, "matugen was not found"):
+                setup.ensure_matugen_palette(self.root)
+
+        with (patch.object(setup.shutil, "which", return_value="/usr/bin/matugen"),
+              patch.object(setup.subprocess, "run",
+                           return_value=subprocess.CompletedProcess([], 2, "", "\x1b[31mboom\x1b[0m\n"))):
+            with self.assertRaises(ValueError) as exc:
+                setup.ensure_matugen_palette(self.root)
+            self.assertIn("boom", str(exc.exception))
+            self.assertNotIn("\x1b[", str(exc.exception))
+
+        with (patch.object(setup.shutil, "which", return_value="/usr/bin/matugen"),
+              patch.object(setup.subprocess, "run",
+                           side_effect=subprocess.TimeoutExpired("matugen", 30))):
+            with self.assertRaisesRegex(ValueError, "Could not run matugen"):
+                setup.ensure_matugen_palette(self.root)
+
+        with (patch.object(setup.shutil, "which", return_value="/usr/bin/matugen"),
+              patch.object(setup.subprocess, "run",
+                           return_value=subprocess.CompletedProcess([], 0, "", ""))):
+            with self.assertRaisesRegex(ValueError, "without writing"):
+                setup.ensure_matugen_palette(self.root)
+
+        def write_unscoped(cmd, **_kwargs):
+            parsed = tomllib.loads(Path(cmd[cmd.index("-c") + 1]).read_text(encoding="utf-8"))
+            Path(parsed["templates"]["dusky_sites"]["output_path"]).write_text(":root {}\n", encoding="utf-8")
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        with (patch.object(setup.shutil, "which", return_value="/usr/bin/matugen"),
+              patch.object(setup.subprocess, "run", side_effect=write_unscoped)):
+            with self.assertRaisesRegex(ValueError, "missing the required"):
+                setup.ensure_matugen_palette(self.root)
+
+        self.assertEqual(palette.read_text(encoding="utf-8"), stale)
+
+    def test_tilde_colors_path_resolves_against_home_and_rejects_nul(self):
+        about = self.root / ".config/dusky_sites/about.css"
+        about.parent.mkdir(parents=True, exist_ok=True)
+        about.write_text("/* fixture */", encoding="utf-8")
+        palette = self.root / ".config/matugen/generated/dusky_sites.css"
+        palette.parent.mkdir(parents=True, exist_ok=True)
+        palette.write_text(self._scoped_palette(), encoding="utf-8")
+        config_file = self.root / ".config/dusky/settings/dusky_sites/config.json"
+        config_file.parent.mkdir(parents=True, exist_ok=True)
+        config_file.write_text(
+            json.dumps({"colorsPath": "~/.config/matugen/generated/dusky_sites.css"}),
+            encoding="utf-8",
+        )
+        self.assertEqual(setup.load_profile_styles(self.root)[0], palette)
+
+        config_file.write_text(json.dumps({"colorsPath": "/tmp/bad\0.css"}), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "NUL"):
+            setup.load_profile_styles(self.root)
 
     def package_fixture(self, name="dusky_sites.xpi", *, matches=False, signed=True, extension_id=None):
         source = self.root / ".config/firefox_extentions/dusky_sites/extension"

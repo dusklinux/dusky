@@ -123,7 +123,7 @@ SCHEMA = {
             options=["trigger"],
             group="Install / Update",
             confirm_message="Install or update Dusky Sites across all detected native Firefox profiles? This runs the full setup script.",
-            extended_help="**Install / Update**\n\nRuns `dusky_sites_setup.py` with `--yes`, dynamically discovering native Firefox 158+ profiles in the traditional and XDG registries (including external profile paths) and installing the native host, messaging manifests, per-profile XPI, and userChrome.css styling."
+            extended_help="**Install / Update**\n\nRuns `dusky_sites_setup.py` with `--yes`, automatically generating the Matugen palette if missing or stale, dynamically discovering native Firefox 161+ profiles in the traditional and XDG registries (including external profile paths), and installing the native host, messaging manifests, per-profile XPI, and `userChrome.css`/`userContent.css` styling."
         ),
         ConfigItem(
             label="Uninstall System",
