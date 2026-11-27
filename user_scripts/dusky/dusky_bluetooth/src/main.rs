@@ -8,10 +8,12 @@ mod fonts;
 
 pub mod audio;
 pub mod bluez;
+pub mod config;
 pub mod gpu;
 pub mod icons;
 pub mod model;
 pub mod renderer;
+pub mod telemetry;
 pub mod theme;
 pub mod ui;
 

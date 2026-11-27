@@ -3,9 +3,114 @@
 
 use iced_futures::futures::channel::oneshot;
 use std::cmp::Reverse;
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VisibilityMode {
+    Hidden,
+    AlwaysVisible,
+    Temporary { timeout_secs: u32 },
+}
+
+impl VisibilityMode {
+    pub const MIN_TIMEOUT_SECS: u32 = 30;
+    pub const MAX_TIMEOUT_SECS: u32 = 1800;
+
+    pub fn clamp_timeout(secs: u32) -> u32 {
+        secs.clamp(Self::MIN_TIMEOUT_SECS, Self::MAX_TIMEOUT_SECS)
+    }
+
+    pub fn from_adapter_props(discoverable: bool, discoverable_timeout: u32) -> Self {
+        if !discoverable {
+            Self::Hidden
+        } else if discoverable_timeout == 0 {
+            Self::AlwaysVisible
+        } else {
+            Self::Temporary {
+                timeout_secs: discoverable_timeout,
+            }
+        }
+    }
+
+    /// Returns `(discoverable, optional_timeout_to_write_before_enabling)`.
+    pub fn to_bluez_props(self) -> (bool, Option<u32>) {
+        match self {
+            Self::Hidden => (false, None),
+            Self::AlwaysVisible => (true, Some(0)),
+            Self::Temporary { timeout_secs } => (true, Some(Self::clamp_timeout(timeout_secs))),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RfkillState {
+    pub soft_blocked: bool,
+    pub hard_blocked: bool,
+    pub label: Option<String>,
+}
+
+impl RfkillState {
+    pub fn is_blocked(&self) -> bool {
+        self.soft_blocked || self.hard_blocked
+    }
+
+    pub fn short_label(&self) -> &'static str {
+        if self.hard_blocked {
+            "Hard RF-kill"
+        } else if self.soft_blocked {
+            "Soft RF-kill"
+        } else {
+            "Unblocked"
+        }
+    }
+
+    pub fn detail(&self) -> Option<String> {
+        if !self.is_blocked() {
+            return None;
+        }
+        let kind = if self.hard_blocked && self.soft_blocked {
+            "hardware and software RF-kill switches"
+        } else if self.hard_blocked {
+            "a hardware RF-kill switch"
+        } else {
+            "a software RF-kill switch"
+        };
+        match self.label.as_deref().filter(|s| !s.is_empty()) {
+            Some(name) => Some(format!("Bluetooth is blocked by {kind} ({name}).")),
+            None => Some(format!("Bluetooth is blocked by {kind}.")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PanTraffic {
+    pub iface: String,
+    pub total_tx: u64,
+    pub total_rx: u64,
+    pub tx_rate_bps: f64,
+    pub rx_rate_bps: f64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TrafficSnapshot {
+    pub adapter_short_id: String,
+    pub total_tx: u64,
+    pub total_rx: u64,
+    pub tx_rate_bps: f64,
+    pub rx_rate_bps: f64,
+    pub active_tx: bool,
+    pub active_rx: bool,
+    pub available: bool,
+    pub pan: Option<PanTraffic>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HideScope {
+    Session,
+    Persistent,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AdapterState {
     pub path: String,
     pub address: String,
@@ -16,6 +121,11 @@ pub struct AdapterState {
     pub discoverable_timeout: u32,
     pub discovering: bool,
     pub pairable: bool,
+    pub pairable_timeout: u32,
+    pub class: u32,
+    pub modalias: Option<String>,
+    pub address_type: Option<String>,
+    pub power_state: Option<String>,
 }
 
 impl AdapterState {
@@ -38,9 +148,19 @@ impl AdapterState {
     pub fn short_id(&self) -> &str {
         self.path.rsplit('/').next().unwrap_or(&self.path)
     }
+
+    pub fn visibility_mode(&self) -> VisibilityMode {
+        VisibilityMode::from_adapter_props(self.discoverable, self.discoverable_timeout)
+    }
+
+    pub fn is_rfkill_blocked(&self) -> bool {
+        self.power_state
+            .as_deref()
+            .is_some_and(|s| s.eq_ignore_ascii_case("off-blocked"))
+    }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum DeviceKind {
     Headphones,
     Speaker,
@@ -49,6 +169,7 @@ pub enum DeviceKind {
     Phone,
     Controller,
     Computer,
+    #[default]
     Generic,
 }
 
@@ -106,11 +227,12 @@ pub enum DeviceOpOutcome {
     Failed(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DeviceState {
     pub path: String,
     pub adapter_path: String,
     pub address: String,
+    pub address_type: Option<String>,
     pub name: Option<String>,
     pub alias: String,
     pub icon_hint: Option<String>,
@@ -118,11 +240,22 @@ pub struct DeviceState {
     pub appearance: u16,
     pub uuids: Vec<String>,
     pub paired: bool,
+    pub bonded: bool,
     pub connected: bool,
     pub trusted: bool,
     pub blocked: bool,
+    pub services_resolved: bool,
+    pub legacy_pairing: bool,
     pub battery: Option<u8>,
     pub rssi: Option<i16>,
+    pub tx_power: Option<i16>,
+    pub modalias: Option<String>,
+    pub wake_allowed: Option<bool>,
+    pub preferred_bearer: Option<String>,
+    pub cable_pairing: Option<bool>,
+    pub manufacturer_data: BTreeMap<u16, Vec<u8>>,
+    pub service_data: BTreeMap<String, Vec<u8>>,
+    pub advertising_flags: Vec<u8>,
     pub kind: DeviceKind,
     pub in_flight: Option<DeviceOp>,
 }
@@ -625,26 +758,466 @@ pub fn short_uuid(uuid: &str) -> Option<u16> {
     None
 }
 
+pub fn normalize_mac(raw: &str) -> String {
+    raw.trim().replace('-', ":").to_ascii_uppercase()
+}
+
+pub fn format_hex_bytes(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|b| format!("{b:02X}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 pub fn service_uuid_name(uuid: &str) -> String {
-    match short_uuid(uuid) {
-        Some(0x1101) => "Serial Port".to_string(),
-        Some(0x1105) => "OBEX Object Push".to_string(),
-        Some(0x1106) => "OBEX File Transfer".to_string(),
-        Some(0x1108) => "Headset".to_string(),
-        Some(0x110A) => "Audio Source".to_string(),
-        Some(0x110B) => "Audio Sink (A2DP)".to_string(),
-        Some(0x110C) => "A/V Remote Control Target".to_string(),
-        Some(0x110E) => "A/V Remote Control".to_string(),
-        Some(0x1115) => "Personal Area Network (PANU)".to_string(),
-        Some(0x1116) => "Network Access Point (NAP)".to_string(),
-        Some(0x111E) => "Handsfree (HFP)".to_string(),
-        Some(0x111F) => "Handsfree Audio Gateway".to_string(),
-        Some(0x1124) => "Human Interface Device (HID)".to_string(),
-        Some(0x112F) => "Phonebook Access".to_string(),
-        Some(0x180F) => "Battery Service".to_string(),
-        Some(0x1812) => "HID over GATT".to_string(),
-        Some(short) => format!("Bluetooth Service (0x{short:04x})"),
-        None => uuid.trim().to_string(),
+    let trimmed = uuid.trim();
+    if let Some(short) = short_uuid(trimmed) {
+        let name = match short {
+            0x1000 => "Service Discovery Server",
+            0x1001 => "Browse Group Descriptor",
+            0x1101 => "Serial Port (SPP)",
+            0x1102 => "LAN Access Using PPP",
+            0x1103 => "Dialup Networking (DUN)",
+            0x1104 => "IrMC Sync",
+            0x1105 => "OBEX Object Push",
+            0x1106 => "OBEX File Transfer",
+            0x1108 => "Headset (HSP)",
+            0x110A => "Audio Source (A2DP)",
+            0x110B => "Audio Sink (A2DP)",
+            0x110C => "A/V Remote Control Target",
+            0x110D => "Advanced Audio Distribution",
+            0x110E => "A/V Remote Control",
+            0x110F => "A/V Remote Control Controller",
+            0x1112 => "Headset Audio Gateway",
+            0x1115 => "Personal Area Network (PANU)",
+            0x1116 => "Network Access Point (NAP)",
+            0x1117 => "Group Ad-hoc Network (GN)",
+            0x111E => "Handsfree (HFP)",
+            0x111F => "Handsfree Audio Gateway",
+            0x1124 => "Human Interface Device (HID)",
+            0x112D => "SIM Access (SAP)",
+            0x112E => "Phonebook Access Client",
+            0x112F => "Phonebook Access Server",
+            0x1130 => "Phonebook Access",
+            0x1131 => "Headset HS",
+            0x1132 => "Message Access Server",
+            0x1133 => "Message Notification Server",
+            0x1134 => "Message Access Profile",
+            0x1200 => "PnP Information (DIP)",
+            0x1203 => "Generic Audio",
+            0x1400 => "Health Device Profile",
+            0x1800 => "Generic Access (GAP)",
+            0x1801 => "Generic Attribute (GATT)",
+            0x1802 => "Immediate Alert",
+            0x1803 => "Link Loss",
+            0x1804 => "Tx Power",
+            0x1805 => "Current Time",
+            0x180A => "Device Information",
+            0x180D => "Heart Rate",
+            0x180F => "Battery Service",
+            0x1812 => "HID over GATT (HOGP)",
+            0x1813 => "Scan Parameters",
+            0x1816 => "Cycling Speed and Cadence",
+            0x1818 => "Cycling Power",
+            0x1819 => "Location and Navigation",
+            0x181A => "Environmental Sensing",
+            0x181C => "User Data",
+            0x1843 => "Audio Input Control",
+            0x1844 => "Volume Control (VCS)",
+            0x1845 => "Volume Offset Control",
+            0x1846 => "Coordinated Set Identification (CSIS)",
+            0x1848 => "Media Control",
+            0x1849 => "Generic Media Control",
+            0x184D => "Microphone Control",
+            0x184E => "Audio Stream Control (ASCS)",
+            0x184F => "Broadcast Audio Scan (BASS)",
+            0x1850 => "Published Audio Capabilities (PACS)",
+            0x1851 => "Basic Audio Announcement",
+            0x1852 => "Broadcast Audio Announcement",
+            0x1853 => "Common Audio (CAS)",
+            0x1854 => "Hearing Access (HAS)",
+            0x1855 => "Telephony and Media Audio (TMAS)",
+            0xFE2C => "Google Fast Pair",
+            0xFE95 => "Xiaomi Inc.",
+            0xFEAA => "Eddystone",
+            _ => return format!("Bluetooth Service (0x{short:04x})"),
+        };
+        return name.to_string();
+    }
+
+    match trimmed.to_ascii_lowercase().as_str() {
+        "03b80e5a-ede8-4b33-a751-6ce34ec4c700" => "Bluetooth LE MIDI".to_string(),
+        "7905f431-b5ce-4e99-a40f-4b1e122d00d0" => "Apple Notification Center (ANCS)".to_string(),
+        "89d3502b-0f36-433a-8ef4-c502ad55f8dc" => "Apple Media Service (AMS)".to_string(),
+        "6e400001-b5a3-f393-e0a9-e50e24dcca9e" => "Nordic UART Service".to_string(),
+        _ => trimmed.to_string(),
+    }
+}
+
+/// Decode a 24-bit Bluetooth Class of Device (CoD) into human-readable major, minor, and service classes.
+pub fn decode_class(class: u32) -> Option<String> {
+    if class == 0 {
+        return None;
+    }
+    let major_bits = (class >> 8) & 0x1F;
+    let minor_bits = (class >> 2) & 0x3F;
+    let service_bits = (class >> 13) & 0x7FF;
+
+    let major = match major_bits {
+        0 => "Miscellaneous",
+        1 => "Computer",
+        2 => "Phone",
+        3 => "LAN / Network",
+        4 => "Audio/Video",
+        5 => "Peripheral",
+        6 => "Imaging",
+        7 => "Wearable",
+        8 => "Toy",
+        9 => "Health",
+        31 => "Uncategorized",
+        _ => "Unknown",
+    };
+
+    let minor = match major_bits {
+        1 => match minor_bits {
+            1 => Some("Desktop"),
+            2 => Some("Server"),
+            3 => Some("Laptop"),
+            4 => Some("Handheld"),
+            5 => Some("Palm-size"),
+            6 => Some("Wearable"),
+            7 => Some("Tablet"),
+            _ => None,
+        },
+        2 => match minor_bits {
+            1 => Some("Cellular"),
+            2 => Some("Cordless"),
+            3 => Some("Smartphone"),
+            4 => Some("Wired Modem / Gateway"),
+            5 => Some("ISDN"),
+            _ => None,
+        },
+        4 => match minor_bits {
+            1 => Some("Wearable Headset"),
+            2 => Some("Hands-free"),
+            4 => Some("Microphone"),
+            5 => Some("Loudspeaker"),
+            6 => Some("Headphones"),
+            7 => Some("Portable Audio"),
+            8 => Some("Car Audio"),
+            9 => Some("Set-top Box"),
+            10 => Some("HiFi Audio"),
+            11 => Some("VCR"),
+            12 => Some("Video Camera"),
+            13 => Some("Camcorder"),
+            14 => Some("Video Monitor"),
+            15 => Some("Video Display & Loudspeaker"),
+            16 => Some("Video Conferencing"),
+            18 => Some("Gaming / Toy"),
+            _ => None,
+        },
+        5 => {
+            let sub = minor_bits & 0x0F;
+            let hi = (minor_bits >> 4) & 0x03;
+            match (hi, sub) {
+                (0, 1) => Some("Joystick"),
+                (0, 2) => Some("Gamepad"),
+                (0, 3) => Some("Remote Control"),
+                (0, 4) => Some("Sensing Device"),
+                (0, 5) => Some("Digitizer Tablet"),
+                (0, 6) => Some("Card Reader"),
+                (0, 7) => Some("Digital Pen"),
+                (1, _) => Some("Keyboard"),
+                (2, _) => Some("Pointing Device"),
+                (3, _) => Some("Combo Keyboard/Pointing"),
+                _ => None,
+            }
+        }
+        6 => {
+            let mut parts = Vec::new();
+            if (minor_bits & 0x04) != 0 {
+                parts.push("Display");
+            }
+            if (minor_bits & 0x08) != 0 {
+                parts.push("Camera");
+            }
+            if (minor_bits & 0x10) != 0 {
+                parts.push("Scanner");
+            }
+            if (minor_bits & 0x20) != 0 {
+                parts.push("Printer");
+            }
+            if parts.is_empty() {
+                None
+            } else {
+                // Handled below via owned format if multiple; keep simple single label for 1 match
+                match parts.len() {
+                    1 => Some(parts[0]),
+                    _ => Some("Multi-function"),
+                }
+            }
+        }
+        7 => match minor_bits {
+            1 => Some("Wristwatch"),
+            2 => Some("Pager"),
+            3 => Some("Jacket"),
+            4 => Some("Helmet"),
+            5 => Some("Glasses"),
+            _ => None,
+        },
+        9 => match minor_bits {
+            1 => Some("Blood Pressure"),
+            2 => Some("Thermometer"),
+            3 => Some("Weighing Scale"),
+            4 => Some("Glucose Meter"),
+            5 => Some("Pulse Oximeter"),
+            6 => Some("Heart Rate Monitor"),
+            _ => None,
+        },
+        _ => None,
+    };
+
+    let mut services = Vec::new();
+    if (service_bits & 0x001) != 0 {
+        services.push("Limited Discoverable");
+    }
+    if (service_bits & 0x002) != 0 {
+        services.push("LE Audio");
+    }
+    if (service_bits & 0x008) != 0 {
+        services.push("Positioning");
+    }
+    if (service_bits & 0x010) != 0 {
+        services.push("Networking");
+    }
+    if (service_bits & 0x020) != 0 {
+        services.push("Rendering");
+    }
+    if (service_bits & 0x040) != 0 {
+        services.push("Capturing");
+    }
+    if (service_bits & 0x080) != 0 {
+        services.push("Object Transfer");
+    }
+    if (service_bits & 0x100) != 0 {
+        services.push("Audio");
+    }
+    if (service_bits & 0x200) != 0 {
+        services.push("Telephony");
+    }
+    if (service_bits & 0x400) != 0 {
+        services.push("Information");
+    }
+
+    let base = match minor {
+        Some(m) => format!("{major} — {m}"),
+        None => major.to_string(),
+    };
+    if services.is_empty() {
+        Some(base)
+    } else {
+        Some(format!("{base} ({})", services.join(", ")))
+    }
+}
+
+/// Decode a 16-bit GATT Appearance value into a human-readable Bluetooth SIG description.
+pub fn decode_appearance(appearance: u16) -> Option<String> {
+    if appearance == 0 {
+        return None;
+    }
+    let exact = match appearance {
+        0x0040 => Some("Phone"),
+        0x0080 => Some("Computer"),
+        0x0081 => Some("Workstation"),
+        0x0082 => Some("Laptop"),
+        0x0083 => Some("Desktop"),
+        0x0084 => Some("Server"),
+        0x0085 => Some("Tablet"),
+        0x00C0 => Some("Watch"),
+        0x00C1 => Some("Sports Watch"),
+        0x00C2 => Some("Smartwatch"),
+        0x0100 => Some("Clock"),
+        0x0140 => Some("Display"),
+        0x0180 => Some("Remote Control"),
+        0x01C0 => Some("Eye-glasses"),
+        0x0200 => Some("Tag"),
+        0x0240 => Some("Keyring"),
+        0x0280 => Some("Media Player"),
+        0x0340 => Some("Heart Rate Sensor"),
+        0x03C0 => Some("Human Interface Device"),
+        0x03C1 => Some("Keyboard"),
+        0x03C2 => Some("Mouse"),
+        0x03C3 => Some("Joystick"),
+        0x03C4 => Some("Gamepad"),
+        0x03C5 => Some("Digitizer Tablet"),
+        0x03C6 => Some("Card Reader"),
+        0x03C7 => Some("Digital Pen"),
+        0x03C8 => Some("Barcode Scanner"),
+        0x03C9 => Some("Touchpad"),
+        0x0840 => Some("Audio Sink"),
+        0x0841 => Some("Standalone Speaker"),
+        0x0842 => Some("Soundbar"),
+        0x0880 => Some("Audio Source"),
+        0x0881 => Some("Microphone"),
+        0x0940 => Some("Wearable Audio Device"),
+        0x0941 => Some("Earbud"),
+        0x0942 => Some("Headset"),
+        0x0943 => Some("Headphones"),
+        0x0944 => Some("Neck Band"),
+        0x0A40 => Some("Hearing Aid"),
+        _ => None,
+    };
+    if let Some(name) = exact {
+        return Some(name.to_string());
+    }
+
+    let category = match appearance >> 6 {
+        0x001 => "Phone",
+        0x002 => "Computer",
+        0x003 => "Watch",
+        0x004 => "Clock",
+        0x005 => "Display",
+        0x006 => "Remote Control",
+        0x00D => "Heart Rate Sensor",
+        0x00F => "Human Interface Device",
+        0x014 => "Running / Walking Sensor",
+        0x015 => "Cycling",
+        0x021 => "Audio Sink",
+        0x022 => "Audio Source",
+        0x025 => "Wearable Audio Device",
+        0x029 => "Hearing Aid",
+        _ => "Unknown Appearance",
+    };
+    Some(category.to_string())
+}
+
+/// Decode Bluetooth Core Spec Advertising Flags byte(s) into readable names.
+pub fn decode_advertising_flags(flags: &[u8]) -> String {
+    if flags.is_empty() {
+        return String::new();
+    }
+    let first = flags[0];
+    let mut parts = Vec::new();
+    if (first & 0x01) != 0 {
+        parts.push("LE Limited Discoverable");
+    }
+    if (first & 0x02) != 0 {
+        parts.push("LE General Discoverable");
+    }
+    if (first & 0x04) != 0 {
+        parts.push("BR/EDR Not Supported");
+    }
+    if (first & 0x08) != 0 {
+        parts.push("Simultaneous LE & BR/EDR (Controller)");
+    }
+    if (first & 0x10) != 0 {
+        parts.push("Simultaneous LE & BR/EDR (Host)");
+    }
+    let hex = format_hex_bytes(flags);
+    if parts.is_empty() {
+        format!("0x{hex}")
+    } else {
+        format!("{} (0x{hex})", parts.join(", "))
+    }
+}
+
+pub fn format_bytes_full(bytes: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    const GB: f64 = MB * 1024.0;
+    const TB: f64 = GB * 1024.0;
+
+    let b = bytes as f64;
+    if b >= TB {
+        format!("{:.2} TB", b / TB)
+    } else if b >= GB {
+        format!("{:.2} GB", b / GB)
+    } else if b >= MB {
+        format!("{:.2} MB", b / MB)
+    } else if b >= KB {
+        format!("{:.2} KB", b / KB)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
+pub fn format_rate_full(bps: f64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    const GB: f64 = MB * 1024.0;
+
+    let v = if bps.is_finite() && bps > 0.0 {
+        bps
+    } else {
+        0.0
+    };
+    if v >= GB {
+        format!("{:.2} GB/s", v / GB)
+    } else if v >= MB {
+        format!("{:.2} MB/s", v / MB)
+    } else if v >= KB {
+        format!("{:.2} KB/s", v / KB)
+    } else {
+        format!("{:.0} B/s", v)
+    }
+}
+
+/// Ultra-compact single-letter byte formatter (`0B`, `512B`, `8.5K`, `122M`, `1.4G`)
+/// bounded to <= 5 characters so `↑122M ↓8.5M` stays <= 11 chars at 360px width.
+pub fn format_bytes_compact(bytes: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    const GB: f64 = MB * 1024.0;
+    const TB: f64 = GB * 1024.0;
+
+    let fmt_unit = |val: f64, suffix: char| {
+        if val >= 9.95 {
+            format!("{:.0}{suffix}", val)
+        } else {
+            format!("{:.1}{suffix}", val)
+        }
+    };
+
+    let b = bytes as f64;
+    if b >= TB {
+        fmt_unit(b / TB, 'T')
+    } else if b >= GB {
+        fmt_unit(b / GB, 'G')
+    } else if b >= MB {
+        fmt_unit(b / MB, 'M')
+    } else if b >= KB {
+        fmt_unit(b / KB, 'K')
+    } else {
+        format!("{bytes}B")
+    }
+}
+
+pub fn format_rate_compact(bps: f64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    const GB: f64 = MB * 1024.0;
+
+    let v = if bps.is_finite() && bps > 0.0 {
+        bps
+    } else {
+        0.0
+    };
+    let fmt_unit = |val: f64, suffix: char| {
+        if val >= 9.95 {
+            format!("{:.0}{suffix}/s", val)
+        } else {
+            format!("{:.1}{suffix}/s", val)
+        }
+    };
+    if v >= GB {
+        fmt_unit(v / GB, 'G')
+    } else if v >= MB {
+        fmt_unit(v / MB, 'M')
+    } else if v >= KB {
+        fmt_unit(v / KB, 'K')
+    } else {
+        format!("{:.0}B/s", v)
     }
 }
 
@@ -935,23 +1508,79 @@ mod tests {
             path: path.to_string(),
             adapter_path: "/org/bluez/hci0".to_string(),
             address: addr.to_string(),
-            name: None,
             alias: alias.to_string(),
-            icon_hint: None,
-            class: 0,
-            appearance: 0,
-            uuids: Vec::new(),
-            paired: false,
-            connected: false,
-            trusted: false,
-            blocked: false,
-            battery: None,
-            rssi: None,
-            kind: DeviceKind::Generic,
-            in_flight: None,
+            ..Default::default()
         };
         dev.refresh_kind();
         dev
+    }
+
+    #[test]
+    fn decoders_cover_class_appearance_uuids_adv_flags_visibility_and_bytes() {
+        assert_eq!(decode_class(0), None);
+        // Audio/Video (4) Headphones (6) + Audio(0x100) + Rendering(0x020)
+        let hp_class = (0x120 << 13) | (4 << 8) | (6 << 2);
+        let decoded = decode_class(hp_class).unwrap();
+        assert!(decoded.contains("Audio/Video — Headphones"));
+        assert!(decoded.contains("Rendering"));
+        assert!(decoded.contains("Audio"));
+
+        let kbd_class = (5 << 8) | (0x10 << 2);
+        assert_eq!(
+            decode_class(kbd_class).as_deref(),
+            Some("Peripheral — Keyboard")
+        );
+
+        assert_eq!(decode_appearance(0), None);
+        assert_eq!(decode_appearance(0x03C1).as_deref(), Some("Keyboard"));
+        assert_eq!(decode_appearance(0x0941).as_deref(), Some("Earbud"));
+        assert_eq!(
+            decode_appearance(0x0949).as_deref(),
+            Some("Wearable Audio Device")
+        );
+
+        assert_eq!(
+            service_uuid_name("0000184e-0000-1000-8000-00805f9b34fb"),
+            "Audio Stream Control (ASCS)"
+        );
+        assert_eq!(
+            service_uuid_name("03b80e5a-ede8-4b33-a751-6ce34ec4c700"),
+            "Bluetooth LE MIDI"
+        );
+        assert_eq!(
+            service_uuid_name("0000fe2c-0000-1000-8000-00805f9b34fb"),
+            "Google Fast Pair"
+        );
+
+        let flags = decode_advertising_flags(&[0x06]);
+        assert!(flags.contains("LE General Discoverable"));
+        assert!(flags.contains("BR/EDR Not Supported"));
+
+        assert_eq!(
+            VisibilityMode::from_adapter_props(false, 180),
+            VisibilityMode::Hidden
+        );
+        assert_eq!(
+            VisibilityMode::from_adapter_props(true, 0),
+            VisibilityMode::AlwaysVisible
+        );
+        assert_eq!(
+            VisibilityMode::from_adapter_props(true, 120),
+            VisibilityMode::Temporary { timeout_secs: 120 }
+        );
+        assert_eq!(
+            VisibilityMode::Temporary { timeout_secs: 5 }.to_bluez_props(),
+            (true, Some(30))
+        );
+        assert_eq!(VisibilityMode::AlwaysVisible.to_bluez_props(), (true, Some(0)));
+        assert_eq!(VisibilityMode::Hidden.to_bluez_props(), (false, None));
+
+        assert_eq!(format_bytes_compact(0), "0B");
+        assert_eq!(format_bytes_compact(8_960_000), "8.5M");
+        assert_eq!(format_bytes_compact(128_000_000), "122M");
+        assert_eq!(format_bytes_full(128_492_000), "122.54 MB");
+        assert_eq!(format_rate_compact(2900.0), "2.8K/s");
+        assert_eq!(format_rate_full(2900.0), "2.83 KB/s");
     }
 
     #[test]

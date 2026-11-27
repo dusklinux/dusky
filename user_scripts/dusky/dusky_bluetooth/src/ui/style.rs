@@ -70,6 +70,30 @@ pub fn hairline_rule(theme: AppTheme) -> impl Fn(&iced_core::Theme) -> container
     }
 }
 
+pub fn accent_hairline(theme: AppTheme) -> impl Fn(&iced_core::Theme) -> container::Style {
+    move |_| container::Style {
+        background: Some(Background::Color(theme.accent)),
+        ..Default::default()
+    }
+}
+
+pub fn traffic_pill(theme: AppTheme) -> impl Fn(&iced_core::Theme) -> container::Style {
+    move |_| container::Style {
+        background: Some(Background::Color(mix(
+            theme.chrome_bg(),
+            theme.fg,
+            if theme.is_light() { 0.045 } else { 0.04 },
+        ))),
+        text_color: Some(theme.fg_muted),
+        border: Border {
+            color: theme.grid_line(),
+            width: 1.0,
+            radius: 6.0.into(),
+        },
+        ..Default::default()
+    }
+}
+
 pub fn subtle_rule(theme: AppTheme) -> impl Fn(&iced_core::Theme) -> container::Style {
     move |_| container::Style {
         background: Some(Background::Color(theme.grid_line_subtle())),
@@ -215,22 +239,48 @@ pub fn passkey_box(theme: AppTheme) -> impl Fn(&iced_core::Theme) -> container::
     }
 }
 
-pub fn scanning_banner(theme: AppTheme) -> impl Fn(&iced_core::Theme) -> container::Style {
+pub fn modal_section_box(theme: AppTheme) -> impl Fn(&iced_core::Theme) -> container::Style {
     move |_| container::Style {
         background: Some(Background::Color(mix(
             theme.card_bg,
-            theme.accent,
-            if theme.is_light() { 0.14 } else { 0.12 },
+            theme.bg,
+            if theme.is_light() { 0.35 } else { 0.42 },
         ))),
         text_color: Some(theme.fg),
         border: Border {
-            color: mix(theme.card_bg, theme.accent, 0.42),
+            color: theme.grid_line(),
             width: 1.0,
             radius: 8.0.into(),
         },
         ..Default::default()
     }
 }
+
+pub fn info_row_button(
+    theme: AppTheme,
+) -> impl Fn(&iced_core::Theme, button::Status) -> button::Style {
+    move |_, status| {
+        let background = match status {
+            button::Status::Active | button::Status::Disabled => None,
+            button::Status::Hovered => Some(Background::Color(theme.card_hover)),
+            button::Status::Pressed => Some(Background::Color(mix(
+                theme.card_hover,
+                theme.accent,
+                0.22,
+            ))),
+        };
+        button::Style {
+            background,
+            text_color: theme.fg,
+            border: Border {
+                radius: 5.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+}
+
 
 pub fn notice_banner(
     theme: AppTheme,

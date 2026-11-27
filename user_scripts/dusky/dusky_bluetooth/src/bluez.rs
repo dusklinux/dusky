@@ -8,8 +8,11 @@
 
 use crate::model::{
     AdapterState, AgentReply, AgentState, DeviceKind, DeviceOp, DeviceOpOutcome, DeviceState,
-    PairingKind, PairingPrompt, is_canceled_bluez_error, service_uuid_name, translate_bluez_error,
-    valid_rssi,
+    PairingKind, PairingPrompt, RfkillState, TrafficSnapshot, VisibilityMode,
+    is_canceled_bluez_error, service_uuid_name, translate_bluez_error, valid_rssi,
+};
+use crate::telemetry::{
+    HciSocket, TrafficTracker, parse_hci_dev_id, read_active_bnep_bytes, read_bluetooth_rfkill,
 };
 use futures_timer::Delay;
 use iced_futures::futures::channel::mpsc::{self, UnboundedReceiver, UnboundedSender};
@@ -17,8 +20,9 @@ use iced_futures::futures::channel::oneshot;
 use iced_futures::futures::future::Fuse;
 use iced_futures::futures::{FutureExt, StreamExt, select_biased};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use zbus::message::Type as MessageType;
 use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
 use zbus::{Connection, DBusError, MatchRule, Message, MessageStream};
@@ -42,6 +46,9 @@ const AGENT_CAPABILITY: &str = "KeyboardDisplay";
 
 const RECONNECT_BACKOFF: Duration = Duration::from_secs(3);
 const SHUTDOWN_UNREGISTER_TIMEOUT: Duration = Duration::from_millis(400);
+const TRAFFIC_ACTIVE_INTERVAL: Duration = Duration::from_secs(1);
+const TRAFFIC_IDLE_INTERVAL: Duration = Duration::from_secs(2);
+const RFKILL_IDLE_INTERVAL: Duration = Duration::from_secs(3);
 const HYDRATE_RETRY_DELAYS: [Duration; 4] = [
     Duration::from_millis(500),
     Duration::from_secs(1),
@@ -65,6 +72,9 @@ pub enum BackendStatus {
 
 #[derive(Debug)]
 pub enum BackendCommand {
+    SetActiveAdapter {
+        adapter_path: Option<String>,
+    },
     SetAdapterPowered {
         adapter_path: String,
         powered: bool,
@@ -72,6 +82,22 @@ pub enum BackendCommand {
     SetAdapterDiscoverable {
         adapter_path: String,
         discoverable: bool,
+    },
+    SetAdapterVisibility {
+        adapter_path: String,
+        mode: VisibilityMode,
+    },
+    SetAdapterAlias {
+        adapter_path: String,
+        alias: String,
+    },
+    SetAdapterPairable {
+        adapter_path: String,
+        pairable: bool,
+    },
+    SetAdapterPairableTimeout {
+        adapter_path: String,
+        timeout_secs: u32,
     },
     StartDiscovery {
         adapter_path: String,
@@ -133,6 +159,11 @@ pub enum BackendEvent {
     AliasUpdated {
         reset: bool,
     },
+    AdapterAliasUpdated {
+        reset: bool,
+    },
+    RfkillChanged(RfkillState),
+    TrafficUpdated(TrafficSnapshot),
     DeviceOpFinished {
         path: String,
         op: DeviceOp,
@@ -410,8 +441,13 @@ struct WorkerCache {
     adapters: BTreeMap<String, AdapterState>,
     devices: BTreeMap<String, DeviceState>,
     pending_batteries: HashMap<String, u8>,
+    active_adapter: Option<String>,
     agent_registered: bool,
     status: BackendStatus,
+    rfkill: RfkillState,
+    hci_socket: HciSocket,
+    traffic: TrafficTracker,
+    last_traffic: Option<TrafficSnapshot>,
 }
 
 impl WorkerCache {
@@ -420,8 +456,101 @@ impl WorkerCache {
             adapters: BTreeMap::new(),
             devices: BTreeMap::new(),
             pending_batteries: HashMap::new(),
+            active_adapter: None,
             agent_registered: false,
             status: BackendStatus::Connecting,
+            rfkill: RfkillState::default(),
+            hci_socket: HciSocket::new(),
+            traffic: TrafficTracker::new(),
+            last_traffic: None,
+        }
+    }
+
+    fn effective_adapter(&self) -> Option<&AdapterState> {
+        if let Some(path) = self.active_adapter.as_deref()
+            && let Some(adapter) = self.adapters.get(path)
+        {
+            return Some(adapter);
+        }
+        self.adapters.values().next()
+    }
+
+    fn refresh_rfkill(&mut self, evt_tx: &UnboundedSender<BackendEvent>) {
+        let active_hci = self.effective_adapter().map(|a| a.short_id().to_string());
+        let next = read_bluetooth_rfkill(Path::new("/sys/class/rfkill"), active_hci.as_deref());
+        if next != self.rfkill {
+            self.rfkill = next.clone();
+            let _ = evt_tx.unbounded_send(BackendEvent::RfkillChanged(next));
+        }
+    }
+
+    fn reset_traffic(&mut self, evt_tx: &UnboundedSender<BackendEvent>) {
+        let short_id = self
+            .effective_adapter()
+            .map(|a| a.short_id().to_string())
+            .unwrap_or_default();
+        self.traffic.reset(short_id);
+        if self.last_traffic.as_ref().is_some_and(|t| t.available) {
+            let empty = TrafficSnapshot::default();
+            self.last_traffic = Some(empty.clone());
+            let _ = evt_tx.unbounded_send(BackendEvent::TrafficUpdated(empty));
+        }
+    }
+
+    fn telemetry_interval(&self) -> Option<Duration> {
+        match self.status {
+            BackendStatus::Ready => {
+                let Some(adapter) = self.effective_adapter() else {
+                    return Some(RFKILL_IDLE_INTERVAL);
+                };
+                if !adapter.powered {
+                    return Some(RFKILL_IDLE_INTERVAL);
+                }
+                let active_link = adapter.discovering
+                    || self
+                        .devices
+                        .values()
+                        .any(|d| d.adapter_path == adapter.path && d.connected);
+                Some(if active_link {
+                    TRAFFIC_ACTIVE_INTERVAL
+                } else {
+                    TRAFFIC_IDLE_INTERVAL
+                })
+            }
+            BackendStatus::NoAdapter | BackendStatus::Unavailable => Some(RFKILL_IDLE_INTERVAL),
+            BackendStatus::Connecting => None,
+        }
+    }
+
+    fn poll_telemetry(&mut self, evt_tx: &UnboundedSender<BackendEvent>) {
+        self.refresh_rfkill(evt_tx);
+        let Some(adapter) = self.effective_adapter().cloned() else {
+            self.reset_traffic(evt_tx);
+            return;
+        };
+        if self.status != BackendStatus::Ready || !adapter.powered {
+            self.reset_traffic(evt_tx);
+            return;
+        }
+        let short_id = adapter.short_id();
+        if self.traffic.adapter_short_id() != short_id {
+            self.traffic.reset(short_id);
+        }
+        let Some(dev_id) = parse_hci_dev_id(short_id) else {
+            self.reset_traffic(evt_tx);
+            return;
+        };
+        let Some((raw_tx, raw_rx)) = self.hci_socket.read_dev_bytes(dev_id) else {
+            self.reset_traffic(evt_tx);
+            return;
+        };
+        let pan_sample = read_active_bnep_bytes(Path::new("/sys/class/net"));
+        let snap = self
+            .traffic
+            .update(raw_tx, raw_rx, Instant::now(), pan_sample);
+        if traffic_changed(self.last_traffic.as_ref(), &snap) {
+            self.last_traffic = Some(snap.clone());
+            let _ = evt_tx.unbounded_send(BackendEvent::TrafficUpdated(snap));
         }
     }
 
@@ -454,6 +583,45 @@ impl WorkerCache {
                 (dev.display_name().to_string(), dev.address.clone()),
             );
         }
+    }
+}
+
+fn traffic_changed(prev: Option<&TrafficSnapshot>, next: &TrafficSnapshot) -> bool {
+    let Some(prev) = prev else {
+        return true;
+    };
+    prev.available != next.available
+        || prev.adapter_short_id != next.adapter_short_id
+        || prev.total_tx != next.total_tx
+        || prev.total_rx != next.total_rx
+        || prev.active_tx != next.active_tx
+        || prev.active_rx != next.active_rx
+        || (prev.tx_rate_bps.round() as u64) != (next.tx_rate_bps.round() as u64)
+        || (prev.rx_rate_bps.round() as u64) != (next.rx_rate_bps.round() as u64)
+        || prev.pan.as_ref().map(|p| (&p.iface, p.total_tx, p.total_rx))
+            != next.pan.as_ref().map(|p| (&p.iface, p.total_tx, p.total_rx))
+}
+
+fn arm_telemetry_timer(
+    cache: &WorkerCache,
+    current_interval: &mut Option<Duration>,
+    timer: &mut Fuse<Delay>,
+) {
+    let next = cache.telemetry_interval();
+    *current_interval = next;
+    *timer = match next {
+        Some(delay) => Delay::new(delay).fuse(),
+        None => Fuse::terminated(),
+    };
+}
+
+fn sync_telemetry_timer(
+    cache: &WorkerCache,
+    current_interval: &mut Option<Duration>,
+    timer: &mut Fuse<Delay>,
+) {
+    if cache.telemetry_interval() != *current_interval {
+        arm_telemetry_timer(cache, current_interval, timer);
     }
 }
 
@@ -510,6 +678,8 @@ async fn worker_main(
 
         let mut hydrate_retry_attempt: usize = 0;
         let mut hydrate_retry_timer: Fuse<Delay> = Fuse::terminated();
+        let mut telemetry_interval: Option<Duration> = None;
+        let mut telemetry_timer: Fuse<Delay> = Fuse::terminated();
 
         if bluez_has_owner(&conn).await {
             if !hydrate_bluez(&conn, &mut cache, &device_labels, &evt_tx).await {
@@ -529,6 +699,8 @@ async fn worker_main(
                 &evt_tx,
             );
         }
+        cache.poll_telemetry(&evt_tx);
+        arm_telemetry_timer(&cache, &mut telemetry_interval, &mut telemetry_timer);
 
         loop {
             select_biased! {
@@ -545,6 +717,18 @@ async fn worker_main(
                             let _ = evt_tx.unbounded_send(BackendEvent::Stopped);
                             let _ = ack_tx.send(());
                             return;
+                        }
+                        Some(BackendCommand::SetActiveAdapter { adapter_path }) => {
+                            if cache.active_adapter != adapter_path {
+                                cache.active_adapter = adapter_path;
+                                cache.reset_traffic(&evt_tx);
+                                cache.poll_telemetry(&evt_tx);
+                                arm_telemetry_timer(
+                                    &cache,
+                                    &mut telemetry_interval,
+                                    &mut telemetry_timer,
+                                );
+                            }
                         }
                         Some(cmd) => {
                             handle_command(
@@ -591,6 +775,12 @@ async fn worker_main(
                             &evt_tx,
                         );
                     }
+                    cache.poll_telemetry(&evt_tx);
+                    arm_telemetry_timer(&cache, &mut telemetry_interval, &mut telemetry_timer);
+                }
+                _ = telemetry_timer => {
+                    cache.poll_telemetry(&evt_tx);
+                    arm_telemetry_timer(&cache, &mut telemetry_interval, &mut telemetry_timer);
                 }
                 maybe_msg = owner_stream.next() => {
                     match maybe_msg {
@@ -606,6 +796,12 @@ async fn worker_main(
                                 &mut hydrate_retry_timer,
                                 &evt_tx,
                             ).await;
+                            cache.poll_telemetry(&evt_tx);
+                            arm_telemetry_timer(
+                                &cache,
+                                &mut telemetry_interval,
+                                &mut telemetry_timer,
+                            );
                         }
                         Some(Err(_)) | None => break,
                     }
@@ -621,6 +817,12 @@ async fn worker_main(
                                 &discovery_started_by_us,
                                 &evt_tx,
                             );
+                            cache.refresh_rfkill(&evt_tx);
+                            sync_telemetry_timer(
+                                &cache,
+                                &mut telemetry_interval,
+                                &mut telemetry_timer,
+                            );
                         }
                         Some(Err(_)) | None => break,
                     }
@@ -635,6 +837,11 @@ async fn worker_main(
                                 &device_labels,
                                 &discovery_started_by_us,
                                 &evt_tx,
+                            );
+                            sync_telemetry_timer(
+                                &cache,
+                                &mut telemetry_interval,
+                                &mut telemetry_timer,
                             );
                         }
                         Some(Err(_)) | None => break,
@@ -934,6 +1141,7 @@ async fn teardown_session(
         .map(|mut set| set.drain().collect())
         .unwrap_or_default();
 
+    cache.hci_socket.close();
     let registered = cache.agent_registered;
     cache.agent_registered = false;
 
@@ -1174,10 +1382,13 @@ fn handle_properties_changed(
 
     match iface.as_str() {
         BLUEZ_ADAPTER_IFACE => {
+            let mut power_toggled = false;
             if let Some(adapter) = cache.adapters.get_mut(path) {
+                let prev_powered = adapter.powered;
                 let powered_turned_off = prop_bool(&changed, "Powered") == Some(false);
                 let discovery_stopped = prop_bool(&changed, "Discovering") == Some(false);
-                apply_adapter_properties(adapter, &changed);
+                apply_adapter_properties(adapter, &changed, &invalidated);
+                power_toggled = adapter.powered != prev_powered;
                 if (powered_turned_off || discovery_stopped)
                     && discovery_started_by_us
                         .lock()
@@ -1190,6 +1401,10 @@ fn handle_properties_changed(
                     });
                 }
                 let _ = evt_tx.unbounded_send(BackendEvent::AdapterUpserted(adapter.clone()));
+            }
+            if power_toggled {
+                cache.reset_traffic(evt_tx);
+                cache.poll_telemetry(evt_tx);
             }
         }
         BLUEZ_DEVICE_IFACE => {
@@ -1312,6 +1527,7 @@ fn handle_command(
                 )
                 .detach();
         }
+        BackendCommand::SetActiveAdapter { .. } => {}
         BackendCommand::SetAdapterDiscoverable {
             adapter_path,
             discoverable,
@@ -1337,6 +1553,141 @@ fn handle_command(
                         }
                     },
                     "bluez-set-discoverable",
+                )
+                .detach();
+        }
+        BackendCommand::SetAdapterVisibility { adapter_path, mode } => {
+            let conn = conn.clone();
+            let evt_tx = evt_tx.clone();
+            executor
+                .spawn(
+                    async move {
+                        let (discoverable, timeout_opt) = mode.to_bluez_props();
+                        // Write DiscoverableTimeout strictly before Discoverable=true so
+                        // bluetoothd arms the countdown timer with the new duration.
+                        if let Some(timeout) = timeout_opt
+                            && let Err(err) = set_dbus_property(
+                                &conn,
+                                &adapter_path,
+                                BLUEZ_ADAPTER_IFACE,
+                                "DiscoverableTimeout",
+                                Value::from(timeout),
+                            )
+                            .await
+                        {
+                            let _ = evt_tx.unbounded_send(BackendEvent::Notice {
+                                message: translate_bluez_error(&err.to_string()),
+                                is_error: true,
+                            });
+                            return;
+                        }
+                        if let Err(err) = set_dbus_property(
+                            &conn,
+                            &adapter_path,
+                            BLUEZ_ADAPTER_IFACE,
+                            "Discoverable",
+                            Value::from(discoverable),
+                        )
+                        .await
+                        {
+                            let _ = evt_tx.unbounded_send(BackendEvent::Notice {
+                                message: translate_bluez_error(&err.to_string()),
+                                is_error: true,
+                            });
+                        }
+                    },
+                    "bluez-set-visibility",
+                )
+                .detach();
+        }
+        BackendCommand::SetAdapterAlias {
+            adapter_path,
+            alias,
+        } => {
+            let conn = conn.clone();
+            let evt_tx = evt_tx.clone();
+            let reset = alias.is_empty();
+            executor
+                .spawn(
+                    async move {
+                        match set_dbus_property(
+                            &conn,
+                            &adapter_path,
+                            BLUEZ_ADAPTER_IFACE,
+                            "Alias",
+                            Value::from(alias.as_str()),
+                        )
+                        .await
+                        {
+                            Ok(()) => {
+                                let _ = evt_tx
+                                    .unbounded_send(BackendEvent::AdapterAliasUpdated { reset });
+                            }
+                            Err(err) => {
+                                let _ = evt_tx.unbounded_send(BackendEvent::Notice {
+                                    message: translate_bluez_error(&err.to_string()),
+                                    is_error: true,
+                                });
+                            }
+                        }
+                    },
+                    "bluez-set-adapter-alias",
+                )
+                .detach();
+        }
+        BackendCommand::SetAdapterPairable {
+            adapter_path,
+            pairable,
+        } => {
+            let conn = conn.clone();
+            let evt_tx = evt_tx.clone();
+            executor
+                .spawn(
+                    async move {
+                        if let Err(err) = set_dbus_property(
+                            &conn,
+                            &adapter_path,
+                            BLUEZ_ADAPTER_IFACE,
+                            "Pairable",
+                            Value::from(pairable),
+                        )
+                        .await
+                        {
+                            let _ = evt_tx.unbounded_send(BackendEvent::Notice {
+                                message: translate_bluez_error(&err.to_string()),
+                                is_error: true,
+                            });
+                        }
+                    },
+                    "bluez-set-pairable",
+                )
+                .detach();
+        }
+        BackendCommand::SetAdapterPairableTimeout {
+            adapter_path,
+            timeout_secs,
+        } => {
+            let conn = conn.clone();
+            let evt_tx = evt_tx.clone();
+            executor
+                .spawn(
+                    async move {
+                        if let Err(err) = set_dbus_property(
+                            &conn,
+                            &adapter_path,
+                            BLUEZ_ADAPTER_IFACE,
+                            "PairableTimeout",
+                            Value::from(timeout_secs),
+                        )
+                        .await
+                        {
+                            let _ = evt_tx.unbounded_send(BackendEvent::Notice {
+                                message: translate_bluez_error(&err.to_string()),
+                                is_error: true,
+                            });
+                        }
+                    },
+                    "bluez-set-pairable-timeout",
                 )
                 .detach();
         }
@@ -1731,6 +2082,58 @@ fn prop_string_vec(props: &PropertyMap, key: &str) -> Option<Vec<String>> {
     }
 }
 
+fn extract_u8_vec(val: &Value<'_>) -> Option<Vec<u8>> {
+    match unwrap_value(val) {
+        Value::Array(arr) => Some(
+            arr.iter()
+                .filter_map(|item| match unwrap_value(item) {
+                    Value::U8(b) => Some(*b),
+                    _ => None,
+                })
+                .collect(),
+        ),
+        _ => None,
+    }
+}
+
+fn prop_u8_vec(props: &PropertyMap, key: &str) -> Option<Vec<u8>> {
+    extract_u8_vec(props.get(key)?)
+}
+
+fn prop_manufacturer_data(props: &PropertyMap, key: &str) -> Option<BTreeMap<u16, Vec<u8>>> {
+    match unwrap_value(props.get(key)?) {
+        Value::Dict(dict) => {
+            let mut out = BTreeMap::new();
+            for (k, v) in dict.iter() {
+                if let Value::U16(company_id) = unwrap_value(k)
+                    && let Some(bytes) = extract_u8_vec(v)
+                {
+                    out.insert(*company_id, bytes);
+                }
+            }
+            Some(out)
+        }
+        _ => None,
+    }
+}
+
+fn prop_service_data(props: &PropertyMap, key: &str) -> Option<BTreeMap<String, Vec<u8>>> {
+    match unwrap_value(props.get(key)?) {
+        Value::Dict(dict) => {
+            let mut out = BTreeMap::new();
+            for (k, v) in dict.iter() {
+                if let Value::Str(uuid) = unwrap_value(k)
+                    && let Some(bytes) = extract_u8_vec(v)
+                {
+                    out.insert(uuid.as_str().to_string(), bytes);
+                }
+            }
+            Some(out)
+        }
+        _ => None,
+    }
+}
+
 fn parent_adapter_path(device_path: &str) -> String {
     match device_path.rsplit_once('/') {
         Some((parent, _)) if !parent.is_empty() => parent.to_string(),
@@ -1756,22 +2159,24 @@ fn mac_from_object_path(path: &str) -> Option<String> {
 fn decode_adapter(path: &str, props: &PropertyMap) -> AdapterState {
     let mut adapter = AdapterState {
         path: path.to_string(),
-        address: String::new(),
-        name: String::new(),
-        alias: String::new(),
-        powered: false,
-        discoverable: false,
         discoverable_timeout: 180,
-        discovering: false,
         pairable: true,
+        ..Default::default()
     };
-    apply_adapter_properties(&mut adapter, props);
+    apply_adapter_properties(&mut adapter, props, &[]);
     adapter
 }
 
-fn apply_adapter_properties(adapter: &mut AdapterState, props: &PropertyMap) {
+fn apply_adapter_properties(
+    adapter: &mut AdapterState,
+    props: &PropertyMap,
+    invalidated: &[String],
+) {
     if let Some(v) = prop_str(props, "Address") {
         adapter.address = v;
+    }
+    if let Some(v) = prop_str(props, "AddressType") {
+        adapter.address_type = (!v.trim().is_empty()).then_some(v);
     }
     if let Some(v) = prop_str(props, "Name") {
         adapter.name = v;
@@ -1779,8 +2184,17 @@ fn apply_adapter_properties(adapter: &mut AdapterState, props: &PropertyMap) {
     if let Some(v) = prop_str(props, "Alias") {
         adapter.alias = v;
     }
+    if let Some(v) = prop_u32(props, "Class") {
+        adapter.class = v;
+    }
+    if let Some(v) = prop_str(props, "Modalias") {
+        adapter.modalias = (!v.trim().is_empty()).then_some(v);
+    }
     if let Some(v) = prop_bool(props, "Powered") {
         adapter.powered = v;
+    }
+    if let Some(v) = prop_str(props, "PowerState") {
+        adapter.power_state = (!v.trim().is_empty()).then_some(v);
     }
     if let Some(v) = prop_bool(props, "Discoverable") {
         adapter.discoverable = v;
@@ -1794,6 +2208,18 @@ fn apply_adapter_properties(adapter: &mut AdapterState, props: &PropertyMap) {
     if let Some(v) = prop_bool(props, "Pairable") {
         adapter.pairable = v;
     }
+    if let Some(v) = prop_u32(props, "PairableTimeout") {
+        adapter.pairable_timeout = v;
+    }
+    for key in invalidated {
+        match key.as_str() {
+            "Modalias" => adapter.modalias = None,
+            "AddressType" => adapter.address_type = None,
+            "PowerState" => adapter.power_state = None,
+            "Class" => adapter.class = 0,
+            _ => {}
+        }
+    }
 }
 
 fn decode_device(path: &str, props: &PropertyMap, battery: Option<u8>) -> DeviceState {
@@ -1803,20 +2229,9 @@ fn decode_device(path: &str, props: &PropertyMap, battery: Option<u8>) -> Device
         address: prop_str(props, "Address")
             .or_else(|| mac_from_object_path(path))
             .unwrap_or_default(),
-        name: None,
-        alias: String::new(),
-        icon_hint: None,
-        class: 0,
-        appearance: 0,
-        uuids: Vec::new(),
-        paired: false,
-        connected: false,
-        trusted: false,
-        blocked: false,
         battery,
-        rssi: None,
         kind: DeviceKind::Generic,
-        in_flight: None,
+        ..Default::default()
     };
     let _ = apply_device_properties(&mut device, props, &[]);
     device
@@ -1832,6 +2247,9 @@ fn apply_device_properties(
     }
     if let Some(v) = prop_str(changed, "Address") {
         device.address = v;
+    }
+    if let Some(v) = prop_str(changed, "AddressType") {
+        device.address_type = (!v.trim().is_empty()).then_some(v);
     }
     if let Some(v) = prop_str(changed, "Name") {
         device.name = (!v.trim().is_empty()).then_some(v);
@@ -1856,6 +2274,9 @@ fn apply_device_properties(
     if let Some(v) = paired_change {
         device.paired = v;
     }
+    if let Some(v) = prop_bool(changed, "Bonded") {
+        device.bonded = v;
+    }
 
     let connected_change = prop_bool(changed, "Connected");
     if let Some(v) = connected_change {
@@ -1868,18 +2289,56 @@ fn apply_device_properties(
     if let Some(v) = prop_bool(changed, "Blocked") {
         device.blocked = v;
     }
+    if let Some(v) = prop_bool(changed, "ServicesResolved") {
+        device.services_resolved = v;
+    }
+    if let Some(v) = prop_bool(changed, "LegacyPairing") {
+        device.legacy_pairing = v;
+    }
     if let Some(v) = prop_i16(changed, "RSSI") {
         device.rssi = valid_rssi(v);
+    }
+    if let Some(v) = prop_i16(changed, "TxPower") {
+        device.tx_power = Some(v);
+    }
+    if let Some(v) = prop_str(changed, "Modalias") {
+        device.modalias = (!v.trim().is_empty()).then_some(v);
+    }
+    if let Some(v) = prop_bool(changed, "WakeAllowed") {
+        device.wake_allowed = Some(v);
+    }
+    if let Some(v) = prop_str(changed, "PreferredBearer") {
+        device.preferred_bearer = (!v.trim().is_empty()).then_some(v);
+    }
+    if let Some(v) = prop_bool(changed, "CablePairing") {
+        device.cable_pairing = Some(v);
+    }
+    if let Some(v) = prop_manufacturer_data(changed, "ManufacturerData") {
+        device.manufacturer_data = v;
+    }
+    if let Some(v) = prop_service_data(changed, "ServiceData") {
+        device.service_data = v;
+    }
+    if let Some(v) = prop_u8_vec(changed, "AdvertisingFlags") {
+        device.advertising_flags = v;
     }
 
     for key in invalidated {
         match key.as_str() {
             "RSSI" => device.rssi = None,
+            "TxPower" => device.tx_power = None,
             "Name" => device.name = None,
             "Icon" => device.icon_hint = None,
             "Class" => device.class = 0,
             "Appearance" => device.appearance = 0,
             "UUIDs" => device.uuids.clear(),
+            "Modalias" => device.modalias = None,
+            "WakeAllowed" => device.wake_allowed = None,
+            "PreferredBearer" => device.preferred_bearer = None,
+            "CablePairing" => device.cable_pairing = None,
+            "ManufacturerData" => device.manufacturer_data.clear(),
+            "ServiceData" => device.service_data.clear(),
+            "AdvertisingFlags" => device.advertising_flags.clear(),
             _ => {}
         }
     }
@@ -1891,7 +2350,7 @@ fn apply_device_properties(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zbus::zvariant::Array;
+    use zbus::zvariant::{Array, Dict};
 
     fn owned(val: Value<'_>) -> OwnedValue {
         val.try_into().unwrap()
@@ -1963,5 +2422,66 @@ mod tests {
         assert!(adapter.discoverable);
         assert!(adapter.discovering);
         assert_eq!(adapter.discoverable_timeout, 120);
+    }
+
+    #[test]
+    fn decode_extended_bluez_properties_and_variant_dicts() {
+        let mut props = PropertyMap::new();
+        props.insert("Address".into(), owned(Value::from("11:22:33:44:55:66")));
+        props.insert("AddressType".into(), owned(Value::from("public")));
+        props.insert("Bonded".into(), owned(Value::from(true)));
+        props.insert("ServicesResolved".into(), owned(Value::from(true)));
+        props.insert("LegacyPairing".into(), owned(Value::from(false)));
+        props.insert("TxPower".into(), owned(Value::from(4_i16)));
+        props.insert("Modalias".into(), owned(Value::from("usb:v054Cp0CE6d0100")));
+        props.insert("WakeAllowed".into(), owned(Value::from(true)));
+        props.insert(
+            "AdvertisingFlags".into(),
+            owned(Value::Array(Array::from(vec![0x06_u8]))),
+        );
+
+        let mut mfg: HashMap<u16, Value<'_>> = HashMap::new();
+        mfg.insert(0x004C_u16, Value::Array(Array::from(vec![0x02_u8, 0x15_u8])));
+        props.insert("ManufacturerData".into(), owned(Value::Dict(Dict::from(mfg))));
+
+        let mut svc: HashMap<&str, Value<'_>> = HashMap::new();
+        svc.insert(
+            "0000fe2c-0000-1000-8000-00805f9b34fb",
+            Value::Array(Array::from(vec![0xAA_u8, 0xBB_u8])),
+        );
+        props.insert("ServiceData".into(), owned(Value::Dict(Dict::from(svc))));
+
+        let mut dev = decode_device("/org/bluez/hci0/dev_11_22_33_44_55_66", &props, None);
+        assert_eq!(dev.address_type.as_deref(), Some("public"));
+        assert!(dev.bonded);
+        assert!(dev.services_resolved);
+        assert_eq!(dev.tx_power, Some(4));
+        assert_eq!(dev.wake_allowed, Some(true));
+        assert_eq!(dev.advertising_flags, vec![0x06]);
+        assert_eq!(
+            dev.manufacturer_data.get(&0x004C).map(Vec::as_slice),
+            Some(&[0x02, 0x15][..])
+        );
+        assert_eq!(
+            dev.service_data
+                .get("0000fe2c-0000-1000-8000-00805f9b34fb")
+                .map(Vec::as_slice),
+            Some(&[0xAA, 0xBB][..])
+        );
+
+        let _ = apply_device_properties(
+            &mut dev,
+            &PropertyMap::new(),
+            &["TxPower".into(), "ManufacturerData".into()],
+        );
+        assert_eq!(dev.tx_power, None);
+        assert!(dev.manufacturer_data.is_empty());
+
+        let mut aprops = PropertyMap::new();
+        aprops.insert("PairableTimeout".into(), owned(Value::from(300_u32)));
+        aprops.insert("PowerState".into(), owned(Value::from("off-blocked")));
+        let adapter = decode_adapter("/org/bluez/hci0", &aprops);
+        assert_eq!(adapter.pairable_timeout, 300);
+        assert!(adapter.is_rfkill_blocked());
     }
 }
