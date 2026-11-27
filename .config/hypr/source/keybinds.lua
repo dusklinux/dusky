@@ -150,7 +150,7 @@ cond_bind(
 
 cond_bind(
     "ALT + 2",
-    hl.dsp.exec_cmd("blueman-manager"),
+    hl.dsp.exec_cmd("dusky_bluetooth"),
     { description = "Bluetooth Manager" }
 )
 
