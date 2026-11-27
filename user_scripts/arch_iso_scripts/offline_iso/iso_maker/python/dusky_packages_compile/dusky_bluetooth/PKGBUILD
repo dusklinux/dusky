@@ -1,0 +1,35 @@
+pkgname=dusky_bluetooth
+pkgver=1.0.0
+pkgrel=1
+pkgdesc='Dusky Bluetooth native Rust Bluetooth manager for Hyprland'
+arch=('x86_64')
+license=('custom')
+depends=('glibc' 'gcc-libs' 'wayland' 'libxkbcommon' 'vulkan-icd-loader' 'mesa' 'libglvnd' 'bluez')
+optdepends=(
+  'pipewire: Bluetooth audio profile discovery via pw-dump'
+  'wireplumber: Bluetooth audio profile switching via wpctl'
+)
+makedepends=('cargo' 'python')
+options=('!debug')
+
+build() {
+  rm -rf "$srcdir/project"
+  cp -aL -- "$DUSKY_PACKAGE_SOURCE" "$srcdir/project"
+  python "$DUSKY_BUILD_RUST" "$srcdir/project" "$srcdir/binary-output/dusky_bluetooth"
+}
+
+package() {
+  install -Dm755 "$srcdir/binary-output/dusky_bluetooth" \
+    "$pkgdir/usr/bin/dusky_bluetooth"
+  install -dm755 "$pkgdir/usr/share/dusky_bluetooth"
+  python - "$srcdir/project" "$DUSKY_BUILD_RUST" > "$pkgdir/usr/share/dusky_bluetooth/source.sha256" <<'PY'
+import sys
+from pathlib import Path
+
+project = Path(sys.argv[1])
+sys.path.insert(0, str(Path(sys.argv[2]).resolve().parent))
+from build_rust import shared
+print(shared.source_digest(project, recipe="bluetooth-native-v1-frozen-tmpfs"))
+PY
+  chmod 0644 "$pkgdir/usr/share/dusky_bluetooth/source.sha256"
+}
