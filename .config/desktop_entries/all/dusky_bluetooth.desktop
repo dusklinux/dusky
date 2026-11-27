@@ -1,0 +1,14 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Dusky Bluetooth
+GenericName=Bluetooth Manager
+Comment=Native Wayland Bluetooth manager with BlueZ D-Bus integration
+Exec=dusky_bluetooth
+TryExec=dusky_bluetooth
+Icon=bluetooth
+Terminal=false
+Categories=Settings;HardwareSettings;Network;
+Keywords=dusky;bluetooth;devices;audio;pairing;adapter;headphones;keyboard;mouse;phone;
+StartupWMClass=dusky_bluetooth
+StartupNotify=true

@@ -30,9 +30,9 @@ use std::time::Duration;
 use ui::BluetoothApp;
 
 const DEFAULT_WIDTH: f32 = 560.0;
-const DEFAULT_HEIGHT: f32 = 680.0;
+const DEFAULT_HEIGHT: f32 = 360.0;
 const MIN_WIDTH: f32 = 360.0;
-const MIN_HEIGHT: f32 = 480.0;
+const MIN_HEIGHT: f32 = 340.0;
 
 static IPC_RECEIVER: Mutex<Option<UnboundedReceiver<IpcCommand>>> = Mutex::new(None);
 
@@ -135,7 +135,7 @@ fn print_help() {
     println!("Options:");
     println!("  --version, -v           Show version and exit");
     println!("  --width, -w <PX>        Set initial window width (min 360)");
-    println!("  --height <PX>           Set initial window height (min 480)");
+    println!("  --height <PX>           Set initial window height (min 340)");
     println!("  --toggle                Close an existing instance if running, otherwise launch");
     println!("  --help, -h              Show this help\n");
     println!("Behavior:");

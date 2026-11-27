@@ -363,6 +363,16 @@ hl.window_rule({
     pin = true
 })
 
+--- Dusky Bluetooth: same compact footprint as the old Blueman manager, slightly larger ---
+hl.window_rule({
+    name = "dusky_bluetooth_window",
+    match = { class = "^(dusky_bluetooth)$" },
+    float = true,
+    size = {560, 360},
+    center = true,
+    pin = true
+})
+
 --- handbrake ---
 hl.window_rule({
     name = "handbrake",
