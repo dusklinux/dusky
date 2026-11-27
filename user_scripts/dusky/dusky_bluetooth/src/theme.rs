@@ -100,12 +100,22 @@ pub fn relative_luminance(color: Color) -> f32 {
     0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b)
 }
 
-/// Pick a crisp high-contrast foreground color for arbitrary swatch or pill fills.
+/// WCAG 2.1 contrast ratio between two sRGB colors (`1.0..=21.0`).
+pub fn contrast_ratio(a: Color, b: Color) -> f32 {
+    let la = relative_luminance(a);
+    let lb = relative_luminance(b);
+    let (hi, lo) = if la >= lb { (la, lb) } else { (lb, la) };
+    (hi + 0.05) / (lo + 0.05)
+}
+
+/// Pick the higher-contrast foreground ink (`#0b0d12` vs `#ffffff`) for any pill fill.
 pub fn contrasting_fg(bg: Color) -> Color {
-    if relative_luminance(bg) > 0.36 {
-        Color::from_rgb8(14, 16, 22)
+    let dark = Color::from_rgb8(11, 13, 18);
+    let light = Color::from_rgb8(255, 255, 255);
+    if contrast_ratio(bg, dark) >= contrast_ratio(bg, light) {
+        dark
     } else {
-        Color::from_rgb8(244, 246, 250)
+        light
     }
 }
 
@@ -291,7 +301,16 @@ impl AppTheme {
     }
 
     pub fn muted_fg(&self) -> Color {
-        mix(self.bg, self.fg_muted, 0.62)
+        let candidate = mix(
+            self.bg,
+            self.fg_muted,
+            if self.is_light() { 0.92 } else { 0.80 },
+        );
+        if contrast_ratio(candidate, self.card_bg) >= 4.5 {
+            candidate
+        } else {
+            mix(self.bg, self.fg, 0.68)
+        }
     }
 
     pub fn input_bg(&self) -> Color {
@@ -315,10 +334,15 @@ impl AppTheme {
         let light = self.is_light();
         let bg = mix(self.card_bg, semantic, if light { 0.18 } else { 0.16 });
         let border = mix(self.card_bg, semantic, if light { 0.48 } else { 0.42 });
-        let fg = if light {
+        let initial_fg = if light {
             mix(self.fg, semantic, 0.35)
         } else {
             mix(self.fg, semantic, 0.68)
+        };
+        let fg = if contrast_ratio(initial_fg, bg) >= 4.5 {
+            initial_fg
+        } else {
+            mix(self.fg, semantic, 0.25)
         };
         BadgeColors { bg, border, fg }
     }
@@ -379,13 +403,6 @@ mod tests {
         format!("#{r:02x}{g:02x}{b:02x}")
     }
 
-    fn contrast_ratio(a: Color, b: Color) -> f32 {
-        let la = relative_luminance(a);
-        let lb = relative_luminance(b);
-        let (hi, lo) = if la >= lb { (la, lb) } else { (lb, la) };
-        (hi + 0.05) / (lo + 0.05)
-    }
-
     #[test]
     fn hex_conversion_round_trips_and_rejects_invalid_inputs() {
         let color = hex_to_color("#afc6ff").unwrap();
@@ -442,5 +459,31 @@ mod tests {
         assert!(light.is_light());
         assert!(relative_luminance(light.danger) < 0.25);
         assert!(contrast_ratio(light.status_badge(light.danger).fg, light.status_badge(light.danger).bg) >= 4.5);
+    }
+
+    #[test]
+    fn contrasting_fg_muted_fg_and_status_badge_meet_wcag_aa_across_palettes() {
+        for hex in ["#0d0e12", "#f5f6fa", "#e05a8a", "#ffb1c8", "#2563eb"] {
+            let bg = hex_to_color(hex).unwrap();
+            let fg = contrasting_fg(bg);
+            assert!(
+                contrast_ratio(fg, bg) >= 4.5,
+                "contrasting_fg failed AA for {hex}: {}",
+                contrast_ratio(fg, bg)
+            );
+        }
+
+        let dark = AppTheme::default();
+        assert!(contrast_ratio(dark.muted_fg(), dark.card_bg) >= 4.5);
+        let dark_deep_accent = dark.status_badge(hex_to_color("#1d4ed8").unwrap());
+        assert!(contrast_ratio(dark_deep_accent.fg, dark_deep_accent.bg) >= 4.5);
+
+        let light = AppTheme::parse(
+            r##"{"bg":"#f5f6fa","fg":"#181a20","accent":"#ffb1c8"}"##,
+        )
+        .unwrap();
+        assert!(contrast_ratio(light.muted_fg(), light.card_bg) >= 4.5);
+        let light_pastel_badge = light.status_badge(light.accent);
+        assert!(contrast_ratio(light_pastel_badge.fg, light_pastel_badge.bg) >= 4.5);
     }
 }

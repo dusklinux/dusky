@@ -183,18 +183,26 @@ fn view_header_traffic<'a>(
     }
 
     let t = &app.traffic;
-    let up_color = if t.active_tx { theme.accent } else { theme.fg_muted };
-    let dn_color = if t.active_rx { theme.success } else { theme.fg_muted };
+    let up_color = if t.active_tx {
+        theme.status_badge(theme.accent).fg
+    } else {
+        theme.fg_muted
+    };
+    let dn_color = if t.active_rx {
+        theme.status_badge(theme.success).fg
+    } else {
+        theme.fg_muted
+    };
 
     let content: Element<'a, Message> = if app.window_width < 470.0 {
         // Ultra-compact <= 11-char layout for 360px single-row fit.
         row![
             text(format!("↑{}", format_bytes_compact(t.total_tx)))
-                .size(10.0)
+                .size(10.5)
                 .font(style::mono_font())
                 .color(up_color),
             text(format!("↓{}", format_bytes_compact(t.total_rx)))
-                .size(10.0)
+                .size(10.5)
                 .font(style::mono_font())
                 .color(dn_color),
         ]
@@ -315,11 +323,13 @@ fn view_header<'a>(
     let rfkill_blocked =
         app.rfkill.is_blocked() || active_adapter.is_some_and(AdapterState::is_rfkill_blocked);
 
+    let accent_fg = theme.status_badge(theme.accent).fg;
+
     // Power toggle (short text kept)
     let power_fg = if !has_adapter {
         theme.muted_fg()
     } else if powered {
-        contrasting_fg(theme.accent)
+        accent_fg
     } else {
         theme.fg_muted
     };
@@ -327,7 +337,7 @@ fn view_header<'a>(
         has_adapter,
         button(
             row![
-                render_icon("power", 13.0, power_fg),
+                render_icon("power", 14.0, power_fg),
                 text(if powered { "On" } else { "Off" })
                     .size(11.5)
                     .font(style::bold_font()),
@@ -403,7 +413,7 @@ fn view_header<'a>(
     let disc_color = if !powered {
         theme.muted_fg()
     } else if discoverable {
-        theme.accent
+        accent_fg
     } else {
         theme.fg_muted
     };
@@ -444,7 +454,7 @@ fn view_header<'a>(
             "filter",
             14.0,
             if app.config.hide_unnamed {
-                theme.accent
+                accent_fg
             } else {
                 theme.fg_muted
             },
@@ -471,7 +481,7 @@ fn view_header<'a>(
             "settings",
             14.0,
             if settings_highlight {
-                theme.accent
+                accent_fg
             } else {
                 theme.fg_muted
             },
@@ -1075,7 +1085,7 @@ fn view_device_card<'a>(
             row![
                 render_icon(
                     if low { "battery_low" } else { "battery" },
-                    12.0,
+                    13.5,
                     bat_badge.fg,
                 ),
                 text(format!("{pct}%"))
@@ -1213,7 +1223,11 @@ fn view_device_card<'a>(
                 "chevron_down"
             },
             15.0,
-            theme.fg_muted,
+            if expanded {
+                theme.status_badge(theme.accent).fg
+            } else {
+                theme.fg_muted
+            },
         ))
         .padding(Padding::from([5, 6]))
         .style(style::icon_button(theme, expanded))
@@ -1306,12 +1320,12 @@ fn view_device_drawer<'a>(
                         13.0,
                         if enabled { theme.fg } else { theme.muted_fg() }
                     ),
-                    text("Connect").size(12),
+                    text("Connect").size(11.5),
                 ]
-                .spacing(5)
+                .spacing(4)
                 .align_y(Alignment::Center),
             )
-            .padding(Padding::from([5, 9]))
+            .padding(Padding::from([4, 8]))
             .style(style::secondary_button(theme))
             .on_press_maybe(enabled.then(|| Message::ConnectDevice(dev.path.clone()))),
         );
@@ -1343,12 +1357,12 @@ fn view_device_drawer<'a>(
                     13.0,
                     if dev.trusted { theme.info } else { theme.fg },
                 ),
-                text(if dev.trusted { "Untrust" } else { "Trust" }).size(12),
+                text(if dev.trusted { "Untrust" } else { "Trust" }).size(11.5),
             ]
-            .spacing(5)
+            .spacing(4)
             .align_y(Alignment::Center),
         )
-        .padding(Padding::from([5, 9]))
+        .padding(Padding::from([4, 8]))
         .style(style::secondary_button(theme))
         .on_press(Message::ToggleTrust(dev.path.clone())),
     );
@@ -1372,12 +1386,12 @@ fn view_device_drawer<'a>(
                     13.0,
                     if dev.blocked { theme.danger } else { theme.fg },
                 ),
-                text(if dev.blocked { "Unblock" } else { "Block" }).size(12),
+                text(if dev.blocked { "Unblock" } else { "Block" }).size(11.5),
             ]
-            .spacing(5)
+            .spacing(4)
             .align_y(Alignment::Center),
         )
-        .padding(Padding::from([5, 9]))
+        .padding(Padding::from([4, 8]))
         .style(style::secondary_button(theme))
         .on_press(Message::ToggleBlock(dev.path.clone())),
     );
@@ -1395,7 +1409,7 @@ fn view_device_drawer<'a>(
     // Rename
     let rename_btn = style::pointer(
         button(
-            row![render_icon("edit", 12.5, theme.fg), text("Rename").size(11.5),]
+            row![render_icon("edit", 13.0, theme.fg), text("Rename").size(11.5),]
                 .spacing(4)
                 .align_y(Alignment::Center),
         )
@@ -1413,7 +1427,7 @@ fn view_device_drawer<'a>(
     // Device Info modal trigger
     let info_btn = style::pointer(
         button(
-            row![render_icon("info", 12.5, theme.accent), text("Info").size(11.5),]
+            row![render_icon("info", 13.0, theme.accent), text("Info").size(11.5),]
                 .spacing(4)
                 .align_y(Alignment::Center),
         )
@@ -1458,7 +1472,7 @@ fn view_device_drawer<'a>(
             let hide_btn = style::pointer(
                 button(
                     row![
-                        render_icon("eye_off", 12.5, theme.fg_muted),
+                        render_icon("eye_off", 13.0, theme.fg_muted),
                         text("Hide").size(11.5),
                     ]
                     .spacing(4)
@@ -1488,18 +1502,18 @@ fn view_device_drawer<'a>(
             button(
                 row![
                     render_icon("trash", 13.0, contrasting_fg(theme.danger)),
-                    text("Confirm Remove?").size(12).font(style::bold_font()),
+                    text("Confirm Remove?").size(11.5).font(style::bold_font()),
                 ]
-                .spacing(5)
+                .spacing(4)
                 .align_y(Alignment::Center),
             )
-            .padding(Padding::from([5, 9]))
+            .padding(Padding::from([4, 8]))
             .style(style::confirm_danger_button(theme))
             .on_press(Message::RemoveDevice(dev.path.clone())),
         );
         let cancel_btn = style::pointer(
-            button(text("Cancel").size(12))
-                .padding(Padding::from([5, 9]))
+            button(text("Cancel").size(11.5))
+                .padding(Padding::from([4, 8]))
                 .style(style::secondary_button(theme))
                 .on_press(Message::CancelRemove),
         );
@@ -1518,12 +1532,12 @@ fn view_device_drawer<'a>(
                             theme.muted_fg()
                         },
                     ),
-                    text("Remove").size(12),
+                    text("Remove").size(11.5),
                 ]
-                .spacing(5)
+                .spacing(4)
                 .align_y(Alignment::Center),
             )
-            .padding(Padding::from([5, 9]))
+            .padding(Padding::from([4, 8]))
             .style(style::danger_button(theme))
             .on_press_maybe(can_remove.then(|| Message::RemoveDevice(dev.path.clone()))),
         );

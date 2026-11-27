@@ -391,34 +391,26 @@ pub fn icon_button(
     theme: AppTheme,
     active: bool,
 ) -> impl Fn(&iced_core::Theme, button::Status) -> button::Style {
+    let badge = theme.status_badge(theme.accent);
     move |_, status| {
-        let base_bg = if active {
-            Some(Background::Color(mix(
-                theme.chrome_bg(),
-                theme.accent,
-                0.22,
-            )))
-        } else {
-            None
-        };
         let background = match status {
-            button::Status::Active => base_bg,
+            button::Status::Active => active.then_some(Background::Color(badge.bg)),
             button::Status::Hovered => Some(Background::Color(if active {
-                mix(theme.chrome_bg(), theme.accent, 0.32)
+                mix(badge.bg, theme.accent, 0.14)
             } else {
                 theme.card_hover
             })),
-            button::Status::Pressed => Some(Background::Color(mix(
-                theme.chrome_bg(),
-                theme.accent,
-                0.38,
-            ))),
+            button::Status::Pressed => Some(Background::Color(if active {
+                mix(badge.bg, theme.accent, 0.24)
+            } else {
+                mix(theme.card_hover, theme.accent, 0.18)
+            })),
             button::Status::Disabled => None,
         };
         let text_color = if matches!(status, button::Status::Disabled) {
             theme.muted_fg()
         } else if active {
-            theme.accent
+            badge.fg
         } else {
             theme.fg
         };
@@ -427,7 +419,7 @@ pub fn icon_button(
             text_color,
             border: Border {
                 color: if active && !matches!(status, button::Status::Disabled) {
-                    mix(theme.chrome_bg(), theme.accent, 0.48)
+                    badge.border
                 } else {
                     Color::TRANSPARENT
                 },
@@ -479,25 +471,30 @@ pub fn power_switch_button(
     theme: AppTheme,
     powered: bool,
 ) -> impl Fn(&iced_core::Theme, button::Status) -> button::Style {
+    let badge = theme.status_badge(theme.accent);
     move |_, status| {
         if powered {
             let bg = match status {
-                button::Status::Active => theme.accent,
-                button::Status::Hovered => theme.accent_hover,
-                button::Status::Pressed => mix(theme.accent, theme.fg, 0.14),
-                button::Status::Disabled => mix(theme.card_bg, theme.accent, 0.30),
+                button::Status::Active => badge.bg,
+                button::Status::Hovered => mix(badge.bg, theme.accent, 0.14),
+                button::Status::Pressed => mix(badge.bg, theme.accent, 0.24),
+                button::Status::Disabled => mix(theme.bg, theme.card_bg, 0.5),
             };
-            let fg = if matches!(status, button::Status::Disabled) {
-                theme.muted_fg()
+            let border_col = if matches!(status, button::Status::Disabled) {
+                theme.grid_line()
             } else {
-                contrasting_fg(bg)
+                mix(theme.card_bg, theme.accent, 0.65)
             };
             button::Style {
                 background: Some(Background::Color(bg)),
-                text_color: fg,
+                text_color: if matches!(status, button::Status::Disabled) {
+                    theme.muted_fg()
+                } else {
+                    theme.fg
+                },
                 border: Border {
-                    color: bg,
-                    width: 1.0,
+                    color: border_col,
+                    width: 1.2,
                     radius: 8.0.into(),
                 },
                 ..Default::default()
