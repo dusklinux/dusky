@@ -260,11 +260,19 @@ pub fn view_date_chooser<'a>(
                     } else {
                         style::regular_font()
                     })
+                    .width(Length::Fill)
                     .align_x(Alignment::Center)
                     .align_y(Alignment::Center),
             )
             .width(Length::Fill)
             .height(Length::Fill)
+            // Compensate for lining-numeral baseline vs descender space in the em-box.
+            .padding(Padding {
+                top: 1.5,
+                right: 0.0,
+                bottom: 0.0,
+                left: 0.0,
+            })
             .align_x(Alignment::Center)
             .align_y(Alignment::Center)
             .into();
